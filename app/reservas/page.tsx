@@ -247,30 +247,18 @@ function normalizeSimuladores(value: ReservaApi["simuladores"]): TeamKey[] {
 
 export default function ReservasPage() {
   const [isMounted, setIsMounted] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  const availableDates = useMemo(() => {
-    if (!isMounted) return [];
-    return getAvailableDates();
-  }, [isMounted]);
+  const [availableDates, setAvailableDates] = useState<
+    { value: string; fullLabel: string }[]
+  >([]);
 
   const dateInputRef = useRef<HTMLInputElement | null>(null);
-
-  if (!isMounted || availableDates.length === 0) {
-    return (
-      <main className="min-h-screen bg-black text-white" />
-    );
-  }
 
   const initialDate = availableDates[0]?.value ?? "";
   const initialTimeSlots = getTimeSlotsForDate(initialDate);
   const initialTime = initialTimeSlots[0] ?? "";
 
-  const [selectedDate, setSelectedDate] = useState<string>(initialDate);
-  const [selectedTime, setSelectedTime] = useState<string>(initialTime);
+  const [selectedDate, setSelectedDate] = useState<string>("");
+  const [selectedTime, setSelectedTime] = useState<string>("");
   const [selectedTeams, setSelectedTeams] = useState<TeamKey[]>([]);
   const [reservations, setReservations] = useState<ReservationMap>({});
   const [name, setName] = useState("");
@@ -283,6 +271,18 @@ export default function ReservasPage() {
     title: "",
     message: "",
   });
+
+  useEffect(() => {
+    const dates = getAvailableDates();
+    setAvailableDates(dates);
+
+    const firstDate = dates[0]?.value ?? "";
+    const firstTime = getTimeSlotsForDate(firstDate)[0] ?? "";
+
+    setSelectedDate(firstDate);
+    setSelectedTime(firstTime);
+    setIsMounted(true);
+  }, []);
 
   const minDate = availableDates[0]?.value ?? "";
   const maxDate = availableDates[availableDates.length - 1]?.value ?? "";
@@ -308,6 +308,10 @@ export default function ReservasPage() {
   const selectedDateLabel = selectedDate ? formatFullDateLabel(selectedDate) : "";
   const phoneDigits = getPhoneDigits(phone);
   const isPhoneValid = phoneDigits.length >= 10;
+
+  if (!isMounted || availableDates.length === 0 || !selectedDate || !selectedTime) {
+    return <main className="min-h-screen bg-black text-white" />;
+  }
 
   function openFeedbackModal(
     type: "success" | "error",
