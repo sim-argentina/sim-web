@@ -473,20 +473,20 @@ export default function ReservasPage() {
       return;
     }
 
-    if (!acceptedConditions) {
-      openFeedbackModal(
-        "error",
-        "Condiciones de uso",
-        "Para continuar con el pago, tenés que confirmar que leíste y aceptás las condiciones de uso."
-      );
-      return;
-    }
-
     if (!isPhoneValid) {
       openFeedbackModal(
         "error",
         "Teléfono inválido",
         "Ingresá un número de teléfono con al menos 10 dígitos."
+      );
+      return;
+    }
+
+    if (!acceptedConditions) {
+      openFeedbackModal(
+        "error",
+        "Condiciones de uso",
+        "Para continuar con el pago, tenés que confirmar que leíste y aceptás las condiciones de uso."
       );
       return;
     }
@@ -524,26 +524,19 @@ export default function ReservasPage() {
       fecha: selectedDate,
       hora: selectedTime,
       simuladores: selectedTeams,
-      cantidad_turnos: 1,
+      cantidad_turnos: selectedTeams.length,
       total,
+      acepto_condiciones: acceptedConditions,
     };
 
     try {
       const response = await fetch("/api/mercadopago/preference", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-  nombre: name,
-  telefono: phone,
-  fecha: selectedDate,
-  hora: selectedTime,
-  simuladores: selectedTeams,
-  cantidad_turnos: selectedTeams.length,
-  total,
-  acepto_condiciones: acceptedConditions,
-}),
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
 
       const result = await response.json().catch(() => null);
 
@@ -949,16 +942,18 @@ export default function ReservasPage() {
                     <div className="mt-0.5 rounded-xl bg-red-500/10 p-2 text-red-400">
                       <CircleAlert className="h-4 w-4" />
                     </div>
+
                     <div>
                       <p className="text-sm font-black uppercase tracking-[0.18em] text-red-300">
                         Condiciones de uso
                       </p>
+
                       <p className="mt-2 text-sm leading-6 text-zinc-300">
                         Antes de pagar, confirmá que leíste y aceptás las condiciones
-                        de uso. Para utilizar los simuladores, la altura mínima es de
-                        <span className="font-bold text-white"> 1.40 metros</span> y el
-                        peso máximo permitido es de
-                        <span className="font-bold text-white"> 110 kg</span>.
+                        de uso. Para utilizar los simuladores, la altura mínima es de{" "}
+                        <span className="font-bold text-white">1.40 metros</span> y
+                        el peso máximo permitido es de{" "}
+                        <span className="font-bold text-white">110 kg</span>.
                       </p>
                     </div>
                   </div>
@@ -971,8 +966,10 @@ export default function ReservasPage() {
                       disabled={isSubmitting || isLoadingReservations}
                       className="mt-1 h-4 w-4 accent-red-600 disabled:cursor-not-allowed"
                     />
+
                     <span>
-                      Confirmo que leí, entiendo y respeto las condiciones de uso de SIM.
+                      Confirmo que leí, entiendo y respeto las condiciones de uso de
+                      SIM.
                     </span>
                   </label>
                 </div>
