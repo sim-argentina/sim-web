@@ -31,7 +31,7 @@ export default function ErrorPage() {
               <h2 className="text-xl font-black">Qué podés hacer</h2>
               <p className="mt-2 text-zinc-400">
                 Volvé a intentar la reserva con otro medio de pago. Si el
-                problema continúa, consultanos por Instagram o en el stand.
+                problema continúa, consultanos por Instagram o por WhatsApp.
               </p>
             </div>
           </div>
