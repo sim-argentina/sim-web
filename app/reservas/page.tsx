@@ -253,10 +253,6 @@ export default function ReservasPage() {
 
   const dateInputRef = useRef<HTMLInputElement | null>(null);
 
-  const initialDate = availableDates[0]?.value ?? "";
-  const initialTimeSlots = getTimeSlotsForDate(initialDate);
-  const initialTime = initialTimeSlots[0] ?? "";
-
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedTime, setSelectedTime] = useState<string>("");
   const [selectedTeams, setSelectedTeams] = useState<TeamKey[]>([]);
@@ -308,10 +304,6 @@ export default function ReservasPage() {
   const selectedDateLabel = selectedDate ? formatFullDateLabel(selectedDate) : "";
   const phoneDigits = getPhoneDigits(phone);
   const isPhoneValid = phoneDigits.length >= 10;
-
-  if (!isMounted || availableDates.length === 0 || !selectedDate || !selectedTime) {
-    return <main className="min-h-screen bg-black text-white" />;
-  }
 
   function openFeedbackModal(
     type: "success" | "error",
@@ -475,100 +467,104 @@ export default function ReservasPage() {
     }
   }, [selectedDate, availableTimeSlots, selectedTime]);
 
-async function handleReserve() {
-  if (!name.trim() || !phone.trim() || selectedTeams.length === 0 || isSubmitting) {
-    return;
-  }
+  async function handleReserve() {
+    if (!name.trim() || !phone.trim() || selectedTeams.length === 0 || isSubmitting) {
+      return;
+    }
 
-  if (!isPhoneValid) {
-    openFeedbackModal(
-      "error",
-      "Teléfono inválido",
-      "Ingresá un número de teléfono con al menos 10 dígitos."
-    );
-    return;
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const [year, month, day] = selectedDate.split("-").map(Number);
-  const selectedDateObj = new Date(year, month - 1, day);
-  selectedDateObj.setHours(0, 0, 0, 0);
-
-  if (selectedDateObj <= today) {
-    openFeedbackModal(
-      "error",
-      "Fecha no válida",
-      "Las reservas solo pueden hacerse desde mañana en adelante."
-    );
-    return;
-  }
-
-  if (!getTimeSlotsForDate(selectedDate).includes(selectedTime)) {
-    openFeedbackModal(
-      "error",
-      "Horario no disponible",
-      "Ese horario no está disponible para la fecha elegida."
-    );
-    return;
-  }
-
-  setIsSubmitting(true);
-
-  const payload = {
-    nombre: name.trim(),
-    telefono: phone.trim(),
-    fecha: selectedDate,
-    hora: selectedTime,
-    simuladores: selectedTeams,
-    cantidad_turnos: 1,
-    total,
-  };
-
-  try {
-    const response = await fetch("/api/mercadopago/preference", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
+    if (!isPhoneValid) {
       openFeedbackModal(
         "error",
-        "No se pudo iniciar el pago",
-        result?.error || "Ocurrió un problema al generar el pago."
+        "Teléfono inválido",
+        "Ingresá un número de teléfono con al menos 10 dígitos."
       );
       return;
     }
 
-    const paymentUrl = result?.init_point || result?.sandbox_init_point;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    if (!paymentUrl) {
+    const [year, month, day] = selectedDate.split("-").map(Number);
+    const selectedDateObj = new Date(year, month - 1, day);
+    selectedDateObj.setHours(0, 0, 0, 0);
+
+    if (selectedDateObj <= today) {
       openFeedbackModal(
         "error",
-        "Link de pago no disponible",
-        "Mercado Pago no devolvió un enlace de pago válido."
+        "Fecha no válida",
+        "Las reservas solo pueden hacerse desde mañana en adelante."
       );
       return;
     }
 
-    window.location.href = paymentUrl;
-  } catch (error) {
-    console.error("Error al crear preferencia de pago:", error);
-    openFeedbackModal(
-      "error",
-      "Error del sistema",
-      "Ocurrió un error al conectar con Mercado Pago."
-    );
-  } finally {
-    setIsSubmitting(false);
+    if (!getTimeSlotsForDate(selectedDate).includes(selectedTime)) {
+      openFeedbackModal(
+        "error",
+        "Horario no disponible",
+        "Ese horario no está disponible para la fecha elegida."
+      );
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    const payload = {
+      nombre: name.trim(),
+      telefono: phone.trim(),
+      fecha: selectedDate,
+      hora: selectedTime,
+      simuladores: selectedTeams,
+      cantidad_turnos: 1,
+      total,
+    };
+
+    try {
+      const response = await fetch("/api/mercadopago/preference", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        openFeedbackModal(
+          "error",
+          "No se pudo iniciar el pago",
+          result?.error || "Ocurrió un problema al generar el pago."
+        );
+        return;
+      }
+
+      const paymentUrl = result?.init_point || result?.sandbox_init_point;
+
+      if (!paymentUrl) {
+        openFeedbackModal(
+          "error",
+          "Link de pago no disponible",
+          "Mercado Pago no devolvió un enlace de pago válido."
+        );
+        return;
+      }
+
+      window.location.href = paymentUrl;
+    } catch (error) {
+      console.error("Error al crear preferencia de pago:", error);
+      openFeedbackModal(
+        "error",
+        "Error del sistema",
+        "Ocurrió un error al conectar con Mercado Pago."
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
-}
+
+  if (!isMounted || availableDates.length === 0 || !selectedDate || !selectedTime) {
+    return <main className="min-h-screen bg-black text-white" />;
+  }
 
   return (
     <main className="min-h-screen bg-black text-white">
