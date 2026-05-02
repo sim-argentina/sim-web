@@ -41,14 +41,15 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     const {
-      nombre,
-      telefono,
-      fecha,
-      hora,
-      simuladores,
-      cantidad_turnos,
-      total,
-    } = body;
+  nombre,
+  telefono,
+  fecha,
+  hora,
+  simuladores,
+  cantidad_turnos,
+  total,
+  acepto_condiciones,
+} = body;
 
     if (
       !nombre ||
