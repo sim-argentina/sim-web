@@ -259,6 +259,7 @@ export default function ReservasPage() {
   const [reservations, setReservations] = useState<ReservationMap>({});
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [acceptedConditions, setAcceptedConditions] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingReservations, setIsLoadingReservations] = useState(false);
   const [feedbackModal, setFeedbackModal] = useState<FeedbackModalState>({
@@ -469,6 +470,15 @@ export default function ReservasPage() {
 
   async function handleReserve() {
     if (!name.trim() || !phone.trim() || selectedTeams.length === 0 || isSubmitting) {
+      return;
+    }
+
+    if (!acceptedConditions) {
+      openFeedbackModal(
+        "error",
+        "Condiciones de uso",
+        "Para continuar con el pago, tenés que confirmar que leíste y aceptás las condiciones de uso."
+      );
       return;
     }
 
@@ -926,6 +936,39 @@ export default function ReservasPage() {
                   )}
                 </div>
 
+                <div className="rounded-[22px] border border-red-500/30 bg-red-950/20 p-4">
+                  <div className="mb-3 flex items-start gap-3">
+                    <div className="mt-0.5 rounded-xl bg-red-500/10 p-2 text-red-400">
+                      <CircleAlert className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black uppercase tracking-[0.18em] text-red-300">
+                        Condiciones de uso
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-zinc-300">
+                        Antes de pagar, confirmá que leíste y aceptás las condiciones
+                        de uso. Para utilizar los simuladores, la altura mínima es de
+                        <span className="font-bold text-white"> 1.40 metros</span> y el
+                        peso máximo permitido es de
+                        <span className="font-bold text-white"> 110 kg</span>.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/10 bg-black/30 p-3 text-sm text-zinc-200 transition hover:border-red-500/30">
+                    <input
+                      type="checkbox"
+                      checked={acceptedConditions}
+                      onChange={(e) => setAcceptedConditions(e.target.checked)}
+                      disabled={isSubmitting || isLoadingReservations}
+                      className="mt-1 h-4 w-4 accent-red-600 disabled:cursor-not-allowed"
+                    />
+                    <span>
+                      Confirmo que leí, entiendo y respeto las condiciones de uso de SIM.
+                    </span>
+                  </label>
+                </div>
+
                 <button
                   type="button"
                   onClick={handleReserve}
@@ -935,6 +978,7 @@ export default function ReservasPage() {
                     !name.trim() ||
                     !phone.trim() ||
                     !isPhoneValid ||
+                    !acceptedConditions ||
                     selectedTeams.length === 0
                   }
                   className={cn(
@@ -944,6 +988,7 @@ export default function ReservasPage() {
                       !name.trim() ||
                       !phone.trim() ||
                       !isPhoneValid ||
+                      !acceptedConditions ||
                       selectedTeams.length === 0
                       ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
                       : "bg-red-600 text-white hover:bg-red-500"
