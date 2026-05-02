@@ -91,14 +91,15 @@ export async function POST(req: Request) {
         },
 
         external_reference: JSON.stringify({
-          nombre,
-          telefono,
-          fecha,
-          hora,
-          simuladores,
-          cantidad_turnos,
-          total,
-        }),
+  nombre,
+  telefono,
+  fecha,
+  hora,
+  simuladores,
+  cantidad_turnos,
+  total,
+  acepto_condiciones,
+}),
 
         back_urls: {
           success: `${baseUrl}/reservas/exito`,
@@ -107,6 +108,8 @@ export async function POST(req: Request) {
         },
 
         auto_return: "approved",
+
+        notification_url: `${baseUrl}/api/mercadopago/webhook`,
 
         payment_methods: {
           excluded_payment_types: [
