@@ -530,12 +530,20 @@ export default function ReservasPage() {
 
     try {
       const response = await fetch("/api/mercadopago/preference", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+  nombre: name,
+  telefono: phone,
+  fecha: selectedDate,
+  hora: selectedTime,
+  simuladores: selectedTeams,
+  cantidad_turnos: selectedTeams.length,
+  total,
+  acepto_condiciones: acceptedConditions,
+}),
 
       const result = await response.json().catch(() => null);
 
