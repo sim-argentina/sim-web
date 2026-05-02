@@ -52,15 +52,16 @@ export async function POST(req: Request) {
 } = body;
 
     if (
-      !nombre ||
-      !telefono ||
-      !fecha ||
-      !hora ||
-      !Array.isArray(simuladores) ||
-      simuladores.length === 0 ||
-      !cantidad_turnos ||
-      !total
-    ) {
+  !nombre ||
+  !telefono ||
+  !fecha ||
+  !hora ||
+  !Array.isArray(simuladores) ||
+  simuladores.length === 0 ||
+  !cantidad_turnos ||
+  !total ||
+  acepto_condiciones !== true
+) {
       return NextResponse.json(
         { error: "Faltan datos para crear la preferencia" },
         { status: 400 }
