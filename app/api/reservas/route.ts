@@ -9,6 +9,7 @@ type ReservaBody = {
   simuladores: string[];
   cantidad_turnos: number;
   total: number;
+  acepto_condiciones: boolean;
 };
 
 export async function GET(req: Request) {
@@ -28,8 +29,6 @@ export async function GET(req: Request) {
     const { data, error } = await query;
 
     if (error) {
-      console.error("Error Supabase GET reservas:", error);
-
       return NextResponse.json(
         { error: "Error al obtener reservas", details: error.message },
         { status: 500 }
@@ -38,8 +37,6 @@ export async function GET(req: Request) {
 
     return NextResponse.json(data ?? [], { status: 200 });
   } catch (error) {
-    console.error("Error interno GET reservas:", error);
-
     return NextResponse.json(
       {
         error: "Error al obtener reservas",
@@ -62,6 +59,7 @@ export async function POST(req: Request) {
       simuladores,
       cantidad_turnos,
       total,
+      acepto_condiciones,
     } = body;
 
     if (
@@ -72,10 +70,11 @@ export async function POST(req: Request) {
       !Array.isArray(simuladores) ||
       simuladores.length === 0 ||
       !cantidad_turnos ||
-      !total
+      !total ||
+      acepto_condiciones !== true
     ) {
       return NextResponse.json(
-        { error: "Faltan campos obligatorios" },
+        { error: "Faltan campos obligatorios o no se aceptaron las condiciones" },
         { status: 400 }
       );
     }
@@ -88,8 +87,6 @@ export async function POST(req: Request) {
       .eq("estado", "activa");
 
     if (checkError) {
-      console.error("Error validando disponibilidad:", checkError);
-
       return NextResponse.json(
         {
           error: "Error al validar disponibilidad",
@@ -132,14 +129,13 @@ export async function POST(req: Request) {
           cantidad_turnos,
           total,
           estado: "activa",
+          acepto_condiciones,
         },
       ])
       .select()
       .single();
 
     if (error) {
-      console.error("Error Supabase POST reservas:", error);
-
       return NextResponse.json(
         { error: "Error al guardar la reserva", details: error.message },
         { status: 500 }
@@ -148,8 +144,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json(data, { status: 201 });
   } catch (error) {
-    console.error("Error interno POST reservas:", error);
-
     return NextResponse.json(
       {
         error: "Error interno del servidor",
