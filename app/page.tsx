@@ -12,26 +12,11 @@ import {
   Clock3,
 } from "lucide-react";
 
-type NavItem = {
-  label: string;
-  href: string;
-};
-
 type Feature = {
   title: string;
   text: string;
   icon: React.ElementType;
 };
-
-const navItems: NavItem[] = [
-  { label: "Inicio", href: "/" },
-  { label: "Reserva", href: "/reservas" },
-  { label: "Alquiler", href: "/alquiler" },
-  { label: "Viaja con SIM", href: "/viaja-con-sim" },
-  { label: "Novedades", href: "/novedades" },
-  { label: "Sobre nosotros", href: "/sobre-nosotros" },
-  { label: "Tienda", href: "/tienda" },
-];
 
 const features: Feature[] = [
   {
@@ -58,49 +43,6 @@ const features: Feature[] = [
 
 function cn(...classes: string[]) {
   return classes.filter(Boolean).join(" ");
-}
-
-function NavBar() {
-  return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-black/80 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 md:px-6 lg:px-8">
-        <Link href="/" className="flex items-center gap-4">
-          <Image
-            src="/sim-logo.jpg"
-            alt="Logo SIM"
-            width={140}
-            height={140}
-            className="h-16 w-16 rounded-md object-contain"
-            priority
-          />
-
-          <div className="flex flex-col justify-center leading-tight">
-            <div className="text-xs font-black uppercase tracking-[0.35em] text-red-500">
-              SIM ARGENTINA
-            </div>
-            <div className="mt-1 text-sm text-zinc-400">
-              Simuladores de Fórmula 1
-            </div>
-          </div>
-        </Link>
-
-        <nav className="hidden items-center gap-6 md:flex">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "whitespace-nowrap text-sm font-bold uppercase tracking-[0.08em] text-zinc-300 transition hover:text-white",
-                item.href === "/" ? "text-white" : ""
-              )}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-      </div>
-    </header>
-  );
 }
 
 function SectionEyebrow({ children }: { children: React.ReactNode }) {
@@ -307,9 +249,7 @@ function CollageSection() {
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-black text-white">
-      <NavBar />
-
-      <section className="mx-auto max-w-7xl px-4 py-8 md:px-6 lg:px-8">
+  <section className="mx-auto max-w-7xl px-4 py-8 md:px-6 lg:px-8">
         <div className="overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-r from-red-950/40 via-zinc-950 to-zinc-900">
           <div className="grid gap-8 p-6 md:p-10 lg:grid-cols-[1.5fr_0.9fr]">
             <div>
