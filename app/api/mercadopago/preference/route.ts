@@ -9,10 +9,7 @@ const client = new MercadoPagoConfig({
 });
 
 function isInvalidBaseUrl(url: string) {
-  return (
-    url.includes("localhost") ||
-    url.includes("127.0.0.1")
-  );
+  return url.includes("localhost") || url.includes("127.0.0.1");
 }
 
 export async function POST(req: Request) {
@@ -35,7 +32,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            "NEXT_PUBLIC_BASE_URL no puede ser localhost. Usá una URL pública (Vercel, ngrok o Cloudflare Tunnel).",
+            "NEXT_PUBLIC_BASE_URL no puede ser localhost. Usá una URL pública como Vercel.",
         },
         { status: 500 }
       );
@@ -58,7 +55,6 @@ export async function POST(req: Request) {
       !telefono ||
       !fecha ||
       !hora ||
-      !simuladores ||
       !Array.isArray(simuladores) ||
       simuladores.length === 0 ||
       !cantidad_turnos ||
@@ -78,18 +74,22 @@ export async function POST(req: Request) {
           {
             id: `reserva-${fecha}-${hora}`,
             title: `Reserva SIM - ${fecha} ${hora}`,
-            description: `Reserva para ${nombre} | Simuladores: ${simuladores.join(", ")}`,
+            description: `Reserva para ${nombre} | Simuladores: ${simuladores.join(
+              ", "
+            )}`,
             quantity: 1,
             unit_price: Number(total),
             currency_id: "ARS",
           },
         ],
+
         payer: {
           name: nombre,
           phone: {
             number: telefono,
           },
         },
+
         external_reference: JSON.stringify({
           nombre,
           telefono,
@@ -99,12 +99,21 @@ export async function POST(req: Request) {
           cantidad_turnos,
           total,
         }),
+
         back_urls: {
           success: `${baseUrl}/reservas/exito`,
           failure: `${baseUrl}/reservas/error`,
           pending: `${baseUrl}/reservas/pendiente`,
         },
+
         auto_return: "approved",
+
+        payment_methods: {
+          excluded_payment_types: [
+            { id: "ticket" },
+            { id: "atm" },
+          ],
+        },
       },
     });
 
