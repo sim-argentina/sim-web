@@ -74,7 +74,7 @@ export default function AlquilerPage() {
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <a
-                  href="https://wa.me/5493510000000?text=Hola%20SIM%2C%20quiero%20consultar%20disponibilidad%20para%20alquilar%20simuladores%20o%20el%20colectivo."
+                  href="https://wa.me/5493512520927?text=Hola%20SIM%2C%20quiero%20consultar%20disponibilidad%20para%20alquilar%20simuladores%20o%20el%20colectivo."
                   target="_blank"
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-6 py-4 text-sm font-black uppercase tracking-[0.12em] text-white transition hover:scale-[1.02]"
                 >
