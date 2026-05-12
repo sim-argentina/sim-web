@@ -242,7 +242,7 @@ export default function AlquilerPage() {
                 </div>
               </div>
 
-              <div className="relative min-h-[280px] overflow-hidden rounded-[34px] border border-white/10 md:translate-y-8">
+              <div className="relative min-h-[280px] overflow-hidden rounded-[34px] border border-white/10">
                 <Image
                   src="/sim-alquiler-2.jpg"
                   alt="Evento SIM"
