@@ -12,6 +12,7 @@ import {
   Truck,
   Users,
   Zap,
+  Flag,
 } from "lucide-react";
 
 const services = [
@@ -55,6 +56,7 @@ export default function AlquilerPage() {
 
         <div className="mx-auto max-w-7xl">
           <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+            {/* TEXTO */}
             <div className="rounded-[36px] border border-white/10 bg-white/[0.03] p-6 shadow-2xl backdrop-blur md:p-10">
               <p className="text-xs font-black uppercase tracking-[0.45em] text-pink-400">
                 Alquiler SIM
@@ -89,20 +91,25 @@ export default function AlquilerPage() {
               </div>
             </div>
 
-            <div className="grid gap-4">
-              <div className="relative min-h-[260px] overflow-hidden rounded-[32px] border border-white/10 bg-zinc-950 shadow-2xl md:min-h-[420px]">
-                <Image
-                  src="/colectivo-sim.jpg"
-                  alt="Colectivo SIM"
-                  fill
-                  className="object-cover"
-                  priority
+            {/* VIDEO VERTICAL */}
+            <div className="grid gap-4 lg:max-w-[430px] lg:justify-self-end">
+              <div className="relative min-h-[620px] overflow-hidden rounded-[32px] border border-white/10 bg-zinc-950 shadow-2xl">
+                <video
+                  src="/colectivo-sim.mp4"
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  className="absolute inset-0 h-full w-full object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/15 to-transparent" />
+
+                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
+
                 <div className="absolute bottom-5 left-5 right-5 rounded-3xl border border-white/10 bg-black/55 p-5 backdrop-blur">
                   <p className="text-xs font-bold uppercase tracking-[0.35em] text-blue-300">
                     Formato móvil
                   </p>
+
                   <h2 className="mt-2 text-2xl font-black">
                     Colectivo + simuladores
                   </h2>
@@ -141,6 +148,7 @@ export default function AlquilerPage() {
               <p className="text-xs font-black uppercase tracking-[0.45em] text-blue-400">
                 Qué podés contratar
               </p>
+
               <h2 className="mt-4 text-3xl font-black md:text-5xl">
                 Dos formatos, una misma experiencia
               </h2>
@@ -167,6 +175,7 @@ export default function AlquilerPage() {
                   </div>
 
                   <h3 className="text-xl font-black">{service.title}</h3>
+
                   <p className="mt-3 leading-7 text-zinc-400">
                     {service.text}
                   </p>
@@ -177,7 +186,7 @@ export default function AlquilerPage() {
         </div>
       </section>
 
-      {/* BLOQUE VISUAL DISTINTO */}
+      {/* BLOQUE VISUAL */}
       <section className="px-4 py-10 md:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
           <div className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
@@ -191,8 +200,7 @@ export default function AlquilerPage() {
               <p className="mt-5 leading-8 text-zinc-300">
                 SIM funciona muy bien cuando el objetivo es atraer gente,
                 generar fotos, videos, competencia y conversación alrededor de
-                una marca o evento. No es solamente entretenimiento: es una
-                herramienta de impacto.
+                una marca o evento.
               </p>
 
               <div className="mt-8 space-y-4">
@@ -204,7 +212,7 @@ export default function AlquilerPage() {
                 </div>
 
                 <div className="flex gap-3">
-                  <TrophyIcon />
+                  <Flag className="mt-1 h-5 w-5 shrink-0 text-pink-300" />
                   <p className="text-zinc-300">
                     Se pueden crear rankings, desafíos y premios.
                   </p>
@@ -223,15 +231,18 @@ export default function AlquilerPage() {
               <div className="relative min-h-[280px] overflow-hidden rounded-[34px] border border-white/10">
                 <Image
                   src="/sim-alquiler-1.jpg"
-                  alt="Simuladores SIM para eventos"
+                  alt="Simuladores SIM"
                   fill
                   className="object-cover"
                 />
+
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
+
                 <div className="absolute bottom-5 left-5 right-5">
                   <p className="text-xs font-black uppercase tracking-[0.3em] text-pink-300">
                     Empresas
                   </p>
+
                   <h3 className="mt-2 text-2xl font-black">
                     Activaciones de marca
                   </h3>
@@ -241,15 +252,18 @@ export default function AlquilerPage() {
               <div className="relative min-h-[280px] overflow-hidden rounded-[34px] border border-white/10 md:translate-y-8">
                 <Image
                   src="/sim-alquiler-2.jpg"
-                  alt="Evento con simuladores SIM"
+                  alt="Evento SIM"
                   fill
                   className="object-cover"
                 />
+
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
+
                 <div className="absolute bottom-5 left-5 right-5">
                   <p className="text-xs font-black uppercase tracking-[0.3em] text-blue-300">
                     Consumidor final
                   </p>
+
                   <h3 className="mt-2 text-2xl font-black">
                     Eventos privados
                   </h3>
@@ -259,18 +273,22 @@ export default function AlquilerPage() {
               <div className="relative min-h-[280px] overflow-hidden rounded-[34px] border border-white/10 md:col-span-2">
                 <Image
                   src="/sim-alquiler-3.jpg"
-                  alt="Colectivo SIM en evento"
+                  alt="Colectivo SIM"
                   fill
                   className="object-cover"
                 />
+
                 <div className="absolute inset-0 bg-gradient-to-r from-black via-black/30 to-transparent" />
+
                 <div className="absolute bottom-5 left-5 max-w-md">
                   <p className="text-xs font-black uppercase tracking-[0.3em] text-white">
                     Experiencia móvil
                   </p>
+
                   <h3 className="mt-2 text-3xl font-black">
                     El colectivo SIM como punto de atracción
                   </h3>
+
                   <p className="mt-3 text-zinc-300">
                     Un formato pensado para que la experiencia viaje hacia el
                     público.
@@ -285,14 +303,16 @@ export default function AlquilerPage() {
       {/* BENEFICIOS */}
       <section className="px-4 py-10 md:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl rounded-[36px] border border-white/10 bg-white/[0.03] p-6 md:p-10">
-          <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-start">
+          <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr]">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.45em] text-pink-400">
                 Por qué SIM
               </p>
+
               <h2 className="mt-4 text-3xl font-black md:text-5xl">
                 Mucho más que poner simuladores
               </h2>
+
               <p className="mt-5 leading-8 text-zinc-400">
                 La diferencia está en cómo se presenta, cómo se comunica y cómo
                 se convierte en una experiencia que la gente quiere probar,
@@ -307,6 +327,7 @@ export default function AlquilerPage() {
                   className="flex gap-3 rounded-3xl border border-white/10 bg-black/40 p-5"
                 >
                   <CheckCircle2 className="mt-1 h-5 w-5 shrink-0 text-blue-300" />
+
                   <p className="leading-7 text-zinc-300">{benefit}</p>
                 </div>
               ))}
@@ -314,51 +335,6 @@ export default function AlquilerPage() {
           </div>
         </div>
       </section>
-
-      {/* CTA FINAL */}
-      <section className="px-4 py-14 md:px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl overflow-hidden rounded-[40px] border border-white/10 bg-gradient-to-r from-blue-700 via-purple-800 to-pink-700 p-1">
-          <div className="rounded-[38px] bg-black/75 p-8 backdrop-blur md:p-12">
-            <div className="grid gap-8 lg:grid-cols-[1fr_0.8fr] lg:items-center">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.45em] text-pink-200">
-                  Cotización
-                </p>
-                <h2 className="mt-4 text-3xl font-black md:text-5xl">
-                  Armemos una propuesta para tu evento
-                </h2>
-                <p className="mt-5 max-w-2xl leading-8 text-zinc-300">
-                  Contanos qué tipo de evento estás pensando, dónde sería, la
-                  cantidad estimada de personas y si buscás alquilar simuladores
-                  o el colectivo completo.
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <a
-                  href="https://wa.me/5493510000000"
-                  target="_blank"
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-6 py-4 text-sm font-black uppercase tracking-[0.12em] text-black transition hover:scale-[1.02]"
-                >
-                  Pedir cotización
-                  <ArrowRight className="h-4 w-4" />
-                </a>
-
-                <Link
-                  href="/sobre-nosotros"
-                  className="inline-flex items-center justify-center rounded-2xl border border-white/15 bg-white/10 px-6 py-4 text-sm font-black uppercase tracking-[0.12em] text-white transition hover:bg-white/15"
-                >
-                  Conocer más sobre SIM
-                </Link>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
     </main>
   );
-}
-
-function TrophyIcon() {
-  return <Zap className="mt-1 h-5 w-5 shrink-0 text-blue-300" />;
 }
