@@ -55,14 +55,14 @@ export default function AlquilerPage() {
         <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_20%,rgba(0,102,255,0.22),transparent_32%),radial-gradient(circle_at_80%_10%,rgba(255,0,128,0.22),transparent_28%),linear-gradient(180deg,#050505,#000)]" />
 
         <div className="mx-auto max-w-7xl">
-          <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+          <div className="grid gap-6 lg:grid-cols-[1fr_430px] lg:items-stretch">
             {/* TEXTO */}
-            <div className="rounded-[36px] border border-white/10 bg-white/[0.03] p-6 shadow-2xl backdrop-blur md:p-10">
+            <div className="flex min-h-[620px] flex-col justify-center rounded-[36px] border border-white/10 bg-white/[0.03] p-6 shadow-2xl backdrop-blur md:p-10">
               <p className="text-xs font-black uppercase tracking-[0.45em] text-pink-400">
                 Alquiler SIM
               </p>
 
-              <h1 className="mt-5 max-w-4xl text-4xl font-black leading-tight md:text-6xl">
+              <h1 className="mt-5 max-w-3xl text-4xl font-black leading-tight md:text-6xl">
                 Llevá la experiencia de Fórmula 1 a tu evento
               </h1>
 
@@ -73,26 +73,19 @@ export default function AlquilerPage() {
               </p>
 
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <Link
-                  href="/reservas"
+                <a
+                  href="https://wa.me/5493510000000?text=Hola%20SIM%2C%20quiero%20consultar%20disponibilidad%20para%20alquilar%20simuladores%20o%20el%20colectivo."
+                  target="_blank"
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-pink-600 px-6 py-4 text-sm font-black uppercase tracking-[0.12em] text-white transition hover:scale-[1.02]"
                 >
                   Consultar disponibilidad
                   <ArrowRight className="h-4 w-4" />
-                </Link>
-
-                <a
-                  href="https://wa.me/5493510000000"
-                  target="_blank"
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-6 py-4 text-sm font-black uppercase tracking-[0.12em] text-white transition hover:bg-white/10"
-                >
-                  Hablar por WhatsApp
                 </a>
               </div>
             </div>
 
             {/* VIDEO VERTICAL */}
-            <div className="grid gap-4 lg:max-w-[430px] lg:justify-self-end">
+            <div className="grid gap-4">
               <div className="relative min-h-[620px] overflow-hidden rounded-[32px] border border-white/10 bg-zinc-950 shadow-2xl">
                 <video
                   src="/colectivo-sim.mp4"
