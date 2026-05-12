@@ -263,7 +263,7 @@ export default function AlquilerPage() {
                 </div>
               </div>
 
-              <div className="relative min-h-[280px] overflow-hidden rounded-[34px] border border-white/10 md:col-span-2">
+              <div className="relative min-h-[340px] overflow-hidden rounded-[34px] border border-white/10 md:col-span-2">
                 <Image
                   src="/sim-alquiler-3.jpg"
                   alt="Colectivo SIM"
@@ -278,9 +278,9 @@ export default function AlquilerPage() {
                     Experiencia móvil
                   </p>
 
-                  <h3 className="mt-2 text-3xl font-black">
-                    El colectivo SIM como punto de atracción
-                  </h3>
+                  <h3 className="mt-2 max-w-xl text-3xl font-black leading-tight md:text-4xl">
+  El colectivo SIM como punto de atracción
+</h3>
 
                   <p className="mt-3 text-zinc-300">
                     Un formato pensado para que la experiencia viaje hacia el
