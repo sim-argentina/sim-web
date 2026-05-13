@@ -474,7 +474,7 @@ export default function ViajaConSimPage() {
 
           <p className="mt-10 text-xs text-white/40">
             Información basada en la propuesta de Tiul Sports para GP São Paulo
-            2026. Tarifas y disponibilidad sujetas a confirmación. :contentReference[oaicite:0]{index=0}
+            2026. Tarifas y disponibilidad sujetas a confirmación.
           </p>
         </div>
       </section>
