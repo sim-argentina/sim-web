@@ -422,7 +422,6 @@ function ContactSection() {
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-black text-white">
-      <NavBar />
 
       <section className="mx-auto max-w-7xl px-4 py-8 md:px-6 lg:px-8">
         <div className="overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-r from-red-950/40 via-zinc-950 to-zinc-900">
