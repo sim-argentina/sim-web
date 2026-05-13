@@ -7,7 +7,6 @@ import {
   Clock3,
   Flag,
   Gauge,
-  Instagram,
   Mail,
   MapPin,
   Music2,
@@ -343,7 +342,7 @@ function ContactSection() {
               target="_blank"
               className="rounded-[26px] border border-white/10 bg-black/40 p-5 transition hover:border-red-500/40"
             >
-              <Instagram className="mb-4 h-6 w-6 text-red-400" />
+              <Camera className="mb-4 h-6 w-6 text-red-400" />
               <div className="text-sm uppercase tracking-[0.25em] text-zinc-500">
                 Instagram
               </div>
