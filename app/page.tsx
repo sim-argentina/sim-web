@@ -12,7 +12,7 @@ import {
   Clock3,
   Mail,
   Phone,
-  Instagram,
+  Camera,
   Music2,
 } from "lucide-react";
 
@@ -383,7 +383,7 @@ function ContactSection() {
             className="rounded-[24px] border border-white/10 bg-black/40 p-5 transition hover:border-red-500/40 hover:bg-black/60"
           >
             <div className="mb-4 inline-flex rounded-2xl bg-red-950/70 p-3 text-red-400">
-              <Instagram className="h-5 w-5" />
+              <Camera className="h-5 w-5" />
             </div>
 
             <h3 className="text-lg font-bold text-white">
