@@ -1,462 +1,262 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
-
-const includes = [
-  "Vuelos con carry on",
-  "Hotel con desayuno",
-  "Tickets F1 3 días",
-  "Asistencia al viajero",
-];
-
-const fullPackages = [
-  {
-    title: "Full Centro",
-    subtitle: "Zona céntrica",
-    hotel: "Hotel Delplaza Excelsior o similar",
-    sectors: ["G", "H"],
-  },
-  {
-    title: "Full Berrini",
-    subtitle: "Próximo a Interlagos",
-    hotel: "Hotel Intercity Berrini o similar",
-    sectors: ["A", "M", "D"],
-  },
-];
-
-const alternativePackages = [
-  { sector: "G", text: "Hotel en Berrini + tickets F1" },
-  { sector: "R", text: "Hotel en Berrini + tickets F1" },
-  { sector: "D", text: "Hotel en Berrini + tickets F1" },
-];
-
-const sectors = [
-  {
-    sector: "G",
-    title: "Recta trasera",
-    text: "Pasada la curva 3. Acceso a Fan Zone.",
-  },
-  {
-    sector: "A",
-    title: "Recta de meta",
-    text: "Vista elevada de distintos sectores del circuito.",
-  },
-  {
-    sector: "R",
-    title: "Curva do Sol",
-    text: "Gradas cubiertas y ambiente de Fan Zone.",
-  },
-  {
-    sector: "H",
-    title: "S de Senna",
-    text: "Vista al pit lane y uno de los sectores más míticos.",
-  },
-  {
-    sector: "M",
-    title: "Curva 1",
-    text: "Butacas numeradas y maniobras de sobrepaso.",
-  },
-  {
-    sector: "D",
-    title: "Largada",
-    text: "Final de recta principal e inicio de la S de Senna.",
-  },
-];
+import {
+  ChevronRight,
+  Trophy,
+  Bus,
+  MapPin,
+  Flag,
+  Zap,
+  ArrowRight,
+} from "lucide-react";
 
 export default function ViajaConSimPage() {
   return (
-    <main className="min-h-screen bg-[#060807] text-white overflow-hidden">
-      <section className="relative min-h-screen bg-[#080b09]">
-        <Image
-          src="/viaja-con-sim/interlagos-f1.png"
-          alt="F1 en Interlagos"
-          fill
-          priority
-          className="object-cover opacity-60"
-        />
+    <main className="min-h-screen bg-black text-white overflow-hidden">
+      {/* HERO */}
+      <section className="relative h-[100svh] flex items-center justify-center">
+        <video
+          autoPlay
+          muted
+          loop
+          playsInline
+          className="absolute inset-0 w-full h-full object-cover"
+        >
+          <source src="/videos/colectivo-sim.mp4" type="video/mp4" />
+        </video>
 
-        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 to-black/20" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#060807] via-transparent to-black/40" />
+        <div className="absolute inset-0 bg-black/75" />
 
-        <Image
-          src="/viaja-con-sim/bandera-brasil.jpg"
-          alt="Bandera de Brasil"
-          width={900}
-          height={600}
-          className="absolute right-[-150px] bottom-[-120px] w-[720px] rotate-[-14deg] opacity-55"
-        />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(220,38,38,0.25),transparent_50%)]" />
 
-        <Image
-          src="/viaja-con-sim/senna.jpg"
-          alt="Ayrton Senna"
-          width={500}
-          height={700}
-          className="absolute right-0 bottom-0 hidden lg:block h-[620px] w-auto object-cover grayscale opacity-85 mix-blend-luminosity"
-        />
-
-        <div className="relative z-10 max-w-7xl mx-auto px-6 pt-10 pb-20">
-          <header className="flex items-center justify-between mb-20">
-            <div className="flex items-center gap-4">
-              <Image
-                src="/viaja-con-sim/logo-sim.png"
-                alt="SIM"
-                width={110}
-                height={45}
-                className="h-10 w-auto"
-              />
-              <span className="text-white/40 font-black">x</span>
-              <Image
-                src="/viaja-con-sim/logo-tiul.png"
-                alt="Tiul Sports"
-                width={130}
-                height={45}
-                className="h-10 w-auto"
-              />
-            </div>
-
-            <Link
-              href="/"
-              className="hidden md:block rounded-full border border-white/20 px-5 py-2 text-sm font-black hover:bg-white hover:text-black transition"
-            >
-              Volver al inicio
-            </Link>
-          </header>
-
-          <div className="max-w-3xl">
-            <div className="inline-block bg-[#ffdf00] text-black px-5 py-2 font-black uppercase tracking-wider -skew-x-12">
-              <span className="block skew-x-12">
-                Viví la F1 donde todo pasa
+        <div className="relative z-10 max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-14 items-center">
+          <div>
+            <div className="inline-flex items-center gap-2 border border-red-500/30 bg-red-500/10 px-4 py-2 rounded-full mb-6 backdrop-blur-sm">
+              <Flag className="w-4 h-4 text-red-500" />
+              <span className="text-sm tracking-wide text-zinc-300">
+                EXPERIENCIA ITINERANTE F1
               </span>
             </div>
 
-            <h1 className="mt-7 text-6xl md:text-8xl font-black uppercase leading-[0.88] tracking-tight">
-              GP de Brasil
-              <span className="block text-[#00b050] italic">Interlagos</span>
-              <span className="block text-[#ffdf00]">2026</span>
+            <h1 className="text-5xl md:text-7xl font-black leading-[0.95] tracking-tight">
+              VIAJÁ
+              <br />
+              <span className="text-red-500">CON SIM</span>
             </h1>
 
-            <p className="mt-6 text-xl md:text-2xl font-bold text-white/90">
-              São Paulo · 5 al 9 de noviembre
+            <p className="mt-8 text-zinc-300 text-lg max-w-xl leading-relaxed">
+              Llevamos la experiencia SIM a eventos, empresas, activaciones,
+              shoppings y circuitos de todo el país con simuladores
+              profesionales de Fórmula 1 en movimiento.
             </p>
 
-            <div className="mt-9 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl">
-              {includes.map((item) => (
-                <div
-                  key={item}
-                  className="rounded-2xl bg-black/45 border border-[#00b050]/40 p-4 backdrop-blur"
-                >
-                  <div className="h-9 w-9 rounded-full bg-[#00b050]/20 border border-[#00b050] mb-3 flex items-center justify-center text-[#00ff66] font-black">
-                    ✓
-                  </div>
-                  <p className="text-xs font-black uppercase">{item}</p>
-                </div>
-              ))}
+            <div className="flex flex-col sm:flex-row gap-4 mt-10">
+              <Link
+                href="https://wa.me/543512520927"
+                target="_blank"
+                className="group bg-red-600 hover:bg-red-500 transition-all duration-300 px-7 py-4 rounded-2xl font-semibold flex items-center justify-center gap-2 shadow-[0_0_40px_rgba(220,38,38,0.35)]"
+              >
+                Consultar disponibilidad
+                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+              </Link>
+
+              <Link
+                href="/reservas"
+                className="border border-white/10 hover:border-red-500/50 bg-white/5 hover:bg-white/10 transition-all duration-300 px-7 py-4 rounded-2xl font-semibold flex items-center justify-center gap-2 backdrop-blur-sm"
+              >
+                Reservar turno
+              </Link>
+            </div>
+          </div>
+
+          <div className="relative hidden lg:flex justify-center">
+            <div className="relative w-[540px] h-[620px]">
+              <div className="absolute -inset-10 bg-red-600/20 blur-3xl rounded-full" />
+
+              <Image
+                src="/colectivo-sim.png"
+                alt="Colectivo SIM"
+                fill
+                className="object-contain drop-shadow-[0_0_60px_rgba(255,0,0,0.25)]"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 animate-bounce">
+          <ChevronRight className="rotate-90 text-zinc-500 w-8 h-8" />
+        </div>
+      </section>
+
+      {/* COLLAGE */}
+      <section className="relative py-28 px-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex items-end justify-between mb-14">
+            <div>
+              <p className="text-red-500 font-semibold tracking-[0.25em] text-sm mb-4">
+                EXPERIENCIA
+              </p>
+
+              <h2 className="text-4xl md:text-6xl font-black leading-none">
+                SIM EN
+                <br />
+                MOVIMIENTO
+              </h2>
             </div>
 
-            <a
-              href="https://wa.me/5493512520927?text=Hola%20SIM%2C%20quiero%20consultar%20por%20el%20viaje%20al%20GP%20de%20Brasil"
-              target="_blank"
-              className="mt-9 inline-flex rounded-full bg-[#ffdf00] text-black px-9 py-4 font-black uppercase shadow-[0_0_45px_rgba(255,223,0,0.35)] hover:scale-105 transition"
-            >
-              Consultar disponibilidad
-            </a>
-          </div>
-        </div>
-      </section>
-
-      <section className="relative z-20 -mt-16 px-6">
-        <div className="max-w-6xl mx-auto rounded-3xl bg-gradient-to-r from-[#053d1e] via-[#075c2d] to-[#053d1e] border border-[#00b050]/40 shadow-2xl p-6 md:p-8 grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-          <div>
-            <p className="text-5xl font-black">4</p>
-            <p className="text-xs uppercase font-bold text-white/70">noches de hotel</p>
-          </div>
-          <div>
-            <p className="text-5xl font-black">3</p>
-            <p className="text-xs uppercase font-bold text-white/70">días de F1</p>
-          </div>
-          <div>
-            <p className="text-5xl font-black">USD 500</p>
-            <p className="text-xs uppercase font-bold text-white/70">seña para reservar</p>
-          </div>
-          <div>
-            <p className="text-5xl font-black">30/09</p>
-            <p className="text-xs uppercase font-bold text-white/70">fecha límite</p>
-          </div>
-        </div>
-      </section>
-
-      <section id="paquetes" className="bg-[#f4f4ef] text-black px-6 pt-24 pb-16">
-        <div className="max-w-7xl mx-auto">
-          <div className="mb-10">
-            <h2 className="text-4xl md:text-5xl font-black uppercase italic">
-              Paquetes Full
-            </h2>
-            <p className="text-[#009c3b] font-black uppercase mt-2">
-              Todo incluido para que solo te preocupes por disfrutar
-            </p>
+            <div className="hidden md:block max-w-sm text-zinc-400 text-right">
+              Una experiencia visual, sonora y física diseñada para generar
+              impacto en cualquier evento.
+            </div>
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-8">
-            {fullPackages.map((pack, index) => (
-              <div
-                key={pack.title}
-                className={`rounded-[2rem] overflow-hidden shadow-xl border ${
-                  index === 0
-                    ? "bg-gradient-to-br from-[#006b32] to-[#003d1c] text-white border-[#00b050]"
-                    : "bg-gradient-to-br from-[#ffdf00] to-[#d8a900] text-black border-[#ffdf00]"
-                }`}
-              >
-                <div className="p-8">
-                  <p className="font-black uppercase text-sm opacity-80">
-                    {pack.subtitle}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+            <div className="md:col-span-7 relative h-[480px] rounded-[32px] overflow-hidden border border-white/10">
+              <Image
+                src="/simulador1.jpg"
+                alt="Simulador"
+                fill
+                className="object-cover hover:scale-105 transition-transform duration-700"
+              />
+
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/10 to-transparent" />
+
+              <div className="absolute bottom-8 left-8">
+                <p className="text-zinc-400 mb-2">Motion Platform</p>
+                <h3 className="text-3xl font-bold">
+                  Simuladores Profesionales
+                </h3>
+              </div>
+            </div>
+
+            <div className="md:col-span-5 flex flex-col gap-5">
+              <div className="relative h-[228px] rounded-[32px] overflow-hidden border border-white/10">
+                <Image
+                  src="/simulador2.jpg"
+                  alt="Evento"
+                  fill
+                  className="object-cover hover:scale-105 transition-transform duration-700"
+                />
+
+                <div className="absolute inset-0 bg-black/35" />
+              </div>
+
+              <div className="relative h-[228px] rounded-[32px] overflow-hidden border border-white/10">
+                <Image
+                  src="/simulador3.jpg"
+                  alt="Experiencia"
+                  fill
+                  className="object-cover hover:scale-105 transition-transform duration-700"
+                />
+
+                <div className="absolute inset-0 bg-black/35" />
+              </div>
+            </div>
+
+            <div className="md:col-span-4 relative h-[280px] rounded-[32px] overflow-hidden border border-white/10">
+              <Image
+                src="/simulador4.jpg"
+                alt="F1"
+                fill
+                className="object-cover hover:scale-105 transition-transform duration-700"
+              />
+
+              <div className="absolute inset-0 bg-black/35" />
+            </div>
+
+            <div className="md:col-span-8 bg-zinc-950 border border-white/10 rounded-[32px] p-10 flex flex-col md:flex-row justify-between gap-10">
+              <div className="max-w-xl">
+                <p className="text-red-500 font-semibold mb-4">
+                  MÁS QUE UN SIMULADOR
+                </p>
+
+                <h3 className="text-3xl md:text-4xl font-black leading-tight mb-5">
+                  Creamos una experiencia que llama la atención desde lejos.
+                </h3>
+
+                <p className="text-zinc-400 leading-relaxed">
+                  Ideal para marcas, activaciones, eventos corporativos,
+                  exhibiciones, ferias, centros comerciales y experiencias
+                  premium relacionadas al automovilismo.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-5 min-w-[260px]">
+                <div className="bg-black rounded-2xl p-5 border border-white/5">
+                  <Zap className="text-red-500 mb-4" />
+                  <p className="text-3xl font-black">4</p>
+                  <p className="text-zinc-500 text-sm mt-1">
+                    Simuladores simultáneos
                   </p>
-                  <h3 className="text-4xl font-black uppercase italic mt-2">
-                    {pack.title}
-                  </h3>
-                  <p className="mt-3 font-bold opacity-80">{pack.hotel}</p>
+                </div>
 
-                  <div className="mt-8 rounded-2xl overflow-hidden bg-white text-black">
-                    <div className="grid grid-cols-2 bg-black text-white text-xs uppercase font-black">
-                      <div className="p-4">Sector</div>
-                      <div className="p-4">Incluye</div>
-                    </div>
+                <div className="bg-black rounded-2xl p-5 border border-white/5">
+                  <Bus className="text-red-500 mb-4" />
+                  <p className="text-3xl font-black">2</p>
+                  <p className="text-zinc-500 text-sm mt-1">
+                    Pisos de experiencia
+                  </p>
+                </div>
 
-                    {pack.sectors.map((sector) => (
-                      <div
-                        key={sector}
-                        className="grid grid-cols-2 border-t border-black/10 items-center"
-                      >
-                        <div className="p-4 text-4xl font-black">{sector}</div>
-                        <div className="p-4 font-black text-sm">
-                          Vuelo + hotel + ticket F1
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                <div className="bg-black rounded-2xl p-5 border border-white/5">
+                  <MapPin className="text-red-500 mb-4" />
+                  <p className="text-3xl font-black">+</p>
+                  <p className="text-zinc-500 text-sm mt-1">
+                    Eventos en todo el país
+                  </p>
+                </div>
 
-                  <a
-                    href="https://wa.me/5493512520927?text=Hola%20SIM%2C%20quiero%20consultar%20por%20los%20paquetes%20Full%20del%20GP%20de%20Brasil"
-                    target="_blank"
-                    className={`mt-7 inline-flex rounded-full px-7 py-3 font-black uppercase transition hover:scale-105 ${
-                      index === 0 ? "bg-[#ffdf00] text-black" : "bg-black text-white"
-                    }`}
-                  >
-                    Consultar paquete
-                  </a>
+                <div className="bg-black rounded-2xl p-5 border border-white/5">
+                  <Trophy className="text-red-500 mb-4" />
+                  <p className="text-3xl font-black">F1</p>
+                  <p className="text-zinc-500 text-sm mt-1">
+                    Experiencia inmersiva
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="relative bg-[#080b09] px-6 py-20 overflow-hidden">
-        <Image
-          src="/viaja-con-sim/bandera-brasil.jpg"
-          alt="Brasil"
-          fill
-          className="object-cover opacity-15"
-        />
-        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/85 to-black/50" />
-
-        <div className="relative max-w-7xl mx-auto grid lg:grid-cols-[1fr_0.75fr] gap-10 items-center">
-          <div>
-            <h2 className="text-4xl md:text-5xl font-black uppercase italic text-[#00b050]">
-              Paquetes Alternativos
-            </h2>
-            <p className="mt-4 max-w-2xl text-white/75">
-              Para quienes prefieren manejar sus horarios de ida y vuelta al
-              circuito. Incluyen hotel en Berrini, desayuno y tickets F1 para
-              los tres días.
-            </p>
-
-            <div className="mt-8 grid md:grid-cols-3 gap-5">
-              {alternativePackages.map((item) => (
-                <div
-                  key={item.sector}
-                  className="rounded-2xl border border-[#00b050]/60 bg-black/55 p-5"
-                >
-                  <p className="text-[#00b050] uppercase font-black text-sm">
-                    Sector
-                  </p>
-                  <p className="text-6xl font-black">{item.sector}</p>
-                  <p className="text-sm text-white/60 mt-2">{item.text}</p>
-                </div>
-              ))}
             </div>
           </div>
-
-          <div className="rounded-3xl border border-white/20 bg-black/60 p-8">
-            <p className="text-[#ffdf00] font-black uppercase">
-              También se puede contratar sin vuelos
-            </p>
-            <p className="mt-4 text-white/70">
-              Consultá disponibilidad para armar la opción que mejor se adapte a
-              tu viaje.
-            </p>
-          </div>
         </div>
       </section>
 
-      <section id="sectores" className="bg-[#f4f4ef] text-black px-6 py-20">
-        <div className="max-w-7xl mx-auto">
-          <h2 className="text-4xl md:text-5xl font-black uppercase italic">
-            Sectores del circuito
-          </h2>
-          <p className="text-[#009c3b] font-black uppercase mt-2">
-            Elegí tu lugar en la acción
-          </p>
+      {/* CTA */}
+      <section className="relative py-28 px-6">
+        <div className="max-w-6xl mx-auto relative overflow-hidden rounded-[40px] border border-red-500/20 bg-gradient-to-br from-red-600/15 via-zinc-950 to-black p-10 md:p-16">
+          <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-red-600/20 blur-3xl rounded-full" />
 
-          <div className="mt-10 grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {sectors.map((item) => (
-              <div
-                key={item.sector}
-                className="rounded-2xl bg-[#08110d] text-white overflow-hidden shadow-xl border border-black/10"
-              >
-                <div className="h-28 relative">
-                  <Image
-                    src="/viaja-con-sim/interlagos-f1.png"
-                    alt="Interlagos"
-                    fill
-                    className="object-cover opacity-70"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#08110d] to-transparent" />
-                </div>
+          <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-10">
+            <div className="max-w-2xl">
+              <p className="text-red-500 font-semibold tracking-[0.25em] text-sm mb-5">
+                ¿QUERÉS LLEVAR SIM A TU EVENTO?
+              </p>
 
-                <div className="p-5">
-                  <div className="h-16 w-16 -mt-12 relative z-10 rounded-full border-4 border-[#ffdf00] bg-black flex items-center justify-center text-3xl font-black">
-                    {item.sector}
-                  </div>
+              <h2 className="text-4xl md:text-6xl font-black leading-[0.95] mb-6">
+                HACÉ QUE
+                <br />
+                TU EVENTO
+                <br />
+                SE SIENTA
+                <span className="text-red-500"> COMO F1</span>
+              </h2>
 
-                  <h3 className="mt-4 text-2xl font-black">{item.title}</h3>
-                  <p className="mt-3 text-white/65 text-sm">{item.text}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="reserva" className="relative bg-[#080b09] px-6 py-20 overflow-hidden">
-        <Image
-          src="/viaja-con-sim/helmet-senna.jpg"
-          alt="Casco de Senna"
-          width={420}
-          height={520}
-          className="absolute right-0 bottom-0 hidden lg:block w-[360px] opacity-90"
-        />
-
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_40%,rgba(0,156,59,0.25),transparent_30%),radial-gradient(circle_at_70%_50%,rgba(255,223,0,0.15),transparent_25%)]" />
-
-        <div className="relative max-w-7xl mx-auto grid lg:grid-cols-2 gap-10">
-          <div className="rounded-3xl bg-black/55 border border-white/10 p-8">
-            <p className="text-[#00b050] uppercase font-black">Cómo reservar</p>
-            <h2 className="text-4xl font-black uppercase italic mt-2">
-              Asegurá tu lugar
-            </h2>
-
-            <div className="mt-8 space-y-4">
-              {[
-                "Seña de USD 500 por pasajero para confirmar la reserva.",
-                "Cuotas mensuales o pago total del saldo.",
-                "El viaje debe estar abonado antes del 30/09.",
-                "La preventa es hasta agotar stock.",
-              ].map((item) => (
-                <p key={item} className="flex gap-3 text-white/75">
-                  <span className="text-[#00b050] font-black">✓</span>
-                  {item}
-                </p>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-3xl bg-black/55 border border-white/10 p-8">
-            <p className="text-[#00b050] uppercase font-black">Formas de pago</p>
-            <h2 className="text-4xl font-black uppercase italic mt-2">
-              Simple y flexible
-            </h2>
-
-            <div className="mt-8 space-y-4">
-              {[
-                "Efectivo en sucursales Tiul.",
-                "Transferencia o depósito en dólares.",
-                "Tarjeta de crédito con consumo en dólares.",
-              ].map((item) => (
-                <p key={item} className="flex gap-3 text-white/75">
-                  <span className="text-[#ffdf00] font-black">✓</span>
-                  {item}
-                </p>
-              ))}
-            </div>
-
-            <a
-              href="https://wa.me/5493512520927?text=Hola%20SIM%2C%20quiero%20reservar%20mi%20lugar%20para%20el%20GP%20de%20Brasil"
-              target="_blank"
-              className="mt-8 inline-flex rounded-full bg-[#ffdf00] text-black px-8 py-4 font-black uppercase hover:scale-105 transition"
-            >
-              Quiero reservar mi lugar
-            </a>
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-[#f4f4ef] text-black px-6 py-14">
-        <div className="max-w-7xl mx-auto grid lg:grid-cols-[0.6fr_1.4fr] gap-8 items-center">
-          <div className="text-center">
-            <p className="text-5xl font-black">+250</p>
-            <p className="font-black uppercase">personas ya viajaron con Tiul</p>
-          </div>
-
-          <div className="relative rounded-3xl overflow-hidden min-h-[190px] p-8 flex items-center">
-            <Image
-              src="/viaja-con-sim/bandera-brasil.jpg"
-              alt="Bandera Brasil"
-              fill
-              className="object-cover"
-            />
-            <div className="absolute inset-0 bg-black/45" />
-            <div className="relative max-w-xl rounded-2xl bg-black/70 p-6 text-white">
-              <p className="text-2xl font-black italic">
-                “Una experiencia increíble, todo organizado al detalle para que
-                solo tengas que disfrutar la F1.”
+              <p className="text-zinc-400 text-lg leading-relaxed">
+                Activaciones de marca, eventos privados, acciones comerciales,
+                torneos y experiencias premium.
               </p>
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-[#080b09] px-6 py-16">
-        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-8">
-          <div>
-            <h2 className="text-5xl md:text-6xl font-black uppercase italic">
-              <span className="text-[#00b050]">Brasil</span> te espera
-            </h2>
-            <p className="mt-3 text-xl text-white/75">
-              No es lo mismo simularlo que vivirlo.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-4">
-            <a
-              href="https://wa.me/5493512520927?text=Hola%20SIM%2C%20quiero%20informaci%C3%B3n%20del%20viaje%20al%20GP%20de%20Brasil"
-              target="_blank"
-              className="rounded-full bg-[#ffdf00] text-black px-8 py-4 font-black uppercase hover:scale-105 transition"
-            >
-              Hablar por WhatsApp
-            </a>
 
             <Link
-              href="/"
-              className="rounded-full border border-white/20 px-8 py-4 font-black uppercase hover:bg-white hover:text-black transition"
+              href="https://wa.me/543512520927"
+              target="_blank"
+              className="group shrink-0 bg-red-600 hover:bg-red-500 transition-all duration-300 px-8 py-5 rounded-2xl font-bold text-lg flex items-center gap-3 shadow-[0_0_40px_rgba(220,38,38,0.35)]"
             >
-              Volver al inicio
+              Hablar con SIM
+              <ArrowRight className="group-hover:translate-x-1 transition-transform" />
             </Link>
           </div>
         </div>
-
-        <p className="max-w-7xl mx-auto mt-10 text-xs text-white/35">
-          Información basada en la propuesta de Tiul Sports para GP São Paulo
-          2026. Disponibilidad sujeta a confirmación.
-        </p>
       </section>
     </main>
   );
