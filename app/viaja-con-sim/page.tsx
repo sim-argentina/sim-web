@@ -197,7 +197,7 @@ export default function ViajaConSimBrasilPage() {
           <div className="grid lg:grid-cols-2 gap-8">
             <div className="relative rounded-[32px] overflow-hidden h-[520px]">
               <Image
-                src="/viaja-con-sim/interlagos-f1.jpg"
+                src="/viaja-con-sim/interlagos-f1.png"
                 alt="Interlagos"
                 fill
                 className="object-cover"
