@@ -249,7 +249,7 @@ export default function ViajaConSimPage() {
 
           <div className="relative h-[560px] rounded-[44px] overflow-hidden border border-white/10">
             <Image
-              src="/brasil-flag.jpg"
+              src="/interlagos-map.webp"
               alt="Bandera de Brasil"
               fill
               className="object-cover"
