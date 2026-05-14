@@ -3,216 +3,271 @@
 import Image from "next/image";
 import Link from "next/link";
 import {
+  Plane,
+  Hotel,
+  Ticket,
+  ShieldCheck,
   ChevronRight,
-  Trophy,
-  Bus,
-  MapPin,
   Flag,
-  Zap,
-  ArrowRight,
+  MapPin,
+  Trophy,
 } from "lucide-react";
 
-export default function ViajaConSimPage() {
+export default function ViajaConSimBrasilPage() {
+  const sectores = [
+    {
+      nombre: "G",
+      descripcion:
+        "Recta trasera, pasada la curva 3. Acceso a Fan Zone.",
+      image: "/sectorg.jpg",
+    },
+    {
+      nombre: "A",
+      descripcion:
+        "Recta principal con vista amplia de distintos sectores.",
+      image: "/sectora.jpg",
+    },
+    {
+      nombre: "R",
+      descripcion:
+        "Vista a Curva do Sol y parte de la salida de boxes.",
+      image: "/sectorr.jpg",
+    },
+    {
+      nombre: "H",
+      descripcion:
+        "Vista a la S de Senna y salida del pit lane.",
+      image: "/sectorh.jpg",
+    },
+  ];
+
   return (
-    <main className="min-h-screen bg-black text-white overflow-hidden">
+    <main className="bg-black text-white overflow-hidden">
       {/* HERO */}
-      <section className="relative h-[100svh] flex items-center justify-center">
-        <video
-          autoPlay
-          muted
-          loop
-          playsInline
-          className="absolute inset-0 w-full h-full object-cover"
-        >
-          <source src="/videos/colectivo-sim.mp4" type="video/mp4" />
-        </video>
+      <section className="relative min-h-screen flex items-center">
+        <Image
+          src="/brasil-hero.jpg"
+          alt="GP Brasil"
+          fill
+          priority
+          className="object-cover"
+        />
 
         <div className="absolute inset-0 bg-black/75" />
 
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(220,38,38,0.25),transparent_50%)]" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/70 to-transparent" />
 
-        <div className="relative z-10 max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-14 items-center">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,215,0,0.25),transparent_35%)]" />
+
+        <div className="relative z-10 max-w-7xl mx-auto px-6 py-28 grid lg:grid-cols-2 gap-12 items-center">
           <div>
-            <div className="inline-flex items-center gap-2 border border-red-500/30 bg-red-500/10 px-4 py-2 rounded-full mb-6 backdrop-blur-sm">
-              <Flag className="w-4 h-4 text-red-500" />
-              <span className="text-sm tracking-wide text-zinc-300">
-                EXPERIENCIA ITINERANTE F1
-              </span>
+            <div className="inline-flex items-center gap-3 bg-yellow-400 text-black px-4 py-2 rounded-full font-bold text-sm mb-7">
+              <Flag className="w-4 h-4" />
+              VIVÍ LA F1 DONDE TODO PASA
             </div>
 
-            <h1 className="text-5xl md:text-7xl font-black leading-[0.95] tracking-tight">
-              VIAJÁ
+            <div className="flex items-center gap-4 mb-8">
+              <Image
+                src="/sim-logo.png"
+                alt="SIM"
+                width={90}
+                height={40}
+                className="object-contain"
+              />
+
+              <span className="text-zinc-400 text-2xl font-light">×</span>
+
+              <Image
+                src="/tiul-logo.png"
+                alt="Tiul"
+                width={90}
+                height={40}
+                className="object-contain"
+              />
+            </div>
+
+            <h1 className="text-5xl md:text-8xl font-black leading-[0.9] tracking-tight">
+              GP DE
               <br />
-              <span className="text-red-500">CON SIM</span>
+              <span className="text-white">BRASIL</span>
             </h1>
 
-            <p className="mt-8 text-zinc-300 text-lg max-w-xl leading-relaxed">
-              Llevamos la experiencia SIM a eventos, empresas, activaciones,
-              shoppings y circuitos de todo el país con simuladores
-              profesionales de Fórmula 1 en movimiento.
+            <h2 className="text-4xl md:text-6xl font-black italic text-green-500 mt-2">
+              INTERLAGOS 2026
+            </h2>
+
+            <div className="flex items-center gap-3 mt-8 text-lg text-zinc-300">
+              <MapPin className="text-yellow-400" />
+              São Paulo • 5 al 9 de Noviembre
+            </div>
+
+            <p className="mt-8 text-zinc-300 text-lg leading-relaxed max-w-xl">
+              Viví el Gran Premio de Brasil junto a SIM y Tiul Sports.
+              Viaje completo para sentir la Fórmula 1 desde adentro,
+              en uno de los circuitos más históricos del mundo.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-4 mt-10">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-10">
+              <div className="bg-black/50 border border-white/10 rounded-2xl p-4 backdrop-blur-md">
+                <Plane className="text-green-400 mb-3" />
+                <p className="text-sm text-zinc-400">
+                  Vuelos incluidos
+                </p>
+              </div>
+
+              <div className="bg-black/50 border border-white/10 rounded-2xl p-4 backdrop-blur-md">
+                <Hotel className="text-green-400 mb-3" />
+                <p className="text-sm text-zinc-400">
+                  Hotel + desayuno
+                </p>
+              </div>
+
+              <div className="bg-black/50 border border-white/10 rounded-2xl p-4 backdrop-blur-md">
+                <Ticket className="text-green-400 mb-3" />
+                <p className="text-sm text-zinc-400">
+                  Tickets F1
+                </p>
+              </div>
+
+              <div className="bg-black/50 border border-white/10 rounded-2xl p-4 backdrop-blur-md">
+                <ShieldCheck className="text-green-400 mb-3" />
+                <p className="text-sm text-zinc-400">
+                  Asistencia viajero
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-5 mt-12">
               <Link
                 href="https://wa.me/543512520927"
                 target="_blank"
-                className="group bg-red-600 hover:bg-red-500 transition-all duration-300 px-7 py-4 rounded-2xl font-semibold flex items-center justify-center gap-2 shadow-[0_0_40px_rgba(220,38,38,0.35)]"
+                className="bg-yellow-400 hover:bg-yellow-300 transition-all duration-300 text-black font-black px-8 py-5 rounded-2xl flex items-center justify-center gap-3 text-lg shadow-[0_0_40px_rgba(250,204,21,0.35)]"
               >
-                Consultar disponibilidad
-                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                CONSULTAR DISPONIBILIDAD
               </Link>
 
               <Link
-                href="/reservas"
-                className="border border-white/10 hover:border-red-500/50 bg-white/5 hover:bg-white/10 transition-all duration-300 px-7 py-4 rounded-2xl font-semibold flex items-center justify-center gap-2 backdrop-blur-sm"
+                href="/"
+                className="border border-white/10 hover:border-white/30 bg-white/5 px-8 py-5 rounded-2xl flex items-center justify-center gap-3 text-lg"
               >
-                Reservar turno
+                Volver al inicio
               </Link>
             </div>
           </div>
 
-          <div className="relative hidden lg:flex justify-center">
-            <div className="relative w-[540px] h-[620px]">
-              <div className="absolute -inset-10 bg-red-600/20 blur-3xl rounded-full" />
+          <div className="relative hidden lg:flex justify-end">
+            <div className="relative w-[620px] h-[780px]">
+              <div className="absolute inset-0 bg-gradient-to-t from-green-500/20 via-yellow-500/10 to-transparent blur-3xl rounded-full" />
 
               <Image
-                src="/colectivo-sim.png"
-                alt="Colectivo SIM"
+                src="/senna.png"
+                alt="Senna"
                 fill
-                className="object-contain drop-shadow-[0_0_60px_rgba(255,0,0,0.25)]"
+                className="object-contain object-bottom"
               />
             </div>
           </div>
         </div>
 
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 animate-bounce">
-          <ChevronRight className="rotate-90 text-zinc-500 w-8 h-8" />
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce">
+          <ChevronRight className="rotate-90 w-8 h-8 text-white/60" />
         </div>
       </section>
 
-      {/* COLLAGE */}
-      <section className="relative py-28 px-6">
+      {/* INFO */}
+      <section className="relative py-24 px-6 bg-white text-black">
         <div className="max-w-7xl mx-auto">
-          <div className="flex items-end justify-between mb-14">
-            <div>
-              <p className="text-red-500 font-semibold tracking-[0.25em] text-sm mb-4">
-                EXPERIENCIA
-              </p>
+          <div className="mb-16">
+            <p className="text-green-600 font-black tracking-[0.3em] mb-4">
+              EXPERIENCIA
+            </p>
 
-              <h2 className="text-4xl md:text-6xl font-black leading-none">
-                SIM EN
-                <br />
-                MOVIMIENTO
-              </h2>
-            </div>
+            <h2 className="text-5xl md:text-7xl font-black leading-none">
+              BRASIL
+              <span className="text-green-600"> TE ESPERA</span>
+            </h2>
 
-            <div className="hidden md:block max-w-sm text-zinc-400 text-right">
-              Una experiencia visual, sonora y física diseñada para generar
-              impacto en cualquier evento.
-            </div>
+            <p className="text-zinc-600 text-lg mt-6 max-w-3xl">
+              Interlagos no es solo una carrera. Es ambiente,
+              historia, pasión y una de las mejores experiencias
+              que puede vivir un fanático de la Fórmula 1.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
-            <div className="md:col-span-7 relative h-[480px] rounded-[32px] overflow-hidden border border-white/10">
+          <div className="grid lg:grid-cols-2 gap-8">
+            <div className="relative rounded-[32px] overflow-hidden h-[520px]">
               <Image
-                src="/simulador1.jpg"
-                alt="Simulador"
+                src="/interlagos.jpg"
+                alt="Interlagos"
                 fill
-                className="object-cover hover:scale-105 transition-transform duration-700"
+                className="object-cover"
               />
 
-              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/10 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
 
-              <div className="absolute bottom-8 left-8">
-                <p className="text-zinc-400 mb-2">Motion Platform</p>
-                <h3 className="text-3xl font-bold">
-                  Simuladores Profesionales
-                </h3>
-              </div>
-            </div>
-
-            <div className="md:col-span-5 flex flex-col gap-5">
-              <div className="relative h-[228px] rounded-[32px] overflow-hidden border border-white/10">
-                <Image
-                  src="/simulador2.jpg"
-                  alt="Evento"
-                  fill
-                  className="object-cover hover:scale-105 transition-transform duration-700"
-                />
-
-                <div className="absolute inset-0 bg-black/35" />
-              </div>
-
-              <div className="relative h-[228px] rounded-[32px] overflow-hidden border border-white/10">
-                <Image
-                  src="/simulador3.jpg"
-                  alt="Experiencia"
-                  fill
-                  className="object-cover hover:scale-105 transition-transform duration-700"
-                />
-
-                <div className="absolute inset-0 bg-black/35" />
-              </div>
-            </div>
-
-            <div className="md:col-span-4 relative h-[280px] rounded-[32px] overflow-hidden border border-white/10">
-              <Image
-                src="/simulador4.jpg"
-                alt="F1"
-                fill
-                className="object-cover hover:scale-105 transition-transform duration-700"
-              />
-
-              <div className="absolute inset-0 bg-black/35" />
-            </div>
-
-            <div className="md:col-span-8 bg-zinc-950 border border-white/10 rounded-[32px] p-10 flex flex-col md:flex-row justify-between gap-10">
-              <div className="max-w-xl">
-                <p className="text-red-500 font-semibold mb-4">
-                  MÁS QUE UN SIMULADOR
+              <div className="absolute bottom-8 left-8 right-8 text-white">
+                <p className="text-green-400 font-bold mb-3">
+                  CIRCUITO INTERLAGOS
                 </p>
 
-                <h3 className="text-3xl md:text-4xl font-black leading-tight mb-5">
-                  Creamos una experiencia que llama la atención desde lejos.
+                <h3 className="text-4xl font-black mb-4">
+                  Donde nació la historia.
                 </h3>
 
-                <p className="text-zinc-400 leading-relaxed">
-                  Ideal para marcas, activaciones, eventos corporativos,
-                  exhibiciones, ferias, centros comerciales y experiencias
-                  premium relacionadas al automovilismo.
+                <p className="text-zinc-300 leading-relaxed">
+                  La mítica S de Senna, las tribunas llenas y el
+                  clima único del GP de Brasil convierten este viaje
+                  en una experiencia irrepetible.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-6">
+              <div className="bg-zinc-100 rounded-[28px] p-8">
+                <p className="text-5xl font-black mb-3">4</p>
+                <p className="text-zinc-600 font-medium">
+                  Noches de hotel
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-5 min-w-[260px]">
-                <div className="bg-black rounded-2xl p-5 border border-white/5">
-                  <Zap className="text-red-500 mb-4" />
-                  <p className="text-3xl font-black">4</p>
-                  <p className="text-zinc-500 text-sm mt-1">
-                    Simuladores simultáneos
-                  </p>
-                </div>
+              <div className="bg-zinc-100 rounded-[28px] p-8">
+                <p className="text-5xl font-black mb-3">3</p>
+                <p className="text-zinc-600 font-medium">
+                  Días de Fórmula 1
+                </p>
+              </div>
 
-                <div className="bg-black rounded-2xl p-5 border border-white/5">
-                  <Bus className="text-red-500 mb-4" />
-                  <p className="text-3xl font-black">2</p>
-                  <p className="text-zinc-500 text-sm mt-1">
-                    Pisos de experiencia
-                  </p>
-                </div>
+              <div className="bg-zinc-100 rounded-[28px] p-8">
+                <p className="text-5xl font-black mb-3">250+</p>
+                <p className="text-zinc-600 font-medium">
+                  Personas viajaron
+                </p>
+              </div>
 
-                <div className="bg-black rounded-2xl p-5 border border-white/5">
-                  <MapPin className="text-red-500 mb-4" />
-                  <p className="text-3xl font-black">+</p>
-                  <p className="text-zinc-500 text-sm mt-1">
-                    Eventos en todo el país
-                  </p>
-                </div>
+              <div className="bg-zinc-100 rounded-[28px] p-8">
+                <Trophy className="w-10 h-10 mb-4 text-green-600" />
 
-                <div className="bg-black rounded-2xl p-5 border border-white/5">
-                  <Trophy className="text-red-500 mb-4" />
-                  <p className="text-3xl font-black">F1</p>
-                  <p className="text-zinc-500 text-sm mt-1">
-                    Experiencia inmersiva
+                <p className="text-zinc-600 font-medium">
+                  Experiencia premium F1
+                </p>
+              </div>
+
+              <div className="col-span-2 bg-black text-white rounded-[28px] p-10 relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-green-500/20 to-yellow-500/10" />
+
+                <div className="relative z-10">
+                  <p className="text-green-400 font-black tracking-[0.25em] text-sm mb-5">
+                    IMPORTANTE
+                  </p>
+
+                  <h3 className="text-3xl font-black mb-5">
+                    CUPOS LIMITADOS
+                  </h3>
+
+                  <p className="text-zinc-300 leading-relaxed">
+                    El viaje se maneja con preventa y disponibilidad
+                    limitada. La experiencia incluye coordinación en
+                    destino y acompañamiento durante el evento.
                   </p>
                 </div>
               </div>
@@ -221,41 +276,91 @@ export default function ViajaConSimPage() {
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="relative py-28 px-6">
-        <div className="max-w-6xl mx-auto relative overflow-hidden rounded-[40px] border border-red-500/20 bg-gradient-to-br from-red-600/15 via-zinc-950 to-black p-10 md:p-16">
-          <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-red-600/20 blur-3xl rounded-full" />
+      {/* SECTORES */}
+      <section className="bg-black py-24 px-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="mb-16">
+            <p className="text-yellow-400 font-black tracking-[0.3em] mb-4">
+              SECTORES
+            </p>
 
-          <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-10">
-            <div className="max-w-2xl">
-              <p className="text-red-500 font-semibold tracking-[0.25em] text-sm mb-5">
-                ¿QUERÉS LLEVAR SIM A TU EVENTO?
-              </p>
-
-              <h2 className="text-4xl md:text-6xl font-black leading-[0.95] mb-6">
-                HACÉ QUE
-                <br />
-                TU EVENTO
-                <br />
-                SE SIENTA
-                <span className="text-red-500"> COMO F1</span>
-              </h2>
-
-              <p className="text-zinc-400 text-lg leading-relaxed">
-                Activaciones de marca, eventos privados, acciones comerciales,
-                torneos y experiencias premium.
-              </p>
-            </div>
-
-            <Link
-              href="https://wa.me/543512520927"
-              target="_blank"
-              className="group shrink-0 bg-red-600 hover:bg-red-500 transition-all duration-300 px-8 py-5 rounded-2xl font-bold text-lg flex items-center gap-3 shadow-[0_0_40px_rgba(220,38,38,0.35)]"
-            >
-              Hablar con SIM
-              <ArrowRight className="group-hover:translate-x-1 transition-transform" />
-            </Link>
+            <h2 className="text-5xl md:text-7xl font-black">
+              ELEGÍ TU
+              <span className="text-yellow-400"> EXPERIENCIA</span>
+            </h2>
           </div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {sectores.map((sector) => (
+              <div
+                key={sector.nombre}
+                className="bg-zinc-950 border border-white/10 rounded-[28px] overflow-hidden group"
+              >
+                <div className="relative h-[240px] overflow-hidden">
+                  <Image
+                    src={sector.image}
+                    alt={sector.nombre}
+                    fill
+                    className="object-cover group-hover:scale-105 transition-transform duration-700"
+                  />
+
+                  <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent" />
+
+                  <div className="absolute bottom-5 left-5">
+                    <div className="w-14 h-14 rounded-full bg-yellow-400 text-black flex items-center justify-center text-2xl font-black">
+                      {sector.nombre}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6">
+                  <p className="text-zinc-300 leading-relaxed">
+                    {sector.descripcion}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA FINAL */}
+      <section className="relative py-28 px-6 overflow-hidden">
+        <Image
+          src="/brasil-bandera.jpg"
+          alt="Brasil"
+          fill
+          className="object-cover opacity-20"
+        />
+
+        <div className="absolute inset-0 bg-black/80" />
+
+        <div className="relative z-10 max-w-5xl mx-auto text-center">
+          <p className="text-green-500 font-black tracking-[0.3em] mb-6">
+            VIAJÁ CON SIM
+          </p>
+
+          <h2 className="text-5xl md:text-8xl font-black leading-[0.9]">
+            NO ES LO MISMO
+            <br />
+            SIMULARLO
+            <br />
+            QUE
+            <span className="text-yellow-400"> VIVIRLO</span>
+          </h2>
+
+          <p className="text-zinc-300 text-xl leading-relaxed max-w-3xl mx-auto mt-10">
+            Formá parte del viaje al GP de Brasil 2026 y viví la
+            Fórmula 1 como nunca antes.
+          </p>
+
+          <Link
+            href="https://wa.me/543512520927"
+            target="_blank"
+            className="inline-flex mt-12 bg-yellow-400 hover:bg-yellow-300 transition-all duration-300 text-black font-black px-10 py-6 rounded-2xl text-xl shadow-[0_0_50px_rgba(250,204,21,0.35)]"
+          >
+            HABLAR POR WHATSAPP
+          </Link>
         </div>
       </section>
     </main>
