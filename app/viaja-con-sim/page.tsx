@@ -4,85 +4,176 @@ import Image from "next/image";
 import Link from "next/link";
 import {
   Plane,
-  BedDouble,
+  Hotel,
   Ticket,
   ShieldCheck,
   MapPin,
   CalendarDays,
   ArrowRight,
-  Users,
+  CheckCircle2,
   Star,
+  Users,
   Trophy,
   CreditCard,
-  CheckCircle2,
-  Flag,
   Route,
-  Gauge,
+  Timer,
+  Flag,
+  Info,
+  Luggage,
+  Bus,
+  MapPinned,
 } from "lucide-react";
 
 export default function ViajaConSimPage() {
-  const sectores = [
-    ["G", "RECTA TRASERA", "Pasada la curva 3. Acceso a Fan Zone.", "green"],
-    ["A", "RECTA PRINCIPAL", "Vista amplia de distintos sectores.", "yellow"],
-    ["R", "CURVA DO SOL", "Inicio de recta trasera y zona técnica.", "green"],
-    ["H", "S DE SENNA", "La zona más icónica del circuito.", "yellow"],
-    ["M", "CURVA 1", "Ideal para ver maniobras y sobrepasos.", "green"],
-    ["D", "LARGADA", "Final de recta principal e inicio de la S.", "yellow"],
+  const includes = [
+    {
+      icon: Plane,
+      title: "Vuelos con carry on",
+      text: "Salidas disponibles desde Buenos Aires, Córdoba, Rosario y Mendoza.",
+    },
+    {
+      icon: Hotel,
+      title: "4 noches de hotel",
+      text: "Alojamiento con desayuno del 5 al 9 de noviembre.",
+    },
+    {
+      icon: Ticket,
+      title: "Tickets F1",
+      text: "Entradas para los 3 días del Gran Premio en el sector elegido.",
+    },
+    {
+      icon: Bus,
+      title: "Traslados al circuito",
+      text: "Opciones con traslados incluidos según el paquete seleccionado.",
+    },
+    {
+      icon: ShieldCheck,
+      title: "Asistencia al viajero",
+      text: "Cobertura y acompañamiento para viajar con más tranquilidad.",
+    },
+    {
+      icon: Luggage,
+      title: "Kit de regalo",
+      text: "Un detalle especial para que vivas la experiencia desde el primer momento.",
+    },
+  ];
+
+  const sectors = [
+    {
+      code: "G",
+      name: "Recta trasera",
+      detail:
+        "Pasada la curva 3. Sector con acceso a Fan Zone y ambiente ideal para vivir el ritmo de carrera.",
+      tone: "green",
+    },
+    {
+      code: "A",
+      name: "Recta principal",
+      detail:
+        "Vista amplia del circuito. Una ubicación elevada para ver autos en distintos sectores.",
+      tone: "yellow",
+    },
+    {
+      code: "R",
+      name: "Curva do Sol",
+      detail:
+        "Inicio de la recta trasera, con vista a una zona técnica y parte de la salida de boxes.",
+      tone: "green",
+    },
+    {
+      code: "H",
+      name: "S de Senna",
+      detail:
+        "Una de las ubicaciones más icónicas: S de Senna, recta trasera y salida del pit lane.",
+      tone: "yellow",
+    },
+    {
+      code: "M",
+      name: "Curva 1",
+      detail:
+        "Zona premium para ver frenajes, ataques, defensas y maniobras de sobrepaso.",
+      tone: "green",
+    },
+    {
+      code: "D",
+      name: "Largada",
+      detail:
+        "Final de recta principal e inicio de la S de Senna. Vista directa de momentos clave.",
+      tone: "yellow",
+    },
+  ];
+
+  const packages = [
+    {
+      title: "Paquete Full Centro",
+      subtitle: "Hotel en zona céntrica",
+      items: [
+        "Hotel Delplaza Excelsior o similar.",
+        "Incluye vuelos, hotel, tickets F1, traslados y asistencia.",
+        "Ideal para quienes buscan una experiencia completa y acompañada.",
+      ],
+    },
+    {
+      title: "Paquete Full Berrini",
+      subtitle: "Próximo a Interlagos",
+      items: [
+        "Hotel Intercity Berrini o similar.",
+        "Ubicación estratégica para moverse hacia el circuito.",
+        "Pensado para vivir el GP con mayor cercanía al evento.",
+      ],
+    },
+    {
+      title: "Paquete Alternativo",
+      subtitle: "Más independencia",
+      items: [
+        "Hotel Park Inn by Radisson Berrini o similar.",
+        "Opción para quienes prefieren manejar sus horarios.",
+        "Cercanía a estación de tren con conexión al autódromo.",
+      ],
+    },
   ];
 
   return (
-    <main className="min-h-screen bg-black text-white overflow-hidden">
+    <main className="min-h-screen bg-[#050505] text-white overflow-hidden">
       {/* HERO */}
-      <section className="relative px-6 pt-28 pb-20 overflow-hidden">
+      <section className="relative min-h-[92vh] px-6 pt-28 pb-20 flex items-center overflow-hidden">
         <Image
           src="/interlagos-race.png"
-          alt="Formula 1 Interlagos"
+          alt="GP Brasil Interlagos"
           fill
           priority
-          className="object-cover opacity-45"
+          className="object-cover opacity-55"
         />
 
-        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 to-black/25" />
-        <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black via-black/90 to-black/20" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black" />
 
         <Image
           src="/carbon.jpg"
-          alt="Carbon texture"
+          alt="Carbono"
           fill
-          className="object-cover opacity-20 mix-blend-overlay"
+          className="object-cover opacity-25 mix-blend-overlay"
         />
 
-        <div className="absolute right-0 top-0 w-[760px] h-full opacity-60">
-          <Image
-            src="/brasil-flag.jpg"
-            alt="Bandera Brasil"
-            fill
-            className="object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-l from-transparent via-black/40 to-black" />
-        </div>
+        <div className="absolute right-[-120px] top-[-120px] w-[720px] h-[720px] rounded-full border-[90px] border-yellow-400/10" />
+        <div className="absolute right-[70px] bottom-[-180px] w-[620px] h-[620px] rounded-full border-[80px] border-green-500/10" />
 
-        <div className="absolute right-8 top-28 hidden lg:block w-[310px] h-[430px] opacity-75 grayscale">
-          <Image src="/senna.jpg" alt="Senna" fill className="object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/20" />
-        </div>
-
-        <div className="relative z-10 max-w-7xl mx-auto">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-3 bg-yellow-400 text-black px-5 py-3 rounded-sm font-black text-sm mb-8">
+        <div className="relative z-10 max-w-7xl mx-auto w-full grid lg:grid-cols-[1fr_0.85fr] gap-14 items-center">
+          <div>
+            <div className="inline-flex items-center gap-3 bg-yellow-400 text-black px-5 py-3 rounded-full font-black text-sm mb-8 shadow-[0_0_45px_rgba(250,204,21,0.35)]">
               <Flag className="w-4 h-4" />
               VIVÍ LA F1 DONDE TODO PASA
             </div>
 
             <div className="flex items-center gap-4 mb-8">
-              <span className="text-3xl font-black italic">SIM</span>
-              <span className="text-zinc-500 text-xl">×</span>
-              <span className="text-2xl font-black">
+              <span className="text-4xl font-black italic">SIM</span>
+              <span className="text-zinc-500 text-2xl">×</span>
+              <span className="text-3xl font-black">
                 Tiul<span className="text-sm ml-1">sports</span>
               </span>
             </div>
 
-            <h1 className="text-6xl md:text-8xl lg:text-[8.5rem] font-black leading-[0.82]">
+            <h1 className="text-6xl md:text-8xl lg:text-[8.8rem] font-black leading-[0.8] tracking-tight">
               GP DE
               <br />
               BRASIL
@@ -93,7 +184,7 @@ export default function ViajaConSimPage() {
               <span className="text-yellow-400">2026</span>
             </h2>
 
-            <div className="mt-8 flex flex-wrap gap-6 text-zinc-300 font-semibold">
+            <div className="mt-8 flex flex-wrap gap-5 text-zinc-200 font-semibold">
               <div className="flex items-center gap-2">
                 <MapPin className="w-5 h-5 text-yellow-400" />
                 São Paulo
@@ -105,10 +196,10 @@ export default function ViajaConSimPage() {
               </div>
             </div>
 
-            <p className="mt-8 max-w-xl text-zinc-300 text-lg leading-relaxed">
-              Viví el Gran Premio de Brasil con SIM y Tiul Sports. Un viaje
-              pensado para disfrutar la Fórmula 1 desde adentro, en uno de los
-              circuitos más históricos del mundo.
+            <p className="mt-8 max-w-2xl text-zinc-300 text-lg leading-relaxed">
+              Una experiencia completa para vivir el Gran Premio de Brasil
+              desde adentro: vuelos, hotel, tickets para los tres días,
+              asistencia y opciones de paquete según tu forma de viajar.
             </p>
 
             <div className="mt-10 flex flex-col sm:flex-row gap-4">
@@ -122,154 +213,271 @@ export default function ViajaConSimPage() {
               </Link>
 
               <a
-                href="#sectores"
+                href="#paquetes"
                 className="border border-white/20 bg-white/10 hover:bg-white/15 px-8 py-5 rounded-2xl font-black flex items-center justify-center"
               >
-                VER SECTORES
+                VER DETALLES DEL VIAJE
               </a>
             </div>
           </div>
 
-          <div className="relative mt-16 rounded-[28px] border border-yellow-400/30 bg-black/70 backdrop-blur-xl overflow-hidden grid md:grid-cols-4">
-            {[
-              [Plane, "VUELOS", "Salidas desde distintas ciudades."],
-              [BedDouble, "HOTEL", "4 noches con desayuno."],
-              [Ticket, "TICKETS F1", "Entrada para los 3 días."],
-              [ShieldCheck, "ASISTENCIA", "Acompañamiento al viajero."],
-            ].map(([Icon, title, text]: any, i) => (
-              <div
-                key={title}
-                className={`p-7 flex gap-5 ${
-                  i !== 3 ? "md:border-r border-white/10" : ""
-                }`}
-              >
-                <Icon className="w-10 h-10 text-green-400 shrink-0" />
-                <div>
-                  <h3 className="font-black mb-1">{title}</h3>
-                  <p className="text-sm text-zinc-400">{text}</p>
-                </div>
+          <div className="relative hidden lg:block">
+            <div className="relative h-[620px] rounded-[44px] overflow-hidden border border-white/10 bg-black/45 backdrop-blur">
+              <Image
+                src="/brasil-flag.jpg"
+                alt="Brasil"
+                fill
+                className="object-cover opacity-55"
+              />
+
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/45 to-transparent" />
+
+              <div className="absolute bottom-8 left-8 right-8">
+                <p className="text-green-400 font-black tracking-[0.25em] text-sm mb-4">
+                  F1 EXPERIENCE
+                </p>
+
+                <h3 className="text-5xl font-black leading-none">
+                  NO ES LO MISMO
+                  <br />
+                  SIMULARLO
+                  <br />
+                  <span className="text-yellow-400">QUE VIVIRLO</span>
+                </h3>
               </div>
-            ))}
+            </div>
+
+            <Image
+              src="/f1-car.png"
+              alt="F1"
+              width={760}
+              height={360}
+              className="absolute -bottom-12 -right-28 drop-shadow-[0_0_55px_rgba(250,204,21,0.35)]"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* QUICK INFO */}
+      <section className="relative px-6 -mt-10 z-20">
+        <div className="max-w-7xl mx-auto grid md:grid-cols-4 rounded-[30px] border border-yellow-400/30 bg-black/85 backdrop-blur-xl overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.6)]">
+          {[
+            ["4", "noches de hotel"],
+            ["3", "días de Fórmula 1"],
+            ["5-9", "noviembre 2026"],
+            ["250+", "personas ya viajaron"],
+          ].map(([number, text], index) => (
+            <div
+              key={text}
+              className={`p-8 text-center ${
+                index !== 3 ? "md:border-r border-white/10" : ""
+              }`}
+            >
+              <p className="text-5xl font-black text-white">{number}</p>
+              <p className="text-zinc-400 uppercase text-sm font-bold mt-2">
+                {text}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* INCLUDES */}
+      <section className="px-6 py-28">
+        <div className="max-w-7xl mx-auto">
+          <div className="max-w-3xl mb-14">
+            <p className="text-green-400 font-black tracking-[0.25em] mb-5">
+              TODO INCLUIDO
+            </p>
+
+            <h2 className="text-5xl md:text-7xl font-black leading-none mb-6">
+              VIAJÁ SIN
+              <br />
+              IMPROVISAR
+            </h2>
+
+            <p className="text-zinc-400 text-lg leading-relaxed">
+              La idea es simple: que tengas el viaje armado y puedas enfocarte
+              en lo importante: vivir el ambiente de Interlagos, la carrera y
+              la experiencia completa de Fórmula 1.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {includes.map((item) => {
+              const Icon = item.icon;
+
+              return (
+                <div
+                  key={item.title}
+                  className="group rounded-[30px] border border-white/10 bg-white/[0.035] p-8 hover:bg-white/[0.06] transition"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-green-500/10 border border-green-500/30 flex items-center justify-center mb-7 group-hover:scale-110 transition">
+                    <Icon className="w-8 h-8 text-green-400" />
+                  </div>
+
+                  <h3 className="text-2xl font-black mb-3">{item.title}</h3>
+
+                  <p className="text-zinc-400 leading-relaxed">{item.text}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       </section>
 
       {/* INTERLAGOS */}
-      <section className="relative px-6 py-24 border-t border-white/10">
+      <section className="relative px-6 py-28 border-y border-white/10 overflow-hidden">
         <Image
           src="/carbon.jpg"
-          alt="Carbon"
+          alt="Carbono"
           fill
-          className="object-cover opacity-10"
+          className="object-cover opacity-15"
         />
 
-        <div className="relative z-10 max-w-7xl mx-auto grid lg:grid-cols-[0.75fr_1.25fr] gap-14 items-center">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_50%,rgba(34,197,94,0.18),transparent_35%),radial-gradient(circle_at_85%_20%,rgba(250,204,21,0.12),transparent_30%)]" />
+
+        <div className="relative z-10 max-w-7xl mx-auto grid lg:grid-cols-[0.85fr_1.15fr] gap-14 items-center">
           <div>
-            <p className="text-green-400 font-black tracking-[0.25em] mb-5">
+            <p className="text-yellow-400 font-black tracking-[0.25em] mb-5">
               CIRCUITO
             </p>
 
             <h2 className="text-5xl md:text-7xl font-black leading-none mb-8">
               INTERLAGOS
+              <br />
+              NO PERDONA
             </h2>
 
-            <p className="text-zinc-300 leading-relaxed text-lg mb-10">
-              Un circuito icónico donde la destreza técnica, la velocidad y la
-              presión se combinan en cada vuelta. La S de Senna, la Curva do Sol
-              y la Subida dos Boxes hacen que este GP sea especial.
+            <p className="text-zinc-300 text-lg leading-relaxed mb-8">
+              Interlagos es uno de esos circuitos donde la carrera se siente
+              distinta. Tiene zonas rápidas, sectores técnicos, desniveles,
+              historia y una energía muy particular por la pasión brasileña.
+            </p>
+
+            <p className="text-zinc-400 leading-relaxed mb-10">
+              La S de Senna, la Curva do Sol, el Bico de Pato y la Subida dos
+              Boxes hacen que cada vuelta tenga tensión, ritmo y oportunidades
+              de maniobra. Por eso el GP de Brasil suele regalar carreras
+              intensas.
             </p>
 
             <div className="grid grid-cols-3 gap-5">
-              <div>
-                <Route className="w-8 h-8 text-green-400 mb-3" />
+              <div className="rounded-2xl border border-white/10 bg-black/60 p-5">
+                <Route className="w-8 h-8 text-green-400 mb-4" />
                 <p className="text-3xl font-black">4.309 m</p>
                 <p className="text-xs text-zinc-500 font-bold">LONGITUD</p>
               </div>
 
-              <div>
-                <Gauge className="w-8 h-8 text-green-400 mb-3" />
+              <div className="rounded-2xl border border-white/10 bg-black/60 p-5">
+                <Timer className="w-8 h-8 text-green-400 mb-4" />
                 <p className="text-3xl font-black">71</p>
                 <p className="text-xs text-zinc-500 font-bold">VUELTAS</p>
               </div>
 
-              <div>
-                <Trophy className="w-8 h-8 text-yellow-400 mb-3" />
+              <div className="rounded-2xl border border-white/10 bg-black/60 p-5">
+                <Trophy className="w-8 h-8 text-yellow-400 mb-4" />
                 <p className="text-3xl font-black">1973</p>
                 <p className="text-xs text-zinc-500 font-bold">DESDE</p>
               </div>
             </div>
           </div>
 
-          <div className="relative h-[560px] rounded-[44px] border border-white/10 bg-white/[0.03] overflow-hidden p-8">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(34,197,94,0.18),transparent_45%)]" />
-
+          <div className="relative h-[620px] rounded-[44px] border border-white/10 bg-black/65 overflow-hidden p-8">
             <Image
               src="/interlagos-map.webp"
               alt="Mapa Interlagos"
               fill
-              className="object-contain p-10 invert brightness-200 opacity-75"
+              className="object-contain p-10 invert brightness-200 opacity-80"
             />
 
             <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-black/20" />
 
-            <div className="absolute left-10 bottom-10">
-              <p className="text-green-400 font-black tracking-[0.2em] text-sm">
-                TRACK MAP
-              </p>
-              <h3 className="text-4xl font-black">SÃO PAULO</h3>
+            <div className="absolute left-10 bottom-10 right-10 flex items-end justify-between gap-8">
+              <div>
+                <p className="text-green-400 font-black tracking-[0.25em] text-sm mb-3">
+                  TRACK MAP
+                </p>
+
+                <h3 className="text-4xl md:text-5xl font-black leading-none">
+                  AUTÓDROMO
+                  <br />
+                  JOSÉ CARLOS PACE
+                </h3>
+              </div>
+
+              <div className="hidden md:block text-right text-zinc-400 max-w-xs">
+                La pista donde la técnica, la presión y el clima de carrera se
+                mezclan como en pocos lugares.
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* SECTORES */}
-      <section id="sectores" className="px-6 py-24 border-t border-white/10">
+      {/* PACKAGES */}
+      <section id="paquetes" className="px-6 py-28">
         <div className="max-w-7xl mx-auto">
-          <p className="text-green-400 font-black tracking-[0.25em] mb-5">
-            SECTORES
-          </p>
+          <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-8 mb-14">
+            <div>
+              <p className="text-green-400 font-black tracking-[0.25em] mb-5">
+                PAQUETES
+              </p>
 
-          <h2 className="text-5xl md:text-6xl font-black leading-none mb-12">
-            ELEGÍ TU EXPERIENCIA
-          </h2>
+              <h2 className="text-5xl md:text-7xl font-black leading-none">
+                ELEGÍ CÓMO
+                <br />
+                QUERÉS VIAJAR
+              </h2>
+            </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-6 gap-5">
-            {sectores.map(([letra, nombre, texto, color]) => (
+            <p className="text-zinc-400 text-lg max-w-xl">
+              La página no muestra precios para que la consulta se cierre por
+              WhatsApp y se pueda manejar disponibilidad actualizada.
+            </p>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-6">
+            {packages.map((pack, index) => (
               <div
-                key={letra}
-                className="group rounded-[24px] border border-white/10 bg-white/[0.04] overflow-hidden hover:-translate-y-2 transition-all duration-300"
+                key={pack.title}
+                className={`rounded-[34px] border p-8 overflow-hidden relative ${
+                  index === 1
+                    ? "border-yellow-400/50 bg-yellow-400/10"
+                    : "border-white/10 bg-white/[0.035]"
+                }`}
               >
-                <div className="relative h-44 bg-gradient-to-br from-zinc-900 to-black overflow-hidden">
-                  <Image
-                    src="/interlagos-race.png"
-                    alt="Interlagos"
-                    fill
-                    className="object-cover opacity-45 group-hover:scale-110 transition duration-700"
-                  />
+                <div className="absolute right-[-80px] top-[-80px] w-52 h-52 rounded-full bg-green-500/10 blur-2xl" />
 
-                  <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent" />
-
-                  <div
-                    className={`absolute left-5 bottom-4 w-12 h-12 rounded-full flex items-center justify-center text-black font-black text-2xl ${
-                      color === "green" ? "bg-green-500" : "bg-yellow-400"
+                <div className="relative z-10">
+                  <p
+                    className={`font-black tracking-[0.2em] text-sm mb-4 ${
+                      index === 1 ? "text-yellow-400" : "text-green-400"
                     }`}
                   >
-                    {letra}
-                  </div>
-                </div>
-
-                <div className="p-5">
-                  <h3 className="font-black uppercase mb-3">{nombre}</h3>
-
-                  <p className="text-sm text-zinc-400 leading-relaxed min-h-[90px]">
-                    {texto}
+                    OPCIÓN {index + 1}
                   </p>
 
-                  <div
-                    className={`mt-5 h-1 w-16 ${
-                      color === "green" ? "bg-green-500" : "bg-yellow-400"
-                    }`}
-                  />
+                  <h3 className="text-3xl font-black mb-2">{pack.title}</h3>
+
+                  <p className="text-zinc-400 mb-8">{pack.subtitle}</p>
+
+                  <div className="space-y-5">
+                    {pack.items.map((item) => (
+                      <div key={item} className="flex gap-3">
+                        <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0 mt-0.5" />
+                        <p className="text-zinc-300">{item}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Link
+                    href="https://wa.me/543512520927"
+                    target="_blank"
+                    className="mt-9 inline-flex w-full justify-center bg-white text-black hover:bg-yellow-400 px-6 py-4 rounded-2xl font-black transition"
+                  >
+                    CONSULTAR ESTA OPCIÓN
+                  </Link>
                 </div>
               </div>
             ))}
@@ -277,48 +485,145 @@ export default function ViajaConSimPage() {
         </div>
       </section>
 
-      {/* EXPERIENCIA */}
-      <section className="relative px-6 py-24 border-t border-white/10 overflow-hidden">
-        <Image
-          src="/brasil-flag.jpg"
-          alt="Brasil"
-          fill
-          className="object-cover opacity-10"
-        />
+      {/* SECTORS */}
+      <section id="sectores" className="px-6 py-28 border-t border-white/10">
+        <div className="max-w-7xl mx-auto">
+          <div className="mb-14">
+            <p className="text-yellow-400 font-black tracking-[0.25em] mb-5">
+              SECTORES DEL CIRCUITO
+            </p>
 
-        <div className="relative z-10 max-w-7xl mx-auto grid lg:grid-cols-3 gap-8 items-center">
-          <div>
-            <p className="text-green-400 font-black tracking-[0.18em] mb-5">
-              ¿POR QUÉ VIAJAR CON SIM?
+            <h2 className="text-5xl md:text-7xl font-black leading-none">
+              ELEGÍ TU LUGAR
+              <br />
+              EN LA ACCIÓN
+            </h2>
+          </div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {sectors.map((sector) => (
+              <div
+                key={sector.code}
+                className="rounded-[30px] border border-white/10 bg-white/[0.035] overflow-hidden hover:-translate-y-2 transition"
+              >
+                <div className="relative h-48">
+                  <Image
+                    src="/interlagos-race.png"
+                    alt="Interlagos"
+                    fill
+                    className="object-cover opacity-55"
+                  />
+
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/30 to-transparent" />
+
+                  <div
+                    className={`absolute left-6 bottom-5 w-16 h-16 rounded-full flex items-center justify-center text-black text-3xl font-black ${
+                      sector.tone === "green" ? "bg-green-500" : "bg-yellow-400"
+                    }`}
+                  >
+                    {sector.code}
+                  </div>
+                </div>
+
+                <div className="p-7">
+                  <h3 className="text-2xl font-black mb-4">{sector.name}</h3>
+
+                  <p className="text-zinc-400 leading-relaxed">
+                    {sector.detail}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* BOOKING + PAYMENT */}
+      <section className="px-6 py-28 border-t border-white/10">
+        <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-8">
+          <div className="rounded-[36px] border border-white/10 bg-white/[0.035] p-10">
+            <p className="text-green-400 font-black tracking-[0.25em] mb-5">
+              CÓMO RESERVAR
             </p>
 
             <h2 className="text-5xl font-black leading-none mb-8">
-              EXPERIENCIA
+              ASEGURÁ
               <br />
-              GARANTIZADA
+              TU LUGAR
             </h2>
 
-            <div className="space-y-4">
+            <div className="space-y-5">
               {[
-                "Coordinación en destino.",
-                "Acompañamiento durante todo el viaje.",
-                "Información detallada del circuito.",
-                "Grupo exclusivo de viajeros SIM.",
-              ].map((item) => (
-                <div key={item} className="flex gap-3">
-                  <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />
-                  <p className="text-zinc-300">{item}</p>
+                "La reserva se confirma con una seña por pasajero.",
+                "El saldo puede abonarse en cuotas mensuales o en un pago total.",
+                "La fecha límite de pago total se informa al momento de reservar.",
+                "La preventa se mantiene hasta agotar stock disponible.",
+              ].map((text) => (
+                <div key={text} className="flex gap-4">
+                  <CheckCircle2 className="w-6 h-6 text-green-400 shrink-0 mt-0.5" />
+                  <p className="text-zinc-300">{text}</p>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="rounded-[32px] border border-green-500/50 bg-black/80 p-10 text-center shadow-[0_0_50px_rgba(34,197,94,0.12)]">
-            <Users className="w-14 h-14 text-green-400 mx-auto mb-5" />
+          <div className="rounded-[36px] border border-yellow-400/30 bg-yellow-400/10 p-10">
+            <p className="text-yellow-400 font-black tracking-[0.25em] mb-5">
+              FORMAS DE PAGO
+            </p>
+
+            <h2 className="text-5xl font-black leading-none mb-8">
+              SIMPLE Y
+              <br />
+              FLEXIBLE
+            </h2>
+
+            <div className="space-y-5">
+              {[
+                "Efectivo en sucursales Tiul.",
+                "Transferencia o depósito en dólares.",
+                "Tarjeta de crédito con consumo en dólares.",
+              ].map((text) => (
+                <div key={text} className="flex gap-4">
+                  <CreditCard className="w-6 h-6 text-yellow-400 shrink-0 mt-0.5" />
+                  <p className="text-zinc-300">{text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* TRUST */}
+      <section className="relative px-6 py-24 overflow-hidden">
+        <Image
+          src="/brasil-flag.jpg"
+          alt="Brasil"
+          fill
+          className="object-cover opacity-12"
+        />
+
+        <div className="relative z-10 max-w-7xl mx-auto grid lg:grid-cols-3 gap-8 items-center">
+          <div>
+            <p className="text-green-400 font-black tracking-[0.18em] mb-5">
+              EXPERIENCIA REAL
+            </p>
+
+            <h2 className="text-5xl font-black leading-none">
+              YA LO VIVIERON
+              <br />
+              MÁS DE 250
+              <br />
+              PERSONAS
+            </h2>
+          </div>
+
+          <div className="rounded-[34px] border border-green-500/40 bg-black/75 p-10 text-center">
+            <Users className="w-16 h-16 text-green-400 mx-auto mb-5" />
 
             <p className="text-7xl font-black">250+</p>
 
-            <p className="font-black mt-2">PERSONAS YA VIAJARON CON TIUL</p>
+            <p className="font-black mt-3">PERSONAS YA VIAJARON CON TIUL</p>
 
             <div className="flex justify-center gap-2 mt-6">
               {[1, 2, 3, 4, 5].map((star) => (
@@ -330,110 +635,34 @@ export default function ViajaConSimPage() {
             </div>
           </div>
 
-          <div className="relative rounded-[32px] border border-white/10 bg-black/70 p-8 overflow-hidden">
+          <div className="rounded-[34px] border border-white/10 bg-black/75 p-10">
             <p className="text-6xl text-green-400 leading-none">“</p>
 
-            <p className="text-2xl text-zinc-200 italic leading-relaxed">
-              El año pasado vivimos una experiencia increíble. Organización,
-              grupo y pasión por la F1 en cada detalle.
+            <p className="text-2xl italic leading-relaxed text-zinc-200">
+              Una experiencia pensada para que solo tengas que disfrutar la F1:
+              viaje, organización, grupo y acompañamiento.
             </p>
           </div>
         </div>
       </section>
 
-      {/* RESERVA */}
-      <section className="px-6 pb-24">
-        <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-8">
-          <div className="rounded-[32px] border border-white/10 bg-white/[0.03] p-9">
-            <p className="text-green-400 font-black tracking-[0.2em] mb-6">
-              CÓMO RESERVAR
-            </p>
-
-            <div className="space-y-5">
-              {[
-                "Seña por pasajero para confirmar la reserva.",
-                "Cuotas mensuales o pago total del saldo.",
-                "Pago total antes de la fecha límite.",
-                "La preventa es hasta agotar stock.",
-              ].map((text) => (
-                <div key={text} className="flex gap-4">
-                  <CheckCircle2 className="w-5 h-5 text-yellow-400 shrink-0 mt-0.5" />
-                  <p className="text-zinc-300">{text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-[32px] border border-white/10 bg-white/[0.03] p-9">
-            <p className="text-green-400 font-black tracking-[0.2em] mb-6">
-              FORMAS DE PAGO
-            </p>
-
-            <div className="space-y-5">
-              {[
-                "Efectivo en sucursales Tiul.",
-                "Transferencia o depósito en dólares.",
-                "Tarjeta de crédito en dólares.",
-              ].map((text) => (
-                <div key={text} className="flex gap-4">
-                  <CreditCard className="w-5 h-5 text-yellow-400 shrink-0 mt-0.5" />
-                  <p className="text-zinc-300">{text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* AUTO */}
-      <section className="relative px-6 pb-24">
-        <div className="max-w-7xl mx-auto relative h-[360px] rounded-[44px] border border-white/10 bg-gradient-to-r from-black via-zinc-950 to-black overflow-hidden">
-          <Image
-            src="/carbon.jpg"
-            alt="Carbon"
-            fill
-            className="object-cover opacity-20"
-          />
-
-          <Image
-            src="/f1-car.png"
-            alt="F1 Car"
-            width={850}
-            height={360}
-            className="absolute right-[-40px] bottom-[-20px] object-contain drop-shadow-[0_0_60px_rgba(250,204,21,0.22)]"
-          />
-
-          <div className="absolute left-10 top-10 max-w-xl">
-            <p className="text-green-400 font-black tracking-[0.2em] mb-4">
-              SIM + TIUL SPORTS
-            </p>
-
-            <h2 className="text-5xl font-black leading-none">
-              BRASIL
-              <br />
-              TE ESPERA
-            </h2>
-          </div>
-        </div>
-      </section>
-
-      {/* CTA FINAL */}
-      <section className="relative px-6 py-10 bg-gradient-to-r from-green-600 via-yellow-400 to-yellow-500 text-black">
+      {/* FINAL CTA */}
+      <section className="relative px-6 py-14 bg-gradient-to-r from-green-600 via-yellow-400 to-yellow-500 text-black">
         <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-8">
           <div>
-            <p className="text-5xl font-black leading-none">
-              NO ES LO MISMO
+            <p className="text-5xl md:text-6xl font-black leading-none">
+              BRASIL TE ESPERA
             </p>
 
-            <p className="font-black mt-2 text-lg">
-              SIMULARLO QUE VIVIRLO.
+            <p className="font-black mt-3 text-lg">
+              No es lo mismo simularlo que vivirlo.
             </p>
           </div>
 
           <Link
             href="https://wa.me/543512520927"
             target="_blank"
-            className="bg-black hover:bg-zinc-900 text-white px-9 py-5 rounded-2xl font-black flex items-center justify-center gap-3 transition"
+            className="bg-black hover:bg-zinc-900 text-white px-10 py-6 rounded-2xl font-black flex items-center justify-center gap-3 transition"
           >
             HABLAR POR WHATSAPP
             <ArrowRight className="w-5 h-5" />
