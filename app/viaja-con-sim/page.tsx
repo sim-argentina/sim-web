@@ -46,7 +46,7 @@ export default function ViajaConSimBrasilPage() {
       {/* HERO */}
       <section className="relative min-h-screen flex items-center">
         <Image
-          src="/brasil-hero.jpg"
+          src="/viaja-con-sim/senna.jpg"
           alt="GP Brasil"
           fill
           priority
@@ -68,7 +68,7 @@ export default function ViajaConSimBrasilPage() {
 
             <div className="flex items-center gap-4 mb-8">
               <Image
-                src="/sim-logo.png"
+                src="/viaja-con-sim/logo-sim.png"
                 alt="SIM"
                 width={90}
                 height={40}
@@ -78,7 +78,7 @@ export default function ViajaConSimBrasilPage() {
               <span className="text-zinc-400 text-2xl font-light">×</span>
 
               <Image
-                src="/tiul-logo.png"
+                src="/viaja-con-sim/logo-tiul.png"
                 alt="Tiul"
                 width={90}
                 height={40}
@@ -197,7 +197,7 @@ export default function ViajaConSimBrasilPage() {
           <div className="grid lg:grid-cols-2 gap-8">
             <div className="relative rounded-[32px] overflow-hidden h-[520px]">
               <Image
-                src="/interlagos.jpg"
+                src="/viaja-con-sim/interlagos-f1.jpg"
                 alt="Interlagos"
                 fill
                 className="object-cover"
@@ -327,7 +327,7 @@ export default function ViajaConSimBrasilPage() {
       {/* CTA FINAL */}
       <section className="relative py-28 px-6 overflow-hidden">
         <Image
-          src="/brasil-bandera.jpg"
+          src="/viaja-con-sim/bandera-brasil.jpg"
           alt="Brasil"
           fill
           className="object-cover opacity-20"
