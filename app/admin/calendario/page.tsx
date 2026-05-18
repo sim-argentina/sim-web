@@ -44,13 +44,18 @@ export default function CalendarioAdminPage() {
         <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-4 md:p-6 overflow-hidden shadow-2xl">
           <div className="calendar-wrapper">
             <FullCalendar
-              plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+              plugins={[
+                dayGridPlugin,
+                timeGridPlugin,
+                interactionPlugin,
+              ]}
               initialView="timeGridDay"
               locale="es"
               height="auto"
               allDaySlot={false}
               slotMinTime="10:00:00"
               slotMaxTime="22:00:00"
+              slotDuration="00:20:00"
               expandRows={true}
               weekends={true}
               nowIndicator={true}
@@ -90,8 +95,8 @@ export default function CalendarioAdminPage() {
           background: #18181b !important;
           border: 1px solid #27272a !important;
           color: white !important;
-          border-radius: 12px !important;
-          padding: 10px 16px !important;
+          border-radius: 14px !important;
+          padding: 10px 18px !important;
           font-weight: 600 !important;
           box-shadow: none !important;
         }
@@ -108,23 +113,54 @@ export default function CalendarioAdminPage() {
           border-color: #27272a !important;
         }
 
-        .calendar-wrapper .fc-col-header-cell,
-        .calendar-wrapper .fc-timegrid-slot,
-        .calendar-wrapper .fc-timegrid-axis {
+        .calendar-wrapper .fc-col-header-cell {
           background: #09090b !important;
           color: white !important;
+          padding: 14px 0 !important;
+          font-weight: 600;
+        }
+
+        .calendar-wrapper .fc-timegrid-slot {
+          background: #09090b !important;
+          height: 70px !important;
+        }
+
+        .calendar-wrapper .fc-timegrid-axis {
+          background: #09090b !important;
+          color: #a1a1aa !important;
+          font-size: 0.95rem;
         }
 
         .calendar-wrapper .fc-event {
-          border-radius: 12px !important;
+          border-radius: 14px !important;
           border: none !important;
-          padding: 4px 8px !important;
-          font-size: 0.9rem;
-          font-weight: 600;
+          padding: 10px 12px !important;
+          font-size: 0.95rem;
+          font-weight: 700;
+          min-height: 52px;
+          display: flex;
+          align-items: center;
+        }
+
+        .calendar-wrapper .fc-event-title {
+          white-space: normal !important;
         }
 
         .calendar-wrapper .fc-day-today {
           background: rgba(220, 38, 38, 0.08) !important;
+        }
+
+        .calendar-wrapper .fc-theme-standard .fc-scrollgrid {
+          border-radius: 18px;
+          overflow: hidden;
+        }
+
+        .calendar-wrapper .fc-timegrid-now-indicator-line {
+          border-color: #ef4444 !important;
+        }
+
+        .calendar-wrapper .fc-timegrid-now-indicator-arrow {
+          border-color: #ef4444 !important;
         }
       `}</style>
     </section>
