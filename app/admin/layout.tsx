@@ -9,18 +9,17 @@ export default async function AdminLayout({
 }) {
   const cookieStore = await cookies();
 
-  const role =
-    cookieStore.get("sim-admin-role")?.value;
+  const role = cookieStore.get("sim-admin-role")?.value;
 
   if (!role) {
     redirect("/admin/login");
   }
 
   return (
-    <div className="flex min-h-screen bg-zinc-950">
+    <div className="min-h-screen bg-zinc-950">
       <AdminSidebar role={role} />
 
-      <main className="flex-1 overflow-x-auto">
+      <main className="min-h-screen overflow-x-auto pt-20">
         {children}
       </main>
     </div>
