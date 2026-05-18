@@ -5,9 +5,6 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 
-import "@fullcalendar/daygrid/index.css";
-import "@fullcalendar/timegrid/index.css";
-
 export default function CalendarioAdminPage() {
   const eventos = [
     {
@@ -47,11 +44,7 @@ export default function CalendarioAdminPage() {
         <div className="bg-zinc-950 border border-zinc-800 rounded-3xl p-4 md:p-6 overflow-hidden shadow-2xl">
           <div className="calendar-wrapper">
             <FullCalendar
-              plugins={[
-                dayGridPlugin,
-                timeGridPlugin,
-                interactionPlugin,
-              ]}
+              plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
               initialView="timeGridDay"
               locale="es"
               height="auto"
@@ -84,6 +77,7 @@ export default function CalendarioAdminPage() {
       <style jsx global>{`
         .calendar-wrapper .fc {
           font-family: inherit;
+          color: white;
         }
 
         .calendar-wrapper .fc-toolbar-title {
@@ -102,38 +96,23 @@ export default function CalendarioAdminPage() {
           box-shadow: none !important;
         }
 
-        .calendar-wrapper .fc-button:hover {
-          background: #dc2626 !important;
-          border-color: #dc2626 !important;
-        }
-
+        .calendar-wrapper .fc-button:hover,
         .calendar-wrapper .fc-button-active {
           background: #dc2626 !important;
           border-color: #dc2626 !important;
         }
 
-        .calendar-wrapper .fc-scrollgrid {
-          border-color: #27272a !important;
-        }
-
+        .calendar-wrapper .fc-scrollgrid,
         .calendar-wrapper .fc-theme-standard td,
         .calendar-wrapper .fc-theme-standard th {
           border-color: #27272a !important;
         }
 
-        .calendar-wrapper .fc-col-header-cell {
-          background: #09090b;
-          color: white;
-          padding: 14px 0;
-        }
-
-        .calendar-wrapper .fc-timegrid-slot {
-          background: #09090b;
-        }
-
+        .calendar-wrapper .fc-col-header-cell,
+        .calendar-wrapper .fc-timegrid-slot,
         .calendar-wrapper .fc-timegrid-axis {
-          background: #09090b;
-          color: #a1a1aa;
+          background: #09090b !important;
+          color: white !important;
         }
 
         .calendar-wrapper .fc-event {
@@ -142,14 +121,6 @@ export default function CalendarioAdminPage() {
           padding: 4px 8px !important;
           font-size: 0.9rem;
           font-weight: 600;
-        }
-
-        .calendar-wrapper .fc-timegrid-now-indicator-line {
-          border-color: #ef4444 !important;
-        }
-
-        .calendar-wrapper .fc-timegrid-now-indicator-arrow {
-          border-color: #ef4444 !important;
         }
 
         .calendar-wrapper .fc-day-today {
