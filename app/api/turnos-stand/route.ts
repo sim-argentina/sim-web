@@ -10,15 +10,10 @@ export async function GET() {
       .order("hora", { ascending: true });
 
     if (error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({
-      turnos: data,
-    });
+    return NextResponse.json({ turnos: data });
   } catch {
     return NextResponse.json(
       { error: "Error cargando turnos" },
@@ -36,60 +31,47 @@ export async function POST(req: Request) {
       telefono,
       fecha,
       hora,
+      hora_estimada_subida,
+      hora_subida,
       simuladores,
+      cantidad_personas,
+      cantidad_minutos,
       cantidad_turnos,
       metodo_pago,
       total,
       observaciones,
     } = body;
 
-    const cantidad_simuladores =
-      simuladores?.length || 0;
-
-    const { data, error } =
-      await supabaseAdmin
-        .from("turnos_stand")
-        .insert([
-          {
-            nombre,
-            telefono,
-            fecha,
-            hora,
-
-            simuladores,
-
-            cantidad_simuladores,
-
-            cantidad_turnos:
-              cantidad_turnos || 1,
-
-            metodo_pago:
-              metodo_pago || "efectivo",
-
-            total:
-              Number(total) || 0,
-
-            estado: "activo",
-
-            duracion_minutos: 20,
-
-            observaciones,
-          },
-        ])
-        .select()
-        .single();
+    const { data, error } = await supabaseAdmin
+      .from("turnos_stand")
+      .insert([
+        {
+          nombre,
+          telefono,
+          fecha,
+          hora,
+          hora_estimada_subida: hora_estimada_subida || null,
+          hora_subida: hora_subida || null,
+          simuladores,
+          cantidad_simuladores: simuladores?.length || 0,
+          cantidad_personas: Number(cantidad_personas) || 1,
+          cantidad_minutos: Number(cantidad_minutos) || 15,
+          cantidad_turnos: Number(cantidad_turnos) || 1,
+          metodo_pago,
+          total: Number(total) || 0,
+          estado: "activo",
+          duracion_minutos: Number(cantidad_minutos) || 15,
+          observaciones,
+        },
+      ])
+      .select()
+      .single();
 
     if (error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({
-      ok: true,
-      turno: data,
-    });
+    return NextResponse.json({ ok: true, turno: data });
   } catch {
     return NextResponse.json(
       { error: "Error creando turno" },

@@ -4,15 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 
 type TurnoStand = {
   id: number;
-  created_at?: string;
   nombre?: string;
   telefono?: string;
   fecha: string;
   hora: string;
+  hora_estimada_subida?: string;
+  hora_subida?: string;
   simuladores: string[];
   cantidad_simuladores: number;
+  cantidad_personas: number;
+  cantidad_minutos: number;
   cantidad_turnos: number;
-  duracion_minutos: number;
   total: number;
   metodo_pago: string;
   estado: string;
@@ -21,26 +23,18 @@ type TurnoStand = {
 
 const SIMULADORES = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
 
-const HORARIOS = [
-  "10:00", "10:20", "10:40",
-  "11:00", "11:20", "11:40",
-  "12:00", "12:20", "12:40",
-  "13:00", "13:20", "13:40",
-  "14:00", "14:20", "14:40",
-  "15:00", "15:20", "15:40",
-  "16:00", "16:20", "16:40",
-  "17:00", "17:20", "17:40",
-  "18:00", "18:20", "18:40",
-  "19:00", "19:20", "19:40",
-  "20:00", "20:20", "20:40",
-  "21:00", "21:20", "21:40",
-];
-
 function fechaLocalISO(date = new Date()) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+function horaActual() {
+  const date = new Date();
+  const h = String(date.getHours()).padStart(2, "0");
+  const m = String(date.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
 }
 
 export default function TurneroAdminPage() {
@@ -49,21 +43,25 @@ export default function TurneroAdminPage() {
   const [guardando, setGuardando] = useState(false);
 
   const [fecha, setFecha] = useState(fechaLocalISO());
-  const [hora, setHora] = useState("10:00");
+  const [hora, setHora] = useState(horaActual());
+  const [horaEstimadaSubida, setHoraEstimadaSubida] = useState("");
+  const [horaSubida, setHoraSubida] = useState("");
+
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
   const [simuladores, setSimuladores] = useState<string[]>([]);
+
+  const [cantidadPersonas, setCantidadPersonas] = useState(1);
+  const [cantidadMinutos, setCantidadMinutos] = useState(15);
   const [cantidadTurnos, setCantidadTurnos] = useState(1);
-  const [metodoPago, setMetodoPago] = useState("efectivo");
+
+  const [metodoPago, setMetodoPago] = useState("qr");
   const [total, setTotal] = useState("");
   const [observaciones, setObservaciones] = useState("");
 
   async function cargarTurnos() {
     try {
-      const res = await fetch("/api/turnos-stand", {
-        cache: "no-store",
-      });
-
+      const res = await fetch("/api/turnos-stand", { cache: "no-store" });
       const data = await res.json();
 
       if (!res.ok) {
@@ -90,15 +88,7 @@ export default function TurneroAdminPage() {
       .sort((a, b) => a.hora.localeCompare(b.hora));
   }, [turnos, fecha]);
 
-  const simuladoresOcupados = useMemo(() => {
-    return turnosDelDia
-      .filter((turno) => turno.hora === hora)
-      .flatMap((turno) => turno.simuladores || []);
-  }, [turnosDelDia, hora]);
-
   function toggleSimulador(simulador: string) {
-    if (simuladoresOcupados.includes(simulador)) return;
-
     setSimuladores((actuales) =>
       actuales.includes(simulador)
         ? actuales.filter((s) => s !== simulador)
@@ -110,7 +100,7 @@ export default function TurneroAdminPage() {
     e.preventDefault();
 
     if (!fecha || !hora) {
-      alert("Falta fecha u horario.");
+      alert("Falta fecha u hora de toma.");
       return;
     }
 
@@ -132,7 +122,11 @@ export default function TurneroAdminPage() {
           telefono,
           fecha,
           hora,
+          hora_estimada_subida: horaEstimadaSubida,
+          hora_subida: horaSubida,
           simuladores,
+          cantidad_personas: cantidadPersonas,
+          cantidad_minutos: cantidadMinutos,
           cantidad_turnos: cantidadTurnos,
           metodo_pago: metodoPago,
           total: Number(total) || 0,
@@ -147,11 +141,16 @@ export default function TurneroAdminPage() {
         return;
       }
 
+      setHora(horaActual());
+      setHoraEstimadaSubida("");
+      setHoraSubida("");
       setNombre("");
       setTelefono("");
       setSimuladores([]);
+      setCantidadPersonas(1);
+      setCantidadMinutos(15);
       setCantidadTurnos(1);
-      setMetodoPago("efectivo");
+      setMetodoPago("qr");
       setTotal("");
       setObservaciones("");
 
@@ -177,11 +176,12 @@ export default function TurneroAdminPage() {
           </h1>
 
           <p className="mt-3 max-w-2xl text-white/60">
-            Cargá turnos de clientes que llegan al stand sin reserva online.
+            Cargá turnos tomados en el stand, con horario real de toma,
+            estimación de subida y horario efectivo de subida.
           </p>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
+        <div className="grid gap-6 lg:grid-cols-[460px_1fr]">
           <form
             onSubmit={crearTurno}
             className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
@@ -191,45 +191,64 @@ export default function TurneroAdminPage() {
             </h2>
 
             <div className="space-y-4">
-              <div>
-                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
-                  Fecha
-                </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Fecha
+                  </label>
 
-                <input
-                  type="date"
-                  value={fecha}
-                  onChange={(e) => {
-                    setFecha(e.target.value);
-                    setSimuladores([]);
-                  }}
-                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                />
+                  <input
+                    type="date"
+                    value={fecha}
+                    onChange={(e) => setFecha(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Hora toma
+                  </label>
+
+                  <input
+                    type="time"
+                    value={hora}
+                    onChange={(e) => setHora(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Hora estimada subida
+                  </label>
+
+                  <input
+                    type="time"
+                    value={horaEstimadaSubida}
+                    onChange={(e) => setHoraEstimadaSubida(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Hora subida real
+                  </label>
+
+                  <input
+                    type="time"
+                    value={horaSubida}
+                    onChange={(e) => setHoraSubida(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
-                  Horario
-                </label>
-
-                <select
-                  value={hora}
-                  onChange={(e) => {
-                    setHora(e.target.value);
-                    setSimuladores([]);
-                  }}
-                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                >
-                  {HORARIOS.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
                   Cliente
                 </label>
 
@@ -243,7 +262,7 @@ export default function TurneroAdminPage() {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
                   Teléfono
                 </label>
 
@@ -257,54 +276,103 @@ export default function TurneroAdminPage() {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
                   Simuladores
                 </label>
 
                 <div className="grid grid-cols-2 gap-2">
                   {SIMULADORES.map((simulador) => {
-                    const ocupado = simuladoresOcupados.includes(simulador);
                     const seleccionado = simuladores.includes(simulador);
 
                     return (
                       <button
                         key={simulador}
                         type="button"
-                        disabled={ocupado}
                         onClick={() => toggleSimulador(simulador)}
                         className={`rounded-2xl border px-4 py-3 text-sm font-black uppercase transition ${
-                          ocupado
-                            ? "cursor-not-allowed border-white/5 bg-white/5 text-white/20"
-                            : seleccionado
+                          seleccionado
                             ? "border-red-500 bg-red-600 text-white"
                             : "border-white/15 bg-black text-white/70 hover:border-red-500 hover:text-white"
                         }`}
                       >
                         {simulador}
-                        {ocupado ? " ocupado" : ""}
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
-                    Cantidad turnos
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Personas
+                  </label>
+
+                  <input
+                    type="number"
+                    min={1}
+                    value={cantidadPersonas}
+                    onChange={(e) =>
+                      setCantidadPersonas(Number(e.target.value))
+                    }
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Minutos
+                  </label>
+
+                  <input
+                    type="number"
+                    min={1}
+                    value={cantidadMinutos}
+                    onChange={(e) =>
+                      setCantidadMinutos(Number(e.target.value))
+                    }
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Turnos
                   </label>
 
                   <input
                     type="number"
                     min={1}
                     value={cantidadTurnos}
-                    onChange={(e) => setCantidadTurnos(Number(e.target.value))}
+                    onChange={(e) =>
+                      setCantidadTurnos(Number(e.target.value))
+                    }
                     className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Método pago
+                  </label>
+
+                  <select
+                    value={metodoPago}
+                    onChange={(e) => setMetodoPago(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  >
+                    <option value="qr">QR</option>
+                    <option value="efectivo">Efectivo</option>
+                    <option value="debito">Débito</option>
+                    <option value="credito">Crédito</option>
+                    <option value="transferencia">Transferencia</option>
+                  </select>
+                </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
                     Total
                   </label>
 
@@ -319,25 +387,7 @@ export default function TurneroAdminPage() {
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
-                  Método de pago
-                </label>
-
-                <select
-                  value={metodoPago}
-                  onChange={(e) => setMetodoPago(e.target.value)}
-                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                >
-                  <option value="efectivo">Efectivo</option>
-                  <option value="transferencia">Transferencia</option>
-                  <option value="mercado_pago">Mercado Pago</option>
-                  <option value="tarjeta">Tarjeta</option>
-                  <option value="otro">Otro</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
                   Observaciones
                 </label>
 
@@ -384,53 +434,68 @@ export default function TurneroAdminPage() {
                 </p>
               </div>
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-white/10">
-                <div className="grid grid-cols-[90px_1.2fr_1fr_1fr_100px] bg-red-600 text-xs font-black uppercase text-white">
-                  <div className="p-3">Hora</div>
-                  <div className="p-3">Cliente</div>
-                  <div className="p-3">Simuladores</div>
-                  <div className="p-3">Pago</div>
-                  <div className="p-3 text-right">Total</div>
-                </div>
+              <div className="overflow-auto rounded-2xl border border-white/10">
+                <div className="min-w-[900px]">
+                  <div className="grid grid-cols-[90px_90px_90px_1.2fr_1fr_90px_90px_90px_110px_100px] bg-red-600 text-xs font-black uppercase text-white">
+                    <div className="p-3">Toma</div>
+                    <div className="p-3">Est.</div>
+                    <div className="p-3">Subida</div>
+                    <div className="p-3">Cliente</div>
+                    <div className="p-3">Simus</div>
+                    <div className="p-3">Pers.</div>
+                    <div className="p-3">Min.</div>
+                    <div className="p-3">Turnos</div>
+                    <div className="p-3">Pago</div>
+                    <div className="p-3 text-right">Total</div>
+                  </div>
 
-                {turnosDelDia.map((turno) => (
-                  <div
-                    key={turno.id}
-                    className="grid grid-cols-[90px_1.2fr_1fr_1fr_100px] border-t border-white/10 bg-black text-sm text-white/80"
-                  >
-                    <div className="p-3 font-black">{turno.hora}</div>
+                  {turnosDelDia.map((turno) => (
+                    <div
+                      key={turno.id}
+                      className="grid grid-cols-[90px_90px_90px_1.2fr_1fr_90px_90px_90px_110px_100px] border-t border-white/10 bg-black text-sm text-white/80"
+                    >
+                      <div className="p-3 font-black">{turno.hora}</div>
+                      <div className="p-3">
+                        {turno.hora_estimada_subida || "-"}
+                      </div>
+                      <div className="p-3">{turno.hora_subida || "-"}</div>
 
-                    <div className="p-3">
-                      <p className="font-bold">
-                        {turno.nombre || "Sin nombre"}
-                      </p>
-                      <p className="text-xs text-white/40">
-                        {turno.telefono || "Sin teléfono"}
-                      </p>
-                    </div>
+                      <div className="p-3">
+                        <p className="font-bold">
+                          {turno.nombre || "Sin nombre"}
+                        </p>
+                        <p className="text-xs text-white/40">
+                          {turno.telefono || "Sin teléfono"}
+                        </p>
+                      </div>
 
-                    <div className="p-3">
-                      <div className="flex flex-wrap gap-1">
-                        {(turno.simuladores || []).map((sim) => (
-                          <span
-                            key={sim}
-                            className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-bold uppercase"
-                          >
-                            {sim}
-                          </span>
-                        ))}
+                      <div className="p-3">
+                        <div className="flex flex-wrap gap-1">
+                          {(turno.simuladores || []).map((sim) => (
+                            <span
+                              key={sim}
+                              className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-bold uppercase"
+                            >
+                              {sim}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="p-3">{turno.cantidad_personas}</div>
+                      <div className="p-3">{turno.cantidad_minutos}</div>
+                      <div className="p-3">{turno.cantidad_turnos}</div>
+
+                      <div className="p-3 capitalize">
+                        {turno.metodo_pago || "-"}
+                      </div>
+
+                      <div className="p-3 text-right font-black">
+                        ${Number(turno.total || 0).toLocaleString("es-AR")}
                       </div>
                     </div>
-
-                    <div className="p-3 capitalize">
-                      {turno.metodo_pago?.replace("_", " ") || "Sin dato"}
-                    </div>
-
-                    <div className="p-3 text-right font-black">
-                      ${Number(turno.total || 0).toLocaleString("es-AR")}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </div>
