@@ -1,11 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import FullCalendar from "@fullcalendar/react";
-import type FullCalendarType from "@fullcalendar/react";
-import dayGridPlugin from "@fullcalendar/daygrid";
-import timeGridPlugin from "@fullcalendar/timegrid";
-import interactionPlugin from "@fullcalendar/interaction";
+import { useEffect, useMemo, useState } from "react";
 
 type Reserva = {
   id: number;
@@ -13,443 +8,282 @@ type Reserva = {
   telefono: string;
   fecha: string;
   hora: string;
-  simuladores: unknown;
-  cantidad_turnos: number;
-  total: number;
-  estado: string;
+  simuladores: string[] | string;
+  cantidad_turnos?: number;
+  total?: number;
+  estado?: string;
+  created_at?: string;
 };
 
-type ReservaNormalizada = Omit<Reserva, "simuladores"> & {
-  simuladores: string[];
-};
-
-type CalendarEvent = {
-  id: string;
-  title: string;
-  start: string;
-  end: string;
-  extendedProps: {
-    reserva: ReservaNormalizada;
-  };
-};
-
-function normalizarSimuladores(simuladores: unknown): string[] {
+function normalizarSimuladores(simuladores: Reserva["simuladores"]) {
   if (Array.isArray(simuladores)) return simuladores;
 
-  if (typeof simuladores === "string") {
-    try {
-      const parsed = JSON.parse(simuladores);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
+  try {
+    const parsed = JSON.parse(simuladores);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
-
-  return [];
 }
 
-function calcularFin(fecha: string, hora: string, cantidadTurnos: number) {
-  const [horas, minutos] = hora.split(":").map(Number);
+function sumar20Minutos(hora: string) {
+  const [h, m] = hora.split(":").map(Number);
+  const fecha = new Date();
+  fecha.setHours(h, m + 20, 0, 0);
 
-  const inicio = new Date(`${fecha}T00:00:00`);
-  inicio.setHours(horas, minutos, 0, 0);
-
-  const duracionMinutos = cantidadTurnos * 20;
-
-  const fin = new Date(inicio);
-  fin.setMinutes(fin.getMinutes() + duracionMinutos);
-
-  const yyyy = fin.getFullYear();
-  const mm = String(fin.getMonth() + 1).padStart(2, "0");
-  const dd = String(fin.getDate()).padStart(2, "0");
-  const hh = String(fin.getHours()).padStart(2, "0");
-  const min = String(fin.getMinutes()).padStart(2, "0");
-
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}:00`;
-}
-
-function formatearMonto(valor: number) {
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency",
-    currency: "ARS",
-    maximumFractionDigits: 0,
-  }).format(valor);
+  return fecha.toLocaleTimeString("es-AR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function CalendarioAdminPage() {
-  const calendarRef = useRef<FullCalendarType | null>(null);
-
-  const [fechaBuscada, setFechaBuscada] = useState("");
-  const [eventos, setEventos] = useState<CalendarEvent[]>([]);
+  const [reservas, setReservas] = useState<Reserva[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [reservaSeleccionada, setReservaSeleccionada] =
-    useState<ReservaNormalizada | null>(null);
-
-  async function cargarReservas() {
-    try {
-      setLoading(true);
-      setError("");
-
-      const response = await fetch("/api/reservas?estado=activa", {
-        cache: "no-store",
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Error al cargar reservas");
-      }
-
-      const eventosConvertidos: CalendarEvent[] = data.map((reserva: Reserva) => {
-        const simuladores = normalizarSimuladores(reserva.simuladores);
-        const cantidadSims = simuladores.length;
-
-        const reservaNormalizada: ReservaNormalizada = {
-          ...reserva,
-          simuladores,
-        };
-
-        return {
-          id: String(reserva.id),
-          title: `${reserva.nombre} • ${cantidadSims} ${
-            cantidadSims === 1 ? "Simu" : "Simus"
-          }`,
-          start: `${reserva.fecha}T${reserva.hora}:00`,
-          end: calcularFin(
-            reserva.fecha,
-            reserva.hora,
-            reserva.cantidad_turnos || 1
-          ),
-          extendedProps: {
-            reserva: reservaNormalizada,
-          },
-        };
-      });
-
-      setEventos(eventosConvertidos);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Error desconocido al cargar reservas"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+    useState<Reserva | null>(null);
 
   useEffect(() => {
+    async function cargarReservas() {
+      try {
+        const res = await fetch("/api/reservas", {
+          cache: "no-store",
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          console.error("Error al cargar reservas:", data);
+          return;
+        }
+
+        setReservas(data.reservas || data || []);
+      } catch (error) {
+        console.error("Error al cargar reservas:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
     cargarReservas();
   }, []);
 
-  function irAFecha() {
-    if (!fechaBuscada) return;
+  const reservasOrdenadas = useMemo(() => {
+    return [...reservas]
+      .filter((reserva) => reserva.estado !== "cancelada")
+      .sort((a, b) => {
+        const fechaA = `${a.fecha} ${a.hora}`;
+        const fechaB = `${b.fecha} ${b.hora}`;
+        return fechaA.localeCompare(fechaB);
+      });
+  }, [reservas]);
 
-    const calendarApi = calendarRef.current?.getApi();
+  const reservasPorFecha = useMemo(() => {
+    return reservasOrdenadas.reduce<Record<string, Reserva[]>>(
+      (acc, reserva) => {
+        if (!acc[reserva.fecha]) acc[reserva.fecha] = [];
+        acc[reserva.fecha].push(reserva);
+        return acc;
+      },
+      {}
+    );
+  }, [reservasOrdenadas]);
 
-    if (!calendarApi) return;
-
-    calendarApi.gotoDate(fechaBuscada);
-    calendarApi.changeView("timeGridDay");
-  }
-
-  function volverAHoy() {
-    const calendarApi = calendarRef.current?.getApi();
-
-    if (!calendarApi) return;
-
-    calendarApi.today();
-    calendarApi.changeView("timeGridDay");
-    setFechaBuscada("");
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-black px-6 py-10 text-white">
+        <p>Cargando calendario...</p>
+      </main>
+    );
   }
 
   return (
-    <section className="min-h-screen bg-black text-white px-4 md:px-8 py-6">
-      <div className="max-w-[1450px] mx-auto">
-        <div className="mb-6 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-red-500 tracking-[0.35em] text-xs mb-2 uppercase">
-              Panel Interno
-            </p>
+    <main className="min-h-screen bg-black px-6 py-10 text-white">
+      <section className="mx-auto max-w-6xl">
+        <div className="mb-8">
+          <p className="mb-2 text-sm uppercase tracking-[0.3em] text-red-500">
+            Admin SIM
+          </p>
 
-            <h1 className="text-3xl md:text-4xl font-bold">
-              Calendario de Reservas
-            </h1>
+          <h1 className="text-3xl font-black uppercase md:text-5xl">
+            Calendario de reservas
+          </h1>
 
-            <p className="text-zinc-400 mt-2 text-base">
-              Gestión visual de reservas confirmadas desde Supabase.
-            </p>
-          </div>
-
-          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-3 flex flex-col sm:flex-row gap-3">
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">
-                Buscar fecha exacta
-              </label>
-
-              <input
-                type="date"
-                value={fechaBuscada}
-                onChange={(e) => setFechaBuscada(e.target.value)}
-                className="bg-black border border-zinc-800 rounded-xl px-4 py-2 text-white outline-none focus:border-red-600"
-              />
-            </div>
-
-            <div className="flex items-end gap-2">
-              <button
-                onClick={irAFecha}
-                className="bg-red-600 hover:bg-red-700 rounded-xl px-4 py-2 font-semibold transition"
-              >
-                Ir
-              </button>
-
-              <button
-                onClick={volverAHoy}
-                className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl px-4 py-2 font-semibold transition"
-              >
-                Hoy
-              </button>
-
-              <button
-                onClick={cargarReservas}
-                className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl px-4 py-2 font-semibold transition"
-              >
-                Actualizar
-              </button>
-            </div>
-          </div>
+          <p className="mt-3 max-w-2xl text-white/60">
+            Visualizá las reservas activas, la cantidad de simuladores ocupados
+            y los detalles de cada turno.
+          </p>
         </div>
 
-        {loading && (
-          <div className="mb-4 rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-zinc-400">
-            Cargando reservas...
+        {reservasOrdenadas.length === 0 ? (
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-8">
+            <p className="text-white/70">No hay reservas activas cargadas.</p>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {Object.entries(reservasPorFecha).map(([fecha, reservasDelDia]) => (
+              <div
+                key={fecha}
+                className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 shadow-2xl"
+              >
+                <h2 className="mb-5 text-xl font-black uppercase text-red-500">
+                  {fecha}
+                </h2>
+
+                <div className="grid gap-4">
+                  {reservasDelDia.map((reserva) => {
+                    const simuladores =
+                      normalizarSimuladores(reserva.simuladores);
+
+                    return (
+                      <button
+                        key={reserva.id}
+                        onClick={() => setReservaSeleccionada(reserva)}
+                        className="w-full rounded-2xl border border-white/10 bg-black p-5 text-left transition hover:border-red-500 hover:bg-red-950/20"
+                      >
+                        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <p className="text-lg font-black uppercase">
+                              {reserva.hora} - {sumar20Minutos(reserva.hora)}
+                            </p>
+
+                            <p className="mt-1 text-white/70">
+                              {reserva.nombre}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap gap-3">
+                            <span className="rounded-full bg-red-600 px-4 py-2 text-sm font-bold text-white">
+                              {simuladores.length}{" "}
+                              {simuladores.length === 1
+                                ? "simulador"
+                                : "simuladores"}
+                            </span>
+
+                            <span className="rounded-full border border-white/15 px-4 py-2 text-sm font-bold text-white/80">
+                              Ver detalles
+                            </span>
+                          </div>
+                        </div>
+
+                        {simuladores.length > 0 && (
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {simuladores.map((simulador) => (
+                              <span
+                                key={simulador}
+                                className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold uppercase text-white/80"
+                              >
+                                {simulador}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
-
-        {error && (
-          <div className="mb-4 rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-red-300">
-            {error}
-          </div>
-        )}
-
-        <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 overflow-hidden shadow-2xl">
-          <div className="calendar-wrapper">
-            <FullCalendar
-              ref={calendarRef}
-              plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-              initialView="timeGridDay"
-              locale="es"
-              height={650}
-              allDaySlot={false}
-              slotMinTime="10:00:00"
-              slotMaxTime="22:00:00"
-              slotDuration="00:20:00"
-              slotLabelInterval="01:00"
-              expandRows={false}
-              weekends={true}
-              nowIndicator={true}
-              headerToolbar={{
-                left: "prev,next today",
-                center: "title",
-                right: "timeGridDay,timeGridWeek,dayGridMonth",
-              }}
-              buttonText={{
-                today: "Hoy",
-                month: "Mes",
-                week: "Semana",
-                day: "Día",
-              }}
-              events={eventos}
-              eventBackgroundColor="#dc2626"
-              eventBorderColor="#dc2626"
-              eventTextColor="#ffffff"
-              eventClick={(info) => {
-                setReservaSeleccionada(info.event.extendedProps.reserva);
-              }}
-            />
-          </div>
-        </div>
-      </div>
+      </section>
 
       {reservaSeleccionada && (
-        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center px-4">
-          <div className="w-full max-w-lg bg-zinc-950 border border-zinc-800 rounded-2xl p-6 text-white shadow-2xl">
-            <div className="flex items-start justify-between gap-4 mb-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 px-4">
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-zinc-950 p-6 text-white shadow-2xl">
+            <div className="mb-5 flex items-start justify-between gap-4">
               <div>
-                <p className="text-red-500 tracking-[0.3em] text-xs uppercase mb-2">
+                <p className="text-sm uppercase tracking-[0.25em] text-red-500">
                   Detalle de reserva
                 </p>
 
-                <h2 className="text-2xl font-bold">
+                <h3 className="mt-2 text-2xl font-black uppercase">
                   {reservaSeleccionada.nombre}
-                </h2>
+                </h3>
               </div>
 
               <button
                 onClick={() => setReservaSeleccionada(null)}
-                className="text-zinc-400 hover:text-white text-2xl"
+                className="rounded-full border border-white/15 px-3 py-1 text-sm font-bold hover:bg-white hover:text-black"
               >
-                ×
+                X
               </button>
             </div>
 
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
-                <span className="text-zinc-500">Teléfono</span>
-                <span>{reservaSeleccionada.telefono}</span>
+            <div className="space-y-4 text-sm">
+              <div className="rounded-2xl bg-white/[0.04] p-4">
+                <p className="text-white/50">Fecha</p>
+                <p className="text-lg font-bold">{reservaSeleccionada.fecha}</p>
               </div>
 
-              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
-                <span className="text-zinc-500">Fecha</span>
-                <span>{reservaSeleccionada.fecha}</span>
+              <div className="rounded-2xl bg-white/[0.04] p-4">
+                <p className="text-white/50">Horario</p>
+                <p className="text-lg font-bold">
+                  {reservaSeleccionada.hora} -{" "}
+                  {sumar20Minutos(reservaSeleccionada.hora)}
+                </p>
               </div>
 
-              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
-                <span className="text-zinc-500">Hora</span>
-                <span>{reservaSeleccionada.hora}</span>
+              <div className="rounded-2xl bg-white/[0.04] p-4">
+                <p className="text-white/50">Teléfono</p>
+                <p className="text-lg font-bold">
+                  {reservaSeleccionada.telefono || "Sin teléfono"}
+                </p>
               </div>
 
-              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
-                <span className="text-zinc-500">Turnos</span>
-                <span>{reservaSeleccionada.cantidad_turnos}</span>
-              </div>
+              <div className="rounded-2xl bg-white/[0.04] p-4">
+                <p className="text-white/50">Simuladores usados</p>
 
-              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
-                <span className="text-zinc-500">Total</span>
-                <span>{formatearMonto(reservaSeleccionada.total)}</span>
-              </div>
-
-              <div className="border-b border-zinc-800 pb-2">
-                <span className="block text-zinc-500 mb-2">Simuladores</span>
-                <div className="flex flex-wrap gap-2">
-                  {reservaSeleccionada.simuladores.length > 0 ? (
-                    reservaSeleccionada.simuladores.map((sim) => (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {normalizarSimuladores(reservaSeleccionada.simuladores)
+                    .length > 0 ? (
+                    normalizarSimuladores(
+                      reservaSeleccionada.simuladores
+                    ).map((simulador) => (
                       <span
-                        key={sim}
-                        className="bg-red-600/20 border border-red-800 text-red-200 rounded-full px-3 py-1"
+                        key={simulador}
+                        className="rounded-full bg-red-600 px-3 py-1 text-xs font-black uppercase"
                       >
-                        {sim}
+                        {simulador}
                       </span>
                     ))
                   ) : (
-                    <span className="text-zinc-400">
-                      Sin simuladores cargados
-                    </span>
+                    <p className="text-white/60">Sin simuladores cargados</p>
                   )}
                 </div>
               </div>
 
-              <div className="flex justify-between gap-4">
-                <span className="text-zinc-500">Estado</span>
-                <span className="text-green-400">
-                  {reservaSeleccionada.estado}
-                </span>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl bg-white/[0.04] p-4">
+                  <p className="text-white/50">Cantidad</p>
+                  <p className="text-lg font-bold">
+                    {
+                      normalizarSimuladores(reservaSeleccionada.simuladores)
+                        .length
+                    }
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-white/[0.04] p-4">
+                  <p className="text-white/50">Total</p>
+                  <p className="text-lg font-bold">
+                    {reservaSeleccionada.total
+                      ? `$${reservaSeleccionada.total.toLocaleString("es-AR")}`
+                      : "Sin total"}
+                  </p>
+                </div>
               </div>
             </div>
+
+            <button
+              onClick={() => setReservaSeleccionada(null)}
+              className="mt-6 w-full rounded-2xl bg-red-600 px-5 py-3 font-black uppercase text-white transition hover:bg-red-700"
+            >
+              Cerrar detalles
+            </button>
           </div>
         </div>
       )}
-
-      <style jsx global>{`
-        .calendar-wrapper .fc {
-          font-family: inherit;
-          color: white;
-          background: #09090b;
-        }
-
-        .calendar-wrapper .fc-toolbar {
-          margin-bottom: 18px !important;
-        }
-
-        .calendar-wrapper .fc-toolbar-title {
-          font-size: 1.6rem !important;
-          font-weight: 800;
-          color: white;
-        }
-
-        .calendar-wrapper .fc-button {
-          background: #18181b !important;
-          border: 1px solid #27272a !important;
-          color: white !important;
-          border-radius: 10px !important;
-          padding: 8px 13px !important;
-          font-size: 0.85rem !important;
-          font-weight: 700 !important;
-          box-shadow: none !important;
-        }
-
-        .calendar-wrapper .fc-button:hover,
-        .calendar-wrapper .fc-button-active {
-          background: #dc2626 !important;
-          border-color: #dc2626 !important;
-        }
-
-        .calendar-wrapper .fc-scrollgrid,
-        .calendar-wrapper .fc-theme-standard td,
-        .calendar-wrapper .fc-theme-standard th {
-          border-color: #27272a !important;
-        }
-
-        .calendar-wrapper .fc-col-header-cell {
-          background: #111113 !important;
-          color: #e4e4e7 !important;
-          padding: 8px 0 !important;
-          font-size: 0.85rem;
-          font-weight: 700;
-        }
-
-        .calendar-wrapper .fc-col-header-cell-cushion {
-          color: #e4e4e7 !important;
-          text-decoration: none !important;
-        }
-
-        .calendar-wrapper .fc-timegrid-slot {
-          background: #09090b !important;
-          height: 42px !important;
-        }
-
-        .calendar-wrapper .fc-timegrid-axis,
-        .calendar-wrapper .fc-timegrid-slot-label {
-          background: #09090b !important;
-          color: #a1a1aa !important;
-          font-size: 0.8rem !important;
-        }
-
-        .calendar-wrapper .fc-event {
-          border-radius: 8px !important;
-          border: none !important;
-          padding: 4px 8px !important;
-          font-size: 0.8rem !important;
-          font-weight: 700;
-          min-height: 28px;
-          display: flex;
-          align-items: center;
-          cursor: pointer;
-        }
-
-        .calendar-wrapper .fc-event-title {
-          white-space: normal !important;
-          overflow: visible !important;
-        }
-
-        .calendar-wrapper .fc-day-today {
-          background: rgba(220, 38, 38, 0.06) !important;
-        }
-
-        .calendar-wrapper .fc-theme-standard .fc-scrollgrid {
-          border-radius: 14px;
-          overflow: hidden;
-        }
-
-        .calendar-wrapper .fc-timegrid-now-indicator-line {
-          border-color: #ef4444 !important;
-        }
-
-        .calendar-wrapper .fc-timegrid-now-indicator-arrow {
-          border-color: #ef4444 !important;
-        }
-      `}</style>
-    </section>
+    </main>
   );
 }
