@@ -15,7 +15,7 @@ type Reserva = {
   created_at?: string;
 };
 
-type Filtro = "dia" | "semana" | "mes" | "fecha";
+type Filtro = "dia" | "semana" | "mes" | "personalizado";
 
 function normalizarSimuladores(simuladores: Reserva["simuladores"]) {
   if (Array.isArray(simuladores)) return simuladores;
@@ -35,18 +35,6 @@ function fechaLocalISO(date = new Date()) {
   return `${y}-${m}-${d}`;
 }
 
-function sumar20Minutos(hora: string) {
-  const [h, m] = hora.split(":").map(Number);
-  const fecha = new Date();
-  fecha.setHours(h, m + 20, 0, 0);
-
-  return fecha.toLocaleTimeString("es-AR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-}
-
 function horaBonita(hora: string) {
   const [h, m] = hora.split(":").map(Number);
   const fecha = new Date();
@@ -59,28 +47,54 @@ function horaBonita(hora: string) {
   });
 }
 
+function sumar20Minutos(hora: string) {
+  const [h, m] = hora.split(":").map(Number);
+  const fecha = new Date();
+  fecha.setHours(h, m + 20, 0, 0);
+
+  return fecha.toLocaleTimeString("es-AR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 function inicioSemana(date: Date) {
   const copia = new Date(date);
   const dia = copia.getDay();
   const diferencia = dia === 0 ? -6 : 1 - dia;
+
   copia.setDate(copia.getDate() + diferencia);
   copia.setHours(0, 0, 0, 0);
+
   return copia;
 }
 
 function finSemana(date: Date) {
   const inicio = inicioSemana(date);
   const fin = new Date(inicio);
+
   fin.setDate(inicio.getDate() + 6);
   fin.setHours(23, 59, 59, 999);
+
   return fin;
+}
+
+function formatearTotal(total?: number) {
+  if (!total) return "Sin total";
+
+  return `$${Number(total).toLocaleString("es-AR")}`;
 }
 
 export default function CalendarioAdminPage() {
   const [reservas, setReservas] = useState<Reserva[]>([]);
   const [loading, setLoading] = useState(true);
+
   const [filtro, setFiltro] = useState<Filtro>("semana");
   const [fechaElegida, setFechaElegida] = useState(fechaLocalISO());
+  const [fechaDesde, setFechaDesde] = useState(fechaLocalISO());
+  const [fechaHasta, setFechaHasta] = useState(fechaLocalISO());
+
   const [reservaSeleccionada, setReservaSeleccionada] =
     useState<Reserva | null>(null);
 
@@ -110,23 +124,18 @@ export default function CalendarioAdminPage() {
   }, []);
 
   const reservasFiltradas = useMemo(() => {
-    const hoy = new Date();
-    const fechaBase = new Date(`${fechaElegida}T00:00:00`);
-
     return reservas
       .filter((reserva) => reserva.estado !== "cancelada")
       .filter((reserva) => {
         const fechaReserva = new Date(`${reserva.fecha}T00:00:00`);
 
         if (filtro === "dia") {
-          return reserva.fecha === fechaLocalISO(hoy);
-        }
-
-        if (filtro === "fecha") {
           return reserva.fecha === fechaElegida;
         }
 
         if (filtro === "semana") {
+          const fechaBase = new Date(`${fechaElegida}T00:00:00`);
+
           return (
             fechaReserva >= inicioSemana(fechaBase) &&
             fechaReserva <= finSemana(fechaBase)
@@ -134,10 +143,19 @@ export default function CalendarioAdminPage() {
         }
 
         if (filtro === "mes") {
+          const fechaBase = new Date(`${fechaElegida}T00:00:00`);
+
           return (
             fechaReserva.getFullYear() === fechaBase.getFullYear() &&
             fechaReserva.getMonth() === fechaBase.getMonth()
           );
+        }
+
+        if (filtro === "personalizado") {
+          const desde = new Date(`${fechaDesde}T00:00:00`);
+          const hasta = new Date(`${fechaHasta}T23:59:59`);
+
+          return fechaReserva >= desde && fechaReserva <= hasta;
         }
 
         return true;
@@ -145,16 +163,20 @@ export default function CalendarioAdminPage() {
       .sort((a, b) => {
         const fechaHoraA = new Date(`${a.fecha}T${a.hora}`);
         const fechaHoraB = new Date(`${b.fecha}T${b.hora}`);
+
         return fechaHoraA.getTime() - fechaHoraB.getTime();
       });
-  }, [reservas, filtro, fechaElegida]);
+  }, [reservas, filtro, fechaElegida, fechaDesde, fechaHasta]);
 
   const reservasPorFecha = useMemo(() => {
-    return reservasFiltradas.reduce<Record<string, Reserva[]>>((acc, reserva) => {
-      if (!acc[reserva.fecha]) acc[reserva.fecha] = [];
-      acc[reserva.fecha].push(reserva);
-      return acc;
-    }, {});
+    return reservasFiltradas.reduce<Record<string, Reserva[]>>(
+      (acc, reserva) => {
+        if (!acc[reserva.fecha]) acc[reserva.fecha] = [];
+        acc[reserva.fecha].push(reserva);
+        return acc;
+      },
+      {}
+    );
   }, [reservasFiltradas]);
 
   if (loading) {
@@ -178,12 +200,13 @@ export default function CalendarioAdminPage() {
           </h1>
 
           <p className="mt-3 max-w-2xl text-white/60">
-            Visualizá reservas activas por día, semana, mes o fecha específica.
+            Visualizá reservas activas por día, semana, mes o período
+            personalizado.
           </p>
         </div>
 
         <div className="mb-8 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
             <div>
               <p className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-white/50">
                 Filtrar por
@@ -191,10 +214,10 @@ export default function CalendarioAdminPage() {
 
               <div className="flex flex-wrap gap-2">
                 {[
-                  { key: "dia", label: "Hoy" },
+                  { key: "dia", label: "Día" },
                   { key: "semana", label: "Semana" },
                   { key: "mes", label: "Mes" },
-                  { key: "fecha", label: "Fecha específica" },
+                  { key: "personalizado", label: "Personalizado" },
                 ].map((item) => (
                   <button
                     key={item.key}
@@ -211,18 +234,48 @@ export default function CalendarioAdminPage() {
               </div>
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
-                Fecha base
-              </label>
+            {filtro !== "personalizado" ? (
+              <div>
+                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                  Fecha
+                </label>
 
-              <input
-                type="date"
-                value={fechaElegida}
-                onChange={(e) => setFechaElegida(e.target.value)}
-                className="rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-              />
-            </div>
+                <input
+                  type="date"
+                  value={fechaElegida}
+                  onChange={(e) => setFechaElegida(e.target.value)}
+                  className="rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                />
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <div>
+                  <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                    Desde
+                  </label>
+
+                  <input
+                    type="date"
+                    value={fechaDesde}
+                    onChange={(e) => setFechaDesde(e.target.value)}
+                    className="rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                    Hasta
+                  </label>
+
+                  <input
+                    type="date"
+                    value={fechaHasta}
+                    onChange={(e) => setFechaHasta(e.target.value)}
+                    className="rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -381,9 +434,7 @@ export default function CalendarioAdminPage() {
                 <div className="rounded-2xl bg-white/[0.04] p-4">
                   <p className="text-white/50">Total</p>
                   <p className="text-lg font-bold">
-                    {reservaSeleccionada.total
-                      ? `$${reservaSeleccionada.total.toLocaleString("es-AR")}`
-                      : "Sin total"}
+                    {formatearTotal(reservaSeleccionada.total)}
                   </p>
                 </div>
               </div>
