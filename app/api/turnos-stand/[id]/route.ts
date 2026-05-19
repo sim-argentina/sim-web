@@ -3,9 +3,10 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await context.params;
     const body = await req.json();
 
     const { data, error } = await supabaseAdmin
@@ -26,7 +27,7 @@ export async function PATCH(
         total: Number(body.total) || 0,
         observaciones: body.observaciones,
       })
-      .eq("id", params.id)
+      .eq("id", id)
       .select()
       .single();
 
