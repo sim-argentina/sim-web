@@ -95,6 +95,8 @@ export default function CalendarioAdminPage() {
   const [fechaDesde, setFechaDesde] = useState(fechaLocalISO());
   const [fechaHasta, setFechaHasta] = useState(fechaLocalISO());
 
+  const [busqueda, setBusqueda] = useState("");
+
   const [reservaSeleccionada, setReservaSeleccionada] =
     useState<Reserva | null>(null);
 
@@ -126,6 +128,16 @@ export default function CalendarioAdminPage() {
   const reservasFiltradas = useMemo(() => {
     return reservas
       .filter((reserva) => reserva.estado !== "cancelada")
+      .filter((reserva) => {
+        const texto = busqueda.toLowerCase().trim();
+
+        if (!texto) return true;
+
+        return (
+          reserva.nombre?.toLowerCase().includes(texto) ||
+          reserva.telefono?.toLowerCase().includes(texto)
+        );
+      })
       .filter((reserva) => {
         const fechaReserva = new Date(`${reserva.fecha}T00:00:00`);
 
@@ -166,7 +178,7 @@ export default function CalendarioAdminPage() {
 
         return fechaHoraA.getTime() - fechaHoraB.getTime();
       });
-  }, [reservas, filtro, fechaElegida, fechaDesde, fechaHasta]);
+  }, [reservas, filtro, fechaElegida, fechaDesde, fechaHasta, busqueda]);
 
   const reservasPorFecha = useMemo(() => {
     return reservasFiltradas.reduce<Record<string, Reserva[]>>(
@@ -200,8 +212,8 @@ export default function CalendarioAdminPage() {
           </h1>
 
           <p className="mt-3 max-w-2xl text-white/60">
-            Visualizá reservas activas por día, semana, mes o período
-            personalizado.
+            Visualizá reservas activas por día, semana, mes, período
+            personalizado, nombre o teléfono.
           </p>
         </div>
 
@@ -231,6 +243,20 @@ export default function CalendarioAdminPage() {
                     {item.label}
                   </button>
                 ))}
+              </div>
+
+              <div className="mt-5">
+                <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                  Buscar reserva
+                </label>
+
+                <input
+                  type="text"
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  placeholder="Buscar por nombre o teléfono..."
+                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500 md:w-[360px]"
+                />
               </div>
             </div>
 
@@ -316,6 +342,10 @@ export default function CalendarioAdminPage() {
 
                             <p className="mt-1 text-white/70">
                               {reserva.nombre}
+                            </p>
+
+                            <p className="mt-1 text-sm text-white/40">
+                              {reserva.telefono || "Sin teléfono"}
                             </p>
                           </div>
 
