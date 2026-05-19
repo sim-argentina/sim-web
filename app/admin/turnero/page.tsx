@@ -104,11 +104,6 @@ export default function TurneroAdminPage() {
       return;
     }
 
-    if (simuladores.length === 0) {
-      alert("Seleccioná al menos un simulador.");
-      return;
-    }
-
     setGuardando(true);
 
     try {
