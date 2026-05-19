@@ -13,10 +13,14 @@ type Reserva = {
   telefono: string;
   fecha: string;
   hora: string;
-  simuladores: string[];
+  simuladores: unknown;
   cantidad_turnos: number;
   total: number;
   estado: string;
+};
+
+type ReservaNormalizada = Omit<Reserva, "simuladores"> & {
+  simuladores: string[];
 };
 
 type CalendarEvent = {
@@ -25,16 +29,43 @@ type CalendarEvent = {
   start: string;
   end: string;
   extendedProps: {
-    reserva: Reserva;
+    reserva: ReservaNormalizada;
   };
 };
 
-function calcularFin(fecha: string, hora: string, cantidadTurnos: number) {
-  const inicio = new Date(`${fecha}T${hora}:00`);
-  const minutos = cantidadTurnos * 20;
-  const fin = new Date(inicio.getTime() + minutos * 60 * 1000);
+function normalizarSimuladores(simuladores: unknown): string[] {
+  if (Array.isArray(simuladores)) return simuladores;
 
-  return fin.toISOString().slice(0, 19);
+  if (typeof simuladores === "string") {
+    try {
+      const parsed = JSON.parse(simuladores);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  return [];
+}
+
+function calcularFin(fecha: string, hora: string, cantidadTurnos: number) {
+  const [horas, minutos] = hora.split(":").map(Number);
+
+  const inicio = new Date(`${fecha}T00:00:00`);
+  inicio.setHours(horas, minutos, 0, 0);
+
+  const duracionMinutos = cantidadTurnos * 20;
+
+  const fin = new Date(inicio);
+  fin.setMinutes(fin.getMinutes() + duracionMinutos);
+
+  const yyyy = fin.getFullYear();
+  const mm = String(fin.getMonth() + 1).padStart(2, "0");
+  const dd = String(fin.getDate()).padStart(2, "0");
+  const hh = String(fin.getHours()).padStart(2, "0");
+  const min = String(fin.getMinutes()).padStart(2, "0");
+
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:00`;
 }
 
 function formatearMonto(valor: number) {
@@ -53,7 +84,7 @@ export default function CalendarioAdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reservaSeleccionada, setReservaSeleccionada] =
-    useState<Reserva | null>(null);
+    useState<ReservaNormalizada | null>(null);
 
   async function cargarReservas() {
     try {
@@ -71,9 +102,13 @@ export default function CalendarioAdminPage() {
       }
 
       const eventosConvertidos: CalendarEvent[] = data.map((reserva: Reserva) => {
-        const cantidadSims = Array.isArray(reserva.simuladores)
-          ? reserva.simuladores.length
-          : 0;
+        const simuladores = normalizarSimuladores(reserva.simuladores);
+        const cantidadSims = simuladores.length;
+
+        const reservaNormalizada: ReservaNormalizada = {
+          ...reserva,
+          simuladores,
+        };
 
         return {
           id: String(reserva.id),
@@ -87,7 +122,7 @@ export default function CalendarioAdminPage() {
             reserva.cantidad_turnos || 1
           ),
           extendedProps: {
-            reserva,
+            reserva: reservaNormalizada,
           },
         };
       });
@@ -288,14 +323,20 @@ export default function CalendarioAdminPage() {
               <div className="border-b border-zinc-800 pb-2">
                 <span className="block text-zinc-500 mb-2">Simuladores</span>
                 <div className="flex flex-wrap gap-2">
-                  {reservaSeleccionada.simuladores.map((sim) => (
-                    <span
-                      key={sim}
-                      className="bg-red-600/20 border border-red-800 text-red-200 rounded-full px-3 py-1"
-                    >
-                      {sim}
+                  {reservaSeleccionada.simuladores.length > 0 ? (
+                    reservaSeleccionada.simuladores.map((sim) => (
+                      <span
+                        key={sim}
+                        className="bg-red-600/20 border border-red-800 text-red-200 rounded-full px-3 py-1"
+                      >
+                        {sim}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-zinc-400">
+                      Sin simuladores cargados
                     </span>
-                  ))}
+                  )}
                 </div>
               </div>
 
