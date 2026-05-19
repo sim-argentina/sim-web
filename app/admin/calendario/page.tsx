@@ -1,33 +1,112 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import type FullCalendarType from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 
+type Reserva = {
+  id: number;
+  nombre: string;
+  telefono: string;
+  fecha: string;
+  hora: string;
+  simuladores: string[];
+  cantidad_turnos: number;
+  total: number;
+  estado: string;
+};
+
+type CalendarEvent = {
+  id: string;
+  title: string;
+  start: string;
+  end: string;
+  extendedProps: {
+    reserva: Reserva;
+  };
+};
+
+function calcularFin(fecha: string, hora: string, cantidadTurnos: number) {
+  const inicio = new Date(`${fecha}T${hora}:00`);
+  const minutos = cantidadTurnos * 20;
+  const fin = new Date(inicio.getTime() + minutos * 60 * 1000);
+
+  return fin.toISOString().slice(0, 19);
+}
+
+function formatearMonto(valor: number) {
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 0,
+  }).format(valor);
+}
+
 export default function CalendarioAdminPage() {
   const calendarRef = useRef<FullCalendarType | null>(null);
-  const [fechaBuscada, setFechaBuscada] = useState("");
 
-  const eventos = [
-    {
-      title: "Juan Pérez • 2 Simus",
-      start: "2026-05-18T14:00:00",
-      end: "2026-05-18T14:20:00",
-    },
-    {
-      title: "Martín Gómez • 1 Simu",
-      start: "2026-05-18T15:00:00",
-      end: "2026-05-18T15:20:00",
-    },
-    {
-      title: "Lucas Fernández • 4 Simus",
-      start: "2026-05-18T17:00:00",
-      end: "2026-05-18T17:40:00",
-    },
-  ];
+  const [fechaBuscada, setFechaBuscada] = useState("");
+  const [eventos, setEventos] = useState<CalendarEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [reservaSeleccionada, setReservaSeleccionada] =
+    useState<Reserva | null>(null);
+
+  async function cargarReservas() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const response = await fetch("/api/reservas?estado=activa", {
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Error al cargar reservas");
+      }
+
+      const eventosConvertidos: CalendarEvent[] = data.map((reserva: Reserva) => {
+        const cantidadSims = Array.isArray(reserva.simuladores)
+          ? reserva.simuladores.length
+          : 0;
+
+        return {
+          id: String(reserva.id),
+          title: `${reserva.nombre} • ${cantidadSims} ${
+            cantidadSims === 1 ? "Simu" : "Simus"
+          }`,
+          start: `${reserva.fecha}T${reserva.hora}:00`,
+          end: calcularFin(
+            reserva.fecha,
+            reserva.hora,
+            reserva.cantidad_turnos || 1
+          ),
+          extendedProps: {
+            reserva,
+          },
+        };
+      });
+
+      setEventos(eventosConvertidos);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Error desconocido al cargar reservas"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    cargarReservas();
+  }, []);
 
   function irAFecha() {
     if (!fechaBuscada) return;
@@ -64,7 +143,7 @@ export default function CalendarioAdminPage() {
             </h1>
 
             <p className="text-zinc-400 mt-2 text-base">
-              Gestión visual de reservas confirmadas.
+              Gestión visual de reservas confirmadas desde Supabase.
             </p>
           </div>
 
@@ -96,9 +175,28 @@ export default function CalendarioAdminPage() {
               >
                 Hoy
               </button>
+
+              <button
+                onClick={cargarReservas}
+                className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl px-4 py-2 font-semibold transition"
+              >
+                Actualizar
+              </button>
             </div>
           </div>
         </div>
+
+        {loading && (
+          <div className="mb-4 rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-zinc-400">
+            Cargando reservas...
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-red-300">
+            {error}
+          </div>
+        )}
 
         <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-4 overflow-hidden shadow-2xl">
           <div className="calendar-wrapper">
@@ -131,10 +229,86 @@ export default function CalendarioAdminPage() {
               eventBackgroundColor="#dc2626"
               eventBorderColor="#dc2626"
               eventTextColor="#ffffff"
+              eventClick={(info) => {
+                setReservaSeleccionada(info.event.extendedProps.reserva);
+              }}
             />
           </div>
         </div>
       </div>
+
+      {reservaSeleccionada && (
+        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center px-4">
+          <div className="w-full max-w-lg bg-zinc-950 border border-zinc-800 rounded-2xl p-6 text-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4 mb-6">
+              <div>
+                <p className="text-red-500 tracking-[0.3em] text-xs uppercase mb-2">
+                  Detalle de reserva
+                </p>
+
+                <h2 className="text-2xl font-bold">
+                  {reservaSeleccionada.nombre}
+                </h2>
+              </div>
+
+              <button
+                onClick={() => setReservaSeleccionada(null)}
+                className="text-zinc-400 hover:text-white text-2xl"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
+                <span className="text-zinc-500">Teléfono</span>
+                <span>{reservaSeleccionada.telefono}</span>
+              </div>
+
+              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
+                <span className="text-zinc-500">Fecha</span>
+                <span>{reservaSeleccionada.fecha}</span>
+              </div>
+
+              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
+                <span className="text-zinc-500">Hora</span>
+                <span>{reservaSeleccionada.hora}</span>
+              </div>
+
+              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
+                <span className="text-zinc-500">Turnos</span>
+                <span>{reservaSeleccionada.cantidad_turnos}</span>
+              </div>
+
+              <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
+                <span className="text-zinc-500">Total</span>
+                <span>{formatearMonto(reservaSeleccionada.total)}</span>
+              </div>
+
+              <div className="border-b border-zinc-800 pb-2">
+                <span className="block text-zinc-500 mb-2">Simuladores</span>
+                <div className="flex flex-wrap gap-2">
+                  {reservaSeleccionada.simuladores.map((sim) => (
+                    <span
+                      key={sim}
+                      className="bg-red-600/20 border border-red-800 text-red-200 rounded-full px-3 py-1"
+                    >
+                      {sim}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-between gap-4">
+                <span className="text-zinc-500">Estado</span>
+                <span className="text-green-400">
+                  {reservaSeleccionada.estado}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style jsx global>{`
         .calendar-wrapper .fc {
@@ -210,6 +384,7 @@ export default function CalendarioAdminPage() {
           min-height: 28px;
           display: flex;
           align-items: center;
+          cursor: pointer;
         }
 
         .calendar-wrapper .fc-event-title {

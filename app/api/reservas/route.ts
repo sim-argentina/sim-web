@@ -15,22 +15,32 @@ type ReservaBody = {
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
+
     const fecha = searchParams.get("fecha");
+    const estado = searchParams.get("estado");
 
     let query = supabaseAdmin
       .from("reservas")
       .select("*")
-      .order("created_at", { ascending: false });
+      .order("fecha", { ascending: true })
+      .order("hora", { ascending: true });
 
     if (fecha) {
       query = query.eq("fecha", fecha);
+    }
+
+    if (estado) {
+      query = query.eq("estado", estado);
     }
 
     const { data, error } = await query;
 
     if (error) {
       return NextResponse.json(
-        { error: "Error al obtener reservas", details: error.message },
+        {
+          error: "Error al obtener reservas",
+          details: error.message,
+        },
         { status: 500 }
       );
     }
@@ -74,7 +84,9 @@ export async function POST(req: Request) {
       acepto_condiciones !== true
     ) {
       return NextResponse.json(
-        { error: "Faltan campos obligatorios o no se aceptaron las condiciones" },
+        {
+          error: "Faltan campos obligatorios o no se aceptaron las condiciones",
+        },
         { status: 400 }
       );
     }
@@ -137,7 +149,10 @@ export async function POST(req: Request) {
 
     if (error) {
       return NextResponse.json(
-        { error: "Error al guardar la reserva", details: error.message },
+        {
+          error: "Error al guardar la reserva",
+          details: error.message,
+        },
         { status: 500 }
       );
     }
