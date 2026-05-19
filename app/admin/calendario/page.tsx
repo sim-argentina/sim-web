@@ -15,6 +15,8 @@ type Reserva = {
   created_at?: string;
 };
 
+type Filtro = "dia" | "semana" | "mes" | "fecha";
+
 function normalizarSimuladores(simuladores: Reserva["simuladores"]) {
   if (Array.isArray(simuladores)) return simuladores;
 
@@ -26,6 +28,13 @@ function normalizarSimuladores(simuladores: Reserva["simuladores"]) {
   }
 }
 
+function fechaLocalISO(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function sumar20Minutos(hora: string) {
   const [h, m] = hora.split(":").map(Number);
   const fecha = new Date();
@@ -34,12 +43,44 @@ function sumar20Minutos(hora: string) {
   return fecha.toLocaleTimeString("es-AR", {
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
+}
+
+function horaBonita(hora: string) {
+  const [h, m] = hora.split(":").map(Number);
+  const fecha = new Date();
+  fecha.setHours(h, m, 0, 0);
+
+  return fecha.toLocaleTimeString("es-AR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function inicioSemana(date: Date) {
+  const copia = new Date(date);
+  const dia = copia.getDay();
+  const diferencia = dia === 0 ? -6 : 1 - dia;
+  copia.setDate(copia.getDate() + diferencia);
+  copia.setHours(0, 0, 0, 0);
+  return copia;
+}
+
+function finSemana(date: Date) {
+  const inicio = inicioSemana(date);
+  const fin = new Date(inicio);
+  fin.setDate(inicio.getDate() + 6);
+  fin.setHours(23, 59, 59, 999);
+  return fin;
 }
 
 export default function CalendarioAdminPage() {
   const [reservas, setReservas] = useState<Reserva[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filtro, setFiltro] = useState<Filtro>("semana");
+  const [fechaElegida, setFechaElegida] = useState(fechaLocalISO());
   const [reservaSeleccionada, setReservaSeleccionada] =
     useState<Reserva | null>(null);
 
@@ -68,26 +109,53 @@ export default function CalendarioAdminPage() {
     cargarReservas();
   }, []);
 
-  const reservasOrdenadas = useMemo(() => {
-    return [...reservas]
+  const reservasFiltradas = useMemo(() => {
+    const hoy = new Date();
+    const fechaBase = new Date(`${fechaElegida}T00:00:00`);
+
+    return reservas
       .filter((reserva) => reserva.estado !== "cancelada")
+      .filter((reserva) => {
+        const fechaReserva = new Date(`${reserva.fecha}T00:00:00`);
+
+        if (filtro === "dia") {
+          return reserva.fecha === fechaLocalISO(hoy);
+        }
+
+        if (filtro === "fecha") {
+          return reserva.fecha === fechaElegida;
+        }
+
+        if (filtro === "semana") {
+          return (
+            fechaReserva >= inicioSemana(fechaBase) &&
+            fechaReserva <= finSemana(fechaBase)
+          );
+        }
+
+        if (filtro === "mes") {
+          return (
+            fechaReserva.getFullYear() === fechaBase.getFullYear() &&
+            fechaReserva.getMonth() === fechaBase.getMonth()
+          );
+        }
+
+        return true;
+      })
       .sort((a, b) => {
-        const fechaA = `${a.fecha} ${a.hora}`;
-        const fechaB = `${b.fecha} ${b.hora}`;
-        return fechaA.localeCompare(fechaB);
+        const fechaHoraA = new Date(`${a.fecha}T${a.hora}`);
+        const fechaHoraB = new Date(`${b.fecha}T${b.hora}`);
+        return fechaHoraA.getTime() - fechaHoraB.getTime();
       });
-  }, [reservas]);
+  }, [reservas, filtro, fechaElegida]);
 
   const reservasPorFecha = useMemo(() => {
-    return reservasOrdenadas.reduce<Record<string, Reserva[]>>(
-      (acc, reserva) => {
-        if (!acc[reserva.fecha]) acc[reserva.fecha] = [];
-        acc[reserva.fecha].push(reserva);
-        return acc;
-      },
-      {}
-    );
-  }, [reservasOrdenadas]);
+    return reservasFiltradas.reduce<Record<string, Reserva[]>>((acc, reserva) => {
+      if (!acc[reserva.fecha]) acc[reserva.fecha] = [];
+      acc[reserva.fecha].push(reserva);
+      return acc;
+    }, {});
+  }, [reservasFiltradas]);
 
   if (loading) {
     return (
@@ -110,14 +178,59 @@ export default function CalendarioAdminPage() {
           </h1>
 
           <p className="mt-3 max-w-2xl text-white/60">
-            Visualizá las reservas activas, la cantidad de simuladores ocupados
-            y los detalles de cada turno.
+            Visualizá reservas activas por día, semana, mes o fecha específica.
           </p>
         </div>
 
-        {reservasOrdenadas.length === 0 ? (
+        <div className="mb-8 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                Filtrar por
+              </p>
+
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { key: "dia", label: "Hoy" },
+                  { key: "semana", label: "Semana" },
+                  { key: "mes", label: "Mes" },
+                  { key: "fecha", label: "Fecha específica" },
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    onClick={() => setFiltro(item.key as Filtro)}
+                    className={`rounded-full px-5 py-2 text-sm font-black uppercase transition ${
+                      filtro === item.key
+                        ? "bg-red-600 text-white"
+                        : "border border-white/15 text-white/70 hover:border-red-500 hover:text-white"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-bold uppercase tracking-[0.2em] text-white/50">
+                Fecha base
+              </label>
+
+              <input
+                type="date"
+                value={fechaElegida}
+                onChange={(e) => setFechaElegida(e.target.value)}
+                className="rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+              />
+            </div>
+          </div>
+        </div>
+
+        {reservasFiltradas.length === 0 ? (
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-8">
-            <p className="text-white/70">No hay reservas activas cargadas.</p>
+            <p className="text-white/70">
+              No hay reservas activas para este filtro.
+            </p>
           </div>
         ) : (
           <div className="space-y-8">
@@ -144,7 +257,8 @@ export default function CalendarioAdminPage() {
                         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                           <div>
                             <p className="text-lg font-black uppercase">
-                              {reserva.hora} - {sumar20Minutos(reserva.hora)}
+                              {horaBonita(reserva.hora)} -{" "}
+                              {sumar20Minutos(reserva.hora)}
                             </p>
 
                             <p className="mt-1 text-white/70">
@@ -219,7 +333,7 @@ export default function CalendarioAdminPage() {
               <div className="rounded-2xl bg-white/[0.04] p-4">
                 <p className="text-white/50">Horario</p>
                 <p className="text-lg font-bold">
-                  {reservaSeleccionada.hora} -{" "}
+                  {horaBonita(reservaSeleccionada.hora)} -{" "}
                   {sumar20Minutos(reservaSeleccionada.hora)}
                 </p>
               </div>
