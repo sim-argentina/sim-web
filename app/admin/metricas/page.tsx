@@ -1037,12 +1037,10 @@ export default function AdminMetricasPage() {
     const ticketPromedio = ventasRegistradas ? facturacion / ventasRegistradas : 0;
 
     const totalPersonas = sumBy(standFiltrado, (t) => {
-      const sims = numberValue(t.cantidad_simuladores) || numberValue(t.personas) || 1;
-      const cantTurnos = numberValue(t.cantidad_turnos) || 1;
-      return sims * cantTurnos;
-    });
+  return numberValue(t.cantidad_simuladores) || numberValue(t.personas) || 1;
+});
 
-    const promedioPersonas = totalTurnos ? totalPersonas / totalTurnos : 0;
+    const promedioPersonas = ventasRegistradas ? totalPersonas / ventasRegistradas : 0;
 
     const totalMinutos = sumBy(standFiltrado, (t) => {
       const duracion = numberValue(t.duracion);
@@ -1084,7 +1082,7 @@ export default function AdminMetricasPage() {
       addToRecord(porDiaSemana, diaSemana, cantTurnos);
 
       if (duracion > 0) addToRecord(porDuracion, `${duracion} min`, cantTurnos);
-      if (sims > 0) addToRecord(porPersonas, `${sims} persona/s`, cantTurnos);
+      if (sims > 0) addToRecord(porPersonas, `${sims} persona/s`, 1);
 
       obtenerEscuderias(escuderiaRaw).forEach((escuderia) => {
         addToRecord(porSimulador, escuderia, 1);
