@@ -106,6 +106,7 @@ export default function TurneroAdminPage() {
   const [observaciones, setObservaciones] = useState("");
 
   const [turnoEditando, setTurnoEditando] = useState<TurnoStand | null>(null);
+  const [turnosListos, setTurnosListos] = useState<number[]>([]);
 
   const horaBajada = useMemo(() => {
     return sumarMinutosAHora(horaSubida, cantidadMinutos);
@@ -209,6 +210,14 @@ export default function TurneroAdminPage() {
       actuales.includes(simulador)
         ? actuales.filter((s) => s !== simulador)
         : [...actuales, simulador]
+    );
+  }
+
+  function toggleListo(id: number) {
+    setTurnosListos((actuales) =>
+      actuales.includes(id)
+        ? actuales.filter((turnoId) => turnoId !== id)
+        : [...actuales, id]
     );
   }
 
@@ -387,174 +396,206 @@ export default function TurneroAdminPage() {
           </div>
 
           <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
-            <input
-              type="date"
-              value={fecha}
-              onChange={(e) => setFecha(e.target.value)}
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-            />
+            <Campo label="Fecha">
+              <input
+                type="date"
+                value={fecha}
+                onChange={(e) => setFecha(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              />
+            </Campo>
 
-            <input
-              type="time"
-              value={hora}
-              onChange={(e) => setHora(e.target.value)}
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-            />
+            <Campo label="Hora toma">
+              <input
+                type="time"
+                value={hora}
+                onChange={(e) => setHora(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              />
+            </Campo>
 
-            <input
-              type="time"
-              value={horaEstimadaSubida}
-              onChange={(e) => setHoraEstimadaSubida(e.target.value)}
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-              title="Hora estimada"
-            />
+            <Campo label="Hora estimada">
+              <input
+                type="time"
+                value={horaEstimadaSubida}
+                onChange={(e) => setHoraEstimadaSubida(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              />
+            </Campo>
 
-            <input
-              type="time"
-              value={horaSubida}
-              onChange={(e) => setHoraSubida(e.target.value)}
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-              title="Hora subida"
-            />
+            <Campo label="Hora subida">
+              <input
+                type="time"
+                value={horaSubida}
+                onChange={(e) => setHoraSubida(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              />
+            </Campo>
 
-            <input
-              type="time"
-              value={horaBajada}
-              readOnly
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold text-white/60 outline-none"
-              title="Hora bajada"
-            />
+            <Campo label="Hora bajada">
+              <input
+                type="time"
+                value={horaBajada}
+                readOnly
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold text-white/60 outline-none"
+              />
+            </Campo>
 
-            <input
-              type="text"
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              placeholder="Cliente"
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
-            />
+            <Campo label="Cliente">
+              <input
+                type="text"
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                placeholder="Nombre"
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+              />
+            </Campo>
 
-            <input
-              type="text"
-              value={telefono}
-              onChange={(e) => setTelefono(e.target.value)}
-              placeholder="Teléfono"
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
-            />
+            <Campo label="Teléfono">
+              <input
+                type="text"
+                value={telefono}
+                onChange={(e) => setTelefono(e.target.value)}
+                placeholder="351..."
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+              />
+            </Campo>
 
-            <input
-              type="number"
-              value={total}
-              onChange={(e) => setTotal(e.target.value)}
-              placeholder="Total"
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
-            />
+            <Campo label="Total">
+              <input
+                type="number"
+                value={total}
+                onChange={(e) => setTotal(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+              />
+            </Campo>
           </div>
 
           <div className="mt-3 grid gap-3 md:grid-cols-4 xl:grid-cols-8">
-            <input
-              type="number"
-              min={1}
-              value={cantidadPersonas}
-              onChange={(e) => setCantidadPersonas(Number(e.target.value))}
-              placeholder="Personas"
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-            />
+            <Campo label="Personas">
+              <input
+                type="number"
+                min={1}
+                value={cantidadPersonas}
+                onChange={(e) => setCantidadPersonas(Number(e.target.value))}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              />
+            </Campo>
 
-            <input
-              type="number"
-              min={1}
-              value={cantidadMinutos}
-              onChange={(e) => setCantidadMinutos(Number(e.target.value))}
-              placeholder="Minutos"
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-            />
+            <Campo label="Minutos">
+              <input
+                type="number"
+                min={1}
+                value={cantidadMinutos}
+                onChange={(e) => setCantidadMinutos(Number(e.target.value))}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              />
+            </Campo>
 
-            <input
-              type="number"
-              min={1}
-              value={cantidadTurnos}
-              onChange={(e) => setCantidadTurnos(Number(e.target.value))}
-              placeholder="Turnos"
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-            />
+            <Campo label="Turnos">
+              <input
+                type="number"
+                min={1}
+                value={cantidadTurnos}
+                onChange={(e) => setCantidadTurnos(Number(e.target.value))}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              />
+            </Campo>
 
-            <select
-              value={metodoPago}
-              onChange={(e) => {
-                setMetodoPago(e.target.value);
+            <Campo label="Método pago">
+              <select
+                value={metodoPago}
+                onChange={(e) => {
+                  setMetodoPago(e.target.value);
 
-                if (
-                  e.target.value !== "debito" &&
-                  e.target.value !== "credito"
-                ) {
-                  setPosnet("");
-                }
-              }}
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-            >
-              <option value="qr">QR</option>
-              <option value="efectivo">Efectivo</option>
-              <option value="debito">Débito</option>
-              <option value="credito">Crédito</option>
-              <option value="transferencia">Transferencia</option>
-            </select>
+                  if (
+                    e.target.value !== "debito" &&
+                    e.target.value !== "credito"
+                  ) {
+                    setPosnet("");
+                  }
+                }}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              >
+                <option value="qr">QR</option>
+                <option value="efectivo">Efectivo</option>
+                <option value="debito">Débito</option>
+                <option value="credito">Crédito</option>
+                <option value="transferencia">Transferencia</option>
+              </select>
+            </Campo>
 
-            <select
-              value={posnet}
-              onChange={(e) => setPosnet(e.target.value)}
-              disabled={metodoPago !== "debito" && metodoPago !== "credito"}
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500 disabled:opacity-30"
-            >
-              <option value="">Sin posnet</option>
-              {POSNETS.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
+            <Campo label="Posnet">
+              <select
+                value={posnet}
+                onChange={(e) => setPosnet(e.target.value)}
+                disabled={metodoPago !== "debito" && metodoPago !== "credito"}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500 disabled:opacity-30"
+              >
+                <option value="">Sin posnet</option>
+                {POSNETS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </Campo>
 
-            <input
-              type="text"
-              value={observaciones}
-              onChange={(e) => setObservaciones(e.target.value)}
-              placeholder="Observaciones"
-              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500 xl:col-span-2"
-            />
+            <div className="xl:col-span-2">
+              <Campo label="Observaciones">
+                <input
+                  type="text"
+                  value={observaciones}
+                  onChange={(e) => setObservaciones(e.target.value)}
+                  placeholder="Notas internas"
+                  className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+                />
+              </Campo>
+            </div>
 
-            <button
-              type="submit"
-              disabled={guardando || editando}
-              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30"
-            >
-              {turnoEditando
-                ? editando
-                  ? "Actualizando..."
-                  : "Actualizar"
-                : guardando
-                ? "Guardando..."
-                : "Guardar"}
-            </button>
+            <div className="flex items-end">
+              <button
+                type="submit"
+                disabled={guardando || editando}
+                className="w-full rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30"
+              >
+                {turnoEditando
+                  ? editando
+                    ? "Actualizando..."
+                    : "Actualizar"
+                  : guardando
+                  ? "Guardando..."
+                  : "Guardar"}
+              </button>
+            </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            {SIMULADORES.map((simulador) => {
-              const seleccionado = simuladores.includes(simulador);
+          <div className="mt-4">
+            <p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/40">
+              Simuladores
+            </p>
 
-              return (
-                <button
-                  key={simulador}
-                  type="button"
-                  onClick={() => toggleSimulador(simulador)}
-                  className={`rounded-full border px-4 py-2 text-xs font-black uppercase transition ${
-                    seleccionado
-                      ? "border-red-500 bg-red-600 text-white"
-                      : "border-white/15 bg-black text-white/60 hover:border-red-500 hover:text-white"
-                  }`}
-                >
-                  {simulador}
-                </button>
-              );
-            })}
+            <div className="flex flex-wrap gap-2">
+              {SIMULADORES.map((simulador) => {
+                const seleccionado = simuladores.includes(simulador);
+
+                return (
+                  <button
+                    key={simulador}
+                    type="button"
+                    onClick={() => toggleSimulador(simulador)}
+                    className={`rounded-full border px-4 py-2 text-xs font-black uppercase transition ${
+                      seleccionado
+                        ? "border-red-500 bg-red-600 text-white"
+                        : "border-white/15 bg-black text-white/60 hover:border-red-500 hover:text-white"
+                    }`}
+                  >
+                    {simulador}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </form>
 
@@ -568,10 +609,7 @@ export default function TurneroAdminPage() {
             </div>
 
             <div className="flex items-end gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-bold uppercase tracking-[0.2em] text-white/40">
-                  Ver día
-                </label>
+              <Campo label="Ver día">
                 <input
                   type="date"
                   value={fecha}
@@ -581,7 +619,7 @@ export default function TurneroAdminPage() {
                   }}
                   className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
                 />
-              </div>
+              </Campo>
 
               <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/70">
                 {turnosDelDia.length} turnos
@@ -599,8 +637,9 @@ export default function TurneroAdminPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1150px] space-y-2">
-                <div className="grid grid-cols-[70px_80px_80px_80px_1.4fr_1fr_90px_90px_90px_130px_120px_80px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
+              <div className="min-w-[1220px] space-y-2">
+                <div className="grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_90px_130px_120px_80px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
+                  <span>Listo</span>
                   <span>Toma</span>
                   <span>Est.</span>
                   <span>Sube</span>
@@ -618,12 +657,26 @@ export default function TurneroAdminPage() {
                 {turnosDelDia.map((turno) => {
                   const simus = normalizarSimuladores(turno.simuladores);
                   const posnetTurno = turno.posnet || "-";
+                  const listo = turnosListos.includes(turno.id);
 
                   return (
                     <div
                       key={turno.id}
-                      className="grid grid-cols-[70px_80px_80px_80px_1.4fr_1fr_90px_90px_90px_130px_120px_80px] items-center gap-2 rounded-xl border border-white/10 bg-black px-3 py-2 text-sm transition hover:border-red-500/60"
+                      className={`grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_90px_130px_120px_80px] items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                        listo
+                          ? "border-green-500/50 bg-green-950/25"
+                          : "border-white/10 bg-black hover:border-red-500/60"
+                      }`}
                     >
+                      <label className="flex items-center justify-center">
+                        <input
+                          type="checkbox"
+                          checked={listo}
+                          onChange={() => toggleListo(turno.id)}
+                          className="h-5 w-5 accent-red-600"
+                        />
+                      </label>
+
                       <span className="font-black">{turno.hora || "-"}</span>
                       <span className="text-white/70">
                         {turno.hora_estimada_subida || "-"}
@@ -641,7 +694,11 @@ export default function TurneroAdminPage() {
                       </span>
 
                       <div className="min-w-0">
-                        <p className="truncate font-black">
+                        <p
+                          className={`truncate font-black ${
+                            listo ? "text-white/60 line-through" : ""
+                          }`}
+                        >
                           {turno.nombre || "Sin nombre"}
                         </p>
                         <p className="truncate text-xs text-white/40">
@@ -742,6 +799,23 @@ export default function TurneroAdminPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function Campo({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">
+        {label}
+      </label>
+      {children}
+    </div>
   );
 }
 
