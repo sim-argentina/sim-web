@@ -43,7 +43,7 @@ type ChartItem = {
 
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
 
-const STORAGE_KEY = "sim_metricas_excel_stand";
+const STORAGE_KEY = "sim_metricas_excel_stand_v4";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -259,6 +259,27 @@ function getRowValue(row: any, posiblesNombres: string[]) {
 function addToRecord(record: Record<string, number>, key: string | null | undefined, value = 1) {
   if (!key) return;
   record[key] = (record[key] || 0) + value;
+}
+
+function estadoEsActivo(value: any) {
+  if (value === true) return true;
+  if (typeof value === "string") {
+    const v = normalizeText(value);
+    return v === "true" || v === "verdadero" || v === "si" || v === "sí" || v === "activo" || v === "activa";
+  }
+  return false;
+}
+
+function crearClaveTurno(t: TurnoStand, extra = "") {
+  return [
+    t.fecha,
+    extra,
+    t.hora_tomado || "",
+    t.hora_subida || "",
+    t.hora_bajada || "",
+    t.total ?? t.monto ?? 0,
+    t.metodo_pago || "",
+  ].join("|");
 }
 
 function chartPorHora(data: Record<string, number>) {
@@ -558,6 +579,7 @@ export default function AdminMetricasPage() {
       const year = new Date().getFullYear();
       const month = monthFromFileName(file.name);
       const turnosImportados: TurnoStand[] = [];
+      const claves = new Set<string>();
 
       workbook.SheetNames.forEach((sheetName) => {
         const dayNumber = Number(sheetName);
@@ -575,44 +597,55 @@ export default function AdminMetricasPage() {
         rows.forEach((row) => {
           const estado = getRowValue(row, ["Estado"]);
           const turno = getRowValue(row, ["Turno"]);
-          const monto = numberValue(getRowValue(row, ["Monto", "Total", "Facturado"]));
+          const monto = numberValue(getRowValue(row, ["Monto"]));
+
+          const numeroTurno = numberValue(turno);
+
+          // Punto clave: solo tomamos filas reales de venta.
+          // En el Excel, los resúmenes/subtotales tienen Estado vacío, 0 o false.
+          if (!estadoEsActivo(estado)) return;
+          if (!numeroTurno || numeroTurno <= 0) return;
+          if (!monto || monto <= 0) return;
+
           const escuderia = getRowValue(row, ["Escuderia", "Escudería", "Simulador"]);
-
-          const filaValida =
-            turno !== null &&
-            turno !== undefined &&
-            monto > 0 &&
-            estado !== false &&
-            estado !== 0 &&
-            estado !== "0";
-
-          if (!filaValida) return;
-
           const cantidadSimuladores = numberValue(getRowValue(row, ["Cant. de Sim.", "Cantidad de Sim", "Cant Sim"]));
           const cantidadTurnos = numberValue(getRowValue(row, ["Cant. Turnos", "Cantidad Turnos", "Turnos"]));
           const duracion = numberValue(getRowValue(row, ["Tiempo (Min)", "Tiempo", "Duracion", "Duración"]));
 
-          turnosImportados.push({
+          const turnoParseado: TurnoStand = {
             fecha,
             hora_tomado: excelTimeToString(getRowValue(row, ["Hora que se tomo el turno", "Hora tomado"])),
             hora_subida: excelTimeToString(getRowValue(row, ["Hora de subida", "Hora subida"])),
             hora_bajada: excelTimeToString(getRowValue(row, ["Hora de bajada", "Hora bajada"])),
             simulador: escuderia ? String(escuderia) : "",
-            cantidad_simuladores: cantidadSimuladores,
-            cantidad_turnos: cantidadTurnos,
+            cantidad_simuladores: cantidadSimuladores || 1,
+            cantidad_turnos: cantidadTurnos || cantidadSimuladores || 1,
             personas: cantidadSimuladores || 1,
             duracion,
             metodo_pago: normalizarMetodoPago(getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"])),
             posnet: "",
             total: monto,
-          });
+          };
+
+          const clave = crearClaveTurno(turnoParseado, String(numeroTurno));
+          if (claves.has(clave)) return;
+
+          claves.add(clave);
+          turnosImportados.push(turnoParseado);
         });
       });
 
-      setExcelStand(turnosImportados);
+      localStorage.removeItem("sim_metricas_excel_stand");
+      localStorage.removeItem("sim_excel_stand");
       localStorage.setItem(STORAGE_KEY, JSON.stringify(turnosImportados));
+      setExcelStand(turnosImportados);
 
-      alert(`Se importaron ${turnosImportados.length} turnos del Excel.`);
+      const facturacionImportada = turnosImportados.reduce((acc, t) => acc + numberValue(t.total), 0);
+      const turnosVendidosImportados = turnosImportados.reduce((acc, t) => acc + numberValue(t.cantidad_turnos), 0);
+
+      alert(
+        `Excel importado correctamente.\nVentas: ${turnosImportados.length}\nTurnos vendidos: ${turnosVendidosImportados}\nFacturación: ${formatMoney(facturacionImportada)}`
+      );
     };
 
     reader.readAsArrayBuffer(file);
@@ -645,10 +678,19 @@ export default function AdminMetricasPage() {
   }, [reservas, estadoFiltro, busqueda, fechaDesde, fechaHasta]);
 
   const standFiltrado = useMemo(() => {
-    const data = excelStand.length > 0 ? excelStand : turnosStand;
+    // Si hay Excel cargado, usamos SOLO Excel para evitar sumar Supabase + Excel.
+    const fuente = excelStand.length > 0 ? excelStand : turnosStand;
+    const claves = new Set<string>();
 
-    return filtrarPorFecha(data).filter((t) => {
-      const texto = `${t.fecha} ${t.hora_bajada} ${t.hora_subida} ${t.simulador} ${t.metodo_pago} ${t.posnet}`.toLowerCase();
+    const dataSinDuplicados = fuente.filter((t, index) => {
+      const clave = crearClaveTurno(t, String(index));
+      if (claves.has(clave)) return false;
+      claves.add(clave);
+      return true;
+    });
+
+    return filtrarPorFecha(dataSinDuplicados).filter((t) => {
+      const texto = `${t.fecha} ${t.hora_bajada} ${t.hora_subida} ${t.simulador} ${t.metodo_pago}`.toLowerCase();
       return texto.includes(busqueda.toLowerCase());
     });
   }, [turnosStand, excelStand, busqueda, fechaDesde, fechaHasta]);
@@ -715,14 +757,23 @@ export default function AdminMetricasPage() {
     const facturacion = sumBy(standFiltrado, (t) => numberValue(t.total ?? t.monto));
 
     const totalTurnos = sumBy(standFiltrado, (t) => {
+      const cantTurnos = numberValue(t.cantidad_turnos);
+      if (cantTurnos > 0) return cantTurnos;
+
       const sims = numberValue(t.cantidad_simuladores);
       if (sims > 0) return sims;
+
       return numberValue(t.personas) || 1;
     });
 
     const ticketPromedio = ventasRegistradas ? facturacion / ventasRegistradas : 0;
 
-    const totalPersonas = totalTurnos;
+    const totalPersonas = sumBy(standFiltrado, (t) => {
+      const sims = numberValue(t.cantidad_simuladores);
+      if (sims > 0) return sims;
+      return numberValue(t.personas) || 1;
+    });
+
     const promedioPersonas = ventasRegistradas ? totalPersonas / ventasRegistradas : 0;
 
     const totalMinutos = sumBy(standFiltrado, (t) => {
@@ -749,21 +800,25 @@ export default function AdminMetricasPage() {
       const monto = numberValue(t.total ?? t.monto);
       const metodo = normalizarMetodoPago(t.metodo_pago);
       const duracion = numberValue(t.duracion);
-      const personas = numberValue(t.personas) || numberValue(t.cantidad_simuladores) || 1;
+      const sims = numberValue(t.cantidad_simuladores) || numberValue(t.personas) || 1;
+      const cantTurnos = numberValue(t.cantidad_turnos) || sims || 1;
       const hora = obtenerHoraAgrupada(t.hora_subida || t.hora_bajada || t.hora_tomado);
       const diaSemana = nombreDia(t.fecha);
 
-      addToRecord(porMetodoPago, metodo);
-      addToRecord(ingresosPorMetodo, metodo, monto);
-      addToRecord(ingresosPorDia, t.fecha, monto);
-      addToRecord(porHora, hora);
-      addToRecord(porDiaSemana, diaSemana);
+      if (metodo !== "Sin dato") {
+        addToRecord(porMetodoPago, metodo, cantTurnos);
+        addToRecord(ingresosPorMetodo, metodo, monto);
+      }
 
-      if (duracion > 0) addToRecord(porDuracion, `${duracion} min`);
-      if (personas > 0) addToRecord(porPersonas, `${personas} persona/s`);
+      addToRecord(ingresosPorDia, t.fecha, monto);
+      addToRecord(porHora, hora, cantTurnos);
+      addToRecord(porDiaSemana, diaSemana, cantTurnos);
+
+      if (duracion > 0) addToRecord(porDuracion, `${duracion} min`, cantTurnos);
+      if (sims > 0) addToRecord(porPersonas, `${sims} persona/s`, cantTurnos);
 
       obtenerEscuderias(t.simulador).forEach((escuderia) => {
-        addToRecord(porSimulador, escuderia);
+        addToRecord(porSimulador, escuderia, 1);
       });
     });
 
@@ -1005,7 +1060,7 @@ export default function AdminMetricasPage() {
             </div>
 
             <div className="mb-8">
-              <LineChart title="Ingresos por día" data={metricasStand.ingresosPorDia} valueFormatter={formatMoney} />
+              <BarChart title="Ingresos por día" data={metricasStand.ingresosPorDia} valueFormatter={formatMoney} />
             </div>
 
             <div className="mb-8 grid gap-6 xl:grid-cols-3">
