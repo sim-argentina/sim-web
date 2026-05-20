@@ -11,17 +11,19 @@ type TurnoStand = {
   hora_estimada_subida?: string;
   hora_subida?: string;
   hora_bajada?: string;
-  simuladores?: string[];
+  simuladores?: string[] | string;
   cantidad_personas?: number;
   cantidad_minutos?: number;
   cantidad_turnos?: number;
   total?: number;
   metodo_pago?: string;
+  posnet?: string;
   estado?: string;
   observaciones?: string;
 };
 
 const SIMULADORES = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
+const POSNETS = ["Posnet 1", "Posnet 2", "Posnet 3"];
 
 function fechaLocalISO(date = new Date()) {
   const y = date.getFullYear();
@@ -32,9 +34,9 @@ function fechaLocalISO(date = new Date()) {
 
 function horaActual() {
   const date = new Date();
-  const h = String(date.getHours()).padStart(2, "0");
-  const m = String(date.getMinutes()).padStart(2, "0");
-  return `${h}:${m}`;
+  return `${String(date.getHours()).padStart(2, "0")}:${String(
+    date.getMinutes()
+  ).padStart(2, "0")}`;
 }
 
 function sumarMinutosAHora(hora: string, minutos: number) {
@@ -45,10 +47,9 @@ function sumarMinutosAHora(hora: string, minutos: number) {
 
   date.setHours(h, m + minutos, 0, 0);
 
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mm = String(date.getMinutes()).padStart(2, "0");
-
-  return `${hh}:${mm}`;
+  return `${String(date.getHours()).padStart(2, "0")}:${String(
+    date.getMinutes()
+  ).padStart(2, "0")}`;
 }
 
 function normalizarSimuladores(simuladores?: string[] | string) {
@@ -71,7 +72,13 @@ function formatearPago(pago?: string) {
   if (pago === "qr") return "QR";
   if (pago === "debito") return "Débito";
   if (pago === "credito") return "Crédito";
-  return pago.charAt(0).toUpperCase() + pago.slice(1);
+  if (pago === "efectivo") return "Efectivo";
+  if (pago === "transferencia") return "Transferencia";
+  return pago;
+}
+
+function formatoDinero(valor: number) {
+  return `$${valor.toLocaleString("es-AR")}`;
 }
 
 export default function TurneroAdminPage() {
@@ -94,6 +101,7 @@ export default function TurneroAdminPage() {
   const [cantidadTurnos, setCantidadTurnos] = useState(1);
 
   const [metodoPago, setMetodoPago] = useState("qr");
+  const [posnet, setPosnet] = useState("");
   const [total, setTotal] = useState("");
   const [observaciones, setObservaciones] = useState("");
 
@@ -129,8 +137,72 @@ export default function TurneroAdminPage() {
     return turnos
       .filter((turno) => turno.fecha === fecha)
       .filter((turno) => turno.estado !== "cancelado")
-      .sort((a, b) => a.hora.localeCompare(b.hora));
+      .sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
   }, [turnos, fecha]);
+
+  const resumenDia = useMemo(() => {
+    const porMetodo: Record<string, { cantidad: number; total: number }> = {};
+    const porSimulador: Record<string, number> = {};
+    const porMinutos: Record<string, number> = {};
+    const porPersonas: Record<string, number> = {};
+    const porPosnet: Record<string, { cantidad: number; total: number }> = {};
+    const porPosnetYMetodo: Record<string, number> = {};
+
+    let totalFacturado = 0;
+    let cantidadTurnos = 0;
+
+    turnosDelDia.forEach((turno) => {
+      const totalTurno = Number(turno.total || 0);
+      const metodo = formatearPago(turno.metodo_pago);
+      const minutos = `${turno.cantidad_minutos || 15} min`;
+      const personas = `${turno.cantidad_personas || 1} persona${
+        (turno.cantidad_personas || 1) > 1 ? "s" : ""
+      }`;
+      const simus = normalizarSimuladores(turno.simuladores);
+      const posnetTurno = turno.posnet;
+
+      cantidadTurnos += 1;
+      totalFacturado += totalTurno;
+
+      porMetodo[metodo] = porMetodo[metodo] || { cantidad: 0, total: 0 };
+      porMetodo[metodo].cantidad += 1;
+      porMetodo[metodo].total += totalTurno;
+
+      porMinutos[minutos] = (porMinutos[minutos] || 0) + 1;
+      porPersonas[personas] = (porPersonas[personas] || 0) + 1;
+
+      simus.forEach((sim) => {
+        porSimulador[sim] = (porSimulador[sim] || 0) + 1;
+      });
+
+      if (
+        posnetTurno &&
+        (turno.metodo_pago === "debito" || turno.metodo_pago === "credito")
+      ) {
+        porPosnet[posnetTurno] = porPosnet[posnetTurno] || {
+          cantidad: 0,
+          total: 0,
+        };
+
+        porPosnet[posnetTurno].cantidad += 1;
+        porPosnet[posnetTurno].total += totalTurno;
+
+        const clave = `${posnetTurno} - ${metodo}`;
+        porPosnetYMetodo[clave] = (porPosnetYMetodo[clave] || 0) + totalTurno;
+      }
+    });
+
+    return {
+      cantidadTurnos,
+      totalFacturado,
+      porMetodo,
+      porSimulador,
+      porMinutos,
+      porPersonas,
+      porPosnet,
+      porPosnetYMetodo,
+    };
+  }, [turnosDelDia]);
 
   function toggleSimulador(simulador: string) {
     setSimuladores((actuales) =>
@@ -151,6 +223,7 @@ export default function TurneroAdminPage() {
     setCantidadMinutos(15);
     setCantidadTurnos(1);
     setMetodoPago("qr");
+    setPosnet("");
     setTotal("");
     setObservaciones("");
   }
@@ -182,6 +255,7 @@ export default function TurneroAdminPage() {
           cantidad_minutos: cantidadMinutos,
           cantidad_turnos: cantidadTurnos,
           metodo_pago: metodoPago,
+          posnet,
           total: Number(total) || 0,
           observaciones,
         }),
@@ -217,6 +291,7 @@ export default function TurneroAdminPage() {
     setCantidadMinutos(turno.cantidad_minutos || 15);
     setCantidadTurnos(turno.cantidad_turnos || 1);
     setMetodoPago(turno.metodo_pago || "qr");
+    setPosnet(turno.posnet || "");
     setTotal(String(turno.total || ""));
     setObservaciones(turno.observaciones || "");
   }
@@ -245,6 +320,7 @@ export default function TurneroAdminPage() {
           cantidad_minutos: cantidadMinutos,
           cantidad_turnos: cantidadTurnos,
           metodo_pago: metodoPago,
+          posnet,
           total: Number(total) || 0,
           observaciones,
         }),
@@ -274,10 +350,10 @@ export default function TurneroAdminPage() {
   }
 
   return (
-    <main className="min-h-screen bg-black px-6 py-10 text-white">
+    <main className="min-h-screen bg-black px-4 py-8 text-white md:px-6">
       <section className="mx-auto max-w-7xl">
-        <div className="mb-8">
-          <p className="mb-2 text-sm uppercase tracking-[0.3em] text-red-500">
+        <div className="mb-6">
+          <p className="mb-2 text-xs uppercase tracking-[0.3em] text-red-500">
             Admin SIM
           </p>
 
@@ -285,456 +361,437 @@ export default function TurneroAdminPage() {
             Turnero del stand
           </h1>
 
-          <p className="mt-3 max-w-2xl text-white/60">
-            Cargá, consultá y editá turnos del stand por cualquier día.
+          <p className="mt-2 max-w-2xl text-sm text-white/60">
+            Cargá turnos, revisá el día y controlá el cierre con resumen.
           </p>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[460px_1fr]">
-          <form
-            onSubmit={turnoEditando ? guardarEdicion : crearTurno}
-            className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
-          >
-            <h2 className="mb-5 text-xl font-black uppercase text-red-500">
+        <form
+          onSubmit={turnoEditando ? guardarEdicion : crearTurno}
+          className="mb-6 rounded-3xl border border-white/10 bg-white/[0.03] p-4"
+        >
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="text-xl font-black uppercase text-red-500">
               {turnoEditando ? "Editar turno" : "Nuevo turno"}
             </h2>
 
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Fecha
-                  </label>
-                  <input
-                    type="date"
-                    value={fecha}
-                    onChange={(e) => setFecha(e.target.value)}
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  />
-                </div>
+            {turnoEditando && (
+              <button
+                type="button"
+                onClick={cerrarEdicion}
+                className="rounded-full border border-white/15 px-4 py-2 text-xs font-black uppercase text-white/70 hover:border-white hover:text-white"
+              >
+                Cancelar edición
+              </button>
+            )}
+          </div>
 
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Hora toma
-                  </label>
-                  <input
-                    type="time"
-                    value={hora}
-                    onChange={(e) => setHora(e.target.value)}
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  />
-                </div>
-              </div>
+          <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+            />
 
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Estimada
-                  </label>
-                  <input
-                    type="time"
-                    value={horaEstimadaSubida}
-                    onChange={(e) => setHoraEstimadaSubida(e.target.value)}
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  />
-                </div>
+            <input
+              type="time"
+              value={hora}
+              onChange={(e) => setHora(e.target.value)}
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+            />
 
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Subida
-                  </label>
-                  <input
-                    type="time"
-                    value={horaSubida}
-                    onChange={(e) => setHoraSubida(e.target.value)}
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  />
-                </div>
+            <input
+              type="time"
+              value={horaEstimadaSubida}
+              onChange={(e) => setHoraEstimadaSubida(e.target.value)}
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              title="Hora estimada"
+            />
 
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Bajada
-                  </label>
-                  <input
-                    type="time"
-                    value={horaBajada}
-                    readOnly
-                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-bold text-white/60 outline-none"
-                  />
-                </div>
-              </div>
+            <input
+              type="time"
+              value={horaSubida}
+              onChange={(e) => setHoraSubida(e.target.value)}
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+              title="Hora subida"
+            />
 
-              <div>
-                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                  Cliente
-                </label>
-                <input
-                  type="text"
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Nombre del cliente"
-                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
-                />
-              </div>
+            <input
+              type="time"
+              value={horaBajada}
+              readOnly
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold text-white/60 outline-none"
+              title="Hora bajada"
+            />
 
-              <div>
-                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                  Teléfono
-                </label>
-                <input
-                  type="text"
-                  value={telefono}
-                  onChange={(e) => setTelefono(e.target.value)}
-                  placeholder="351..."
-                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
-                />
-              </div>
+            <input
+              type="text"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              placeholder="Cliente"
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+            />
 
-              <div>
-                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                  Simuladores
-                </label>
+            <input
+              type="text"
+              value={telefono}
+              onChange={(e) => setTelefono(e.target.value)}
+              placeholder="Teléfono"
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+            />
 
-                <div className="grid grid-cols-2 gap-2">
-                  {SIMULADORES.map((simulador) => {
-                    const seleccionado = simuladores.includes(simulador);
+            <input
+              type="number"
+              value={total}
+              onChange={(e) => setTotal(e.target.value)}
+              placeholder="Total"
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+            />
+          </div>
 
-                    return (
-                      <button
-                        key={simulador}
-                        type="button"
-                        onClick={() => toggleSimulador(simulador)}
-                        className={`rounded-2xl border px-4 py-3 text-sm font-black uppercase transition ${
-                          seleccionado
-                            ? "border-red-500 bg-red-600 text-white"
-                            : "border-white/15 bg-black text-white/70 hover:border-red-500 hover:text-white"
-                        }`}
-                      >
-                        {simulador}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <input
+              type="number"
+              min={1}
+              value={cantidadPersonas}
+              onChange={(e) => setCantidadPersonas(Number(e.target.value))}
+              placeholder="Personas"
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+            />
 
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Personas
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={cantidadPersonas}
-                    onChange={(e) => setCantidadPersonas(Number(e.target.value))}
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  />
-                </div>
+            <input
+              type="number"
+              min={1}
+              value={cantidadMinutos}
+              onChange={(e) => setCantidadMinutos(Number(e.target.value))}
+              placeholder="Minutos"
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+            />
 
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Minutos
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={cantidadMinutos}
-                    onChange={(e) => setCantidadMinutos(Number(e.target.value))}
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  />
-                </div>
+            <input
+              type="number"
+              min={1}
+              value={cantidadTurnos}
+              onChange={(e) => setCantidadTurnos(Number(e.target.value))}
+              placeholder="Turnos"
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+            />
 
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Turnos
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={cantidadTurnos}
-                    onChange={(e) => setCantidadTurnos(Number(e.target.value))}
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  />
-                </div>
-              </div>
+            <select
+              value={metodoPago}
+              onChange={(e) => {
+                setMetodoPago(e.target.value);
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Método pago
-                  </label>
-                  <select
-                    value={metodoPago}
-                    onChange={(e) => setMetodoPago(e.target.value)}
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  >
-                    <option value="qr">QR</option>
-                    <option value="efectivo">Efectivo</option>
-                    <option value="debito">Débito</option>
-                    <option value="credito">Crédito</option>
-                    <option value="transferencia">Transferencia</option>
-                  </select>
-                </div>
+                if (
+                  e.target.value !== "debito" &&
+                  e.target.value !== "credito"
+                ) {
+                  setPosnet("");
+                }
+              }}
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+            >
+              <option value="qr">QR</option>
+              <option value="efectivo">Efectivo</option>
+              <option value="debito">Débito</option>
+              <option value="credito">Crédito</option>
+              <option value="transferencia">Transferencia</option>
+            </select>
 
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Total
-                  </label>
-                  <input
-                    type="number"
-                    value={total}
-                    onChange={(e) => setTotal(e.target.value)}
-                    placeholder="0"
-                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
-                  />
-                </div>
-              </div>
+            <select
+              value={posnet}
+              onChange={(e) => setPosnet(e.target.value)}
+              disabled={metodoPago !== "debito" && metodoPago !== "credito"}
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500 disabled:opacity-30"
+            >
+              <option value="">Sin posnet</option>
+              {POSNETS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
 
-              <div>
-                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                  Observaciones
-                </label>
-                <textarea
-                  value={observaciones}
-                  onChange={(e) => setObservaciones(e.target.value)}
-                  placeholder="Notas internas..."
-                  rows={3}
-                  className="w-full resize-none rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
-                />
-              </div>
+            <input
+              type="text"
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              placeholder="Observaciones"
+              className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500 xl:col-span-2"
+            />
 
-              <div className="flex gap-3">
-                {turnoEditando && (
-                  <button
-                    type="button"
-                    onClick={cerrarEdicion}
-                    className="w-full rounded-2xl border border-white/15 px-5 py-4 font-black uppercase text-white/70 transition hover:border-white hover:text-white"
-                  >
-                    Cancelar
-                  </button>
-                )}
+            <button
+              type="submit"
+              disabled={guardando || editando}
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30"
+            >
+              {turnoEditando
+                ? editando
+                  ? "Actualizando..."
+                  : "Actualizar"
+                : guardando
+                ? "Guardando..."
+                : "Guardar"}
+            </button>
+          </div>
 
+          <div className="mt-4 flex flex-wrap gap-2">
+            {SIMULADORES.map((simulador) => {
+              const seleccionado = simuladores.includes(simulador);
+
+              return (
                 <button
-                  type="submit"
-                  disabled={guardando || editando}
-                  className="w-full rounded-2xl bg-red-600 px-5 py-4 font-black uppercase text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30"
+                  key={simulador}
+                  type="button"
+                  onClick={() => toggleSimulador(simulador)}
+                  className={`rounded-full border px-4 py-2 text-xs font-black uppercase transition ${
+                    seleccionado
+                      ? "border-red-500 bg-red-600 text-white"
+                      : "border-white/15 bg-black text-white/60 hover:border-red-500 hover:text-white"
+                  }`}
                 >
-                  {turnoEditando
-                    ? editando
-                      ? "Actualizando..."
-                      : "Actualizar turno"
-                    : guardando
-                    ? "Guardando..."
-                    : "Guardar turno"}
+                  {simulador}
                 </button>
-              </div>
-            </div>
-          </form>
+              );
+            })}
+          </div>
+        </form>
 
-          <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-            <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-xl font-black uppercase text-red-500">
+                Turnos guardados
+              </h2>
+              <p className="text-sm text-white/50">{fecha}</p>
+            </div>
+
+            <div className="flex items-end gap-3">
               <div>
-                <h2 className="text-xl font-black uppercase text-red-500">
-                  Turnos del día
-                </h2>
-                <p className="text-sm text-white/50">{fecha}</p>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-[0.2em] text-white/40">
+                  Ver día
+                </label>
+                <input
+                  type="date"
+                  value={fecha}
+                  onChange={(e) => {
+                    setFecha(e.target.value);
+                    setTurnoEditando(null);
+                  }}
+                  className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+                />
               </div>
 
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div>
-                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-                    Ver día
-                  </label>
-                  <input
-                    type="date"
-                    value={fecha}
-                    onChange={(e) => {
-                      setFecha(e.target.value);
-                      setTurnoEditando(null);
-                    }}
-                    className="rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-                  />
-                </div>
-
-                <div className="rounded-full border border-white/10 px-4 py-3 text-sm font-bold text-white/70">
-                  {turnosDelDia.length} turnos
-                </div>
+              <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/70">
+                {turnosDelDia.length} turnos
               </div>
             </div>
+          </div>
 
-            {loading ? (
-              <p className="text-white/60">Cargando turnos...</p>
-            ) : turnosDelDia.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-black p-6">
-                <p className="text-white/60">
-                  No hay turnos cargados para esta fecha.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
+          {loading ? (
+            <p className="text-white/60">Cargando turnos...</p>
+          ) : turnosDelDia.length === 0 ? (
+            <div className="rounded-2xl border border-white/10 bg-black p-5">
+              <p className="text-white/60">
+                No hay turnos cargados para esta fecha.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <div className="min-w-[1150px] space-y-2">
+                <div className="grid grid-cols-[70px_80px_80px_80px_1.4fr_1fr_90px_90px_90px_130px_120px_80px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
+                  <span>Toma</span>
+                  <span>Est.</span>
+                  <span>Sube</span>
+                  <span>Baja</span>
+                  <span>Cliente</span>
+                  <span>Simus</span>
+                  <span>Pers.</span>
+                  <span>Min.</span>
+                  <span>Pago</span>
+                  <span>Posnet</span>
+                  <span>Total</span>
+                  <span></span>
+                </div>
+
                 {turnosDelDia.map((turno) => {
                   const simus = normalizarSimuladores(turno.simuladores);
+                  const posnetTurno = turno.posnet || "-";
 
                   return (
                     <div
                       key={turno.id}
-                      className="rounded-2xl border border-white/10 bg-black p-5 transition hover:border-red-500/60"
+                      className="grid grid-cols-[70px_80px_80px_80px_1.4fr_1fr_90px_90px_90px_130px_120px_80px] items-center gap-2 rounded-xl border border-white/10 bg-black px-3 py-2 text-sm transition hover:border-red-500/60"
                     >
-                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                        <div className="grid flex-1 gap-3 md:grid-cols-3 xl:grid-cols-7">
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                              Toma
-                            </p>
-                            <p className="mt-1 text-lg font-black">
-                              {turno.hora || "-"}
-                            </p>
-                          </div>
+                      <span className="font-black">{turno.hora || "-"}</span>
+                      <span className="text-white/70">
+                        {turno.hora_estimada_subida || "-"}
+                      </span>
+                      <span className="text-white/70">
+                        {turno.hora_subida || "-"}
+                      </span>
+                      <span className="text-white/70">
+                        {turno.hora_bajada ||
+                          sumarMinutosAHora(
+                            turno.hora_subida || "",
+                            turno.cantidad_minutos || 15
+                          ) ||
+                          "-"}
+                      </span>
 
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                              Estimada
-                            </p>
-                            <p className="mt-1 text-lg font-bold text-white/80">
-                              {turno.hora_estimada_subida || "-"}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                              Subida
-                            </p>
-                            <p className="mt-1 text-lg font-bold text-white/80">
-                              {turno.hora_subida || "-"}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                              Bajada
-                            </p>
-                            <p className="mt-1 text-lg font-bold text-white/80">
-                              {turno.hora_bajada ||
-                                sumarMinutosAHora(
-                                  turno.hora_subida || "",
-                                  turno.cantidad_minutos || 15
-                                ) ||
-                                "-"}
-                            </p>
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                              Cliente
-                            </p>
-                            <p className="mt-1 font-black">
-                              {turno.nombre || "Sin nombre"}
-                            </p>
-                            <p className="text-sm text-white/45">
-                              {turno.telefono || "Sin teléfono"}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                              Total
-                            </p>
-                            <p className="mt-1 text-lg font-black text-red-500">
-                              $
-                              {Number(turno.total || 0).toLocaleString(
-                                "es-AR"
-                              )}
-                            </p>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => abrirEdicion(turno)}
-                          className="rounded-2xl border border-white/15 px-5 py-3 text-sm font-black uppercase text-white/80 transition hover:border-red-500 hover:bg-red-600 hover:text-white"
-                        >
-                          Editar
-                        </button>
-                      </div>
-
-                      <div className="mt-5 grid gap-3 md:grid-cols-4">
-                        <div className="rounded-2xl bg-white/[0.04] p-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                            Personas
-                          </p>
-                          <p className="mt-1 font-black">
-                            {turno.cantidad_personas || 1}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl bg-white/[0.04] p-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                            Minutos
-                          </p>
-                          <p className="mt-1 font-black">
-                            {turno.cantidad_minutos || 15}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl bg-white/[0.04] p-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                            Turnos
-                          </p>
-                          <p className="mt-1 font-black">
-                            {turno.cantidad_turnos || 1}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl bg-white/[0.04] p-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                            Pago
-                          </p>
-                          <p className="mt-1 font-black">
-                            {formatearPago(turno.metodo_pago)}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4">
-                        <p className="mb-2 text-xs uppercase tracking-[0.18em] text-white/40">
-                          Simuladores
+                      <div className="min-w-0">
+                        <p className="truncate font-black">
+                          {turno.nombre || "Sin nombre"}
                         </p>
-
-                        {simus.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {simus.map((sim) => (
-                              <span
-                                key={sim}
-                                className="rounded-full bg-red-600 px-3 py-1 text-xs font-black uppercase"
-                              >
-                                {sim}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-white/45">
-                            Todavía no asignado
-                          </p>
-                        )}
+                        <p className="truncate text-xs text-white/40">
+                          {turno.telefono || "Sin teléfono"}
+                        </p>
                       </div>
 
-                      {turno.observaciones && (
-                        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                          <p className="text-xs uppercase tracking-[0.18em] text-white/40">
-                            Observaciones
-                          </p>
-                          <p className="mt-1 text-sm text-white/70">
-                            {turno.observaciones}
-                          </p>
-                        </div>
-                      )}
+                      <span className="truncate text-white/70">
+                        {simus.length ? simus.join(", ") : "-"}
+                      </span>
+
+                      <span>{turno.cantidad_personas || 1}</span>
+                      <span>{turno.cantidad_minutos || 15}</span>
+                      <span>{formatearPago(turno.metodo_pago)}</span>
+                      <span>{posnetTurno}</span>
+
+                      <span className="font-black text-red-500">
+                        {formatoDinero(Number(turno.total || 0))}
+                      </span>
+
+                      <button
+                        onClick={() => abrirEdicion(turno)}
+                        className="rounded-lg border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/70 transition hover:border-red-500 hover:bg-red-600 hover:text-white"
+                      >
+                        Editar
+                      </button>
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-red-500/30 bg-red-950/20 p-5">
+          <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-2xl font-black uppercase text-red-500">
+                Resumen del día
+              </h2>
+              <p className="text-sm text-white/50">{fecha}</p>
+            </div>
+
+            <div className="text-left md:text-right">
+              <p className="text-sm uppercase tracking-[0.2em] text-white/40">
+                Facturación total
+              </p>
+              <p className="text-3xl font-black">
+                {formatoDinero(resumenDia.totalFacturado)}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <div className="rounded-2xl border border-white/10 bg-black p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-white/40">
+                Turnos
+              </p>
+              <p className="mt-2 text-2xl font-black">
+                {resumenDia.cantidadTurnos}
+              </p>
+            </div>
+
+            <ResumenBox titulo="Por método" data={resumenDia.porMetodo} />
+            <ResumenBox titulo="Por simulador" data={resumenDia.porSimulador} />
+            <ResumenBox titulo="Por duración" data={resumenDia.porMinutos} />
+            <ResumenBox titulo="Por personas" data={resumenDia.porPersonas} />
+            <ResumenBox titulo="Por posnet" data={resumenDia.porPosnet} />
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-white/10 bg-black p-4">
+            <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-white/40">
+              Posnet por método de pago
+            </p>
+
+            {Object.keys(resumenDia.porPosnetYMetodo).length === 0 ? (
+              <p className="text-sm text-white/45">
+                No hay cobros con posnet cargados para este día.
+              </p>
+            ) : (
+              <div className="grid gap-2 md:grid-cols-3">
+                {Object.entries(resumenDia.porPosnetYMetodo).map(
+                  ([clave, valor]) => (
+                    <div
+                      key={clave}
+                      className="flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2 text-sm"
+                    >
+                      <span className="font-bold text-white/70">{clave}</span>
+                      <span className="font-black text-red-500">
+                        {formatoDinero(valor)}
+                      </span>
+                    </div>
+                  )
+                )}
               </div>
             )}
           </div>
         </div>
       </section>
     </main>
+  );
+}
+
+function ResumenBox({
+  titulo,
+  data,
+}: {
+  titulo: string;
+  data: Record<string, any>;
+}) {
+  const entries = Object.entries(data);
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black p-4">
+      <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-white/40">
+        {titulo}
+      </p>
+
+      {entries.length === 0 ? (
+        <p className="text-sm text-white/45">Sin datos</p>
+      ) : (
+        <div className="space-y-2">
+          {entries.map(([key, value]) => {
+            const esObjeto =
+              typeof value === "object" && value !== null && "total" in value;
+
+            return (
+              <div
+                key={key}
+                className="flex items-start justify-between gap-3 text-sm"
+              >
+                <span className="font-bold text-white/70">{key}</span>
+
+                <span className="text-right font-black">
+                  {esObjeto ? (
+                    <>
+                      {value.cantidad} /{" "}
+                      <span className="text-red-500">
+                        {formatoDinero(value.total)}
+                      </span>
+                    </>
+                  ) : (
+                    value
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
