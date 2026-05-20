@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 
 type Vista = "reservas" | "stand";
+type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
+type Agrupacion = "dia" | "semana" | "mes";
 
 type Reserva = {
   id: number;
-  created_at: string;
+  created_at?: string;
   nombre: string;
   telefono: string;
   fecha: string;
@@ -22,18 +24,22 @@ type TurnoStand = {
   id?: number;
   created_at?: string;
   fecha: string;
-  hora_bajada?: string;
   hora_subida?: string;
+  hora_bajada?: string;
   hora_tomado?: string;
-  simulador?: string;
+  metodo_pago?: string;
+  total?: number | string;
+  monto?: number | string;
   cantidad_simuladores?: number;
   cantidad_turnos?: number;
   duracion?: number | string;
+  escuderia?: string;
+  simulador?: string;
   personas?: number | string;
-  metodo_pago?: string;
-  posnet?: string;
-  total?: number | string;
-  monto?: number | string;
+  archivo_nombre?: string;
+  archivo_key?: string;
+  hash_unico?: string;
+  origen?: string;
 };
 
 type ChartItem = {
@@ -41,17 +47,12 @@ type ChartItem = {
   value: number;
 };
 
-type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
-type AgrupacionIngresos = "dia" | "semana" | "mes";
-
-const STORAGE_KEY = "sim_metricas_excel_stand_v7";
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency",
-    currency: "ARS",
-    maximumFractionDigits: 0,
-  }).format(value || 0);
+function normalizeText(value: any) {
+  return String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }
 
 function numberValue(value: any) {
@@ -69,12 +70,12 @@ function numberValue(value: any) {
   );
 }
 
-function normalizeText(value: any) {
-  return String(value ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 0,
+  }).format(value || 0);
 }
 
 function normalizeArray(value: unknown): string[] {
@@ -85,8 +86,10 @@ function parseFechaLocal(fecha: string) {
   if (!fecha) return null;
   const parts = fecha.split("-");
   if (parts.length !== 3) return null;
+
   const [year, month, day] = parts.map(Number);
   if (!year || !month || !day) return null;
+
   return new Date(year, month - 1, day, 12, 0, 0, 0);
 }
 
@@ -174,7 +177,6 @@ function monthFromFileName(fileName: string) {
   return String(new Date().getMonth() + 1).padStart(2, "0");
 }
 
-
 function normalizarMetodoPago(value: any) {
   const v = normalizeText(value);
 
@@ -210,6 +212,11 @@ function obtenerHoraAgrupada(value: any) {
   return `${String(h).padStart(2, "0")} hs`;
 }
 
+function capitalizar(value: string) {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function nombreDia(fecha: string) {
   const date = parseFechaLocal(fecha);
   if (!date) return "Sin dato";
@@ -219,135 +226,17 @@ function nombreDia(fecha: string) {
   });
 }
 
-function fechaCorta(fecha: string) {
-  const date = parseFechaLocal(fecha);
-  if (!date) return fecha || "Sin dato";
-
-  return date.toLocaleDateString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-  });
-}
-
 function fechaConDia(fecha: string) {
   const date = parseFechaLocal(fecha);
   if (!date) return fecha || "Sin dato";
 
   const dia = date.toLocaleDateString("es-AR", { weekday: "long" });
-  const corto = date.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" });
-
-  return `${dia} ${corto}`;
-}
-
-function capitalizar(value: string) {
-  if (!value) return value;
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function obtenerLunesSemana(fecha: string) {
-  const date = parseFechaLocal(fecha);
-  if (!date) return null;
-  return startOfWeek(date);
-}
-
-function clavePeriodoIngresos(fecha: string, agrupacion: AgrupacionIngresos) {
-  const date = parseFechaLocal(fecha);
-  if (!date) return null;
-
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  if (agrupacion === "dia") {
-    const label = capitalizar(
-      date.toLocaleDateString("es-AR", {
-        weekday: "long",
-        day: "2-digit",
-        month: "2-digit",
-      })
-    );
-
-    return {
-      key: `${year}-${month}-${day}`,
-      label,
-      sortValue: `${year}-${month}-${day}`,
-    };
-  }
-
-  if (agrupacion === "semana") {
-    const start = startOfWeek(date);
-    const end = endOfWeek(date);
-    const startKey = toInputDate(start);
-    const endKey = toInputDate(end);
-
-    return {
-      key: startKey,
-      label: `Semana ${start.toLocaleDateString("es-AR", {
-        day: "2-digit",
-        month: "2-digit",
-      })} - ${end.toLocaleDateString("es-AR", {
-        day: "2-digit",
-        month: "2-digit",
-      })}`,
-      sortValue: startKey,
-    };
-  }
-
-  const label = capitalizar(
-    date.toLocaleDateString("es-AR", {
-      month: "long",
-      year: "numeric",
-    })
-  );
-
-  return {
-    key: `${year}-${month}`,
-    label,
-    sortValue: `${year}-${month}`,
-  };
-}
-
-function agruparIngresosPorPeriodo(
-  items: TurnoStand[],
-  agrupacion: AgrupacionIngresos,
-  filtroExacto: string
-) {
-  const acumulado: Record<string, { label: string; value: number; sortValue: string }> = {};
-
-  items.forEach((item) => {
-    const periodo = clavePeriodoIngresos(item.fecha, agrupacion);
-    if (!periodo) return;
-    if (filtroExacto && filtroExacto !== "ultimos" && filtroExacto !== "todos" && periodo.key !== filtroExacto) return;
-
-    if (!acumulado[periodo.key]) {
-      acumulado[periodo.key] = {
-        label: periodo.label,
-        value: 0,
-        sortValue: periodo.sortValue,
-      };
-    }
-
-    acumulado[periodo.key].value += numberValue(item.total ?? item.monto);
+  const corto = date.toLocaleDateString("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
   });
 
-  const ordenado = Object.values(acumulado).sort((a, b) => a.sortValue.localeCompare(b.sortValue));
-  const visible = filtroExacto === "ultimos" ? ordenado.slice(-12) : ordenado;
-
-  return visible.map(({ label, value }) => ({ label, value }));
-}
-
-function opcionesPeriodoIngresos(items: TurnoStand[], agrupacion: AgrupacionIngresos) {
-  const map = new Map<string, { label: string; sortValue: string }>();
-
-  items.forEach((item) => {
-    const periodo = clavePeriodoIngresos(item.fecha, agrupacion);
-    if (!periodo) return;
-    map.set(periodo.key, { label: periodo.label, sortValue: periodo.sortValue });
-  });
-
-  return Array.from(map.entries())
-    .sort((a, b) => b[1].sortValue.localeCompare(a[1].sortValue))
-    .map(([key, value]) => ({ key, label: value.label }));
+  return `${capitalizar(dia)} ${corto}`;
 }
 
 function getRowValue(row: any, posiblesNombres: string[]) {
@@ -368,32 +257,37 @@ function getRowValue(row: any, posiblesNombres: string[]) {
   return null;
 }
 
+function crearArchivoKey(fileName: string) {
+  return normalizeText(fileName)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function crearHashTurno(t: TurnoStand, archivoKey = "") {
+  return [
+    archivoKey || t.archivo_key || "",
+    t.fecha || "",
+    excelTimeToString(t.hora_tomado || ""),
+    excelTimeToString(t.hora_subida || ""),
+    excelTimeToString(t.hora_bajada || ""),
+    normalizarMetodoPago(t.metodo_pago),
+    numberValue(t.total ?? t.monto),
+    numberValue(t.cantidad_simuladores || t.personas || 1),
+    numberValue(t.cantidad_turnos || 1),
+    numberValue(t.duracion || 0),
+    normalizeText(t.escuderia || t.simulador || ""),
+  ].join("|");
+}
+
 function addToRecord(record: Record<string, number>, key: string | null | undefined, value = 1) {
   if (!key) return;
   record[key] = (record[key] || 0) + value;
 }
 
-function estadoEsActivo(value: any) {
-  if (value === true) return true;
-  if (typeof value === "string") {
-    const v = normalizeText(value);
-    return v === "true" || v === "verdadero" || v === "si" || v === "sí" || v === "activo" || v === "activa";
-  }
-  return false;
-}
-
-function crearClaveTurno(t: TurnoStand, extra = "") {
-  return [
-    t.fecha || "",
-    extra || "",
-    excelTimeToString(t.hora_tomado || ""),
-    excelTimeToString(t.hora_subida || ""),
-    excelTimeToString(t.hora_bajada || ""),
-    numberValue(t.total ?? t.monto),
-    normalizarMetodoPago(t.metodo_pago),
-    numberValue(t.cantidad_turnos),
-    numberValue(t.cantidad_simuladores || t.personas),
-  ].join("|");
+function toChart(data: Record<string, number>, sortByValue = true): ChartItem[] {
+  return Object.entries(data)
+    .sort((a, b) => (sortByValue ? b[1] - a[1] : a[0].localeCompare(b[0])))
+    .map(([label, value]) => ({ label, value }));
 }
 
 function chartPorHora(data: Record<string, number>) {
@@ -407,16 +301,14 @@ function chartPorDiaSemana(data: Record<string, number>) {
 
   return Object.entries(data)
     .sort((a, b) => orden.indexOf(a[0]) - orden.indexOf(b[0]))
-    .map(([label, value]) => ({ label, value }));
+    .map(([label, value]) => ({ label: capitalizar(label), value }));
 }
 
-function toChart(data: Record<string, number>, sortByValue = true): ChartItem[] {
-  return Object.entries(data)
-    .sort((a, b) => (sortByValue ? b[1] - a[1] : a[0].localeCompare(b[0])))
-    .map(([label, value]) => ({ label, value }));
+function sumBy<T>(items: T[], getter: (item: T) => number) {
+  return items.reduce((acc, item) => acc + getter(item), 0);
 }
 
-function countBy<T>(items: T[], getter: (item: T) => string | number | undefined | null) {
+function countBy<T>(items: T[], getter: (item: T) => string | number | null | undefined) {
   return items.reduce((acc: Record<string, number>, item) => {
     const key = String(getter(item) || "Sin dato");
     acc[key] = (acc[key] || 0) + 1;
@@ -424,11 +316,120 @@ function countBy<T>(items: T[], getter: (item: T) => string | number | undefined
   }, {});
 }
 
-function sumBy<T>(items: T[], getter: (item: T) => number) {
-  return items.reduce((acc, item) => acc + getter(item), 0);
+function clavePeriodo(fecha: string, agrupacion: Agrupacion) {
+  const date = parseFechaLocal(fecha);
+  if (!date) return null;
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  if (agrupacion === "dia") {
+    return {
+      key: `${year}-${month}-${day}`,
+      label: capitalizar(
+        date.toLocaleDateString("es-AR", {
+          weekday: "long",
+          day: "2-digit",
+          month: "2-digit",
+        })
+      ),
+      sortValue: `${year}-${month}-${day}`,
+    };
+  }
+
+  if (agrupacion === "semana") {
+    const start = startOfWeek(date);
+    const end = endOfWeek(date);
+    const startKey = toInputDate(start);
+
+    return {
+      key: startKey,
+      label: `Semana ${start.toLocaleDateString("es-AR", {
+        day: "2-digit",
+        month: "2-digit",
+      })} - ${end.toLocaleDateString("es-AR", {
+        day: "2-digit",
+        month: "2-digit",
+      })}`,
+      sortValue: startKey,
+    };
+  }
+
+  return {
+    key: `${year}-${month}`,
+    label: capitalizar(
+      date.toLocaleDateString("es-AR", {
+        month: "long",
+        year: "numeric",
+      })
+    ),
+    sortValue: `${year}-${month}`,
+  };
 }
 
-function KpiCard({ title, value, subtext }: { title: string; value: string; subtext?: string }) {
+function agruparIngresos(items: TurnoStand[], agrupacion: Agrupacion, filtroExacto: string) {
+  const acumulado: Record<string, { label: string; value: number; sortValue: string }> = {};
+
+  items.forEach((item) => {
+    const periodo = clavePeriodo(item.fecha, agrupacion);
+    if (!periodo) return;
+
+    if (
+      filtroExacto &&
+      filtroExacto !== "ultimos" &&
+      filtroExacto !== "todos" &&
+      periodo.key !== filtroExacto
+    ) {
+      return;
+    }
+
+    if (!acumulado[periodo.key]) {
+      acumulado[periodo.key] = {
+        label: periodo.label,
+        value: 0,
+        sortValue: periodo.sortValue,
+      };
+    }
+
+    acumulado[periodo.key].value += numberValue(item.total ?? item.monto);
+  });
+
+  const ordenado = Object.values(acumulado).sort((a, b) =>
+    a.sortValue.localeCompare(b.sortValue)
+  );
+
+  const visible = filtroExacto === "ultimos" ? ordenado.slice(-12) : ordenado;
+
+  return visible.map(({ label, value }) => ({ label, value }));
+}
+
+function opcionesPeriodo(items: TurnoStand[], agrupacion: Agrupacion) {
+  const map = new Map<string, { label: string; sortValue: string }>();
+
+  items.forEach((item) => {
+    const periodo = clavePeriodo(item.fecha, agrupacion);
+    if (!periodo) return;
+    map.set(periodo.key, {
+      label: periodo.label,
+      sortValue: periodo.sortValue,
+    });
+  });
+
+  return Array.from(map.entries())
+    .sort((a, b) => b[1].sortValue.localeCompare(a[1].sortValue))
+    .map(([key, value]) => ({ key, label: value.label }));
+}
+
+function KpiCard({
+  title,
+  value,
+  subtext,
+}: {
+  title: string;
+  value: string;
+  subtext?: string;
+}) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
       <p className="text-xs uppercase tracking-[0.2em] text-white/45">{title}</p>
@@ -479,70 +480,6 @@ function BarChart({
   );
 }
 
-function LineChart({
-  title,
-  data,
-  valueFormatter,
-}: {
-  title: string;
-  data: ChartItem[];
-  valueFormatter?: (n: number) => string;
-}) {
-  const width = 900;
-  const height = 280;
-  const padding = 40;
-  const max = Math.max(...data.map((d) => d.value), 1);
-
-  const points = data.map((item, index) => {
-    const x =
-      data.length === 1
-        ? width / 2
-        : padding + (index * (width - padding * 2)) / (data.length - 1);
-
-    const y = height - padding - (item.value / max) * (height - padding * 2);
-
-    return { ...item, x, y };
-  });
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
-      <h3 className="mb-5 text-lg font-semibold text-white">{title}</h3>
-
-      {data.length === 0 ? (
-        <p className="text-sm text-white/55">Sin datos para este período.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <div className="min-w-[700px]">
-            <svg viewBox={`0 0 ${width} ${height}`} className="h-72 w-full">
-              <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="rgba(255,255,255,0.15)" />
-              <line x1={padding} y1={padding} x2={padding} y2={height - padding} stroke="rgba(255,255,255,0.15)" />
-              <polyline
-                fill="none"
-                stroke="#ef4444"
-                strokeWidth="4"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                points={points.map((p) => `${p.x},${p.y}`).join(" ")}
-              />
-              {points.map((p) => (
-                <g key={p.label}>
-                  <circle cx={p.x} cy={p.y} r="5" fill="#ef4444" />
-                  <text x={p.x} y={p.y - 12} textAnchor="middle" fontSize="12" fill="white">
-                    {valueFormatter ? valueFormatter(p.value) : p.value}
-                  </text>
-                  <text x={p.x} y={height - 10} textAnchor="middle" fontSize="11" fill="rgba(255,255,255,0.7)">
-                    {p.label}
-                  </text>
-                </g>
-              ))}
-            </svg>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function PieChart({ title, data }: { title: string; data: ChartItem[] }) {
   const total = data.reduce((acc, d) => acc + d.value, 0);
   const colors = ["#ef4444", "#22c55e", "#3b82f6", "#eab308", "#a855f7", "#f97316"];
@@ -583,7 +520,10 @@ function PieChart({ title, data }: { title: string; data: ChartItem[] }) {
             {data.map((item, i) => (
               <div key={item.label} className="flex justify-between text-sm">
                 <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: colors[i % colors.length] }} />
+                  <div
+                    className="h-3 w-3 rounded-full"
+                    style={{ backgroundColor: colors[i % colors.length] }}
+                  />
                   <span className="text-white/80">{item.label}</span>
                 </div>
                 <span className="text-white">
@@ -598,18 +538,109 @@ function PieChart({ title, data }: { title: string; data: ChartItem[] }) {
   );
 }
 
+function LineChart({
+  title,
+  data,
+  valueFormatter,
+}: {
+  title: string;
+  data: ChartItem[];
+  valueFormatter?: (n: number) => string;
+}) {
+  const width = 900;
+  const height = 280;
+  const padding = 40;
+  const max = Math.max(...data.map((d) => d.value), 1);
+
+  const points = data.map((item, index) => {
+    const x =
+      data.length === 1
+        ? width / 2
+        : padding + (index * (width - padding * 2)) / (data.length - 1);
+
+    const y = height - padding - (item.value / max) * (height - padding * 2);
+
+    return { ...item, x, y };
+  });
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+      <h3 className="mb-5 text-lg font-semibold text-white">{title}</h3>
+
+      {data.length === 0 ? (
+        <p className="text-sm text-white/55">Sin datos para este período.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <div className="min-w-[700px]">
+            <svg viewBox={`0 0 ${width} ${height}`} className="h-72 w-full">
+              <line
+                x1={padding}
+                y1={height - padding}
+                x2={width - padding}
+                y2={height - padding}
+                stroke="rgba(255,255,255,0.15)"
+              />
+              <line
+                x1={padding}
+                y1={padding}
+                x2={padding}
+                y2={height - padding}
+                stroke="rgba(255,255,255,0.15)"
+              />
+              <polyline
+                fill="none"
+                stroke="#ef4444"
+                strokeWidth="4"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                points={points.map((p) => `${p.x},${p.y}`).join(" ")}
+              />
+              {points.map((p) => (
+                <g key={p.label}>
+                  <circle cx={p.x} cy={p.y} r="5" fill="#ef4444" />
+                  <text
+                    x={p.x}
+                    y={p.y - 12}
+                    textAnchor="middle"
+                    fontSize="12"
+                    fill="white"
+                  >
+                    {valueFormatter ? valueFormatter(p.value) : p.value}
+                  </text>
+                  <text
+                    x={p.x}
+                    y={height - 10}
+                    textAnchor="middle"
+                    fontSize="11"
+                    fill="rgba(255,255,255,0.7)"
+                  >
+                    {p.label}
+                  </text>
+                </g>
+              ))}
+            </svg>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminMetricasPage() {
   const [vista, setVista] = useState<Vista>("reservas");
 
   const [reservas, setReservas] = useState<Reserva[]>([]);
   const [turnosStand, setTurnosStand] = useState<TurnoStand[]>([]);
-  const [excelStand, setExcelStand] = useState<TurnoStand[]>([]);
+  const [turnosHistoricos, setTurnosHistoricos] = useState<TurnoStand[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [importando, setImportando] = useState(false);
+
   const [quickPeriod, setQuickPeriod] = useState<QuickPeriod>("mes");
   const [busqueda, setBusqueda] = useState("");
   const [estadoFiltro, setEstadoFiltro] = useState<"todas" | "activa" | "cancelada">("todas");
-  const [agrupacionIngresos, setAgrupacionIngresos] = useState<AgrupacionIngresos>("semana");
+
+  const [agrupacionIngresos, setAgrupacionIngresos] = useState<Agrupacion>("semana");
   const [filtroIngresos, setFiltroIngresos] = useState("ultimos");
 
   const hoy = new Date();
@@ -618,15 +649,6 @@ export default function AdminMetricasPage() {
 
   useEffect(() => {
     cargarDatos();
-
-    const excelGuardado = localStorage.getItem(STORAGE_KEY);
-    if (excelGuardado) {
-      try {
-        setExcelStand(JSON.parse(excelGuardado));
-      } catch {
-        localStorage.removeItem(STORAGE_KEY);
-      }
-    }
   }, []);
 
   useEffect(() => {
@@ -658,22 +680,34 @@ export default function AdminMetricasPage() {
     try {
       setLoading(true);
 
-      const [resReservas, resStand] = await Promise.all([
+      const [resReservas, resStand, resHistoricos] = await Promise.all([
         fetch("/api/reservas", { cache: "no-store" }),
         fetch("/api/turnos-stand", { cache: "no-store" }),
+        fetch("/api/turnos-historicos", { cache: "no-store" }),
       ]);
 
       const reservasJson = await resReservas.json();
       const standJson = await resStand.json();
+      const historicosJson = await resHistoricos.json();
 
       setReservas(
-        (Array.isArray(reservasJson) ? reservasJson : reservasJson.reservas || []).map((r: Reserva) => ({
-          ...r,
-          simuladores: normalizeArray(r.simuladores),
-        }))
+        (Array.isArray(reservasJson) ? reservasJson : reservasJson.reservas || []).map(
+          (r: Reserva) => ({
+            ...r,
+            simuladores: normalizeArray(r.simuladores),
+          })
+        )
       );
 
       setTurnosStand(Array.isArray(standJson) ? standJson : standJson.turnos || []);
+
+      setTurnosHistoricos(
+        (historicosJson.turnos || []).map((t: any) => ({
+          ...t,
+          simulador: t.escuderia || t.simulador || "",
+          total: Number(t.total || 0),
+        }))
+      );
     } catch (error) {
       console.error(error);
       alert("Error cargando métricas");
@@ -684,15 +718,15 @@ export default function AdminMetricasPage() {
 
   async function leerExcel(file: File) {
     const buffer = await file.arrayBuffer();
-    const data = new Uint8Array(buffer);
-
-    const workbook = XLSX.read(data, {
+    const workbook = XLSX.read(new Uint8Array(buffer), {
       type: "array",
       cellDates: true,
     });
 
     const year = new Date().getFullYear();
     const month = monthFromFileName(file.name);
+    const archivoKey = crearArchivoKey(file.name);
+
     const turnosImportados: TurnoStand[] = [];
     const claves = new Set<string>();
 
@@ -711,37 +745,52 @@ export default function AdminMetricasPage() {
 
       rows.forEach((row) => {
         const monto = numberValue(getRowValue(row, ["Monto"]));
-        const metodoPago = normalizarMetodoPago(getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"]));
+        const metodoPago = normalizarMetodoPago(
+          getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"])
+        );
 
         if (!monto || monto <= 0) return;
         if (!metodoPago) return;
 
-        const turno = getRowValue(row, ["Turno"]);
-        const numeroTurno = numberValue(turno);
-        const escuderia = getRowValue(row, ["Escuderia", "Escudería", "Simulador"]);
-        const cantidadSimuladores = numberValue(getRowValue(row, ["Cant. de Sim.", "Cantidad de Sim", "Cant Sim"]));
-        const cantidadTurnos = numberValue(getRowValue(row, ["Cant. Turnos", "Cantidad Turnos", "Turnos"]));
-        const duracion = numberValue(getRowValue(row, ["Tiempo (Min)", "Tiempo", "Duracion", "Duración"]));
+        const escuderia = String(
+          getRowValue(row, ["Escuderia", "Escudería", "Simulador"]) || ""
+        );
+
+        const cantidadSimuladores =
+          numberValue(getRowValue(row, ["Cant. de Sim.", "Cantidad de Sim", "Cant Sim"])) || 1;
+
+        const cantidadTurnos =
+          numberValue(getRowValue(row, ["Cant. Turnos", "Cantidad Turnos", "Turnos"])) ||
+          cantidadSimuladores ||
+          1;
+
+        const duracion =
+          numberValue(getRowValue(row, ["Tiempo (Min)", "Tiempo", "Duracion", "Duración"])) || 15;
 
         const turnoParseado: TurnoStand = {
+          archivo_nombre: file.name,
+          archivo_key: archivoKey,
           fecha,
-          hora_tomado: excelTimeToString(getRowValue(row, ["Hora que se tomo el turno", "Hora tomado"])),
+          hora_tomado: excelTimeToString(
+            getRowValue(row, ["Hora que se tomo el turno", "Hora tomado"])
+          ),
           hora_subida: excelTimeToString(getRowValue(row, ["Hora de subida", "Hora subida"])),
           hora_bajada: excelTimeToString(getRowValue(row, ["Hora de bajada", "Hora bajada"])),
-          simulador: escuderia ? String(escuderia) : "",
-          cantidad_simuladores: cantidadSimuladores || 1,
-          cantidad_turnos: cantidadTurnos || cantidadSimuladores || 1,
-          personas: cantidadSimuladores || 1,
-          duracion,
           metodo_pago: metodoPago,
-          posnet: "",
           total: monto,
+          cantidad_simuladores: cantidadSimuladores,
+          cantidad_turnos: cantidadTurnos,
+          duracion,
+          escuderia,
+          simulador: escuderia,
+          origen: "excel",
         };
 
-        const clave = crearClaveTurno(turnoParseado, `${file.name}-${numeroTurno || ""}`);
-        if (claves.has(clave)) return;
+        const hash = crearHashTurno(turnoParseado, archivoKey);
+        if (claves.has(hash)) return;
 
-        claves.add(clave);
+        claves.add(hash);
+        turnoParseado.hash_unico = hash;
         turnosImportados.push(turnoParseado);
       });
     });
@@ -754,43 +803,77 @@ export default function AdminMetricasPage() {
     if (files.length === 0) return;
 
     try {
+      setImportando(true);
+
       const resultados = await Promise.all(files.map((file) => leerExcel(file)));
-      const nuevos = resultados.flat();
-      const combinados = [...excelStand, ...nuevos];
-      const deduplicados: TurnoStand[] = [];
-      const clavesGlobales = new Set<string>();
+      const turnos = resultados.flat();
 
-      combinados.forEach((turno) => {
-        const clave = crearClaveTurno(turno);
-        if (clavesGlobales.has(clave)) return;
-        clavesGlobales.add(clave);
-        deduplicados.push(turno);
-      });
+      if (turnos.length === 0) {
+        alert("No se encontraron turnos válidos en los Excel.");
+        return;
+      }
 
-      localStorage.removeItem("sim_metricas_excel_stand");
-      localStorage.removeItem("sim_excel_stand");
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(deduplicados));
-      setExcelStand(deduplicados);
+      const chunks: TurnoStand[][] = [];
+      for (let i = 0; i < turnos.length; i += 500) {
+        chunks.push(turnos.slice(i, i + 500));
+      }
 
-      const facturacionNueva = nuevos.reduce((acc, t) => acc + numberValue(t.total), 0);
-      const turnosVendidosNuevos = nuevos.reduce((acc, t) => acc + numberValue(t.cantidad_turnos), 0);
-      const facturacionTotal = deduplicados.reduce((acc, t) => acc + numberValue(t.total), 0);
-      const turnosVendidosTotal = deduplicados.reduce((acc, t) => acc + numberValue(t.cantidad_turnos), 0);
+      for (const chunk of chunks) {
+        const res = await fetch("/api/turnos-historicos", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ turnos: chunk }),
+        });
+
+        const json = await res.json();
+
+        if (!res.ok) {
+          throw new Error(json.error || "Error guardando turnos históricos");
+        }
+      }
+
+      await cargarDatos();
+
+      const facturacion = turnos.reduce((acc, t) => acc + numberValue(t.total), 0);
+      const turnosVendidos = turnos.reduce(
+        (acc, t) => acc + numberValue(t.cantidad_turnos),
+        0
+      );
 
       alert(
-        `Excel importado correctamente.\nArchivos: ${files.length}\nVentas nuevas leídas: ${nuevos.length}\nTurnos nuevos leídos: ${turnosVendidosNuevos}\nFacturación nueva leída: ${formatMoney(facturacionNueva)}\n\nTotal guardado en página:\nVentas: ${deduplicados.length}\nTurnos vendidos: ${turnosVendidosTotal}\nFacturación: ${formatMoney(facturacionTotal)}`
+        `Excel importado y guardado en Supabase.\nArchivos: ${files.length}\nVentas leídas: ${turnos.length}\nTurnos vendidos leídos: ${turnosVendidos}\nFacturación leída: ${formatMoney(facturacion)}`
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert("Error importando Excel. Revisá que el archivo tenga el mismo formato.");
+      alert(error.message || "Error importando Excel");
     } finally {
+      setImportando(false);
       e.target.value = "";
     }
   }
 
-  function borrarExcelCargado() {
-    localStorage.removeItem(STORAGE_KEY);
-    setExcelStand([]);
+  async function borrarImportacion(archivoKey: string) {
+    const confirmar = confirm("¿Seguro que querés borrar esta importación?");
+    if (!confirmar) return;
+
+    try {
+      const res = await fetch(`/api/turnos-historicos?archivo_key=${archivoKey}`, {
+        method: "DELETE",
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "Error borrando importación");
+      }
+
+      await cargarDatos();
+    } catch (error: any) {
+      console.error(error);
+      alert(error.message || "Error borrando importación");
+    }
   }
 
   function filtrarPorFecha<T extends { fecha?: string }>(items: T[]) {
@@ -809,29 +892,61 @@ export default function AdminMetricasPage() {
   const reservasFiltradas = useMemo(() => {
     return filtrarPorFecha<Reserva>(reservas).filter((r) => {
       const coincideEstado = estadoFiltro === "todas" ? true : r.estado === estadoFiltro;
-      const texto = `${r.nombre} ${r.telefono} ${r.fecha} ${r.hora} ${r.simuladores.join(" ")}`.toLowerCase();
+      const texto = `${r.nombre} ${r.telefono} ${r.fecha} ${r.hora} ${r.simuladores.join(
+        " "
+      )}`.toLowerCase();
+
       return coincideEstado && texto.includes(busqueda.toLowerCase());
     });
   }, [reservas, estadoFiltro, busqueda, fechaDesde, fechaHasta]);
 
   const standFiltrado = useMemo(() => {
-    // Mezclamos Supabase + Excel para poder ver el histórico completo.
-    // Si una venta existe en ambos lados, se evita sumarla dos veces con una clave de deduplicación.
-    const fuente = [...turnosStand, ...excelStand];
+    const fuente = [...turnosStand, ...turnosHistoricos];
     const claves = new Set<string>();
 
     const dataSinDuplicados = fuente.filter((t) => {
-      const clave = crearClaveTurno(t);
+      const clave = crearHashTurno(t, t.archivo_key || "");
       if (claves.has(clave)) return false;
       claves.add(clave);
       return true;
     });
 
     return filtrarPorFecha(dataSinDuplicados).filter((t) => {
-      const texto = `${t.fecha} ${t.hora_bajada} ${t.hora_subida} ${t.simulador} ${t.metodo_pago}`.toLowerCase();
+      const texto = `${t.fecha} ${t.hora_bajada} ${t.hora_subida} ${t.simulador} ${t.escuderia} ${t.metodo_pago}`.toLowerCase();
       return texto.includes(busqueda.toLowerCase());
     });
-  }, [turnosStand, excelStand, busqueda, fechaDesde, fechaHasta]);
+  }, [turnosStand, turnosHistoricos, busqueda, fechaDesde, fechaHasta]);
+
+  const importaciones = useMemo(() => {
+    const map = new Map<
+      string,
+      { archivo_key: string; archivo_nombre: string; ventas: number; facturacion: number }
+    >();
+
+    turnosHistoricos.forEach((t) => {
+      const key = t.archivo_key || "sin-key";
+      if (!map.has(key)) {
+        map.set(key, {
+          archivo_key: key,
+          archivo_nombre: t.archivo_nombre || key,
+          ventas: 0,
+          facturacion: 0,
+        });
+      }
+
+      const item = map.get(key)!;
+      item.ventas += 1;
+      item.facturacion += numberValue(t.total);
+    });
+
+    return Array.from(map.values()).sort((a, b) =>
+      a.archivo_nombre.localeCompare(b.archivo_nombre)
+    );
+  }, [turnosHistoricos]);
+
+  const opcionesIngresos = useMemo(() => {
+    return opcionesPeriodo(standFiltrado, agrupacionIngresos);
+  }, [standFiltrado, agrupacionIngresos]);
 
   const metricasReservas = useMemo(() => {
     const activas = reservasFiltradas.filter((r) => r.estado === "activa");
@@ -839,7 +954,10 @@ export default function AdminMetricasPage() {
 
     const facturacion = sumBy(activas, (r) => numberValue(r.total));
     const ticketPromedio = activas.length ? facturacion / activas.length : 0;
-    const tasaCancelacion = reservasFiltradas.length ? (canceladas.length / reservasFiltradas.length) * 100 : 0;
+    const tasaCancelacion = reservasFiltradas.length
+      ? (canceladas.length / reservasFiltradas.length) * 100
+      : 0;
+
     const turnosVendidos = sumBy(activas, (r) => numberValue(r.cantidad_turnos));
     const simuladoresUsados = sumBy(activas, (r) => r.simuladores.length);
     const promedioSims = activas.length ? simuladoresUsados / activas.length : 0;
@@ -861,7 +979,8 @@ export default function AdminMetricasPage() {
       r.simuladores.forEach((sim) => {
         porSimulador[sim] = (porSimulador[sim] || 0) + 1;
         ingresosPorSimulador[sim] =
-          (ingresosPorSimulador[sim] || 0) + numberValue(r.total) / Math.max(r.simuladores.length, 1);
+          (ingresosPorSimulador[sim] || 0) +
+          numberValue(r.total) / Math.max(r.simuladores.length, 1);
       });
     });
 
@@ -884,8 +1003,14 @@ export default function AdminMetricasPage() {
       reservasPorEstado: toChart(porEstado),
       reservasPorSimulador: toChart(porSimulador),
       reservasPorCantidadTurnos: toChart(porCantidadTurnos),
-      reservasPorDia: toChart(porDia, false).map((i) => ({ ...i, label: i.label.slice(5) })),
-      ingresosPorDia: toChart(ingresosPorDia, false).map((i) => ({ ...i, label: i.label.slice(5) })),
+      reservasPorDia: toChart(porDia, false).map((i) => ({
+        ...i,
+        label: i.label.slice(5),
+      })),
+      ingresosPorDia: toChart(ingresosPorDia, false).map((i) => ({
+        ...i,
+        label: i.label.slice(5),
+      })),
       ingresosPorSimulador: toChart(ingresosPorSimulador),
     };
   }, [reservasFiltradas]);
@@ -931,8 +1056,8 @@ export default function AdminMetricasPage() {
     const porPersonas: Record<string, number> = {};
     const porHora: Record<string, number> = {};
     const porDiaSemana: Record<string, number> = {};
-    const ingresosPorDia: Record<string, number> = {};
     const ingresosPorMetodo: Record<string, number> = {};
+    const ingresosPorDia: Record<string, number> = {};
 
     standFiltrado.forEach((t) => {
       const monto = numberValue(t.total ?? t.monto);
@@ -942,6 +1067,7 @@ export default function AdminMetricasPage() {
       const cantTurnos = numberValue(t.cantidad_turnos) || sims || 1;
       const hora = obtenerHoraAgrupada(t.hora_subida || t.hora_bajada || t.hora_tomado);
       const diaSemana = nombreDia(t.fecha);
+      const escuderiaRaw = t.escuderia || t.simulador || "";
 
       if (metodo) {
         addToRecord(porMetodoPago, metodo, cantTurnos);
@@ -955,14 +1081,16 @@ export default function AdminMetricasPage() {
       if (duracion > 0) addToRecord(porDuracion, `${duracion} min`, cantTurnos);
       if (sims > 0) addToRecord(porPersonas, `${sims} persona/s`, cantTurnos);
 
-      obtenerEscuderias(t.simulador).forEach((escuderia) => {
+      obtenerEscuderias(escuderiaRaw).forEach((escuderia) => {
         addToRecord(porSimulador, escuderia, 1);
       });
     });
 
     const horaPico = Object.entries(porHora).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
-    const mejorDiaFecha = Object.entries(ingresosPorDia).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
-    const simuladorMasUsado = Object.entries(porSimulador).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+    const mejorDiaFecha =
+      Object.entries(ingresosPorDia).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+    const simuladorMasUsado =
+      Object.entries(porSimulador).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
 
     return {
       ventasRegistradas,
@@ -985,13 +1113,17 @@ export default function AdminMetricasPage() {
       porPersonas: toChart(porPersonas),
       porHora: chartPorHora(porHora),
       porDia: chartPorDiaSemana(porDiaSemana),
-      ingresosPorDia: agruparIngresosPorPeriodo(standFiltrado, agrupacionIngresos, filtroIngresos),
-      opcionesIngresos: opcionesPeriodoIngresos(standFiltrado, agrupacionIngresos),
+      ingresosPorPeriodo: agruparIngresos(
+        standFiltrado,
+        agrupacionIngresos,
+        filtroIngresos
+      ),
       ingresosPorMetodo: toChart(ingresosPorMetodo),
     };
   }, [standFiltrado, agrupacionIngresos, filtroIngresos]);
 
-  const rangoTexto = !fechaDesde && !fechaHasta ? "Todo el histórico" : `${fechaDesde || "Inicio"} → ${fechaHasta || "Hoy"}`;
+  const rangoTexto =
+    !fechaDesde && !fechaHasta ? "Todo el histórico" : `${fechaDesde || "Inicio"} → ${fechaHasta || "Hoy"}`;
 
   return (
     <main className="min-h-screen bg-[#050505] text-white">
@@ -1003,7 +1135,7 @@ export default function AdminMetricasPage() {
             </p>
             <h1 className="text-4xl font-bold">Métricas de gestión</h1>
             <p className="mt-2 max-w-2xl text-white/60">
-              Compará reservas online y turnos del stand desde una misma pantalla.
+              Compará reservas online, turnos del stand y turnos históricos importados.
             </p>
           </div>
 
@@ -1100,6 +1232,7 @@ export default function AdminMetricasPage() {
                   multiple
                   accept=".xlsx,.xls,.csv"
                   onChange={importarExcel}
+                  disabled={importando}
                   className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none focus:border-red-500"
                 />
               </div>
@@ -1115,21 +1248,6 @@ export default function AdminMetricasPage() {
               />
             </div>
           </div>
-
-          {vista === "stand" && excelStand.length > 0 && (
-            <div className="mt-4 flex flex-col gap-3 rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3 md:flex-row md:items-center md:justify-between">
-              <p className="text-sm text-green-300">
-                Excel/es cargado/s y guardado/s en esta página: <b>{excelStand.length}</b> turnos importados.
-              </p>
-
-              <button
-                onClick={borrarExcelCargado}
-                className="rounded-xl border border-white/10 bg-black/30 px-4 py-2 text-sm text-white/80 hover:bg-black/50"
-              >
-                Borrar Excel cargado
-              </button>
-            </div>
-          )}
 
           <div className="mt-4 rounded-xl border border-white/10 bg-black/25 px-4 py-3">
             <p className="text-sm text-white/50">Rango activo</p>
@@ -1175,70 +1293,94 @@ export default function AdminMetricasPage() {
           <>
             <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
               <p className="text-sm text-white/60">
-                Datos cargados desde Supabase: <b className="text-white">{turnosStand.length}</b> · Datos importados de Excel:{" "}
-                <b className="text-white">{excelStand.length}</b> · Las métricas mezclan Supabase + Excel y evitan duplicados por venta
+                Datos de Supabase actual: <b className="text-white">{turnosStand.length}</b> ·
+                Históricos importados: <b className="text-white">{turnosHistoricos.length}</b>
               </p>
             </div>
 
+            {importaciones.length > 0 && (
+              <div className="mb-8 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+                <h3 className="mb-4 text-lg font-semibold text-white">Importaciones guardadas</h3>
+                <div className="space-y-3">
+                  {importaciones.map((imp) => (
+                    <div
+                      key={imp.archivo_key}
+                      className="flex flex-col gap-3 rounded-xl border border-white/10 bg-black/30 p-4 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div>
+                        <p className="font-semibold text-white">{imp.archivo_nombre}</p>
+                        <p className="text-sm text-white/50">
+                          Ventas: {imp.ventas} · Facturación: {formatMoney(imp.facturacion)}
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => borrarImportacion(imp.archivo_key)}
+                        className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-white hover:bg-red-500/20"
+                      >
+                        Borrar importación
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="mb-8 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+              <KpiCard title="Ventas registradas" value={String(metricasStand.ventasRegistradas)} />
               <KpiCard title="Turnos vendidos" value={String(metricasStand.totalTurnos)} />
               <KpiCard title="Facturación" value={formatMoney(metricasStand.facturacion)} />
               <KpiCard title="Ticket promedio" value={formatMoney(metricasStand.ticketPromedio)} />
-              <KpiCard title="Ventas registradas" value={String(metricasStand.ventasRegistradas)} />
+              <KpiCard title="Personas" value={String(metricasStand.totalPersonas)} />
               <KpiCard title="Prom. personas" value={metricasStand.promedioPersonas.toFixed(2)} />
               <KpiCard title="Horas vendidas" value={metricasStand.horasVendidas.toFixed(1)} />
               <KpiCard title="Minutos vendidos" value={String(metricasStand.totalMinutos)} />
               <KpiCard title="Ingreso/minuto" value={formatMoney(metricasStand.ingresoPorMinuto)} />
               <KpiCard title="Ingreso/persona" value={formatMoney(metricasStand.ingresoPorPersona)} />
-              <KpiCard title="Ingreso prom. por simulador" value={formatMoney(metricasStand.ingresoPromedioPorSimulador)} />
+              <KpiCard title="Ingreso promedio/sim" value={formatMoney(metricasStand.ingresoPromedioPorSimulador)} />
               <KpiCard title="Hora pico" value={metricasStand.horaPico} />
               <KpiCard title="Mejor día" value={metricasStand.mejorDia} />
               <KpiCard title="Sim más usado" value={metricasStand.simuladorMasUsado} />
             </div>
 
             <div className="mb-8 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
-              <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="mb-5 grid gap-4 md:grid-cols-3">
                 <div>
-                  <h3 className="text-lg font-semibold text-white">Ingresos por período</h3>
-                  <p className="mt-1 text-sm text-white/55">
-                    Agrupá la facturación del stand por día, semana o mes y filtrá un período exacto.
-                  </p>
+                  <label className="mb-2 block text-sm text-white/70">Agrupar ingresos por</label>
+                  <select
+                    value={agrupacionIngresos}
+                    onChange={(e) => setAgrupacionIngresos(e.target.value as Agrupacion)}
+                    className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                  >
+                    <option value="dia">Día</option>
+                    <option value="semana">Semana</option>
+                    <option value="mes">Mes</option>
+                  </select>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-white/45">Agrupar</label>
-                    <select
-                      value={agrupacionIngresos}
-                      onChange={(e) => setAgrupacionIngresos(e.target.value as AgrupacionIngresos)}
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
-                    >
-                      <option value="dia">Día</option>
-                      <option value="semana">Semana</option>
-                      <option value="mes">Mes</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-white/45">Período exacto</label>
-                    <select
-                      value={filtroIngresos}
-                      onChange={(e) => setFiltroIngresos(e.target.value)}
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
-                    >
-                      <option value="ultimos">Últimos 12 períodos</option>
-                      <option value="todos">Todos los períodos</option>
-                      {metricasStand.opcionesIngresos.map((opcion) => (
-                        <option key={opcion.key} value={opcion.key}>
-                          {opcion.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div>
+                  <label className="mb-2 block text-sm text-white/70">Período exacto</label>
+                  <select
+                    value={filtroIngresos}
+                    onChange={(e) => setFiltroIngresos(e.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                  >
+                    <option value="ultimos">Últimos 12 períodos</option>
+                    <option value="todos">Todos</option>
+                    {opcionesIngresos.map((op) => (
+                      <option key={op.key} value={op.key}>
+                        {op.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
-              <BarChart title="Ingresos" data={metricasStand.ingresosPorDia} valueFormatter={formatMoney} />
+              <LineChart
+                title="Ingresos por período"
+                data={metricasStand.ingresosPorPeriodo}
+                valueFormatter={formatMoney}
+              />
             </div>
 
             <div className="mb-8 grid gap-6 xl:grid-cols-3">
@@ -1248,7 +1390,7 @@ export default function AdminMetricasPage() {
               <BarChart title="Turnos por duración" data={metricasStand.porDuracion} />
               <BarChart title="Turnos por cantidad de personas" data={metricasStand.porPersonas} />
               <BarChart title="Turnos por hora" data={metricasStand.porHora} />
-              <BarChart title="Turnos por día" data={metricasStand.porDia} />
+              <BarChart title="Turnos por día de semana" data={metricasStand.porDia} />
             </div>
           </>
         )}
