@@ -10,8 +10,8 @@ type TurnoStand = {
   hora: string;
   hora_estimada_subida?: string;
   hora_subida?: string;
+  hora_bajada?: string;
   simuladores?: string[];
-  cantidad_simuladores?: number;
   cantidad_personas?: number;
   cantidad_minutos?: number;
   cantidad_turnos?: number;
@@ -35,6 +35,20 @@ function horaActual() {
   const h = String(date.getHours()).padStart(2, "0");
   const m = String(date.getMinutes()).padStart(2, "0");
   return `${h}:${m}`;
+}
+
+function sumarMinutosAHora(hora: string, minutos: number) {
+  if (!hora) return "";
+
+  const [h, m] = hora.split(":").map(Number);
+  const date = new Date();
+
+  date.setHours(h, m + minutos, 0, 0);
+
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+
+  return `${hh}:${mm}`;
 }
 
 function normalizarSimuladores(simuladores?: string[] | string) {
@@ -84,6 +98,10 @@ export default function TurneroAdminPage() {
   const [observaciones, setObservaciones] = useState("");
 
   const [turnoEditando, setTurnoEditando] = useState<TurnoStand | null>(null);
+
+  const horaBajada = useMemo(() => {
+    return sumarMinutosAHora(horaSubida, cantidadMinutos);
+  }, [horaSubida, cantidadMinutos]);
 
   async function cargarTurnos() {
     try {
@@ -158,6 +176,7 @@ export default function TurneroAdminPage() {
           hora,
           hora_estimada_subida: horaEstimadaSubida,
           hora_subida: horaSubida,
+          hora_bajada: horaBajada,
           simuladores,
           cantidad_personas: cantidadPersonas,
           cantidad_minutos: cantidadMinutos,
@@ -220,6 +239,7 @@ export default function TurneroAdminPage() {
           hora,
           hora_estimada_subida: horaEstimadaSubida,
           hora_subida: horaSubida,
+          hora_bajada: horaBajada,
           simuladores,
           cantidad_personas: cantidadPersonas,
           cantidad_minutos: cantidadMinutos,
@@ -253,242 +273,6 @@ export default function TurneroAdminPage() {
     limpiarFormulario();
   }
 
-  const FormularioTurno = ({
-    modo,
-    onSubmit,
-  }: {
-    modo: "crear" | "editar";
-    onSubmit: (e: React.FormEvent) => void;
-  }) => (
-    <form
-      onSubmit={onSubmit}
-      className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
-    >
-      <h2 className="mb-5 text-xl font-black uppercase text-red-500">
-        {modo === "crear" ? "Nuevo turno" : "Editar turno"}
-      </h2>
-
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Fecha
-            </label>
-            <input
-              type="date"
-              value={fecha}
-              onChange={(e) => setFecha(e.target.value)}
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Hora toma
-            </label>
-            <input
-              type="time"
-              value={hora}
-              onChange={(e) => setHora(e.target.value)}
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Hora estimada
-            </label>
-            <input
-              type="time"
-              value={horaEstimadaSubida}
-              onChange={(e) => setHoraEstimadaSubida(e.target.value)}
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Hora subida
-            </label>
-            <input
-              type="time"
-              value={horaSubida}
-              onChange={(e) => setHoraSubida(e.target.value)}
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-            Cliente
-          </label>
-          <input
-            type="text"
-            value={nombre}
-            onChange={(e) => setNombre(e.target.value)}
-            placeholder="Nombre del cliente"
-            className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
-          />
-        </div>
-
-        <div>
-          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-            Teléfono
-          </label>
-          <input
-            type="text"
-            value={telefono}
-            onChange={(e) => setTelefono(e.target.value)}
-            placeholder="351..."
-            className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
-          />
-        </div>
-
-        <div>
-          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-            Simuladores
-          </label>
-
-          <div className="grid grid-cols-2 gap-2">
-            {SIMULADORES.map((simulador) => {
-              const seleccionado = simuladores.includes(simulador);
-
-              return (
-                <button
-                  key={simulador}
-                  type="button"
-                  onClick={() => toggleSimulador(simulador)}
-                  className={`rounded-2xl border px-4 py-3 text-sm font-black uppercase transition ${
-                    seleccionado
-                      ? "border-red-500 bg-red-600 text-white"
-                      : "border-white/15 bg-black text-white/70 hover:border-red-500 hover:text-white"
-                  }`}
-                >
-                  {simulador}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Personas
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={cantidadPersonas}
-              onChange={(e) => setCantidadPersonas(Number(e.target.value))}
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Minutos
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={cantidadMinutos}
-              onChange={(e) => setCantidadMinutos(Number(e.target.value))}
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Turnos
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={cantidadTurnos}
-              onChange={(e) => setCantidadTurnos(Number(e.target.value))}
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Método pago
-            </label>
-            <select
-              value={metodoPago}
-              onChange={(e) => setMetodoPago(e.target.value)}
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
-            >
-              <option value="qr">QR</option>
-              <option value="efectivo">Efectivo</option>
-              <option value="debito">Débito</option>
-              <option value="credito">Crédito</option>
-              <option value="transferencia">Transferencia</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-              Total
-            </label>
-            <input
-              type="number"
-              value={total}
-              onChange={(e) => setTotal(e.target.value)}
-              placeholder="0"
-              className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
-            Observaciones
-          </label>
-          <textarea
-            value={observaciones}
-            onChange={(e) => setObservaciones(e.target.value)}
-            placeholder="Notas internas..."
-            rows={3}
-            className="w-full resize-none rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
-          />
-        </div>
-
-        <div className="flex gap-3">
-          {modo === "editar" && (
-            <button
-              type="button"
-              onClick={cerrarEdicion}
-              className="w-full rounded-2xl border border-white/15 px-5 py-4 font-black uppercase text-white/70 transition hover:border-white hover:text-white"
-            >
-              Cancelar
-            </button>
-          )}
-
-          <button
-            type="submit"
-            disabled={guardando || editando}
-            className="w-full rounded-2xl bg-red-600 px-5 py-4 font-black uppercase text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30"
-          >
-            {modo === "crear"
-              ? guardando
-                ? "Guardando..."
-                : "Guardar turno"
-              : editando
-              ? "Actualizando..."
-              : "Actualizar turno"}
-          </button>
-        </div>
-      </div>
-    </form>
-  );
-
   return (
     <main className="min-h-screen bg-black px-6 py-10 text-white">
       <section className="mx-auto max-w-7xl">
@@ -507,10 +291,245 @@ export default function TurneroAdminPage() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[460px_1fr]">
-          <FormularioTurno
-            modo={turnoEditando ? "editar" : "crear"}
+          <form
             onSubmit={turnoEditando ? guardarEdicion : crearTurno}
-          />
+            className="rounded-3xl border border-white/10 bg-white/[0.03] p-5"
+          >
+            <h2 className="mb-5 text-xl font-black uppercase text-red-500">
+              {turnoEditando ? "Editar turno" : "Nuevo turno"}
+            </h2>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Fecha
+                  </label>
+                  <input
+                    type="date"
+                    value={fecha}
+                    onChange={(e) => setFecha(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Hora toma
+                  </label>
+                  <input
+                    type="time"
+                    value={hora}
+                    onChange={(e) => setHora(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Estimada
+                  </label>
+                  <input
+                    type="time"
+                    value={horaEstimadaSubida}
+                    onChange={(e) => setHoraEstimadaSubida(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Subida
+                  </label>
+                  <input
+                    type="time"
+                    value={horaSubida}
+                    onChange={(e) => setHoraSubida(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Bajada
+                  </label>
+                  <input
+                    type="time"
+                    value={horaBajada}
+                    readOnly
+                    className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 font-bold text-white/60 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                  Cliente
+                </label>
+                <input
+                  type="text"
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  placeholder="Nombre del cliente"
+                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                  Teléfono
+                </label>
+                <input
+                  type="text"
+                  value={telefono}
+                  onChange={(e) => setTelefono(e.target.value)}
+                  placeholder="351..."
+                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                  Simuladores
+                </label>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {SIMULADORES.map((simulador) => {
+                    const seleccionado = simuladores.includes(simulador);
+
+                    return (
+                      <button
+                        key={simulador}
+                        type="button"
+                        onClick={() => toggleSimulador(simulador)}
+                        className={`rounded-2xl border px-4 py-3 text-sm font-black uppercase transition ${
+                          seleccionado
+                            ? "border-red-500 bg-red-600 text-white"
+                            : "border-white/15 bg-black text-white/70 hover:border-red-500 hover:text-white"
+                        }`}
+                      >
+                        {simulador}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Personas
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={cantidadPersonas}
+                    onChange={(e) => setCantidadPersonas(Number(e.target.value))}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Minutos
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={cantidadMinutos}
+                    onChange={(e) => setCantidadMinutos(Number(e.target.value))}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Turnos
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={cantidadTurnos}
+                    onChange={(e) => setCantidadTurnos(Number(e.target.value))}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Método pago
+                  </label>
+                  <select
+                    value={metodoPago}
+                    onChange={(e) => setMetodoPago(e.target.value)}
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-red-500"
+                  >
+                    <option value="qr">QR</option>
+                    <option value="efectivo">Efectivo</option>
+                    <option value="debito">Débito</option>
+                    <option value="credito">Crédito</option>
+                    <option value="transferencia">Transferencia</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                    Total
+                  </label>
+                  <input
+                    type="number"
+                    value={total}
+                    onChange={(e) => setTotal(e.target.value)}
+                    placeholder="0"
+                    className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                  Observaciones
+                </label>
+                <textarea
+                  value={observaciones}
+                  onChange={(e) => setObservaciones(e.target.value)}
+                  placeholder="Notas internas..."
+                  rows={3}
+                  className="w-full resize-none rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                {turnoEditando && (
+                  <button
+                    type="button"
+                    onClick={cerrarEdicion}
+                    className="w-full rounded-2xl border border-white/15 px-5 py-4 font-black uppercase text-white/70 transition hover:border-white hover:text-white"
+                  >
+                    Cancelar
+                  </button>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={guardando || editando}
+                  className="w-full rounded-2xl bg-red-600 px-5 py-4 font-black uppercase text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30"
+                >
+                  {turnoEditando
+                    ? editando
+                      ? "Actualizando..."
+                      : "Actualizar turno"
+                    : guardando
+                    ? "Guardando..."
+                    : "Guardar turno"}
+                </button>
+              </div>
+            </div>
+          </form>
 
           <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
             <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -562,12 +581,12 @@ export default function TurneroAdminPage() {
                       className="rounded-2xl border border-white/10 bg-black p-5 transition hover:border-red-500/60"
                     >
                       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                        <div className="grid flex-1 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                        <div className="grid flex-1 gap-3 md:grid-cols-3 xl:grid-cols-7">
                           <div>
                             <p className="text-xs uppercase tracking-[0.18em] text-white/40">
                               Toma
                             </p>
-                            <p className="mt-1 text-lg font-black text-white">
+                            <p className="mt-1 text-lg font-black">
                               {turno.hora || "-"}
                             </p>
                           </div>
@@ -590,11 +609,25 @@ export default function TurneroAdminPage() {
                             </p>
                           </div>
 
-                          <div className="md:col-span-2 xl:col-span-2">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] text-white/40">
+                              Bajada
+                            </p>
+                            <p className="mt-1 text-lg font-bold text-white/80">
+                              {turno.hora_bajada ||
+                                sumarMinutosAHora(
+                                  turno.hora_subida || "",
+                                  turno.cantidad_minutos || 15
+                                ) ||
+                                "-"}
+                            </p>
+                          </div>
+
+                          <div className="md:col-span-2">
                             <p className="text-xs uppercase tracking-[0.18em] text-white/40">
                               Cliente
                             </p>
-                            <p className="mt-1 font-black text-white">
+                            <p className="mt-1 font-black">
                               {turno.nombre || "Sin nombre"}
                             </p>
                             <p className="text-sm text-white/45">
