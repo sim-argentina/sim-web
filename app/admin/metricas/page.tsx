@@ -185,7 +185,10 @@ function normalizarMetodoPago(value: any) {
   if (v === "ef" || v.includes("efectivo") || v.includes("cash")) return "EFECTIVO";
   if (v.includes("deb")) return "DÉBITO";
   if (v.includes("cred") || v.includes("credito")) return "CRÉDITO";
-  if (v.includes("transf") || v.includes("transferencia")) return "TRANSFERENCIA";
+  if (  v.includes("trans") ||  v.includes("tranf") ||  v.includes("transfer") ||
+  v.includes("transferencia")
+)
+  return "TRANSFERENCIA";
 
   return v.toUpperCase();
 }
@@ -204,10 +207,14 @@ function obtenerEscuderias(value: any) {
 
 function obtenerHoraAgrupada(value: any) {
   const hora = String(value || "").slice(0, 5);
+
   if (!hora.includes(":")) return null;
 
   const h = Number(hora.split(":")[0]);
+
   if (Number.isNaN(h)) return null;
+
+  if (h < 10 || h > 22) return null;
 
   return `${String(h).padStart(2, "0")} hs`;
 }
