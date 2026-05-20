@@ -1081,7 +1081,7 @@ export default function AdminMetricasPage() {
       addToRecord(porHora, hora, cantTurnos);
       addToRecord(porDiaSemana, diaSemana, cantTurnos);
 
-      if (duracion > 0) addToRecord(porDuracion, `${duracion} min`, cantTurnos);
+      if (duracion > 0) addToRecord(porDuracion, `${duracion} min`, 1);
       if (sims > 0) addToRecord(porPersonas, `${sims} persona/s`, 1);
 
       obtenerEscuderias(escuderiaRaw).forEach((escuderia) => {
