@@ -185,7 +185,7 @@ function normalizarMetodoPago(value: any) {
   if (v === "ef" || v.includes("efectivo") || v.includes("cash")) return "EFECTIVO";
   if (v.includes("deb")) return "DÉBITO";
   if (v.includes("cred") || v.includes("credito")) return "CRÉDITO";
-  if (  v.includes("trans") ||  v.includes("tranf") ||  v.includes("transfer") ||
+  if (  v.includes("trasf") ||  v.includes("tranf") ||  v.includes("transfer") ||
   v.includes("transferencia")
 )
   return "TRANSFERENCIA";
