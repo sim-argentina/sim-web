@@ -849,9 +849,14 @@ export default function AdminMetricasPage() {
       console.error(error);
       alert(error.message || "Error importando Excel");
     } finally {
-      setImportando(false);
-      e.target.value = "";
-    }
+  setImportando(false);
+
+  if (e.target) {
+    e.target.value = "";
+  }
+
+  window.location.reload();
+}
   }
 
   async function borrarImportacion(archivoKey: string) {
@@ -1228,13 +1233,13 @@ export default function AdminMetricasPage() {
               <div>
                 <label className="mb-2 block text-sm text-white/70">Importar Excel</label>
                 <input
-                  type="file"
-                  multiple
-                  accept=".xlsx,.xls,.csv"
-                  onChange={importarExcel}
-                  disabled={importando}
-                  className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none focus:border-red-500"
-                />
+  key={turnosHistoricos.length}
+  type="file"
+  multiple
+  accept=".xlsx,.xls,.csv"
+  onChange={importarExcel}
+  disabled={importando}
+/>
               </div>
             )}
 
