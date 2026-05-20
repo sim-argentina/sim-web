@@ -24,7 +24,10 @@ type TurnoStand = {
   fecha: string;
   hora_bajada?: string;
   hora_subida?: string;
+  hora_tomado?: string;
   simulador?: string;
+  cantidad_simuladores?: number;
+  cantidad_turnos?: number;
   duracion?: number | string;
   personas?: number | string;
   metodo_pago?: string;
@@ -39,6 +42,8 @@ type ChartItem = {
 };
 
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
+
+const STORAGE_KEY = "sim_metricas_excel_stand";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -119,6 +124,53 @@ function startOfYear(date: Date) {
 
 function endOfYear(date: Date) {
   return new Date(date.getFullYear(), 11, 31);
+}
+
+function excelTimeToString(value: any) {
+  if (!value) return "";
+
+  if (value instanceof Date) {
+    return value.toLocaleTimeString("es-AR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+
+  if (typeof value === "number") {
+    const totalMinutes = Math.round(value * 24 * 60);
+    const hours = Math.floor(totalMinutes / 60) % 24;
+    const minutes = totalMinutes % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  }
+
+  return String(value);
+}
+
+function monthFromFileName(fileName: string) {
+  const name = normalizeText(fileName);
+
+  const months: Record<string, string> = {
+    enero: "01",
+    febrero: "02",
+    marzo: "03",
+    abril: "04",
+    mayo: "05",
+    junio: "06",
+    julio: "07",
+    agosto: "08",
+    septiembre: "09",
+    setiembre: "09",
+    octubre: "10",
+    noviembre: "11",
+    diciembre: "12",
+  };
+
+  for (const key of Object.keys(months)) {
+    if (name.includes(key)) return months[key];
+  }
+
+  return String(new Date().getMonth() + 1).padStart(2, "0");
 }
 
 function toChart(data: Record<string, number>, sortByValue = true): ChartItem[] {
@@ -327,6 +379,15 @@ export default function AdminMetricasPage() {
 
   useEffect(() => {
     cargarDatos();
+
+    const excelGuardado = localStorage.getItem(STORAGE_KEY);
+    if (excelGuardado) {
+      try {
+        setExcelStand(JSON.parse(excelGuardado));
+      } catch {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -386,35 +447,78 @@ export default function AdminMetricasPage() {
 
     reader.onload = (event) => {
       const data = new Uint8Array(event.target?.result as ArrayBuffer);
-      const workbook = XLSX.read(data, { type: "array" });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows: any[] = XLSX.utils.sheet_to_json(sheet);
 
-      const parseados: TurnoStand[] = rows.map((row) => {
-        const item: TurnoStand = { fecha: "" };
-
-        Object.keys(row).forEach((key) => {
-          const k = normalizeText(key);
-
-          if (k.includes("fecha")) item.fecha = String(row[key]);
-          if (k.includes("bajada")) item.hora_bajada = String(row[key]);
-          if (k.includes("subida")) item.hora_subida = String(row[key]);
-          if (k.includes("hora") && !item.hora_bajada) item.hora_bajada = String(row[key]);
-          if (k.includes("simu")) item.simulador = String(row[key]);
-          if (k.includes("duracion")) item.duracion = row[key];
-          if (k.includes("persona")) item.personas = row[key];
-          if (k.includes("metodo") || k.includes("pago")) item.metodo_pago = String(row[key]);
-          if (k.includes("posnet")) item.posnet = String(row[key]);
-          if (k.includes("total") || k.includes("monto") || k.includes("facturado")) item.total = row[key];
-        });
-
-        return item;
+      const workbook = XLSX.read(data, {
+        type: "array",
+        cellDates: true,
       });
 
-      setExcelStand(parseados);
+      const year = new Date().getFullYear();
+      const month = monthFromFileName(file.name);
+      const turnosImportados: TurnoStand[] = [];
+
+      workbook.SheetNames.forEach((sheetName) => {
+        const dayNumber = Number(sheetName);
+        if (!dayNumber || dayNumber < 1 || dayNumber > 31) return;
+
+        const sheet = workbook.Sheets[sheetName];
+
+        const rows: any[] = XLSX.utils.sheet_to_json(sheet, {
+          defval: null,
+        });
+
+        const day = String(dayNumber).padStart(2, "0");
+        const fecha = `${year}-${month}-${day}`;
+
+        rows.forEach((row) => {
+          const estado = row["Estado"];
+          const turno = row["Turno"];
+          const monto = numberValue(row["Monto"]);
+          const escuderia = row["Escuderia"];
+
+          const filaValida =
+            turno !== null &&
+            turno !== undefined &&
+            monto > 0 &&
+            estado !== false &&
+            estado !== 0 &&
+            estado !== "0";
+
+          if (!filaValida) return;
+
+          const cantidadSimuladores = numberValue(row["Cant. de Sim."]);
+          const cantidadTurnos = numberValue(row["Cant. Turnos"]);
+          const duracion = numberValue(row["Tiempo (Min)"]);
+
+          turnosImportados.push({
+            fecha,
+            hora_tomado: excelTimeToString(row["Hora que se tomo el turno"]),
+            hora_subida: excelTimeToString(row["Hora de subida"]),
+            hora_bajada: excelTimeToString(row["Hora de bajada"]),
+            simulador: escuderia ? String(escuderia) : "Sin escudería",
+            cantidad_simuladores: cantidadSimuladores,
+            cantidad_turnos: cantidadTurnos,
+            personas: cantidadSimuladores || 1,
+            duracion,
+            metodo_pago: String(row["Metodo de Pago"] || "Sin dato").toUpperCase(),
+            posnet: "Sin dato",
+            total: monto,
+          });
+        });
+      });
+
+      setExcelStand(turnosImportados);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(turnosImportados));
+
+      alert(`Se importaron ${turnosImportados.length} turnos del Excel.`);
     };
 
     reader.readAsArrayBuffer(file);
+  }
+
+  function borrarExcelCargado() {
+    localStorage.removeItem(STORAGE_KEY);
+    setExcelStand([]);
   }
 
   function filtrarPorFecha<T extends { fecha?: string }>(items: T[]) {
@@ -474,12 +578,12 @@ export default function AdminMetricasPage() {
 
       r.simuladores.forEach((sim) => {
         porSimulador[sim] = (porSimulador[sim] || 0) + 1;
-        ingresosPorSimulador[sim] = (ingresosPorSimulador[sim] || 0) + numberValue(r.total) / Math.max(r.simuladores.length, 1);
+        ingresosPorSimulador[sim] =
+          (ingresosPorSimulador[sim] || 0) + numberValue(r.total) / Math.max(r.simuladores.length, 1);
       });
     });
 
     const horaPico = Object.entries(porHora).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
-    const mejorDia = Object.entries(ingresosPorDia).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
 
     return {
       total: reservasFiltradas.length,
@@ -494,7 +598,6 @@ export default function AdminMetricasPage() {
       ingresoPorTurno,
       ingresoPorSimulador,
       horaPico,
-      mejorDia,
       reservasPorHora: toChart(porHora, false),
       reservasPorEstado: toChart(porEstado),
       reservasPorSimulador: toChart(porSimulador),
@@ -608,6 +711,7 @@ export default function AdminMetricasPage() {
           >
             Reservas
           </button>
+
           <button
             onClick={() => setVista("stand")}
             className={`rounded-xl px-6 py-3 text-sm font-bold ${
@@ -697,6 +801,21 @@ export default function AdminMetricasPage() {
               />
             </div>
           </div>
+
+          {vista === "stand" && excelStand.length > 0 && (
+            <div className="mt-4 flex flex-col gap-3 rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3 md:flex-row md:items-center md:justify-between">
+              <p className="text-sm text-green-300">
+                Excel cargado y guardado en esta página: <b>{excelStand.length}</b> turnos importados.
+              </p>
+
+              <button
+                onClick={borrarExcelCargado}
+                className="rounded-xl border border-white/10 bg-black/30 px-4 py-2 text-sm text-white/80 hover:bg-black/50"
+              >
+                Borrar Excel cargado
+              </button>
+            </div>
+          )}
 
           <div className="mt-4 rounded-xl border border-white/10 bg-black/25 px-4 py-3">
             <p className="text-sm text-white/50">Rango activo</p>
