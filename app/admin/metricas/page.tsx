@@ -42,8 +42,9 @@ type ChartItem = {
 };
 
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
+type AgrupacionIngresos = "dia" | "semana" | "mes";
 
-const STORAGE_KEY = "sim_metricas_excel_stand_v6";
+const STORAGE_KEY = "sim_metricas_excel_stand_v7";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -236,6 +237,117 @@ function fechaConDia(fecha: string) {
   const corto = date.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" });
 
   return `${dia} ${corto}`;
+}
+
+function capitalizar(value: string) {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function obtenerLunesSemana(fecha: string) {
+  const date = parseFechaLocal(fecha);
+  if (!date) return null;
+  return startOfWeek(date);
+}
+
+function clavePeriodoIngresos(fecha: string, agrupacion: AgrupacionIngresos) {
+  const date = parseFechaLocal(fecha);
+  if (!date) return null;
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  if (agrupacion === "dia") {
+    const label = capitalizar(
+      date.toLocaleDateString("es-AR", {
+        weekday: "long",
+        day: "2-digit",
+        month: "2-digit",
+      })
+    );
+
+    return {
+      key: `${year}-${month}-${day}`,
+      label,
+      sortValue: `${year}-${month}-${day}`,
+    };
+  }
+
+  if (agrupacion === "semana") {
+    const start = startOfWeek(date);
+    const end = endOfWeek(date);
+    const startKey = toInputDate(start);
+    const endKey = toInputDate(end);
+
+    return {
+      key: startKey,
+      label: `Semana ${start.toLocaleDateString("es-AR", {
+        day: "2-digit",
+        month: "2-digit",
+      })} - ${end.toLocaleDateString("es-AR", {
+        day: "2-digit",
+        month: "2-digit",
+      })}`,
+      sortValue: startKey,
+    };
+  }
+
+  const label = capitalizar(
+    date.toLocaleDateString("es-AR", {
+      month: "long",
+      year: "numeric",
+    })
+  );
+
+  return {
+    key: `${year}-${month}`,
+    label,
+    sortValue: `${year}-${month}`,
+  };
+}
+
+function agruparIngresosPorPeriodo(
+  items: TurnoStand[],
+  agrupacion: AgrupacionIngresos,
+  filtroExacto: string
+) {
+  const acumulado: Record<string, { label: string; value: number; sortValue: string }> = {};
+
+  items.forEach((item) => {
+    const periodo = clavePeriodoIngresos(item.fecha, agrupacion);
+    if (!periodo) return;
+    if (filtroExacto && filtroExacto !== "ultimos" && filtroExacto !== "todos" && periodo.key !== filtroExacto) return;
+
+    if (!acumulado[periodo.key]) {
+      acumulado[periodo.key] = {
+        label: periodo.label,
+        value: 0,
+        sortValue: periodo.sortValue,
+      };
+    }
+
+    acumulado[periodo.key].value += numberValue(item.total ?? item.monto);
+  });
+
+  const ordenado = Object.values(acumulado).sort((a, b) => a.sortValue.localeCompare(b.sortValue));
+  const visible = filtroExacto === "ultimos" ? ordenado.slice(-12) : ordenado;
+
+  return visible.map(({ label, value }) => ({ label, value }));
+}
+
+function opcionesPeriodoIngresos(items: TurnoStand[], agrupacion: AgrupacionIngresos) {
+  const map = new Map<string, { label: string; sortValue: string }>();
+
+  items.forEach((item) => {
+    const periodo = clavePeriodoIngresos(item.fecha, agrupacion);
+    if (!periodo) return;
+    map.set(periodo.key, { label: periodo.label, sortValue: periodo.sortValue });
+  });
+
+  return Array.from(map.entries())
+    .sort((a, b) => b[1].sortValue.localeCompare(a[1].sortValue))
+    .map(([key, value]) => ({ key, label: value.label }));
 }
 
 function getRowValue(row: any, posiblesNombres: string[]) {
@@ -497,6 +609,8 @@ export default function AdminMetricasPage() {
   const [quickPeriod, setQuickPeriod] = useState<QuickPeriod>("mes");
   const [busqueda, setBusqueda] = useState("");
   const [estadoFiltro, setEstadoFiltro] = useState<"todas" | "activa" | "cancelada">("todas");
+  const [agrupacionIngresos, setAgrupacionIngresos] = useState<AgrupacionIngresos>("semana");
+  const [filtroIngresos, setFiltroIngresos] = useState("ultimos");
 
   const hoy = new Date();
   const [fechaDesde, setFechaDesde] = useState(toInputDate(startOfMonth(hoy)));
@@ -536,6 +650,10 @@ export default function AdminMetricasPage() {
     }
   }, [quickPeriod]);
 
+  useEffect(() => {
+    setFiltroIngresos("ultimos");
+  }, [agrupacionIngresos]);
+
   async function cargarDatos() {
     try {
       setLoading(true);
@@ -564,92 +682,110 @@ export default function AdminMetricasPage() {
     }
   }
 
-  function importarExcel(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function leerExcel(file: File) {
+    const buffer = await file.arrayBuffer();
+    const data = new Uint8Array(buffer);
 
-    const reader = new FileReader();
+    const workbook = XLSX.read(data, {
+      type: "array",
+      cellDates: true,
+    });
 
-    reader.onload = (event) => {
-      const data = new Uint8Array(event.target?.result as ArrayBuffer);
+    const year = new Date().getFullYear();
+    const month = monthFromFileName(file.name);
+    const turnosImportados: TurnoStand[] = [];
+    const claves = new Set<string>();
 
-      const workbook = XLSX.read(data, {
-        type: "array",
-        cellDates: true,
+    workbook.SheetNames.forEach((sheetName) => {
+      const dayNumber = Number(sheetName);
+      if (!dayNumber || dayNumber < 1 || dayNumber > 31) return;
+
+      const sheet = workbook.Sheets[sheetName];
+
+      const rows: any[] = XLSX.utils.sheet_to_json(sheet, {
+        defval: null,
       });
 
-      const year = new Date().getFullYear();
-      const month = monthFromFileName(file.name);
-      const turnosImportados: TurnoStand[] = [];
-      const claves = new Set<string>();
+      const day = String(dayNumber).padStart(2, "0");
+      const fecha = `${year}-${month}-${day}`;
 
-      workbook.SheetNames.forEach((sheetName) => {
-        const dayNumber = Number(sheetName);
-        if (!dayNumber || dayNumber < 1 || dayNumber > 31) return;
+      rows.forEach((row) => {
+        const monto = numberValue(getRowValue(row, ["Monto"]));
+        const metodoPago = normalizarMetodoPago(getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"]));
 
-        const sheet = workbook.Sheets[sheetName];
+        if (!monto || monto <= 0) return;
+        if (!metodoPago) return;
 
-        const rows: any[] = XLSX.utils.sheet_to_json(sheet, {
-          defval: null,
-        });
+        const turno = getRowValue(row, ["Turno"]);
+        const numeroTurno = numberValue(turno);
+        const escuderia = getRowValue(row, ["Escuderia", "Escudería", "Simulador"]);
+        const cantidadSimuladores = numberValue(getRowValue(row, ["Cant. de Sim.", "Cantidad de Sim", "Cant Sim"]));
+        const cantidadTurnos = numberValue(getRowValue(row, ["Cant. Turnos", "Cantidad Turnos", "Turnos"]));
+        const duracion = numberValue(getRowValue(row, ["Tiempo (Min)", "Tiempo", "Duracion", "Duración"]));
 
-        const day = String(dayNumber).padStart(2, "0");
-        const fecha = `${year}-${month}-${day}`;
+        const turnoParseado: TurnoStand = {
+          fecha,
+          hora_tomado: excelTimeToString(getRowValue(row, ["Hora que se tomo el turno", "Hora tomado"])),
+          hora_subida: excelTimeToString(getRowValue(row, ["Hora de subida", "Hora subida"])),
+          hora_bajada: excelTimeToString(getRowValue(row, ["Hora de bajada", "Hora bajada"])),
+          simulador: escuderia ? String(escuderia) : "",
+          cantidad_simuladores: cantidadSimuladores || 1,
+          cantidad_turnos: cantidadTurnos || cantidadSimuladores || 1,
+          personas: cantidadSimuladores || 1,
+          duracion,
+          metodo_pago: metodoPago,
+          posnet: "",
+          total: monto,
+        };
 
-        rows.forEach((row) => {
-          const monto = numberValue(getRowValue(row, ["Monto"]));
-          const metodoPago = normalizarMetodoPago(getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"]));
+        const clave = crearClaveTurno(turnoParseado, `${file.name}-${numeroTurno || ""}`);
+        if (claves.has(clave)) return;
 
-          // Punto clave: para que coincida con el resumen del Excel,
-          // validamos por Monto + Método de Pago. No usamos Estado porque
-          // en algunas filas reales viene vacío o distinto.
-          if (!monto || monto <= 0) return;
-          if (!metodoPago) return;
+        claves.add(clave);
+        turnosImportados.push(turnoParseado);
+      });
+    });
 
-          const turno = getRowValue(row, ["Turno"]);
-          const numeroTurno = numberValue(turno);
-          const escuderia = getRowValue(row, ["Escuderia", "Escudería", "Simulador"]);
-          const cantidadSimuladores = numberValue(getRowValue(row, ["Cant. de Sim.", "Cantidad de Sim", "Cant Sim"]));
-          const cantidadTurnos = numberValue(getRowValue(row, ["Cant. Turnos", "Cantidad Turnos", "Turnos"]));
-          const duracion = numberValue(getRowValue(row, ["Tiempo (Min)", "Tiempo", "Duracion", "Duración"]));
+    return turnosImportados;
+  }
 
-          const turnoParseado: TurnoStand = {
-            fecha,
-            hora_tomado: excelTimeToString(getRowValue(row, ["Hora que se tomo el turno", "Hora tomado"])),
-            hora_subida: excelTimeToString(getRowValue(row, ["Hora de subida", "Hora subida"])),
-            hora_bajada: excelTimeToString(getRowValue(row, ["Hora de bajada", "Hora bajada"])),
-            simulador: escuderia ? String(escuderia) : "",
-            cantidad_simuladores: cantidadSimuladores || 1,
-            cantidad_turnos: cantidadTurnos || cantidadSimuladores || 1,
-            personas: cantidadSimuladores || 1,
-            duracion,
-            metodo_pago: metodoPago,
-            posnet: "",
-            total: monto,
-          };
+  async function importarExcel(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length === 0) return;
 
-          const clave = crearClaveTurno(turnoParseado, String(numeroTurno || ""));
-          if (claves.has(clave)) return;
+    try {
+      const resultados = await Promise.all(files.map((file) => leerExcel(file)));
+      const nuevos = resultados.flat();
+      const combinados = [...excelStand, ...nuevos];
+      const deduplicados: TurnoStand[] = [];
+      const clavesGlobales = new Set<string>();
 
-          claves.add(clave);
-          turnosImportados.push(turnoParseado);
-        });
+      combinados.forEach((turno) => {
+        const clave = crearClaveTurno(turno);
+        if (clavesGlobales.has(clave)) return;
+        clavesGlobales.add(clave);
+        deduplicados.push(turno);
       });
 
       localStorage.removeItem("sim_metricas_excel_stand");
       localStorage.removeItem("sim_excel_stand");
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(turnosImportados));
-      setExcelStand(turnosImportados);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(deduplicados));
+      setExcelStand(deduplicados);
 
-      const facturacionImportada = turnosImportados.reduce((acc, t) => acc + numberValue(t.total), 0);
-      const turnosVendidosImportados = turnosImportados.reduce((acc, t) => acc + numberValue(t.cantidad_turnos), 0);
+      const facturacionNueva = nuevos.reduce((acc, t) => acc + numberValue(t.total), 0);
+      const turnosVendidosNuevos = nuevos.reduce((acc, t) => acc + numberValue(t.cantidad_turnos), 0);
+      const facturacionTotal = deduplicados.reduce((acc, t) => acc + numberValue(t.total), 0);
+      const turnosVendidosTotal = deduplicados.reduce((acc, t) => acc + numberValue(t.cantidad_turnos), 0);
 
       alert(
-        `Excel importado correctamente.\nVentas: ${turnosImportados.length}\nTurnos vendidos: ${turnosVendidosImportados}\nFacturación: ${formatMoney(facturacionImportada)}`
+        `Excel importado correctamente.\nArchivos: ${files.length}\nVentas nuevas leídas: ${nuevos.length}\nTurnos nuevos leídos: ${turnosVendidosNuevos}\nFacturación nueva leída: ${formatMoney(facturacionNueva)}\n\nTotal guardado en página:\nVentas: ${deduplicados.length}\nTurnos vendidos: ${turnosVendidosTotal}\nFacturación: ${formatMoney(facturacionTotal)}`
       );
-    };
-
-    reader.readAsArrayBuffer(file);
+    } catch (error) {
+      console.error(error);
+      alert("Error importando Excel. Revisá que el archivo tenga el mismo formato.");
+    } finally {
+      e.target.value = "";
+    }
   }
 
   function borrarExcelCargado() {
@@ -671,7 +807,7 @@ export default function AdminMetricasPage() {
   }
 
   const reservasFiltradas = useMemo(() => {
-    return filtrarPorFecha(reservas).filter((r) => {
+    return filtrarPorFecha<Reserva>(reservas).filter((r) => {
       const coincideEstado = estadoFiltro === "todas" ? true : r.estado === estadoFiltro;
       const texto = `${r.nombre} ${r.telefono} ${r.fecha} ${r.hora} ${r.simuladores.join(" ")}`.toLowerCase();
       return coincideEstado && texto.includes(busqueda.toLowerCase());
@@ -849,13 +985,11 @@ export default function AdminMetricasPage() {
       porPersonas: toChart(porPersonas),
       porHora: chartPorHora(porHora),
       porDia: chartPorDiaSemana(porDiaSemana),
-      ingresosPorDia: toChart(ingresosPorDia, false).map((i) => ({
-        ...i,
-        label: fechaConDia(i.label),
-      })),
+      ingresosPorDia: agruparIngresosPorPeriodo(standFiltrado, agrupacionIngresos, filtroIngresos),
+      opcionesIngresos: opcionesPeriodoIngresos(standFiltrado, agrupacionIngresos),
       ingresosPorMetodo: toChart(ingresosPorMetodo),
     };
-  }, [standFiltrado]);
+  }, [standFiltrado, agrupacionIngresos, filtroIngresos]);
 
   const rangoTexto = !fechaDesde && !fechaHasta ? "Todo el histórico" : `${fechaDesde || "Inicio"} → ${fechaHasta || "Hoy"}`;
 
@@ -963,6 +1097,7 @@ export default function AdminMetricasPage() {
                 <label className="mb-2 block text-sm text-white/70">Importar Excel</label>
                 <input
                   type="file"
+                  multiple
                   accept=".xlsx,.xls,.csv"
                   onChange={importarExcel}
                   className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white outline-none focus:border-red-500"
@@ -984,7 +1119,7 @@ export default function AdminMetricasPage() {
           {vista === "stand" && excelStand.length > 0 && (
             <div className="mt-4 flex flex-col gap-3 rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3 md:flex-row md:items-center md:justify-between">
               <p className="text-sm text-green-300">
-                Excel cargado y guardado en esta página: <b>{excelStand.length}</b> turnos importados.
+                Excel/es cargado/s y guardado/s en esta página: <b>{excelStand.length}</b> turnos importados.
               </p>
 
               <button
@@ -1061,8 +1196,49 @@ export default function AdminMetricasPage() {
               <KpiCard title="Sim más usado" value={metricasStand.simuladorMasUsado} />
             </div>
 
-            <div className="mb-8">
-              <BarChart title="Ingresos por día" data={metricasStand.ingresosPorDia} valueFormatter={formatMoney} />
+            <div className="mb-8 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-white">Ingresos por período</h3>
+                  <p className="mt-1 text-sm text-white/55">
+                    Agrupá la facturación del stand por día, semana o mes y filtrá un período exacto.
+                  </p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-white/45">Agrupar</label>
+                    <select
+                      value={agrupacionIngresos}
+                      onChange={(e) => setAgrupacionIngresos(e.target.value as AgrupacionIngresos)}
+                      className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                    >
+                      <option value="dia">Día</option>
+                      <option value="semana">Semana</option>
+                      <option value="mes">Mes</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs uppercase tracking-[0.2em] text-white/45">Período exacto</label>
+                    <select
+                      value={filtroIngresos}
+                      onChange={(e) => setFiltroIngresos(e.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                    >
+                      <option value="ultimos">Últimos 12 períodos</option>
+                      <option value="todos">Todos los períodos</option>
+                      {metricasStand.opcionesIngresos.map((opcion) => (
+                        <option key={opcion.key} value={opcion.key}>
+                          {opcion.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <BarChart title="Ingresos" data={metricasStand.ingresosPorDia} valueFormatter={formatMoney} />
             </div>
 
             <div className="mb-8 grid gap-6 xl:grid-cols-3">
