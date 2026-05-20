@@ -173,6 +173,108 @@ function monthFromFileName(fileName: string) {
   return String(new Date().getMonth() + 1).padStart(2, "0");
 }
 
+
+function normalizarMetodoPago(value: any) {
+  const v = normalizeText(value);
+
+  if (!v) return "Sin dato";
+  if (v.includes("qr")) return "QR";
+  if (v === "ef" || v.includes("efectivo")) return "EFECTIVO";
+  if (v.includes("deb")) return "DÉBITO";
+  if (v.includes("cred")) return "CRÉDITO";
+  if (v.includes("transf")) return "TRANSFERENCIA";
+
+  return v.toUpperCase();
+}
+
+function obtenerEscuderias(value: any) {
+  const v = normalizeText(value);
+  const escuderias: string[] = [];
+
+  if (v.includes("ferrari")) escuderias.push("Ferrari");
+  if (v.includes("red bull") || v.includes("redbull")) escuderias.push("Red Bull");
+  if (v.includes("alpine")) escuderias.push("Alpine");
+  if (v.includes("mclaren") || v.includes("mc laren")) escuderias.push("McLaren");
+
+  return escuderias;
+}
+
+function obtenerHoraAgrupada(value: any) {
+  const hora = String(value || "").slice(0, 5);
+  if (!hora.includes(":")) return null;
+
+  const h = Number(hora.split(":")[0]);
+  if (Number.isNaN(h)) return null;
+
+  return `${String(h).padStart(2, "0")} hs`;
+}
+
+function nombreDia(fecha: string) {
+  const date = parseFechaLocal(fecha);
+  if (!date) return "Sin dato";
+
+  return date.toLocaleDateString("es-AR", {
+    weekday: "long",
+  });
+}
+
+function fechaCorta(fecha: string) {
+  const date = parseFechaLocal(fecha);
+  if (!date) return fecha || "Sin dato";
+
+  return date.toLocaleDateString("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+  });
+}
+
+function fechaConDia(fecha: string) {
+  const date = parseFechaLocal(fecha);
+  if (!date) return fecha || "Sin dato";
+
+  const dia = date.toLocaleDateString("es-AR", { weekday: "long" });
+  const corto = date.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" });
+
+  return `${dia} ${corto}`;
+}
+
+function getRowValue(row: any, posiblesNombres: string[]) {
+  const entries = Object.entries(row);
+
+  for (const nombre of posiblesNombres) {
+    const buscado = normalizeText(nombre);
+    const match = entries.find(([key]) => normalizeText(key) === buscado);
+    if (match) return match[1];
+  }
+
+  for (const nombre of posiblesNombres) {
+    const buscado = normalizeText(nombre);
+    const match = entries.find(([key]) => normalizeText(key).includes(buscado));
+    if (match) return match[1];
+  }
+
+  return null;
+}
+
+function addToRecord(record: Record<string, number>, key: string | null | undefined, value = 1) {
+  if (!key) return;
+  record[key] = (record[key] || 0) + value;
+}
+
+function chartPorHora(data: Record<string, number>) {
+  return Object.entries(data)
+    .sort((a, b) => Number(a[0].slice(0, 2)) - Number(b[0].slice(0, 2)))
+    .map(([label, value]) => ({ label, value }));
+}
+
+function chartPorDiaSemana(data: Record<string, number>) {
+  const orden = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
+
+  return Object.entries(data)
+    .sort((a, b) => orden.indexOf(a[0]) - orden.indexOf(b[0]))
+    .map(([label, value]) => ({ label, value }));
+}
+
 function toChart(data: Record<string, number>, sortByValue = true): ChartItem[] {
   return Object.entries(data)
     .sort((a, b) => (sortByValue ? b[1] - a[1] : a[0].localeCompare(b[0])))
@@ -471,10 +573,10 @@ export default function AdminMetricasPage() {
         const fecha = `${year}-${month}-${day}`;
 
         rows.forEach((row) => {
-          const estado = row["Estado"];
-          const turno = row["Turno"];
-          const monto = numberValue(row["Monto"]);
-          const escuderia = row["Escuderia"];
+          const estado = getRowValue(row, ["Estado"]);
+          const turno = getRowValue(row, ["Turno"]);
+          const monto = numberValue(getRowValue(row, ["Monto", "Total", "Facturado"]));
+          const escuderia = getRowValue(row, ["Escuderia", "Escudería", "Simulador"]);
 
           const filaValida =
             turno !== null &&
@@ -486,22 +588,22 @@ export default function AdminMetricasPage() {
 
           if (!filaValida) return;
 
-          const cantidadSimuladores = numberValue(row["Cant. de Sim."]);
-          const cantidadTurnos = numberValue(row["Cant. Turnos"]);
-          const duracion = numberValue(row["Tiempo (Min)"]);
+          const cantidadSimuladores = numberValue(getRowValue(row, ["Cant. de Sim.", "Cantidad de Sim", "Cant Sim"]));
+          const cantidadTurnos = numberValue(getRowValue(row, ["Cant. Turnos", "Cantidad Turnos", "Turnos"]));
+          const duracion = numberValue(getRowValue(row, ["Tiempo (Min)", "Tiempo", "Duracion", "Duración"]));
 
           turnosImportados.push({
             fecha,
-            hora_tomado: excelTimeToString(row["Hora que se tomo el turno"]),
-            hora_subida: excelTimeToString(row["Hora de subida"]),
-            hora_bajada: excelTimeToString(row["Hora de bajada"]),
-            simulador: escuderia ? String(escuderia) : "Sin escudería",
+            hora_tomado: excelTimeToString(getRowValue(row, ["Hora que se tomo el turno", "Hora tomado"])),
+            hora_subida: excelTimeToString(getRowValue(row, ["Hora de subida", "Hora subida"])),
+            hora_bajada: excelTimeToString(getRowValue(row, ["Hora de bajada", "Hora bajada"])),
+            simulador: escuderia ? String(escuderia) : "",
             cantidad_simuladores: cantidadSimuladores,
             cantidad_turnos: cantidadTurnos,
             personas: cantidadSimuladores || 1,
             duracion,
-            metodo_pago: String(row["Metodo de Pago"] || "Sin dato").toUpperCase(),
-            posnet: "Sin dato",
+            metodo_pago: normalizarMetodoPago(getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"])),
+            posnet: "",
             total: monto,
           });
         });
@@ -543,7 +645,7 @@ export default function AdminMetricasPage() {
   }, [reservas, estadoFiltro, busqueda, fechaDesde, fechaHasta]);
 
   const standFiltrado = useMemo(() => {
-    const data = [...turnosStand, ...excelStand];
+    const data = excelStand.length > 0 ? excelStand : turnosStand;
 
     return filtrarPorFecha(data).filter((t) => {
       const texto = `${t.fecha} ${t.hora_bajada} ${t.hora_subida} ${t.simulador} ${t.metodo_pago} ${t.posnet}`.toLowerCase();
@@ -609,49 +711,68 @@ export default function AdminMetricasPage() {
   }, [reservasFiltradas]);
 
   const metricasStand = useMemo(() => {
-    const totalTurnos = standFiltrado.length;
+    const ventasRegistradas = standFiltrado.length;
     const facturacion = sumBy(standFiltrado, (t) => numberValue(t.total ?? t.monto));
-    const ticketPromedio = totalTurnos ? facturacion / totalTurnos : 0;
 
-    const totalPersonas = sumBy(standFiltrado, (t) => numberValue(t.personas));
-    const promedioPersonas = totalTurnos ? totalPersonas / totalTurnos : 0;
+    const totalTurnos = sumBy(standFiltrado, (t) => {
+      const sims = numberValue(t.cantidad_simuladores);
+      if (sims > 0) return sims;
+      return numberValue(t.personas) || 1;
+    });
 
-    const totalMinutos = sumBy(standFiltrado, (t) => numberValue(t.duracion));
+    const ticketPromedio = ventasRegistradas ? facturacion / ventasRegistradas : 0;
+
+    const totalPersonas = totalTurnos;
+    const promedioPersonas = ventasRegistradas ? totalPersonas / ventasRegistradas : 0;
+
+    const totalMinutos = sumBy(standFiltrado, (t) => {
+      const duracion = numberValue(t.duracion);
+      const sims = numberValue(t.cantidad_simuladores) || numberValue(t.personas) || 1;
+      return duracion > 0 ? duracion * sims : 0;
+    });
+
     const horasVendidas = totalMinutos / 60;
-
     const ingresoPorMinuto = totalMinutos ? facturacion / totalMinutos : 0;
     const ingresoPorPersona = totalPersonas ? facturacion / totalPersonas : 0;
+    const ingresoPromedioPorSimulador = facturacion / 4;
 
-    const porMetodoPago = countBy(standFiltrado, (t) => t.metodo_pago);
-    const porPosnet = countBy(standFiltrado, (t) => t.posnet);
-    const porSimulador = countBy(standFiltrado, (t) => t.simulador);
-    const porDuracion = countBy(standFiltrado, (t) => `${t.duracion || "Sin dato"} min`);
-    const porPersonas = countBy(standFiltrado, (t) => `${t.personas || "Sin dato"} persona/s`);
-    const porHora = countBy(standFiltrado, (t) => t.hora_bajada?.slice(0, 5));
-    const porDia = countBy(standFiltrado, (t) => t.fecha);
-
+    const porMetodoPago: Record<string, number> = {};
+    const porSimulador: Record<string, number> = {};
+    const porDuracion: Record<string, number> = {};
+    const porPersonas: Record<string, number> = {};
+    const porHora: Record<string, number> = {};
+    const porDiaSemana: Record<string, number> = {};
     const ingresosPorDia: Record<string, number> = {};
     const ingresosPorMetodo: Record<string, number> = {};
-    const ingresosPorPosnet: Record<string, number> = {};
-    const ingresosPorSimulador: Record<string, number> = {};
 
     standFiltrado.forEach((t) => {
       const monto = numberValue(t.total ?? t.monto);
-      const metodo = t.metodo_pago || "Sin dato";
-      const posnet = t.posnet || "Sin dato";
-      const sim = t.simulador || "Sin dato";
+      const metodo = normalizarMetodoPago(t.metodo_pago);
+      const duracion = numberValue(t.duracion);
+      const personas = numberValue(t.personas) || numberValue(t.cantidad_simuladores) || 1;
+      const hora = obtenerHoraAgrupada(t.hora_subida || t.hora_bajada || t.hora_tomado);
+      const diaSemana = nombreDia(t.fecha);
 
-      ingresosPorDia[t.fecha] = (ingresosPorDia[t.fecha] || 0) + monto;
-      ingresosPorMetodo[metodo] = (ingresosPorMetodo[metodo] || 0) + monto;
-      ingresosPorPosnet[posnet] = (ingresosPorPosnet[posnet] || 0) + monto;
-      ingresosPorSimulador[sim] = (ingresosPorSimulador[sim] || 0) + monto;
+      addToRecord(porMetodoPago, metodo);
+      addToRecord(ingresosPorMetodo, metodo, monto);
+      addToRecord(ingresosPorDia, t.fecha, monto);
+      addToRecord(porHora, hora);
+      addToRecord(porDiaSemana, diaSemana);
+
+      if (duracion > 0) addToRecord(porDuracion, `${duracion} min`);
+      if (personas > 0) addToRecord(porPersonas, `${personas} persona/s`);
+
+      obtenerEscuderias(t.simulador).forEach((escuderia) => {
+        addToRecord(porSimulador, escuderia);
+      });
     });
 
     const horaPico = Object.entries(porHora).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
-    const mejorDia = Object.entries(ingresosPorDia).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+    const mejorDiaFecha = Object.entries(ingresosPorDia).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
     const simuladorMasUsado = Object.entries(porSimulador).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
 
     return {
+      ventasRegistradas,
       totalTurnos,
       facturacion,
       ticketPromedio,
@@ -661,20 +782,21 @@ export default function AdminMetricasPage() {
       horasVendidas,
       ingresoPorMinuto,
       ingresoPorPersona,
+      ingresoPromedioPorSimulador,
       horaPico,
-      mejorDia,
+      mejorDia: mejorDiaFecha ? fechaConDia(mejorDiaFecha) : "-",
       simuladorMasUsado,
       porMetodoPago: toChart(porMetodoPago),
-      porPosnet: toChart(porPosnet),
       porSimulador: toChart(porSimulador),
       porDuracion: toChart(porDuracion),
       porPersonas: toChart(porPersonas),
-      porHora: toChart(porHora, false),
-      porDia: toChart(porDia, false).map((i) => ({ ...i, label: i.label.slice(5) })),
-      ingresosPorDia: toChart(ingresosPorDia, false).map((i) => ({ ...i, label: i.label.slice(5) })),
+      porHora: chartPorHora(porHora),
+      porDia: chartPorDiaSemana(porDiaSemana),
+      ingresosPorDia: toChart(ingresosPorDia, false).map((i) => ({
+        ...i,
+        label: fechaConDia(i.label),
+      })),
       ingresosPorMetodo: toChart(ingresosPorMetodo),
-      ingresosPorPosnet: toChart(ingresosPorPosnet),
-      ingresosPorSimulador: toChart(ingresosPorSimulador),
     };
   }, [standFiltrado]);
 
@@ -862,20 +984,21 @@ export default function AdminMetricasPage() {
             <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
               <p className="text-sm text-white/60">
                 Datos cargados desde Supabase: <b className="text-white">{turnosStand.length}</b> · Datos importados de Excel:{" "}
-                <b className="text-white">{excelStand.length}</b>
+                <b className="text-white">{excelStand.length}</b> · Si hay Excel cargado, las métricas usan solo el Excel para evitar duplicados
               </p>
             </div>
 
             <div className="mb-8 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-              <KpiCard title="Turnos" value={String(metricasStand.totalTurnos)} />
+              <KpiCard title="Turnos vendidos" value={String(metricasStand.totalTurnos)} />
               <KpiCard title="Facturación" value={formatMoney(metricasStand.facturacion)} />
               <KpiCard title="Ticket promedio" value={formatMoney(metricasStand.ticketPromedio)} />
-              <KpiCard title="Personas" value={String(metricasStand.totalPersonas)} />
+              <KpiCard title="Ventas registradas" value={String(metricasStand.ventasRegistradas)} />
               <KpiCard title="Prom. personas" value={metricasStand.promedioPersonas.toFixed(2)} />
               <KpiCard title="Horas vendidas" value={metricasStand.horasVendidas.toFixed(1)} />
               <KpiCard title="Minutos vendidos" value={String(metricasStand.totalMinutos)} />
               <KpiCard title="Ingreso/minuto" value={formatMoney(metricasStand.ingresoPorMinuto)} />
               <KpiCard title="Ingreso/persona" value={formatMoney(metricasStand.ingresoPorPersona)} />
+              <KpiCard title="Ingreso prom. por simulador" value={formatMoney(metricasStand.ingresoPromedioPorSimulador)} />
               <KpiCard title="Hora pico" value={metricasStand.horaPico} />
               <KpiCard title="Mejor día" value={metricasStand.mejorDia} />
               <KpiCard title="Sim más usado" value={metricasStand.simuladorMasUsado} />
@@ -888,10 +1011,7 @@ export default function AdminMetricasPage() {
             <div className="mb-8 grid gap-6 xl:grid-cols-3">
               <PieChart title="Turnos por simulador" data={metricasStand.porSimulador} />
               <PieChart title="Turnos por método de pago" data={metricasStand.porMetodoPago} />
-              <PieChart title="Turnos por posnet" data={metricasStand.porPosnet} />
               <BarChart title="Ingresos por método de pago" data={metricasStand.ingresosPorMetodo} valueFormatter={formatMoney} />
-              <BarChart title="Ingresos por posnet" data={metricasStand.ingresosPorPosnet} valueFormatter={formatMoney} />
-              <BarChart title="Ingresos por simulador" data={metricasStand.ingresosPorSimulador} valueFormatter={formatMoney} />
               <BarChart title="Turnos por duración" data={metricasStand.porDuracion} />
               <BarChart title="Turnos por cantidad de personas" data={metricasStand.porPersonas} />
               <BarChart title="Turnos por hora" data={metricasStand.porHora} />
