@@ -19,17 +19,30 @@ type TurnoHistoricoBody = {
 
 export async function GET() {
   try {
-    const { data, error } = await supabaseAdmin
-      .from("turnos_historicos")
-      .select("*")
-      .order("fecha", { ascending: true })
-      .order("hora_subida", { ascending: true });
+    let allData: any[] = [];
+    let from = 0;
+    const pageSize = 1000;
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    while (true) {
+      const { data, error } = await supabaseAdmin
+        .from("turnos_historicos")
+        .select("*")
+        .order("fecha", { ascending: true })
+        .order("hora_subida", { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      allData = [...allData, ...(data || [])];
+
+      if (!data || data.length < pageSize) break;
+
+      from += pageSize;
     }
 
-    return NextResponse.json({ turnos: data || [] });
+    return NextResponse.json({ turnos: allData });
   } catch (error) {
     console.error("GET turnos_historicos error:", error);
     return NextResponse.json(

@@ -1231,16 +1231,21 @@ export default function AdminMetricasPage() {
               </div>
             ) : (
               <div>
-                <label className="mb-2 block text-sm text-white/70">Importar Excel</label>
-                <input
-  key={turnosHistoricos.length}
-  type="file"
-  multiple
-  accept=".xlsx,.xls,.csv"
-  onChange={importarExcel}
-  disabled={importando}
-/>
-              </div>
+  <label className="mb-2 block text-sm text-white/70">Importar Excel</label>
+
+  <label className="flex h-[50px] cursor-pointer items-center justify-center rounded-xl border border-red-500/40 bg-red-500/10 px-4 text-sm font-semibold text-white transition hover:bg-red-500/20">
+    {importando ? "Importando..." : "Subir Excel"}
+    <input
+      key={turnosHistoricos.length}
+      type="file"
+      multiple
+      accept=".xlsx,.xls,.csv"
+      onChange={importarExcel}
+      disabled={importando}
+      className="hidden"
+    />
+  </label>
+</div>
             )}
 
             <div>
