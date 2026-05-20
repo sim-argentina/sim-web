@@ -43,7 +43,7 @@ type ChartItem = {
 
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
 
-const STORAGE_KEY = "sim_metricas_excel_stand_v5";
+const STORAGE_KEY = "sim_metricas_excel_stand_v6";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -272,13 +272,15 @@ function estadoEsActivo(value: any) {
 
 function crearClaveTurno(t: TurnoStand, extra = "") {
   return [
-    t.fecha,
-    extra,
-    t.hora_tomado || "",
-    t.hora_subida || "",
-    t.hora_bajada || "",
-    t.total ?? t.monto ?? 0,
-    t.metodo_pago || "",
+    t.fecha || "",
+    extra || "",
+    excelTimeToString(t.hora_tomado || ""),
+    excelTimeToString(t.hora_subida || ""),
+    excelTimeToString(t.hora_bajada || ""),
+    numberValue(t.total ?? t.monto),
+    normalizarMetodoPago(t.metodo_pago),
+    numberValue(t.cantidad_turnos),
+    numberValue(t.cantidad_simuladores || t.personas),
   ].join("|");
 }
 
@@ -677,12 +679,13 @@ export default function AdminMetricasPage() {
   }, [reservas, estadoFiltro, busqueda, fechaDesde, fechaHasta]);
 
   const standFiltrado = useMemo(() => {
-    // Si hay Excel cargado, usamos SOLO Excel para evitar sumar Supabase + Excel.
-    const fuente = excelStand.length > 0 ? excelStand : turnosStand;
+    // Mezclamos Supabase + Excel para poder ver el histórico completo.
+    // Si una venta existe en ambos lados, se evita sumarla dos veces con una clave de deduplicación.
+    const fuente = [...turnosStand, ...excelStand];
     const claves = new Set<string>();
 
-    const dataSinDuplicados = fuente.filter((t, index) => {
-      const clave = crearClaveTurno(t, String(index));
+    const dataSinDuplicados = fuente.filter((t) => {
+      const clave = crearClaveTurno(t);
       if (claves.has(clave)) return false;
       claves.add(clave);
       return true;
@@ -768,17 +771,17 @@ export default function AdminMetricasPage() {
     const ticketPromedio = ventasRegistradas ? facturacion / ventasRegistradas : 0;
 
     const totalPersonas = sumBy(standFiltrado, (t) => {
-      const sims = numberValue(t.cantidad_simuladores);
-      if (sims > 0) return sims;
-      return numberValue(t.personas) || 1;
+      const sims = numberValue(t.cantidad_simuladores) || numberValue(t.personas) || 1;
+      const cantTurnos = numberValue(t.cantidad_turnos) || 1;
+      return sims * cantTurnos;
     });
 
-    const promedioPersonas = ventasRegistradas ? totalPersonas / ventasRegistradas : 0;
+    const promedioPersonas = totalTurnos ? totalPersonas / totalTurnos : 0;
 
     const totalMinutos = sumBy(standFiltrado, (t) => {
       const duracion = numberValue(t.duracion);
-      const sims = numberValue(t.cantidad_simuladores) || numberValue(t.personas) || 1;
-      return duracion > 0 ? duracion * sims : 0;
+      const cantTurnos = numberValue(t.cantidad_turnos) || 1;
+      return duracion > 0 ? duracion * cantTurnos : 0;
     });
 
     const horasVendidas = totalMinutos / 60;
@@ -1038,7 +1041,7 @@ export default function AdminMetricasPage() {
             <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
               <p className="text-sm text-white/60">
                 Datos cargados desde Supabase: <b className="text-white">{turnosStand.length}</b> · Datos importados de Excel:{" "}
-                <b className="text-white">{excelStand.length}</b> · Si hay Excel cargado, las métricas usan solo el Excel para evitar duplicados
+                <b className="text-white">{excelStand.length}</b> · Las métricas mezclan Supabase + Excel y evitan duplicados por venta
               </p>
             </div>
 
