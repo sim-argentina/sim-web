@@ -43,7 +43,7 @@ type ChartItem = {
 
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
 
-const STORAGE_KEY = "sim_metricas_excel_stand_v4";
+const STORAGE_KEY = "sim_metricas_excel_stand_v5";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -177,12 +177,12 @@ function monthFromFileName(fileName: string) {
 function normalizarMetodoPago(value: any) {
   const v = normalizeText(value);
 
-  if (!v) return "Sin dato";
-  if (v.includes("qr")) return "QR";
-  if (v === "ef" || v.includes("efectivo")) return "EFECTIVO";
+  if (!v) return "";
+  if (v.includes("qr") || v.includes("mp") || v.includes("mercado")) return "QR";
+  if (v === "ef" || v.includes("efectivo") || v.includes("cash")) return "EFECTIVO";
   if (v.includes("deb")) return "DÉBITO";
-  if (v.includes("cred")) return "CRÉDITO";
-  if (v.includes("transf")) return "TRANSFERENCIA";
+  if (v.includes("cred") || v.includes("credito")) return "CRÉDITO";
+  if (v.includes("transf") || v.includes("transferencia")) return "TRANSFERENCIA";
 
   return v.toUpperCase();
 }
@@ -595,18 +595,17 @@ export default function AdminMetricasPage() {
         const fecha = `${year}-${month}-${day}`;
 
         rows.forEach((row) => {
-          const estado = getRowValue(row, ["Estado"]);
-          const turno = getRowValue(row, ["Turno"]);
           const monto = numberValue(getRowValue(row, ["Monto"]));
+          const metodoPago = normalizarMetodoPago(getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"]));
 
-          const numeroTurno = numberValue(turno);
-
-          // Punto clave: solo tomamos filas reales de venta.
-          // En el Excel, los resúmenes/subtotales tienen Estado vacío, 0 o false.
-          if (!estadoEsActivo(estado)) return;
-          if (!numeroTurno || numeroTurno <= 0) return;
+          // Punto clave: para que coincida con el resumen del Excel,
+          // validamos por Monto + Método de Pago. No usamos Estado porque
+          // en algunas filas reales viene vacío o distinto.
           if (!monto || monto <= 0) return;
+          if (!metodoPago) return;
 
+          const turno = getRowValue(row, ["Turno"]);
+          const numeroTurno = numberValue(turno);
           const escuderia = getRowValue(row, ["Escuderia", "Escudería", "Simulador"]);
           const cantidadSimuladores = numberValue(getRowValue(row, ["Cant. de Sim.", "Cantidad de Sim", "Cant Sim"]));
           const cantidadTurnos = numberValue(getRowValue(row, ["Cant. Turnos", "Cantidad Turnos", "Turnos"]));
@@ -622,12 +621,12 @@ export default function AdminMetricasPage() {
             cantidad_turnos: cantidadTurnos || cantidadSimuladores || 1,
             personas: cantidadSimuladores || 1,
             duracion,
-            metodo_pago: normalizarMetodoPago(getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"])),
+            metodo_pago: metodoPago,
             posnet: "",
             total: monto,
           };
 
-          const clave = crearClaveTurno(turnoParseado, String(numeroTurno));
+          const clave = crearClaveTurno(turnoParseado, String(numeroTurno || ""));
           if (claves.has(clave)) return;
 
           claves.add(clave);
@@ -805,7 +804,7 @@ export default function AdminMetricasPage() {
       const hora = obtenerHoraAgrupada(t.hora_subida || t.hora_bajada || t.hora_tomado);
       const diaSemana = nombreDia(t.fecha);
 
-      if (metodo !== "Sin dato") {
+      if (metodo) {
         addToRecord(porMetodoPago, metodo, cantTurnos);
         addToRecord(ingresosPorMetodo, metodo, monto);
       }
