@@ -31,7 +31,7 @@ type TurnoStand = {
 };
 
 const SIMULADORES = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
-const POSNETS = ["Posnet 1", "Posnet 2", "Posnet 3"];
+const POSNETS = ["MP", "PayWay"];
 const METODOS_PAGO = [
   { value: "qr", label: "QR" },
   { value: "efectivo", label: "Efectivo" },
