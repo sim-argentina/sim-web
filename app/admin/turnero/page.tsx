@@ -185,7 +185,6 @@ export default function TurneroAdminPage() {
   const [observaciones, setObservaciones] = useState("");
 
   const [turnoEditando, setTurnoEditando] = useState<TurnoStand | null>(null);
-  const [turnosListos, setTurnosListos] = useState<number[]>([]);
 
   const horaBajada = useMemo(() => {
     return sumarMinutosAHora(horaSubida, cantidadMinutos);
@@ -395,13 +394,6 @@ export default function TurneroAdminPage() {
     );
   }
 
-  function toggleListo(id: number) {
-    setTurnosListos((actuales) =>
-      actuales.includes(id)
-        ? actuales.filter((turnoId) => turnoId !== id)
-        : [...actuales, id],
-    );
-  }
 
   function limpiarFormulario() {
     setHora(horaActual());
@@ -910,7 +902,7 @@ export default function TurneroAdminPage() {
                         .filter(Boolean)
                         .join(" + ") || "-"
                     : turno.posnet_pago || turno.posnet || "-";
-                  const listo = turnosListos.includes(turno.id);
+                  const listo = Boolean(turno.turno_listo);
 
                   return (
                     <div
@@ -926,25 +918,27 @@ export default function TurneroAdminPage() {
                           type="checkbox"
                           checked={Boolean(turno.turno_listo)}
                           onChange={async (e) => {
-  const nuevoValor = e.target.checked;
+                            const nuevoValor = e.target.checked;
 
-  setTurnos((prev) =>
-    prev.map((t) =>
-      t.id === turno.id ? { ...t, turno_listo: nuevoValor } : t
-    )
-  );
+                            setTurnos((prev) =>
+                              prev.map((t) =>
+                                t.id === turno.id
+                                  ? { ...t, turno_listo: nuevoValor }
+                                  : t,
+                              ),
+                            );
 
-  await fetch(`/api/turnos-stand/${turno.id}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      ...turno,
-      turno_listo: nuevoValor,
-    }),
-  });
-}}
+                            await fetch(`/api/turnos-stand/${turno.id}`, {
+                              method: "PATCH",
+                              headers: {
+                                "Content-Type": "application/json",
+                              },
+                              body: JSON.stringify({
+                                ...turno,
+                                turno_listo: nuevoValor,
+                              }),
+                            });
+                          }}
                           className="h-5 w-5 accent-red-600"
                         />
                       </label>
