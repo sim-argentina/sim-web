@@ -2,6 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+type PagoDetalle = {
+  metodo_pago: string;
+  monto: number | string;
+  posnet_pago?: string;
+};
+
 type TurnoStand = {
   id: number;
   nombre?: string;
@@ -19,12 +25,20 @@ type TurnoStand = {
   metodo_pago?: string;
   posnet?: string;
   posnet_pago?: string;
+  pagos_detalle?: PagoDetalle[] | string;
   estado?: string;
   observaciones?: string;
 };
 
 const SIMULADORES = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
 const POSNETS = ["Posnet 1", "Posnet 2", "Posnet 3"];
+const METODOS_PAGO = [
+  { value: "qr", label: "QR" },
+  { value: "efectivo", label: "Efectivo" },
+  { value: "debito", label: "Débito" },
+  { value: "credito", label: "Crédito" },
+  { value: "transferencia", label: "Transferencia" },
+];
 
 function fechaLocalISO(date = new Date()) {
   const y = date.getFullYear();
@@ -36,7 +50,7 @@ function fechaLocalISO(date = new Date()) {
 function horaActual() {
   const date = new Date();
   return `${String(date.getHours()).padStart(2, "0")}:${String(
-    date.getMinutes()
+    date.getMinutes(),
   ).padStart(2, "0")}`;
 }
 
@@ -49,7 +63,7 @@ function sumarMinutosAHora(hora: string, minutos: number) {
   date.setHours(h, m + minutos, 0, 0);
 
   return `${String(date.getHours()).padStart(2, "0")}:${String(
-    date.getMinutes()
+    date.getMinutes(),
   ).padStart(2, "0")}`;
 }
 
@@ -68,14 +82,77 @@ function normalizarSimuladores(simuladores?: string[] | string) {
   return [];
 }
 
+function normalizarPagos(turno?: TurnoStand | null): PagoDetalle[] {
+  if (!turno) return [{ metodo_pago: "qr", monto: "", posnet_pago: "" }];
+
+  if (Array.isArray(turno.pagos_detalle) && turno.pagos_detalle.length > 0) {
+    return turno.pagos_detalle.map((pago) => ({
+      metodo_pago: pago.metodo_pago || "qr",
+      monto: pago.monto ?? "",
+      posnet_pago: pago.posnet_pago || "",
+    }));
+  }
+
+  if (typeof turno.pagos_detalle === "string") {
+    try {
+      const parsed = JSON.parse(turno.pagos_detalle);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((pago) => ({
+          metodo_pago: pago.metodo_pago || "qr",
+          monto: pago.monto ?? "",
+          posnet_pago: pago.posnet_pago || "",
+        }));
+      }
+    } catch {}
+  }
+
+  return [
+    {
+      metodo_pago: turno.metodo_pago || "qr",
+      monto: turno.total || "",
+      posnet_pago: turno.posnet_pago || turno.posnet || "",
+    },
+  ];
+}
+
+function metodoUsaPosnet(metodo: string) {
+  return metodo === "debito" || metodo === "credito" || metodo === "qr";
+}
+
+function limpiarPagosParaGuardar(pagos: PagoDetalle[]) {
+  return pagos
+    .map((pago) => ({
+      metodo_pago: pago.metodo_pago || "qr",
+      monto: Number(pago.monto) || 0,
+      posnet_pago: metodoUsaPosnet(pago.metodo_pago)
+        ? pago.posnet_pago || null
+        : null,
+    }))
+    .filter((pago) => pago.monto > 0);
+}
+
 function formatearPago(pago?: string) {
   if (!pago) return "-";
+  if (pago === "mixto") return "Mixto";
   if (pago === "qr") return "QR";
   if (pago === "debito") return "Débito";
   if (pago === "credito") return "Crédito";
   if (pago === "efectivo") return "Efectivo";
   if (pago === "transferencia") return "Transferencia";
   return pago;
+}
+
+function formatearPagosDetalle(turno: TurnoStand) {
+  const pagos = normalizarPagos(turno).filter((pago) => Number(pago.monto) > 0);
+
+  if (!pagos.length) return formatearPago(turno.metodo_pago);
+
+  return pagos
+    .map(
+      (pago) =>
+        `${formatearPago(pago.metodo_pago)} ${formatoDinero(Number(pago.monto) || 0)}`,
+    )
+    .join(" + ");
 }
 
 function formatoDinero(valor: number) {
@@ -101,9 +178,9 @@ export default function TurneroAdminPage() {
   const [cantidadMinutos, setCantidadMinutos] = useState(15);
   const [cantidadTurnos, setCantidadTurnos] = useState(1);
 
-  const [metodoPago, setMetodoPago] = useState("qr");
-  const [posnet, setPosnet] = useState("");
-  const [total, setTotal] = useState("");
+  const [pagosDetalle, setPagosDetalle] = useState<PagoDetalle[]>([
+    { metodo_pago: "qr", monto: "", posnet_pago: "" },
+  ]);
   const [observaciones, setObservaciones] = useState("");
 
   const [turnoEditando, setTurnoEditando] = useState<TurnoStand | null>(null);
@@ -112,6 +189,13 @@ export default function TurneroAdminPage() {
   const horaBajada = useMemo(() => {
     return sumarMinutosAHora(horaSubida, cantidadMinutos);
   }, [horaSubida, cantidadMinutos]);
+
+  const totalPagos = useMemo(() => {
+    return pagosDetalle.reduce(
+      (acc, pago) => acc + (Number(pago.monto) || 0),
+      0,
+    );
+  }, [pagosDetalle]);
 
   async function cargarTurnos() {
     try {
@@ -155,20 +239,61 @@ export default function TurneroAdminPage() {
 
     turnosDelDia.forEach((turno) => {
       const totalTurno = Number(turno.total || 0);
-      const metodo = formatearPago(turno.metodo_pago);
       const minutos = `${turno.cantidad_minutos || 15} min`;
       const personas = `${turno.cantidad_personas || 1} persona${
         (turno.cantidad_personas || 1) > 1 ? "s" : ""
       }`;
       const simus = normalizarSimuladores(turno.simuladores);
-      const posnetTurno = turno.posnet_pago || turno.posnet;
+      const pagosTurno = normalizarPagos(turno).filter(
+        (pago) => Number(pago.monto) > 0,
+      );
 
       cantidadTurnos += 1;
       totalFacturado += totalTurno;
 
-      porMetodo[metodo] = porMetodo[metodo] || { cantidad: 0, total: 0 };
-      porMetodo[metodo].cantidad += 1;
-      porMetodo[metodo].total += totalTurno;
+      if (pagosTurno.length > 0) {
+        pagosTurno.forEach((pago) => {
+          const metodo = formatearPago(pago.metodo_pago);
+          const monto = Number(pago.monto) || 0;
+          const posnetTurno = pago.posnet_pago || null;
+
+          porMetodo[metodo] = porMetodo[metodo] || { cantidad: 0, total: 0 };
+          porMetodo[metodo].cantidad += 1;
+          porMetodo[metodo].total += monto;
+
+          if (posnetTurno && metodoUsaPosnet(pago.metodo_pago)) {
+            porPosnet[posnetTurno] = porPosnet[posnetTurno] || {
+              cantidad: 0,
+              total: 0,
+            };
+            porPosnet[posnetTurno].cantidad += 1;
+            porPosnet[posnetTurno].total += monto;
+
+            const clave = `${posnetTurno} - ${metodo}`;
+            porPosnetYMetodo[clave] = (porPosnetYMetodo[clave] || 0) + monto;
+          }
+        });
+      } else {
+        const metodo = formatearPago(turno.metodo_pago);
+        const posnetTurno = turno.posnet_pago || turno.posnet;
+
+        porMetodo[metodo] = porMetodo[metodo] || { cantidad: 0, total: 0 };
+        porMetodo[metodo].cantidad += 1;
+        porMetodo[metodo].total += totalTurno;
+
+        if (posnetTurno && metodoUsaPosnet(turno.metodo_pago || "")) {
+          porPosnet[posnetTurno] = porPosnet[posnetTurno] || {
+            cantidad: 0,
+            total: 0,
+          };
+
+          porPosnet[posnetTurno].cantidad += 1;
+          porPosnet[posnetTurno].total += totalTurno;
+
+          const clave = `${posnetTurno} - ${metodo}`;
+          porPosnetYMetodo[clave] = (porPosnetYMetodo[clave] || 0) + totalTurno;
+        }
+      }
 
       porMinutos[minutos] = (porMinutos[minutos] || 0) + 1;
       porPersonas[personas] = (porPersonas[personas] || 0) + 1;
@@ -176,24 +301,6 @@ export default function TurneroAdminPage() {
       simus.forEach((sim) => {
         porSimulador[sim] = (porSimulador[sim] || 0) + 1;
       });
-
-      if (
-        posnetTurno &&
-        (turno.metodo_pago === "debito" ||
-          turno.metodo_pago === "credito" ||
-          turno.metodo_pago === "qr")
-      ) {
-        porPosnet[posnetTurno] = porPosnet[posnetTurno] || {
-          cantidad: 0,
-          total: 0,
-        };
-
-        porPosnet[posnetTurno].cantidad += 1;
-        porPosnet[posnetTurno].total += totalTurno;
-
-        const clave = `${posnetTurno} - ${metodo}`;
-        porPosnetYMetodo[clave] = (porPosnetYMetodo[clave] || 0) + totalTurno;
-      }
     });
 
     return {
@@ -208,11 +315,82 @@ export default function TurneroAdminPage() {
     };
   }, [turnosDelDia]);
 
+  function manejarFlechitas(e: React.KeyboardEvent<HTMLFormElement>) {
+    if (!["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"].includes(e.key))
+      return;
+
+    const target = e.target as HTMLElement;
+    if (!target.matches("input, select, textarea, button")) return;
+
+    const form = e.currentTarget;
+    const campos = Array.from(
+      form.querySelectorAll<HTMLElement>(
+        "[data-turnero-cell]:not(:disabled):not([readonly])",
+      ),
+    );
+    const actual = campos.indexOf(target);
+
+    if (actual === -1) return;
+
+    const columnas = 8;
+    let siguiente = actual;
+
+    if (e.key === "ArrowRight") siguiente = actual + 1;
+    if (e.key === "ArrowLeft") siguiente = actual - 1;
+    if (e.key === "ArrowDown") siguiente = actual + columnas;
+    if (e.key === "ArrowUp") siguiente = actual - columnas;
+
+    if (siguiente < 0 || siguiente >= campos.length) return;
+
+    e.preventDefault();
+
+    const siguienteCampo = campos[siguiente];
+    siguienteCampo.focus();
+
+    if (siguienteCampo instanceof HTMLInputElement) {
+      siguienteCampo.select();
+    }
+  }
+
+  function actualizarPago(
+    index: number,
+    campo: keyof PagoDetalle,
+    valor: string,
+  ) {
+    setPagosDetalle((actuales) =>
+      actuales.map((pago, i) => {
+        if (i !== index) return pago;
+
+        const actualizado = { ...pago, [campo]: valor };
+
+        if (campo === "metodo_pago" && !metodoUsaPosnet(valor)) {
+          actualizado.posnet_pago = "";
+        }
+
+        return actualizado;
+      }),
+    );
+  }
+
+  function agregarPago() {
+    setPagosDetalle((actuales) => [
+      ...actuales,
+      { metodo_pago: "efectivo", monto: "", posnet_pago: "" },
+    ]);
+  }
+
+  function eliminarPago(index: number) {
+    setPagosDetalle((actuales) => {
+      if (actuales.length === 1) return actuales;
+      return actuales.filter((_, i) => i !== index);
+    });
+  }
+
   function toggleSimulador(simulador: string) {
     setSimuladores((actuales) =>
       actuales.includes(simulador)
         ? actuales.filter((s) => s !== simulador)
-        : [...actuales, simulador]
+        : [...actuales, simulador],
     );
   }
 
@@ -220,7 +398,7 @@ export default function TurneroAdminPage() {
     setTurnosListos((actuales) =>
       actuales.includes(id)
         ? actuales.filter((turnoId) => turnoId !== id)
-        : [...actuales, id]
+        : [...actuales, id],
     );
   }
 
@@ -234,10 +412,38 @@ export default function TurneroAdminPage() {
     setCantidadPersonas(1);
     setCantidadMinutos(15);
     setCantidadTurnos(1);
-    setMetodoPago("qr");
-    setPosnet("");
-    setTotal("");
+    setPagosDetalle([{ metodo_pago: "qr", monto: "", posnet_pago: "" }]);
     setObservaciones("");
+  }
+
+  function armarPayload() {
+    const pagosLimpios = limpiarPagosParaGuardar(pagosDetalle);
+    const primerPago = pagosLimpios[0];
+    const totalFinal = pagosLimpios.reduce((acc, pago) => acc + pago.monto, 0);
+    const posnets = pagosLimpios
+      .map((pago) => pago.posnet_pago)
+      .filter(Boolean)
+      .join(" + ");
+
+    return {
+      nombre,
+      telefono,
+      fecha,
+      hora,
+      hora_estimada_subida: horaEstimadaSubida,
+      hora_subida: horaSubida,
+      hora_bajada: horaBajada,
+      simuladores,
+      cantidad_personas: cantidadPersonas,
+      cantidad_minutos: cantidadMinutos,
+      cantidad_turnos: cantidadTurnos,
+      metodo_pago:
+        pagosLimpios.length > 1 ? "mixto" : primerPago?.metodo_pago || "qr",
+      posnet_pago: posnets || null,
+      pagos_detalle: pagosLimpios,
+      total: totalFinal,
+      observaciones,
+    };
   }
 
   async function crearTurno(e: React.FormEvent) {
@@ -248,29 +454,18 @@ export default function TurneroAdminPage() {
       return;
     }
 
+    if (totalPagos <= 0) {
+      alert("Cargá al menos un pago con monto mayor a 0.");
+      return;
+    }
+
     setGuardando(true);
 
     try {
       const res = await fetch("/api/turnos-stand", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nombre,
-          telefono,
-          fecha,
-          hora,
-          hora_estimada_subida: horaEstimadaSubida,
-          hora_subida: horaSubida,
-          hora_bajada: horaBajada,
-          simuladores,
-          cantidad_personas: cantidadPersonas,
-          cantidad_minutos: cantidadMinutos,
-          cantidad_turnos: cantidadTurnos,
-          metodo_pago: metodoPago,
-          posnet_pago: posnet,
-          total: Number(total) || 0,
-          observaciones,
-        }),
+        body: JSON.stringify(armarPayload()),
       });
 
       const data = await res.json();
@@ -302,9 +497,7 @@ export default function TurneroAdminPage() {
     setCantidadPersonas(turno.cantidad_personas || 1);
     setCantidadMinutos(turno.cantidad_minutos || 15);
     setCantidadTurnos(turno.cantidad_turnos || 1);
-    setMetodoPago(turno.metodo_pago || "qr");
-    setPosnet(turno.posnet_pago || turno.posnet || "");
-    setTotal(String(turno.total || ""));
+    setPagosDetalle(normalizarPagos(turno));
     setObservaciones(turno.observaciones || "");
   }
 
@@ -313,29 +506,18 @@ export default function TurneroAdminPage() {
 
     if (!turnoEditando) return;
 
+    if (totalPagos <= 0) {
+      alert("Cargá al menos un pago con monto mayor a 0.");
+      return;
+    }
+
     setEditando(true);
 
     try {
       const res = await fetch(`/api/turnos-stand/${turnoEditando.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nombre,
-          telefono,
-          fecha,
-          hora,
-          hora_estimada_subida: horaEstimadaSubida,
-          hora_subida: horaSubida,
-          hora_bajada: horaBajada,
-          simuladores,
-          cantidad_personas: cantidadPersonas,
-          cantidad_minutos: cantidadMinutos,
-          cantidad_turnos: cantidadTurnos,
-          metodo_pago: metodoPago,
-          posnet_pago: posnet,
-          total: Number(total) || 0,
-          observaciones,
-        }),
+        body: JSON.stringify(armarPayload()),
       });
 
       const data = await res.json();
@@ -380,6 +562,7 @@ export default function TurneroAdminPage() {
 
         <form
           onSubmit={turnoEditando ? guardarEdicion : crearTurno}
+          onKeyDown={manejarFlechitas}
           className="mb-6 rounded-3xl border border-white/10 bg-white/[0.03] p-4"
         >
           <div className="mb-4 flex items-center justify-between gap-3">
@@ -401,6 +584,7 @@ export default function TurneroAdminPage() {
           <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
             <Campo label="Fecha">
               <input
+                data-turnero-cell
                 type="date"
                 value={fecha}
                 onChange={(e) => setFecha(e.target.value)}
@@ -410,6 +594,7 @@ export default function TurneroAdminPage() {
 
             <Campo label="Hora toma">
               <input
+                data-turnero-cell
                 type="time"
                 value={hora}
                 onChange={(e) => setHora(e.target.value)}
@@ -419,6 +604,7 @@ export default function TurneroAdminPage() {
 
             <Campo label="Hora estimada">
               <input
+                data-turnero-cell
                 type="time"
                 value={horaEstimadaSubida}
                 onChange={(e) => setHoraEstimadaSubida(e.target.value)}
@@ -428,6 +614,7 @@ export default function TurneroAdminPage() {
 
             <Campo label="Hora subida">
               <input
+                data-turnero-cell
                 type="time"
                 value={horaSubida}
                 onChange={(e) => setHoraSubida(e.target.value)}
@@ -446,6 +633,7 @@ export default function TurneroAdminPage() {
 
             <Campo label="Cliente">
               <input
+                data-turnero-cell
                 type="text"
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
@@ -456,6 +644,7 @@ export default function TurneroAdminPage() {
 
             <Campo label="Teléfono">
               <input
+                data-turnero-cell
                 type="text"
                 value={telefono}
                 onChange={(e) => setTelefono(e.target.value)}
@@ -466,11 +655,10 @@ export default function TurneroAdminPage() {
 
             <Campo label="Total">
               <input
-                type="number"
-                value={total}
-                onChange={(e) => setTotal(e.target.value)}
-                placeholder="0"
-                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+                type="text"
+                value={formatoDinero(totalPagos)}
+                readOnly
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold text-white/60 outline-none"
               />
             </Campo>
           </div>
@@ -478,6 +666,7 @@ export default function TurneroAdminPage() {
           <div className="mt-3 grid gap-3 md:grid-cols-4 xl:grid-cols-8">
             <Campo label="Personas">
               <input
+                data-turnero-cell
                 type="number"
                 min={1}
                 value={cantidadPersonas}
@@ -488,6 +677,7 @@ export default function TurneroAdminPage() {
 
             <Campo label="Minutos">
               <input
+                data-turnero-cell
                 type="number"
                 min={1}
                 value={cantidadMinutos}
@@ -498,6 +688,7 @@ export default function TurneroAdminPage() {
 
             <Campo label="Turnos">
               <input
+                data-turnero-cell
                 type="number"
                 min={1}
                 value={cantidadTurnos}
@@ -506,53 +697,10 @@ export default function TurneroAdminPage() {
               />
             </Campo>
 
-            <Campo label="Método pago">
-              <select
-                value={metodoPago}
-                onChange={(e) => {
-                  setMetodoPago(e.target.value);
-
-                  if (
-                    e.target.value !== "debito" &&
-                    e.target.value !== "credito" &&
-                    e.target.value !== "qr"
-                  ) {
-                    setPosnet("");
-                  }
-                }}
-                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-              >
-                <option value="qr">QR</option>
-                <option value="efectivo">Efectivo</option>
-                <option value="debito">Débito</option>
-                <option value="credito">Crédito</option>
-                <option value="transferencia">Transferencia</option>
-              </select>
-            </Campo>
-
-            <Campo label="Posnet">
-              <select
-                value={posnet}
-                onChange={(e) => setPosnet(e.target.value)}
-                disabled={
-                  metodoPago !== "debito" &&
-                  metodoPago !== "credito" &&
-                  metodoPago !== "qr"
-                }
-                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500 disabled:opacity-30"
-              >
-                <option value="">Sin posnet</option>
-                {POSNETS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </Campo>
-
-            <div className="xl:col-span-2">
+            <div className="xl:col-span-4">
               <Campo label="Observaciones">
                 <input
+                  data-turnero-cell
                   type="text"
                   value={observaciones}
                   onChange={(e) => setObservaciones(e.target.value)}
@@ -573,9 +721,97 @@ export default function TurneroAdminPage() {
                     ? "Actualizando..."
                     : "Actualizar"
                   : guardando
-                  ? "Guardando..."
-                  : "Guardar"}
+                    ? "Guardando..."
+                    : "Guardar"}
               </button>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/60 p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/40">
+                Métodos de pago
+              </p>
+              <button
+                type="button"
+                onClick={agregarPago}
+                className="rounded-full border border-red-500/60 px-3 py-1 text-[10px] font-black uppercase text-red-400 hover:bg-red-600 hover:text-white"
+              >
+                + Agregar pago
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {pagosDetalle.map((pago, index) => {
+                const usaPosnet = metodoUsaPosnet(pago.metodo_pago);
+
+                return (
+                  <div
+                    key={index}
+                    className="grid gap-2 md:grid-cols-[1.1fr_1fr_1fr_90px]"
+                  >
+                    <select
+                      data-turnero-cell
+                      value={pago.metodo_pago}
+                      onChange={(e) =>
+                        actualizarPago(index, "metodo_pago", e.target.value)
+                      }
+                      className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+                    >
+                      {METODOS_PAGO.map((metodo) => (
+                        <option key={metodo.value} value={metodo.value}>
+                          {metodo.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    <input
+                      data-turnero-cell
+                      type="number"
+                      min={0}
+                      value={pago.monto}
+                      onChange={(e) =>
+                        actualizarPago(index, "monto", e.target.value)
+                      }
+                      placeholder="Monto"
+                      className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+                    />
+
+                    <select
+                      data-turnero-cell
+                      value={pago.posnet_pago || ""}
+                      onChange={(e) =>
+                        actualizarPago(index, "posnet_pago", e.target.value)
+                      }
+                      disabled={!usaPosnet}
+                      className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500 disabled:opacity-30"
+                    >
+                      <option value="">Sin posnet</option>
+                      {POSNETS.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => eliminarPago(index)}
+                      disabled={pagosDetalle.length === 1}
+                      className="rounded-xl border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/60 transition hover:border-red-500 hover:text-white disabled:opacity-30"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 flex justify-end text-sm font-black">
+              Total pagos:{" "}
+              <span className="ml-2 text-red-500">
+                {formatoDinero(totalPagos)}
+              </span>
             </div>
           </div>
 
@@ -646,7 +882,7 @@ export default function TurneroAdminPage() {
           ) : (
             <div className="overflow-x-auto">
               <div className="min-w-[1220px] space-y-2">
-                <div className="grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_90px_130px_120px_80px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
+                <div className="grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_1.4fr_130px_120px_80px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
                   <span>Listo</span>
                   <span>Toma</span>
                   <span>Est.</span>
@@ -664,13 +900,21 @@ export default function TurneroAdminPage() {
 
                 {turnosDelDia.map((turno) => {
                   const simus = normalizarSimuladores(turno.simuladores);
-                  const posnetTurno = turno.posnet_pago || turno.posnet || "-";
+                  const pagos = normalizarPagos(turno).filter(
+                    (pago) => Number(pago.monto) > 0,
+                  );
+                  const posnets = pagos.length
+                    ? pagos
+                        .map((pago) => pago.posnet_pago)
+                        .filter(Boolean)
+                        .join(" + ") || "-"
+                    : turno.posnet_pago || turno.posnet || "-";
                   const listo = turnosListos.includes(turno.id);
 
                   return (
                     <div
                       key={turno.id}
-                      className={`grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_90px_130px_120px_80px] items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                      className={`grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_1.4fr_130px_120px_80px] items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
                         listo
                           ? "border-green-500/50 bg-green-950/25"
                           : "border-white/10 bg-black hover:border-red-500/60"
@@ -696,7 +940,7 @@ export default function TurneroAdminPage() {
                         {turno.hora_bajada ||
                           sumarMinutosAHora(
                             turno.hora_subida || "",
-                            turno.cantidad_minutos || 15
+                            turno.cantidad_minutos || 15,
                           ) ||
                           "-"}
                       </span>
@@ -720,8 +964,10 @@ export default function TurneroAdminPage() {
 
                       <span>{turno.cantidad_personas || 1}</span>
                       <span>{turno.cantidad_minutos || 15}</span>
-                      <span>{formatearPago(turno.metodo_pago)}</span>
-                      <span>{posnetTurno}</span>
+                      <span className="truncate">
+                        {formatearPagosDetalle(turno)}
+                      </span>
+                      <span>{posnets}</span>
 
                       <span className="font-black text-red-500">
                         {formatoDinero(Number(turno.total || 0))}
@@ -799,7 +1045,7 @@ export default function TurneroAdminPage() {
                         {formatoDinero(valor)}
                       </span>
                     </div>
-                  )
+                  ),
                 )}
               </div>
             )}

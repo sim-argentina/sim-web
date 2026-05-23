@@ -1,13 +1,39 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+function limpiarPagosDetalle(pagos: any[]) {
+  if (!Array.isArray(pagos)) return [];
+
+  return pagos
+    .map((pago) => ({
+      metodo_pago: pago?.metodo_pago || "qr",
+      monto: Number(pago?.monto) || 0,
+      posnet_pago: pago?.posnet_pago || null,
+    }))
+    .filter((pago) => pago.monto > 0);
+}
+
 export async function PATCH(
   req: Request,
-  context: { params: Promise<{ id: string }> }
+  context: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await context.params;
     const body = await req.json();
+
+    const pagosDetalle = limpiarPagosDetalle(body.pagos_detalle || []);
+    const totalPagos = pagosDetalle.reduce((acc, pago) => acc + pago.monto, 0);
+    const posnets = pagosDetalle
+      .map((pago) => pago.posnet_pago)
+      .filter(Boolean)
+      .join(" + ");
+
+    const metodoPago =
+      pagosDetalle.length > 1
+        ? "mixto"
+        : pagosDetalle[0]?.metodo_pago || body.metodo_pago || "qr";
+
+    const total = totalPagos > 0 ? totalPagos : Number(body.total) || 0;
 
     const { data, error } = await supabaseAdmin
       .from("turnos_stand")
@@ -24,9 +50,10 @@ export async function PATCH(
         cantidad_personas: Number(body.cantidad_personas) || 1,
         cantidad_minutos: Number(body.cantidad_minutos) || 15,
         cantidad_turnos: Number(body.cantidad_turnos) || 1,
-        posnet_pago: body.posnet_pago || null,
-        metodo_pago: body.metodo_pago,
-        total: Number(body.total) || 0,
+        metodo_pago: metodoPago,
+        posnet_pago: posnets || body.posnet_pago || null,
+        pagos_detalle: pagosDetalle,
+        total,
         observaciones: body.observaciones,
       })
       .eq("id", id)
@@ -41,7 +68,7 @@ export async function PATCH(
   } catch {
     return NextResponse.json(
       { error: "Error actualizando turno" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

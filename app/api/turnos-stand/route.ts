@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+function limpiarPagosDetalle(pagos: any[]) {
+  if (!Array.isArray(pagos)) return [];
+
+  return pagos
+    .map((pago) => ({
+      metodo_pago: pago?.metodo_pago || "qr",
+      monto: Number(pago?.monto) || 0,
+      posnet_pago: pago?.posnet_pago || null,
+    }))
+    .filter((pago) => pago.monto > 0);
+}
+
 export async function GET() {
   try {
     const { data, error } = await supabaseAdmin
@@ -17,7 +29,7 @@ export async function GET() {
   } catch {
     return NextResponse.json(
       { error: "Error cargando turnos" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -26,45 +38,42 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const {
-      nombre,
-      telefono,
-      fecha,
-      hora,
-      hora_estimada_subida,
-      hora_subida,
-      hora_bajada,
-      simuladores,
-      cantidad_personas,
-      cantidad_minutos,
-      cantidad_turnos,
-      metodo_pago,
-      posnet_pago,
-      total,
-      observaciones,
-    } = body;
+    const pagosDetalle = limpiarPagosDetalle(body.pagos_detalle || []);
+    const totalPagos = pagosDetalle.reduce((acc, pago) => acc + pago.monto, 0);
+    const posnets = pagosDetalle
+      .map((pago) => pago.posnet_pago)
+      .filter(Boolean)
+      .join(" + ");
+
+    const metodoPago =
+      pagosDetalle.length > 1
+        ? "mixto"
+        : pagosDetalle[0]?.metodo_pago || body.metodo_pago || "qr";
+
+    const total = totalPagos > 0 ? totalPagos : Number(body.total) || 0;
 
     const { data, error } = await supabaseAdmin
       .from("turnos_stand")
       .insert([
         {
-          nombre,
-          telefono,
-          fecha,
-          hora,
-          hora_estimada_subida: hora_estimada_subida || null,
-          hora_subida: hora_subida || null,
-          hora_bajada: hora_bajada || null,
-          simuladores: simuladores || [],
-          cantidad_simuladores: simuladores?.length || 0,
-          cantidad_personas: Number(cantidad_personas) || 1,
-          cantidad_minutos: Number(cantidad_minutos) || 15,
-          cantidad_turnos: Number(cantidad_turnos) || 1,
-          posnet_pago: posnet_pago || null,
-          metodo_pago,
-          total: Number(total) || 0,
+          nombre: body.nombre,
+          telefono: body.telefono,
+          fecha: body.fecha,
+          hora: body.hora,
+          hora_estimada_subida: body.hora_estimada_subida || null,
+          hora_subida: body.hora_subida || null,
+          hora_bajada: body.hora_bajada || null,
+          simuladores: body.simuladores || [],
+          cantidad_simuladores: body.simuladores?.length || 0,
+          cantidad_personas: Number(body.cantidad_personas) || 1,
+          cantidad_minutos: Number(body.cantidad_minutos) || 15,
+          cantidad_turnos: Number(body.cantidad_turnos) || 1,
+          metodo_pago: metodoPago,
+          posnet_pago: posnets || body.posnet_pago || null,
+          pagos_detalle: pagosDetalle,
+          total,
           estado: "activo",
-          observaciones,
+          observaciones: body.observaciones,
         },
       ])
       .select()
@@ -76,9 +85,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, turno: data });
   } catch {
-    return NextResponse.json(
-      { error: "Error creando turno" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Error creando turno" }, { status: 500 });
   }
 }
