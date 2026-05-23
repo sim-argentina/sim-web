@@ -17,7 +17,7 @@ type TurnoStand = {
   cantidad_turnos?: number;
   total?: number;
   metodo_pago?: string;
-  posnet?: string;
+  posnet_pago?: string;
   estado?: string;
   observaciones?: string;
 };
@@ -81,6 +81,27 @@ function formatoDinero(valor: number) {
   return `$${valor.toLocaleString("es-AR")}`;
 }
 
+function minutosEntre(horaInicio?: string, horaFin?: string) {
+  if (!horaInicio || !horaFin) return null;
+
+  const [h1, m1] = horaInicio.split(":").map(Number);
+  const [h2, m2] = horaFin.split(":").map(Number);
+
+  if (Number.isNaN(h1) || Number.isNaN(m1) || Number.isNaN(h2) || Number.isNaN(m2)) {
+    return null;
+  }
+
+  const inicio = h1 * 60 + m1;
+  const fin = h2 * 60 + m2;
+
+  return fin >= inicio ? fin - inicio : fin + 1440 - inicio;
+}
+
+function promedio(valores: number[]) {
+  if (!valores.length) return 0;
+  return Math.round(valores.reduce((acc, n) => acc + n, 0) / valores.length);
+}
+
 export default function TurneroAdminPage() {
   const [turnos, setTurnos] = useState<TurnoStand[]>([]);
   const [loading, setLoading] = useState(true);
@@ -107,6 +128,7 @@ export default function TurneroAdminPage() {
 
   const [turnoEditando, setTurnoEditando] = useState<TurnoStand | null>(null);
   const [turnosListos, setTurnosListos] = useState<number[]>([]);
+  const [limiteRankingDemora, setLimiteRankingDemora] = useState(5);
 
   const horaBajada = useMemo(() => {
     return sumarMinutosAHora(horaSubida, cantidadMinutos);
@@ -160,7 +182,7 @@ export default function TurneroAdminPage() {
         (turno.cantidad_personas || 1) > 1 ? "s" : ""
       }`;
       const simus = normalizarSimuladores(turno.simuladores);
-      const posnetTurno = turno.posnet;
+      const posnetTurno = turno.posnet_pago;
 
       cantidadTurnos += 1;
       totalFacturado += totalTurno;
@@ -178,7 +200,9 @@ export default function TurneroAdminPage() {
 
       if (
         posnetTurno &&
-        (turno.metodo_pago === "debito" || turno.metodo_pago === "credito")
+        (turno.metodo_pago === "debito" ||
+          turno.metodo_pago === "credito" ||
+          turno.metodo_pago === "qr")
       ) {
         porPosnet[posnetTurno] = porPosnet[posnetTurno] || {
           cantidad: 0,
@@ -193,6 +217,32 @@ export default function TurneroAdminPage() {
       }
     });
 
+    const tiemposSinDemora: number[] = [];
+    const tiemposConDemora: number[] = [];
+    const turnosConDemoraRanking: Array<TurnoStand & { demora_minutos: number }> =
+      [];
+
+    turnosDelDia.forEach((turno) => {
+      const diferencia = minutosEntre(turno.hora, turno.hora_subida);
+      const tieneDemora = Boolean(turno.hora_estimada_subida);
+
+      if (diferencia === null) return;
+
+      if (tieneDemora) {
+        tiemposConDemora.push(diferencia);
+        turnosConDemoraRanking.push({
+          ...turno,
+          demora_minutos: diferencia,
+        });
+      } else {
+        tiemposSinDemora.push(diferencia);
+      }
+    });
+
+    const rankingDemoras = turnosConDemoraRanking
+      .sort((a, b) => b.demora_minutos - a.demora_minutos)
+      .slice(0, limiteRankingDemora);
+
     return {
       cantidadTurnos,
       totalFacturado,
@@ -202,8 +252,12 @@ export default function TurneroAdminPage() {
       porPersonas,
       porPosnet,
       porPosnetYMetodo,
+      promedioSubidaSinDemora: promedio(tiemposSinDemora),
+      promedioSubidaConDemora: promedio(tiemposConDemora),
+      cantidadTurnosConDemora: tiemposConDemora.length,
+      rankingDemoras,
     };
-  }, [turnosDelDia]);
+  }, [turnosDelDia, limiteRankingDemora]);
 
   function toggleSimulador(simulador: string) {
     setSimuladores((actuales) =>
@@ -264,7 +318,7 @@ export default function TurneroAdminPage() {
           cantidad_minutos: cantidadMinutos,
           cantidad_turnos: cantidadTurnos,
           metodo_pago: metodoPago,
-          posnet,
+          posnet_pago: posnet,
           total: Number(total) || 0,
           observaciones,
         }),
@@ -300,7 +354,7 @@ export default function TurneroAdminPage() {
     setCantidadMinutos(turno.cantidad_minutos || 15);
     setCantidadTurnos(turno.cantidad_turnos || 1);
     setMetodoPago(turno.metodo_pago || "qr");
-    setPosnet(turno.posnet || "");
+    setPosnet(turno.posnet_pago || "");
     setTotal(String(turno.total || ""));
     setObservaciones(turno.observaciones || "");
   }
@@ -329,7 +383,7 @@ export default function TurneroAdminPage() {
           cantidad_minutos: cantidadMinutos,
           cantidad_turnos: cantidadTurnos,
           metodo_pago: metodoPago,
-          posnet,
+          posnet_pago: posnet,
           total: Number(total) || 0,
           observaciones,
         }),
@@ -511,7 +565,8 @@ export default function TurneroAdminPage() {
 
                   if (
                     e.target.value !== "debito" &&
-                    e.target.value !== "credito"
+                    e.target.value !== "credito" &&
+                    e.target.value !== "qr"
                   ) {
                     setPosnet("");
                   }
@@ -530,7 +585,11 @@ export default function TurneroAdminPage() {
               <select
                 value={posnet}
                 onChange={(e) => setPosnet(e.target.value)}
-                disabled={metodoPago !== "debito" && metodoPago !== "credito"}
+                disabled={
+                  metodoPago !== "debito" &&
+                  metodoPago !== "credito" &&
+                  metodoPago !== "qr"
+                }
                 className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500 disabled:opacity-30"
               >
                 <option value="">Sin posnet</option>
@@ -656,7 +715,7 @@ export default function TurneroAdminPage() {
 
                 {turnosDelDia.map((turno) => {
                   const simus = normalizarSimuladores(turno.simuladores);
-                  const posnetTurno = turno.posnet || "-";
+                  const posnetTurno = turno.posnet_pago || "-";
                   const listo = turnosListos.includes(turno.id);
 
                   return (
@@ -762,6 +821,33 @@ export default function TurneroAdminPage() {
               </p>
             </div>
 
+            <div className="rounded-2xl border border-white/10 bg-black p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-white/40">
+                Prom. subida sin demora
+              </p>
+              <p className="mt-2 text-2xl font-black">
+                {resumenDia.promedioSubidaSinDemora} min
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-white/40">
+                Prom. subida con demora
+              </p>
+              <p className="mt-2 text-2xl font-black">
+                {resumenDia.promedioSubidaConDemora} min
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-white/40">
+                Turnos con demora
+              </p>
+              <p className="mt-2 text-2xl font-black">
+                {resumenDia.cantidadTurnosConDemora}
+              </p>
+            </div>
+
             <ResumenBox titulo="Por método" data={resumenDia.porMetodo} />
             <ResumenBox titulo="Por simulador" data={resumenDia.porSimulador} />
             <ResumenBox titulo="Por duración" data={resumenDia.porMinutos} />
@@ -793,6 +879,70 @@ export default function TurneroAdminPage() {
                     </div>
                   )
                 )}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-white/10 bg-black p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/40">
+                Ranking de mayores demoras
+              </p>
+
+              <select
+                value={limiteRankingDemora}
+                onChange={(e) => setLimiteRankingDemora(Number(e.target.value))}
+                className="rounded-xl border border-white/15 bg-black px-3 py-2 text-xs font-bold outline-none focus:border-red-500"
+              >
+                <option value={2}>Top 2</option>
+                <option value={5}>Top 5</option>
+                <option value={10}>Top 10</option>
+                <option value={25}>Top 25</option>
+                <option value={50}>Top 50</option>
+              </select>
+            </div>
+
+            {resumenDia.rankingDemoras.length === 0 ? (
+              <p className="text-sm text-white/45">
+                No hay turnos con demora para este día.
+              </p>
+            ) : (
+              <div className="space-y-2 overflow-x-auto">
+                <div className="min-w-[920px] space-y-2">
+                  {resumenDia.rankingDemoras.map((turno, index) => {
+                    const simus = normalizarSimuladores(turno.simuladores);
+
+                    return (
+                      <div
+                        key={turno.id}
+                        className="grid grid-cols-[45px_1.4fr_90px_90px_90px_100px_1fr] items-center gap-2 rounded-xl bg-white/[0.04] px-3 py-2 text-sm"
+                      >
+                        <span className="font-black text-red-500">
+                          #{index + 1}
+                        </span>
+
+                        <div className="min-w-0">
+                          <p className="truncate font-black">
+                            {turno.nombre || "Sin nombre"}
+                          </p>
+                          <p className="truncate text-xs text-white/40">
+                            {turno.telefono || "Sin teléfono"}
+                          </p>
+                        </div>
+
+                        <span>{turno.hora || "-"}</span>
+                        <span>{turno.hora_estimada_subida || "-"}</span>
+                        <span>{turno.hora_subida || "-"}</span>
+                        <span className="font-black text-red-500">
+                          {turno.demora_minutos} min
+                        </span>
+                        <span className="truncate text-white/60">
+                          {simus.length ? simus.join(", ") : "-"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
