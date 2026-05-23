@@ -51,6 +51,7 @@ export async function PATCH(
         cantidad_minutos: Number(body.cantidad_minutos) || 15,
         cantidad_turnos: Number(body.cantidad_turnos) || 1,
         metodo_pago: metodoPago,
+        turno_listo: Boolean(body.turno_listo),
         posnet_pago: posnets || body.posnet_pago || null,
         pagos_detalle: pagosDetalle,
         total,

@@ -71,6 +71,7 @@ export async function POST(req: Request) {
           metodo_pago: metodoPago,
           posnet_pago: posnets || body.posnet_pago || null,
           pagos_detalle: pagosDetalle,
+          turno_listo: Boolean(body.turno_listo) || false,
           total,
           estado: "activo",
           observaciones: body.observaciones,
