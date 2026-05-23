@@ -23,19 +23,26 @@ type Reserva = {
 type TurnoStand = {
   id?: number;
   created_at?: string;
+  nombre?: string;
+  telefono?: string;
   fecha: string;
+  hora?: string;
   hora_subida?: string;
   hora_bajada?: string;
   hora_tomado?: string;
+  hora_estimada_subida?: string;
   metodo_pago?: string;
   total?: number | string;
   monto?: number | string;
   cantidad_simuladores?: number;
   cantidad_turnos?: number;
+  cantidad_minutos?: number | string;
   duracion?: number | string;
   escuderia?: string;
   simulador?: string;
+  simuladores?: string[] | unknown;
   personas?: number | string;
+  cantidad_personas?: number | string;
   archivo_nombre?: string;
   archivo_key?: string;
   hash_unico?: string;
@@ -217,6 +224,68 @@ function obtenerHoraAgrupada(value: any) {
   if (h < 10 || h > 22) return null;
 
   return `${String(h).padStart(2, "0")} hs`;
+}
+
+function normalizarHora(value: any) {
+  const raw = excelTimeToString(value || "").trim();
+  const match = raw.match(/(\d{1,2}):(\d{2})/);
+
+  if (!match) return "";
+
+  const horas = Number(match[1]);
+  const minutos = Number(match[2]);
+
+  if (Number.isNaN(horas) || Number.isNaN(minutos)) return "";
+
+  return `${String(horas).padStart(2, "0")}:${String(minutos).padStart(2, "0")}`;
+}
+
+function minutosEntre(horaInicio?: any, horaFin?: any) {
+  const inicioNormalizado = normalizarHora(horaInicio);
+  const finNormalizado = normalizarHora(horaFin);
+
+  if (!inicioNormalizado || !finNormalizado) return null;
+
+  const [h1, m1] = inicioNormalizado.split(":").map(Number);
+  const [h2, m2] = finNormalizado.split(":").map(Number);
+
+  const inicio = h1 * 60 + m1;
+  const fin = h2 * 60 + m2;
+
+  if (Number.isNaN(inicio) || Number.isNaN(fin)) return null;
+
+  return fin >= inicio ? fin - inicio : fin + 1440 - inicio;
+}
+
+function promedioNumeros(valores: number[]) {
+  if (!valores.length) return 0;
+  return valores.reduce((acc, n) => acc + n, 0) / valores.length;
+}
+
+function obtenerHoraTomaTurno(turno: TurnoStand) {
+  if (turno.hora) return turno.hora;
+  if (turno.hora_tomado) return turno.hora_tomado;
+
+  if (turno.created_at) {
+    const fecha = new Date(turno.created_at);
+    if (!Number.isNaN(fecha.getTime())) {
+      return fecha.toLocaleTimeString("es-AR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+    }
+  }
+
+  return "";
+}
+
+function obtenerSimuladoresTexto(turno: TurnoStand) {
+  if (Array.isArray(turno.simuladores) && turno.simuladores.length) {
+    return turno.simuladores.join(", ");
+  }
+
+  return turno.escuderia || turno.simulador || "-";
 }
 
 function capitalizar(value: string) {
@@ -649,6 +718,7 @@ export default function AdminMetricasPage() {
 
   const [agrupacionIngresos, setAgrupacionIngresos] = useState<Agrupacion>("semana");
   const [filtroIngresos, setFiltroIngresos] = useState("ultimos");
+  const [limiteRankingDemora, setLimiteRankingDemora] = useState(5);
 
   const hoy = new Date();
   const [fechaDesde, setFechaDesde] = useState(toInputDate(startOfMonth(hoy)));
@@ -1068,6 +1138,16 @@ export default function AdminMetricasPage() {
     const porDiaSemana: Record<string, number> = {};
     const ingresosPorMetodo: Record<string, number> = {};
     const ingresosPorDia: Record<string, number> = {};
+    const tiemposSubidaSinDemora: number[] = [];
+    const tiemposSubidaConDemora: number[] = [];
+    const turnosConDemoraRanking: Array<
+      TurnoStand & {
+        demora_minutos: number;
+        hora_tomado_calculada: string;
+        hora_subida_calculada: string;
+        hora_estimada_calculada: string;
+      }
+    > = [];
 
     standFiltrado.forEach((t) => {
       const monto = numberValue(t.total ?? t.monto);
@@ -1078,6 +1158,26 @@ export default function AdminMetricasPage() {
       const hora = obtenerHoraAgrupada(t.hora_subida || t.hora_bajada || t.hora_tomado);
       const diaSemana = nombreDia(t.fecha);
       const escuderiaRaw = t.escuderia || t.simulador || "";
+      const horaTomado = obtenerHoraTomaTurno(t);
+      const horaSubida = normalizarHora(t.hora_subida);
+      const horaEstimadaSubida = normalizarHora(t.hora_estimada_subida);
+      const tiempoHastaSubida = minutosEntre(horaTomado, horaSubida);
+      const tieneDemora = Boolean(horaEstimadaSubida);
+
+      if (tiempoHastaSubida !== null) {
+        if (tieneDemora) {
+          tiemposSubidaConDemora.push(tiempoHastaSubida);
+          turnosConDemoraRanking.push({
+            ...t,
+            demora_minutos: tiempoHastaSubida,
+            hora_tomado_calculada: normalizarHora(horaTomado),
+            hora_subida_calculada: horaSubida,
+            hora_estimada_calculada: horaEstimadaSubida,
+          });
+        } else {
+          tiemposSubidaSinDemora.push(tiempoHastaSubida);
+        }
+      }
 
       if (metodo) {
         addToRecord(porMetodoPago, metodo, cantTurnos);
@@ -1101,6 +1201,11 @@ export default function AdminMetricasPage() {
       Object.entries(ingresosPorDia).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
     const simuladorMasUsado =
       Object.entries(porSimulador).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+    const cantidadRankingDemora = Math.max(1, Math.floor(Number(limiteRankingDemora) || 5));
+    const rankingMayoresDemoras = [...turnosConDemoraRanking]
+      .sort((a, b) => b.demora_minutos - a.demora_minutos)
+      .slice(0, cantidadRankingDemora);
+    const turnoMayorDemora = rankingMayoresDemoras[0];
 
     return {
       ventasRegistradas,
@@ -1117,6 +1222,13 @@ export default function AdminMetricasPage() {
       horaPico,
       mejorDia: mejorDiaFecha ? fechaConDia(mejorDiaFecha) : "-",
       simuladorMasUsado,
+      promedioSubidaSinDemora: promedioNumeros(tiemposSubidaSinDemora),
+      promedioSubidaConDemora: promedioNumeros(tiemposSubidaConDemora),
+      cantidadTurnosConDemora: tiemposSubidaConDemora.length,
+      cantidadTurnosSinDemoraMedidos: tiemposSubidaSinDemora.length,
+      cantidadTurnosConDemoraMedidos: tiemposSubidaConDemora.length,
+      turnoMayorDemora,
+      rankingMayoresDemoras,
       porMetodoPago: toChart(porMetodoPago),
       porSimulador: toChart(porSimulador),
       porDuracion: toChart(porDuracion),
@@ -1130,7 +1242,7 @@ export default function AdminMetricasPage() {
       ),
       ingresosPorMetodo: toChart(ingresosPorMetodo),
     };
-  }, [standFiltrado, agrupacionIngresos, filtroIngresos]);
+  }, [standFiltrado, agrupacionIngresos, filtroIngresos, limiteRankingDemora]);
 
   const rangoTexto =
     !fechaDesde && !fechaHasta ? "Todo el histórico" : `${fechaDesde || "Inicio"} → ${fechaHasta || "Hoy"}`;
@@ -1356,6 +1468,100 @@ export default function AdminMetricasPage() {
               <KpiCard title="Hora pico" value={metricasStand.horaPico} />
               <KpiCard title="Mejor día" value={metricasStand.mejorDia} />
               <KpiCard title="Sim más usado" value={metricasStand.simuladorMasUsado} />
+              <KpiCard
+                title="Prom. subida sin demora"
+                value={`${metricasStand.promedioSubidaSinDemora.toFixed(1)} min`}
+                subtext={`${metricasStand.cantidadTurnosSinDemoraMedidos} turnos medidos`}
+              />
+              <KpiCard
+                title="Prom. subida con demora"
+                value={`${metricasStand.promedioSubidaConDemora.toFixed(1)} min`}
+                subtext={`${metricasStand.cantidadTurnosConDemoraMedidos} turnos medidos`}
+              />
+              <KpiCard
+                title="Turnos con demora"
+                value={String(metricasStand.cantidadTurnosConDemora)}
+                subtext="Con hora estimada cargada"
+              />
+              <KpiCard
+                title="Mayor demora"
+                value={
+                  metricasStand.turnoMayorDemora
+                    ? `${metricasStand.turnoMayorDemora.demora_minutos} min`
+                    : "-"
+                }
+                subtext={
+                  metricasStand.turnoMayorDemora
+                    ? metricasStand.turnoMayorDemora.nombre || metricasStand.turnoMayorDemora.telefono || "Turno sin nombre"
+                    : "Sin datos"
+                }
+              />
+            </div>
+
+            <div className="mb-8 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="mb-4 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-white">Ranking de mayores demoras</h3>
+                  <p className="mt-1 text-sm text-white/50">
+                    Turnos con hora estimada cargada, ordenados por minutos entre toma del turno y subida real.
+                  </p>
+                </div>
+
+                <div className="w-full md:w-48">
+                  <label className="mb-2 block text-sm text-white/70">Cantidad a mostrar</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={limiteRankingDemora}
+                    onChange={(e) =>
+                      setLimiteRankingDemora(Math.max(1, Number(e.target.value) || 1))
+                    }
+                    className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                  />
+                </div>
+              </div>
+
+              {metricasStand.rankingMayoresDemoras.length === 0 ? (
+                <div className="rounded-xl border border-white/10 bg-black/25 p-4 text-sm text-white/50">
+                  No hay turnos con demora en el período seleccionado.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[850px] text-left text-sm">
+                    <thead className="text-xs uppercase tracking-[0.18em] text-white/40">
+                      <tr>
+                        <th className="px-3 py-3">#</th>
+                        <th className="px-3 py-3">Cliente</th>
+                        <th className="px-3 py-3">Fecha</th>
+                        <th className="px-3 py-3">Tomado</th>
+                        <th className="px-3 py-3">Estimada</th>
+                        <th className="px-3 py-3">Subida real</th>
+                        <th className="px-3 py-3">Demora</th>
+                        <th className="px-3 py-3">Simulador/es</th>
+                        <th className="px-3 py-3">Pago</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {metricasStand.rankingMayoresDemoras.map((turno, index) => (
+                        <tr key={`${turno.id || turno.hash_unico || index}-${index}`} className="border-t border-white/10">
+                          <td className="px-3 py-3 font-black text-red-500">#{index + 1}</td>
+                          <td className="px-3 py-3">
+                            <p className="font-semibold text-white">{turno.nombre || "Sin nombre"}</p>
+                            <p className="text-xs text-white/45">{turno.telefono || "Sin teléfono"}</p>
+                          </td>
+                          <td className="px-3 py-3 text-white/75">{turno.fecha || "-"}</td>
+                          <td className="px-3 py-3 text-white/75">{turno.hora_tomado_calculada || "-"}</td>
+                          <td className="px-3 py-3 text-white/75">{turno.hora_estimada_calculada || "-"}</td>
+                          <td className="px-3 py-3 text-white/75">{turno.hora_subida_calculada || "-"}</td>
+                          <td className="px-3 py-3 font-black text-red-400">{turno.demora_minutos} min</td>
+                          <td className="px-3 py-3 text-white/75">{obtenerSimuladoresTexto(turno)}</td>
+                          <td className="px-3 py-3 text-white/75">{normalizarMetodoPago(turno.metodo_pago) || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             <div className="mb-8 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
