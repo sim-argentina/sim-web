@@ -23,6 +23,7 @@ type TurnoStand = {
   cantidad_turnos?: number;
   total?: number;
   metodo_pago?: string;
+  turno_listo?: boolean;
   posnet?: string;
   posnet_pago?: string;
   pagos_detalle?: PagoDetalle[] | string;
@@ -923,8 +924,27 @@ export default function TurneroAdminPage() {
                       <label className="flex items-center justify-center">
                         <input
                           type="checkbox"
-                          checked={listo}
-                          onChange={() => toggleListo(turno.id)}
+                          checked={Boolean(turno.turno_listo)}
+                          onChange={async (e) => {
+  const nuevoValor = e.target.checked;
+
+  setTurnos((prev) =>
+    prev.map((t) =>
+      t.id === turno.id ? { ...t, turno_listo: nuevoValor } : t
+    )
+  );
+
+  await fetch(`/api/turnos-stand/${turno.id}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ...turno,
+      turno_listo: nuevoValor,
+    }),
+  });
+}}
                           className="h-5 w-5 accent-red-600"
                         />
                       </label>
