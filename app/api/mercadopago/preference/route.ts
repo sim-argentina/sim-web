@@ -5,8 +5,6 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
 
-const PRECIO_SIMULADOR = 12000;
-
 const client = new MercadoPagoConfig({
   accessToken: accessToken!,
 });
@@ -16,9 +14,18 @@ function isInvalidBaseUrl(url: string) {
 }
 
 function calcularDescuento(tipo: string, valor: number, totalOriginal: number) {
-  if (tipo === "porcentaje") return totalOriginal * (valor / 100);
-  if (tipo === "monto_fijo") return valor;
-  if (tipo === "turno_gratis") return valor;
+  if (tipo === "porcentaje") {
+    return totalOriginal * (valor / 100);
+  }
+
+  if (tipo === "monto_fijo") {
+    return valor;
+  }
+
+  if (tipo === "turno_gratis") {
+    return valor;
+  }
+
   return 0;
 }
 
@@ -28,17 +35,15 @@ async function validarCodigoDescuento(
 ) {
   const codigoBuscado = codigoIngresado.trim().toUpperCase();
 
-  if (!codigoBuscado) {
-    return { valido: false, codigo: null, descuento: 0, error: null };
-  }
-
   const { data: codigo, error } = await supabaseAdmin
     .from("codigos_descuento")
     .select("*")
     .eq("codigo", codigoBuscado)
     .maybeSingle();
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    throw new Error(error.message);
+  }
 
   if (!codigo) {
     return {
@@ -80,6 +85,7 @@ async function validarCodigoDescuento(
 
   if (
     codigo.usos_maximos !== null &&
+    codigo.usos_maximos !== undefined &&
     Number(codigo.usos_actuales || 0) >= Number(codigo.usos_maximos)
   ) {
     return {
@@ -92,7 +98,7 @@ async function validarCodigoDescuento(
 
   const descuentoCalculado = calcularDescuento(
     codigo.tipo_descuento,
-    Number(codigo.valor_descuento),
+    Number(codigo.valor_descuento || 0),
     totalOriginal
   );
 
@@ -108,14 +114,14 @@ export async function POST(req: Request) {
   try {
     if (!accessToken) {
       return NextResponse.json(
-        { error: "Falta MERCADOPAGO_ACCESS_TOKEN en .env.local" },
+        { error: "Falta MERCADOPAGO_ACCESS_TOKEN" },
         { status: 500 }
       );
     }
 
     if (!baseUrl) {
       return NextResponse.json(
-        { error: "Falta NEXT_PUBLIC_BASE_URL en .env.local" },
+        { error: "Falta NEXT_PUBLIC_BASE_URL" },
         { status: 500 }
       );
     }
@@ -124,7 +130,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            "NEXT_PUBLIC_BASE_URL no puede ser localhost. Usá una URL pública como Vercel.",
+            "NEXT_PUBLIC_BASE_URL no puede ser localhost. Usá la URL pública de Vercel.",
         },
         { status: 500 }
       );
@@ -139,6 +145,7 @@ export async function POST(req: Request) {
       hora,
       simuladores,
       cantidad_turnos,
+      total,
       acepto_condiciones,
       codigo_descuento,
     } = body;
@@ -159,7 +166,14 @@ export async function POST(req: Request) {
       );
     }
 
-    const totalOriginal = simuladores.length * PRECIO_SIMULADOR;
+    const totalOriginal = Math.round(Number(total));
+
+    if (!Number.isFinite(totalOriginal) || totalOriginal <= 0) {
+      return NextResponse.json(
+        { error: "Total original inválido" },
+        { status: 400 }
+      );
+    }
 
     let codigoAplicado = null;
     let descuentoAplicado = 0;
@@ -178,7 +192,7 @@ export async function POST(req: Request) {
       }
 
       codigoAplicado = resultadoCodigo.codigo;
-      descuentoAplicado = resultadoCodigo.descuento;
+      descuentoAplicado = Number(resultadoCodigo.descuento || 0);
     }
 
     const totalFinal = Math.round(
@@ -223,7 +237,7 @@ export async function POST(req: Request) {
           fecha,
           hora,
           simuladores,
-          cantidad_turnos: simuladores.length,
+          cantidad_turnos,
           total: totalFinal,
           total_original: totalOriginal,
           descuento_aplicado: Math.round(descuentoAplicado),
@@ -257,11 +271,17 @@ export async function POST(req: Request) {
       total_final: totalFinal,
       codigo_descuento: codigoAplicado?.codigo || null,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error creando preferencia:", error);
 
     return NextResponse.json(
-      { error: "No se pudo crear la preferencia" },
+      {
+        error: "No se pudo crear la preferencia",
+        details:
+          error?.message ||
+          error?.cause ||
+          JSON.stringify(error, null, 2),
+      },
       { status: 500 }
     );
   }
