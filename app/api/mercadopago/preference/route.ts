@@ -15,36 +15,21 @@ function isInvalidBaseUrl(url: string) {
   return url.includes("localhost") || url.includes("127.0.0.1");
 }
 
-function calcularDescuento(
-  tipo: string,
-  valor: number,
-  totalOriginal: number
-) {
-  if (tipo === "porcentaje") {
-    return totalOriginal * (valor / 100);
-  }
-
-  if (tipo === "monto_fijo") {
-    return valor;
-  }
-
-  if (tipo === "turno_gratis") {
-    return valor;
-  }
-
+function calcularDescuento(tipo: string, valor: number, totalOriginal: number) {
+  if (tipo === "porcentaje") return totalOriginal * (valor / 100);
+  if (tipo === "monto_fijo") return valor;
+  if (tipo === "turno_gratis") return valor;
   return 0;
 }
 
-async function validarCodigoDescuento(codigoIngresado: string, totalOriginal: number) {
+async function validarCodigoDescuento(
+  codigoIngresado: string,
+  totalOriginal: number
+) {
   const codigoBuscado = codigoIngresado.trim().toUpperCase();
 
   if (!codigoBuscado) {
-    return {
-      valido: false,
-      codigo: null,
-      descuento: 0,
-      error: null,
-    };
+    return { valido: false, codigo: null, descuento: 0, error: null };
   }
 
   const { data: codigo, error } = await supabaseAdmin
@@ -53,9 +38,7 @@ async function validarCodigoDescuento(codigoIngresado: string, totalOriginal: nu
     .eq("codigo", codigoBuscado)
     .maybeSingle();
 
-  if (error) {
-    throw new Error(error.message);
-  }
+  if (error) throw new Error(error.message);
 
   if (!codigo) {
     return {
@@ -113,12 +96,10 @@ async function validarCodigoDescuento(codigoIngresado: string, totalOriginal: nu
     totalOriginal
   );
 
-  const descuento = Math.min(descuentoCalculado, totalOriginal);
-
   return {
     valido: true,
     codigo,
-    descuento,
+    descuento: Math.min(descuentoCalculado, totalOriginal),
     error: null,
   };
 }
@@ -200,13 +181,15 @@ export async function POST(req: Request) {
       descuentoAplicado = resultadoCodigo.descuento;
     }
 
-    const totalFinal = Math.max(totalOriginal - descuentoAplicado, 0);
+    const totalFinal = Math.round(
+      Math.max(totalOriginal - descuentoAplicado, 0)
+    );
 
-    if (totalFinal <= 0) {
+    if (!Number.isFinite(totalFinal) || totalFinal <= 0) {
       return NextResponse.json(
         {
           error:
-            "El total final no puede ser $0 para Mercado Pago. Usá un descuento menor al total.",
+            "El total final debe ser mayor a $0 para pagar con Mercado Pago.",
         },
         { status: 400 }
       );
@@ -218,11 +201,9 @@ export async function POST(req: Request) {
       body: {
         items: [
           {
-            id: `reserva-${fecha}-${hora}`,
-            title: `Reserva SIM - ${fecha} ${hora}`,
-            description: `Reserva para ${nombre} | Simuladores: ${simuladores.join(
-              ", "
-            )}`,
+            id: `reserva-sim-${Date.now()}`,
+            title: "Reserva SIM Argentina",
+            description: `Reserva ${fecha} ${hora} - ${simuladores.join(", ")}`,
             quantity: 1,
             unit_price: totalFinal,
             currency_id: "ARS",
@@ -245,7 +226,7 @@ export async function POST(req: Request) {
           cantidad_turnos: simuladores.length,
           total: totalFinal,
           total_original: totalOriginal,
-          descuento_aplicado: descuentoAplicado,
+          descuento_aplicado: Math.round(descuentoAplicado),
           codigo_descuento: codigoAplicado?.codigo || null,
           codigo_descuento_id: codigoAplicado?.id || null,
           acepto_condiciones,
@@ -272,7 +253,7 @@ export async function POST(req: Request) {
       init_point: result.init_point,
       sandbox_init_point: result.sandbox_init_point,
       total_original: totalOriginal,
-      descuento_aplicado: descuentoAplicado,
+      descuento_aplicado: Math.round(descuentoAplicado),
       total_final: totalFinal,
       codigo_descuento: codigoAplicado?.codigo || null,
     });
