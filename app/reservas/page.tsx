@@ -721,8 +721,10 @@ export default function ReservasPage() {
         );
         return;
       }
-
-      const paymentUrl = result?.init_point || result?.sandbox_init_point;
+console.log("MP preference result:", result);
+      const paymentUrl =
+  result?.sandbox_init_point ||
+  result?.init_point;
 
       if (!paymentUrl) {
         openFeedbackModal(
