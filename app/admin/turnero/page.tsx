@@ -8,6 +8,11 @@ type PagoDetalle = {
   posnet_pago?: string;
 };
 
+type ClienteSugerido = {
+  nombre: string;
+  telefono: string;
+};
+
 type TurnoStand = {
   id: number;
   nombre?: string;
@@ -143,6 +148,10 @@ function formatearPago(pago?: string) {
   return pago;
 }
 
+function formatoDinero(valor: number) {
+  return `$${valor.toLocaleString("es-AR")}`;
+}
+
 function formatearPagosDetalle(turno: TurnoStand) {
   const pagos = normalizarPagos(turno).filter((pago) => Number(pago.monto) > 0);
 
@@ -154,10 +163,6 @@ function formatearPagosDetalle(turno: TurnoStand) {
         `${formatearPago(pago.metodo_pago)} ${formatoDinero(Number(pago.monto) || 0)}`,
     )
     .join(" + ");
-}
-
-function formatoDinero(valor: number) {
-  return `$${valor.toLocaleString("es-AR")}`;
 }
 
 export default function TurneroAdminPage() {
@@ -173,6 +178,13 @@ export default function TurneroAdminPage() {
 
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
+
+  const [clientesSugeridos, setClientesSugeridos] = useState<ClienteSugerido[]>(
+    [],
+  );
+  const [mostrarSugerenciasClientes, setMostrarSugerenciasClientes] =
+    useState(false);
+
   const [simuladores, setSimuladores] = useState<string[]>([]);
 
   const [cantidadPersonas, setCantidadPersonas] = useState(1);
@@ -196,6 +208,38 @@ export default function TurneroAdminPage() {
       0,
     );
   }, [pagosDetalle]);
+
+  async function buscarClientes(valor: string) {
+    const busqueda = valor.trim();
+
+    if (busqueda.length < 2) {
+      setClientesSugeridos([]);
+      setMostrarSugerenciasClientes(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/clientes?q=${encodeURIComponent(busqueda)}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        console.error(data);
+        return;
+      }
+
+      setClientesSugeridos(data.clientes || []);
+      setMostrarSugerenciasClientes(true);
+    } catch (error) {
+      console.error("Error buscando clientes:", error);
+    }
+  }
+
+  function seleccionarCliente(cliente: ClienteSugerido) {
+    setNombre(cliente.nombre || "");
+    setTelefono(cliente.telefono || "");
+    setClientesSugeridos([]);
+    setMostrarSugerenciasClientes(false);
+  }
 
   async function cargarTurnos() {
     try {
@@ -394,13 +438,14 @@ export default function TurneroAdminPage() {
     );
   }
 
-
   function limpiarFormulario() {
     setHora(horaActual());
     setHoraEstimadaSubida("");
     setHoraSubida("");
     setNombre("");
     setTelefono("");
+    setClientesSugeridos([]);
+    setMostrarSugerenciasClientes(false);
     setSimuladores([]);
     setCantidadPersonas(1);
     setCantidadMinutos(15);
@@ -482,6 +527,8 @@ export default function TurneroAdminPage() {
     setTurnoEditando(turno);
     setNombre(turno.nombre || "");
     setTelefono(turno.telefono || "");
+    setClientesSugeridos([]);
+    setMostrarSugerenciasClientes(false);
     setFecha(turno.fecha);
     setHora(turno.hora || horaActual());
     setHoraEstimadaSubida(turno.hora_estimada_subida || "");
@@ -624,27 +671,47 @@ export default function TurneroAdminPage() {
               />
             </Campo>
 
-            <Campo label="Cliente">
-              <input
-                data-turnero-cell
-                type="text"
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
-                placeholder="Nombre"
-                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
-              />
-            </Campo>
+            <div className="relative">
+              <Campo label="Cliente">
+                <input
+                  data-turnero-cell
+                  type="text"
+                  value={nombre}
+                  onChange={(e) => {
+                    setNombre(e.target.value);
+                    buscarClientes(e.target.value);
+                  }}
+                  onFocus={() => {
+                    if (clientesSugeridos.length > 0) {
+                      setMostrarSugerenciasClientes(true);
+                    }
+                  }}
+                  placeholder="Nombre"
+                  className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+                />
+              </Campo>
+            </div>
 
-            <Campo label="Teléfono">
-              <input
-                data-turnero-cell
-                type="text"
-                value={telefono}
-                onChange={(e) => setTelefono(e.target.value)}
-                placeholder="351..."
-                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
-              />
-            </Campo>
+            <div className="relative">
+              <Campo label="Teléfono">
+                <input
+                  data-turnero-cell
+                  type="text"
+                  value={telefono}
+                  onChange={(e) => {
+                    setTelefono(e.target.value);
+                    buscarClientes(e.target.value);
+                  }}
+                  onFocus={() => {
+                    if (clientesSugeridos.length > 0) {
+                      setMostrarSugerenciasClientes(true);
+                    }
+                  }}
+                  placeholder="351..."
+                  className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500"
+                />
+              </Campo>
+            </div>
 
             <Campo label="Total">
               <input
@@ -655,6 +722,43 @@ export default function TurneroAdminPage() {
               />
             </Campo>
           </div>
+
+          {mostrarSugerenciasClientes && clientesSugeridos.length > 0 && (
+            <div className="mt-3 rounded-2xl border border-red-500/30 bg-black p-2 shadow-2xl">
+              <p className="mb-2 px-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/35">
+                Clientes encontrados
+              </p>
+
+              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {clientesSugeridos.map((cliente, index) => (
+                  <button
+                    key={`${cliente.nombre}-${cliente.telefono}-${index}`}
+                    type="button"
+                    onClick={() => seleccionarCliente(cliente)}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left transition hover:border-red-500 hover:bg-red-600/20"
+                  >
+                    <p className="truncate text-sm font-black text-white">
+                      {cliente.nombre || "Sin nombre"}
+                    </p>
+                    <p className="truncate text-xs font-bold text-white/45">
+                      {cliente.telefono || "Sin teléfono"}
+                    </p>
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setClientesSugeridos([]);
+                  setMostrarSugerenciasClientes(false);
+                }}
+                className="mt-2 rounded-lg px-2 py-1 text-xs font-bold text-white/45 hover:text-white"
+              >
+                Cerrar sugerencias
+              </button>
+            </div>
+          )}
 
           <div className="mt-3 grid gap-3 md:grid-cols-4 xl:grid-cols-8">
             <Campo label="Personas">
