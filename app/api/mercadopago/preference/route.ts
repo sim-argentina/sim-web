@@ -192,21 +192,22 @@ export async function POST(req: Request) {
   },
 ],
 
-        external_reference: JSON.stringify({
-          referencia,
-          nombre,
-          telefono,
-          fecha,
-          hora,
-          simuladores,
-          cantidad_turnos: simuladores.length,
-          total: totalFinal,
-          total_original: totalOriginal,
-          descuento_aplicado: Math.round(descuentoAplicado),
-          codigo_descuento: codigoAplicado?.codigo || null,
-          codigo_descuento_id: codigoAplicado?.id || null,
-          acepto_condiciones,
-        }),
+        external_reference: referencia,
+
+metadata: {
+  nombre,
+  telefono,
+  fecha,
+  hora,
+  simuladores,
+  cantidad_turnos: simuladores.length,
+  total: totalFinal,
+  total_original: totalOriginal,
+  descuento_aplicado: Math.round(descuentoAplicado),
+  codigo_descuento: codigoAplicado?.codigo || null,
+  codigo_descuento_id: codigoAplicado?.id || null,
+  acepto_condiciones,
+},
 
         back_urls: {
           success: `${baseUrl}/reservas/exito`,

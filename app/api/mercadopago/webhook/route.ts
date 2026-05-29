@@ -40,14 +40,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    if (!paymentData.external_reference) {
-      return NextResponse.json(
-        { error: "El pago no tiene external_reference" },
-        { status: 400 }
-      );
-    }
+    const reserva = paymentData.metadata;
 
-    const reserva = JSON.parse(paymentData.external_reference);
+if (!reserva) {
+  return NextResponse.json(
+    { error: "El pago no tiene metadata de reserva" },
+    { status: 400 }
+  );
+}
 
     const {
       nombre,
