@@ -10,6 +10,7 @@ type ReservaBody = {
   cantidad_turnos: number;
   total: number;
   acepto_condiciones: boolean;
+  codigo_descuento?: string | null;
 };
 
 export async function GET(req: Request) {
@@ -70,6 +71,7 @@ export async function POST(req: Request) {
       cantidad_turnos,
       total,
       acepto_condiciones,
+      codigo_descuento,
     } = body;
 
     if (
@@ -80,7 +82,9 @@ export async function POST(req: Request) {
       !Array.isArray(simuladores) ||
       simuladores.length === 0 ||
       !cantidad_turnos ||
-      !total ||
+      total === undefined ||
+      total === null ||
+      Number(total) < 0 ||
       acepto_condiciones !== true
     ) {
       return NextResponse.json(
@@ -124,7 +128,9 @@ export async function POST(req: Request) {
 
     if (conflicto) {
       return NextResponse.json(
-        { error: "Uno o más simuladores ya están reservados en ese horario" },
+        {
+          error: "Uno o más simuladores ya están reservados en ese horario",
+        },
         { status: 409 }
       );
     }
@@ -142,6 +148,7 @@ export async function POST(req: Request) {
           total,
           estado: "activa",
           acepto_condiciones,
+          codigo_descuento: codigo_descuento ?? null,
         },
       ])
       .select()

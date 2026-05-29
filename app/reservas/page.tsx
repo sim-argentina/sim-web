@@ -438,14 +438,23 @@ export default function ReservasPage() {
       }
 
       if (Number(result.totalFinal) <= 0) {
-        setCodigoAplicado(null);
-        openFeedbackModal(
-          "error",
-          "Código no aplicable",
-          "Este código deja el total en $0. Por ahora las reservas online tienen que tener un monto mayor a $0 para pasar por Mercado Pago."
-        );
-        return;
-      }
+  setCodigoAplicado({
+    codigo: result.codigo,
+    descuento: Number(result.descuento || 0),
+    totalOriginal: Number(result.totalOriginal || totalOriginal),
+    totalFinal: 0,
+  });
+
+  setCodigoInput(result.codigo);
+
+  openFeedbackModal(
+    "success",
+    "Código aplicado",
+    `El código ${result.codigo} deja la reserva bonificada al 100%.`
+  );
+
+  return;
+}
 
       setCodigoAplicado({
         codigo: result.codigo,
@@ -628,13 +637,67 @@ export default function ReservasPage() {
     }
 
     if (totalFinal <= 0) {
+  setIsSubmitting(true);
+
+  try {
+    const response = await fetch("/api/reservas", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        nombre: name.trim(),
+        telefono: phone.trim(),
+        fecha: selectedDate,
+        hora: selectedTime,
+        simuladores: selectedTeams,
+        cantidad_turnos: selectedTeams.length,
+        total: 0,
+        estado: "activa",
+        codigo_descuento: codigoAplicado?.codigo || null,
+      }),
+    });
+
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
       openFeedbackModal(
         "error",
-        "Total inválido",
-        "El total final debe ser mayor a $0 para procesar el pago online."
+        "Error",
+        result?.error || "No se pudo guardar la reserva."
       );
       return;
     }
+
+    openFeedbackModal(
+      "success",
+      "Reserva confirmada",
+      "La reserva fue creada correctamente utilizando el código de descuento."
+    );
+
+    setName("");
+    setPhone("");
+    setSelectedTeams([]);
+    setCodigoAplicado(null);
+    setCodigoInput("");
+
+    await loadReservations(selectedDate);
+
+    return;
+  } catch (error) {
+    console.error(error);
+
+    openFeedbackModal(
+      "error",
+      "Error",
+      "No se pudo guardar la reserva."
+    );
+
+    return;
+  } finally {
+    setIsSubmitting(false);
+  }
+}
 
     setIsSubmitting(true);
 
