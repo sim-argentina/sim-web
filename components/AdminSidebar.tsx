@@ -24,6 +24,11 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin", "staff"],
     },
     {
+      label: "Promociones",
+      href: "/admin/promociones",
+      roles: ["admin"],
+    },
+    {
       label: "Reservas / Gestión",
       href: "/admin",
       roles: ["admin"],
@@ -59,13 +64,9 @@ export default function AdminSidebar({ role }: Props) {
               PANEL INTERNO
             </p>
 
-            <h2 className="text-2xl font-bold">
-              SIM Argentina
-            </h2>
+            <h2 className="text-2xl font-bold">SIM Argentina</h2>
 
-            <p className="text-zinc-500 text-sm mt-2">
-              Rol: {role}
-            </p>
+            <p className="text-zinc-500 text-sm mt-2">Rol: {role}</p>
           </div>
 
           <button
