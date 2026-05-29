@@ -35,21 +35,41 @@ async function validarCodigoDescuento(
   if (error) throw new Error(error.message);
 
   if (!codigo) {
-    return { valido: false, codigo: null, descuento: 0, error: "El código no existe" };
+    return {
+      valido: false,
+      codigo: null,
+      descuento: 0,
+      error: "El código no existe",
+    };
   }
 
   if (!codigo.activo) {
-    return { valido: false, codigo, descuento: 0, error: "El código no está activo" };
+    return {
+      valido: false,
+      codigo,
+      descuento: 0,
+      error: "El código no está activo",
+    };
   }
 
   const hoy = new Date().toISOString().slice(0, 10);
 
   if (codigo.fecha_inicio && hoy < codigo.fecha_inicio) {
-    return { valido: false, codigo, descuento: 0, error: "El código todavía no está vigente" };
+    return {
+      valido: false,
+      codigo,
+      descuento: 0,
+      error: "El código todavía no está vigente",
+    };
   }
 
   if (codigo.fecha_fin && hoy > codigo.fecha_fin) {
-    return { valido: false, codigo, descuento: 0, error: "El código está vencido" };
+    return {
+      valido: false,
+      codigo,
+      descuento: 0,
+      error: "El código está vencido",
+    };
   }
 
   if (
@@ -80,6 +100,8 @@ async function validarCodigoDescuento(
 }
 
 export async function POST(req: Request) {
+  let reservaPendienteId: number | null = null;
+
   try {
     if (!accessToken) {
       return NextResponse.json(
@@ -176,38 +198,92 @@ export async function POST(req: Request) {
       );
     }
 
-    const referencia = `reserva-${Date.now()}`;
+    const { data: existentes, error: checkError } = await supabaseAdmin
+      .from("reservas")
+      .select("id, simuladores")
+      .eq("fecha", fecha)
+      .eq("hora", hora)
+      .eq("estado", "activa");
+
+    if (checkError) {
+      return NextResponse.json(
+        {
+          error: "Error validando disponibilidad",
+          details: checkError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    const ocupados = new Set<string>();
+
+    for (const reserva of existentes || []) {
+      const sims = Array.isArray(reserva.simuladores)
+        ? reserva.simuladores
+        : [];
+
+      for (const sim of sims) {
+        ocupados.add(sim);
+      }
+    }
+
+    const conflicto = simuladores.some((sim: string) => ocupados.has(sim));
+
+    if (conflicto) {
+      return NextResponse.json(
+        { error: "Uno o más simuladores ya están reservados en ese horario" },
+        { status: 409 }
+      );
+    }
+
+    const { data: reservaPendiente, error: insertError } = await supabaseAdmin
+      .from("reservas")
+      .insert([
+        {
+          nombre,
+          telefono,
+          fecha,
+          hora,
+          simuladores,
+          cantidad_turnos: simuladores.length,
+          total: totalFinal,
+          total_original: totalOriginal,
+          descuento_aplicado: Math.round(descuentoAplicado),
+          codigo_descuento: codigoAplicado?.codigo || null,
+          estado: "pendiente_pago",
+          acepto_condiciones,
+        },
+      ])
+      .select("id")
+      .single();
+
+    if (insertError) {
+      return NextResponse.json(
+        {
+          error: "Error creando la reserva pendiente",
+          details: insertError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    reservaPendienteId = reservaPendiente.id;
 
     const preference = new Preference(client);
 
     const result = await preference.create({
       body: {
         items: [
-  {
-    id: `reserva-sim-${Date.now()}`,
-    title: "Reserva SIM Argentina",
-    quantity: 1,
-    unit_price: totalFinal,
-    currency_id: "ARS",
-  },
-],
+          {
+            id: `reserva-sim-${reservaPendiente.id}`,
+            title: "Reserva SIM Argentina",
+            quantity: 1,
+            unit_price: totalFinal,
+            currency_id: "ARS",
+          },
+        ],
 
-        external_reference: referencia,
-
-metadata: {
-  nombre,
-  telefono,
-  fecha,
-  hora,
-  simuladores,
-  cantidad_turnos: simuladores.length,
-  total: totalFinal,
-  total_original: totalOriginal,
-  descuento_aplicado: Math.round(descuentoAplicado),
-  codigo_descuento: codigoAplicado?.codigo || null,
-  codigo_descuento_id: codigoAplicado?.id || null,
-  acepto_condiciones,
-},
+        external_reference: String(reservaPendiente.id),
 
         back_urls: {
           success: `${baseUrl}/reservas/exito`,
@@ -223,6 +299,7 @@ metadata: {
       id: result.id,
       init_point: result.init_point,
       sandbox_init_point: result.sandbox_init_point,
+      reserva_id: reservaPendiente.id,
       total_original: totalOriginal,
       descuento_aplicado: Math.round(descuentoAplicado),
       total_final: totalFinal,
@@ -230,6 +307,13 @@ metadata: {
     });
   } catch (error: any) {
     console.error("Error creando preferencia:", error);
+
+    if (reservaPendienteId) {
+      await supabaseAdmin
+        .from("reservas")
+        .update({ estado: "error_pago" })
+        .eq("id", reservaPendienteId);
+    }
 
     return NextResponse.json(
       {

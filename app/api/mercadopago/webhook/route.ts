@@ -40,40 +40,65 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    const reserva = paymentData.metadata;
+    const reservaId = Number(paymentData.external_reference);
 
-if (!reserva) {
-  return NextResponse.json(
-    { error: "El pago no tiene metadata de reserva" },
-    { status: 400 }
-  );
-}
+    if (!Number.isFinite(reservaId) || reservaId <= 0) {
+      return NextResponse.json(
+        { error: "El pago no tiene una external_reference válida" },
+        { status: 400 }
+      );
+    }
 
-    const {
-      nombre,
-      telefono,
-      fecha,
-      hora,
-      simuladores,
-      cantidad_turnos,
-      total,
-      total_original,
-      descuento_aplicado,
-      codigo_descuento,
-      codigo_descuento_id,
-      acepto_condiciones,
-    } = reserva;
+    const { data: reserva, error: reservaError } = await supabaseAdmin
+      .from("reservas")
+      .select("*")
+      .eq("id", reservaId)
+      .maybeSingle();
+
+    if (reservaError) {
+      return NextResponse.json(
+        {
+          error: "Error buscando reserva pendiente",
+          details: reservaError.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!reserva) {
+      return NextResponse.json(
+        { error: "No existe la reserva pendiente asociada al pago" },
+        { status: 404 }
+      );
+    }
+
+    if (reserva.estado === "activa") {
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    const { data: yaPagada } = await supabaseAdmin
+      .from("reservas")
+      .select("id")
+      .eq("mercado_pago_payment_id", String(paymentId))
+      .maybeSingle();
+
+    if (yaPagada && Number(yaPagada.id) !== reservaId) {
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    const simuladores = Array.isArray(reserva.simuladores)
+      ? reserva.simuladores
+      : [];
 
     if (
-      !nombre ||
-      !telefono ||
-      !fecha ||
-      !hora ||
-      !Array.isArray(simuladores) ||
+      !reserva.nombre ||
+      !reserva.telefono ||
+      !reserva.fecha ||
+      !reserva.hora ||
       simuladores.length === 0 ||
-      !cantidad_turnos ||
-      !total ||
-      acepto_condiciones !== true
+      !reserva.cantidad_turnos ||
+      Number(reserva.total) <= 0 ||
+      reserva.acepto_condiciones !== true
     ) {
       return NextResponse.json(
         { error: "Datos de reserva inválidos" },
@@ -81,26 +106,20 @@ if (!reserva) {
       );
     }
 
-    const { data: reservaExistente } = await supabaseAdmin
-      .from("reservas")
-      .select("id")
-      .eq("mercado_pago_payment_id", String(paymentId))
-      .maybeSingle();
-
-    if (reservaExistente) {
-      return NextResponse.json({ received: true }, { status: 200 });
-    }
-
     const { data: existentes, error: checkError } = await supabaseAdmin
       .from("reservas")
       .select("id, simuladores")
-      .eq("fecha", fecha)
-      .eq("hora", hora)
-      .eq("estado", "activa");
+      .eq("fecha", reserva.fecha)
+      .eq("hora", reserva.hora)
+      .eq("estado", "activa")
+      .neq("id", reservaId);
 
     if (checkError) {
       return NextResponse.json(
-        { error: "Error validando disponibilidad", details: checkError.message },
+        {
+          error: "Error validando disponibilidad",
+          details: checkError.message,
+        },
         { status: 500 }
       );
     }
@@ -120,46 +139,43 @@ if (!reserva) {
     const conflicto = simuladores.some((sim: string) => ocupados.has(sim));
 
     if (conflicto) {
+      await supabaseAdmin
+        .from("reservas")
+        .update({
+          estado: "conflicto_pago_aprobado",
+          mercado_pago_payment_id: String(paymentId),
+        })
+        .eq("id", reservaId);
+
       return NextResponse.json(
         { error: "Uno o más simuladores ya están reservados" },
         { status: 409 }
       );
     }
 
-    const { data: nuevaReserva, error: insertError } = await supabaseAdmin
+    const { error: updateError } = await supabaseAdmin
       .from("reservas")
-      .insert([
-        {
-          nombre,
-          telefono,
-          fecha,
-          hora,
-          simuladores,
-          cantidad_turnos,
-          total,
-          total_original: total_original || total,
-          descuento_aplicado: descuento_aplicado || 0,
-          codigo_descuento: codigo_descuento || null,
-          estado: "activa",
-          acepto_condiciones,
-          mercado_pago_payment_id: String(paymentId),
-        },
-      ])
-      .select()
-      .single();
+      .update({
+        estado: "activa",
+        mercado_pago_payment_id: String(paymentId),
+      })
+      .eq("id", reservaId);
 
-    if (insertError) {
+    if (updateError) {
       return NextResponse.json(
-        { error: "Error guardando reserva", details: insertError.message },
+        {
+          error: "Error activando reserva",
+          details: updateError.message,
+        },
         { status: 500 }
       );
     }
 
-    if (codigo_descuento && codigo_descuento_id) {
+    if (reserva.codigo_descuento) {
       const { data: codigoActual, error: codigoError } = await supabaseAdmin
         .from("codigos_descuento")
         .select("id, usos_actuales")
-        .eq("id", codigo_descuento_id)
+        .eq("codigo", reserva.codigo_descuento)
         .maybeSingle();
 
       if (!codigoError && codigoActual) {
@@ -168,32 +184,19 @@ if (!reserva) {
           .update({
             usos_actuales: Number(codigoActual.usos_actuales || 0) + 1,
           })
-          .eq("id", codigo_descuento_id);
+          .eq("id", codigoActual.id);
       }
-
-      await supabaseAdmin.from("usos_codigos_descuento").insert([
-        {
-          codigo_id: codigo_descuento_id,
-          codigo: codigo_descuento,
-          reserva_id: nuevaReserva.id,
-          nombre,
-          telefono,
-          fecha_reserva: fecha,
-          hora_reserva: hora,
-          total_original: total_original || total,
-          descuento_aplicado: descuento_aplicado || 0,
-          total_final: total,
-          mercado_pago_payment_id: String(paymentId),
-        },
-      ]);
     }
 
-    return NextResponse.json({ received: true }, { status: 201 });
+    return NextResponse.json({ received: true }, { status: 200 });
   } catch (error) {
-    console.error("Error webhook MercadoPago:", error);
+    console.error("Error en webhook Mercado Pago:", error);
 
     return NextResponse.json(
-      { error: "Error interno webhook" },
+      {
+        error: "Error interno del webhook",
+        details: error instanceof Error ? error.message : "Error desconocido",
+      },
       { status: 500 }
     );
   }

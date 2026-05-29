@@ -515,7 +515,7 @@ export default function ReservasPage() {
       const nextReservations: ReservationMap = {};
 
       reservasApi
-        .filter((reserva) => reserva.estado !== "cancelada")
+        .filter((reserva) => !reserva.estado || reserva.estado === "activa")
         .forEach((reserva) => {
           const key = createReservationKey(reserva.fecha, reserva.hora);
 
