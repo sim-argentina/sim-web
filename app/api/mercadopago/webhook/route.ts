@@ -174,15 +174,27 @@ export async function POST(req: Request) {
     if (reserva.codigo_descuento) {
       const { data: codigoActual, error: codigoError } = await supabaseAdmin
         .from("codigos_descuento")
-        .select("id, usos_actuales")
+        .select("id, usos_actuales, usos_maximos")
         .eq("codigo", reserva.codigo_descuento)
         .maybeSingle();
 
       if (!codigoError && codigoActual) {
+        const nuevosUsos = Number(codigoActual.usos_actuales || 0) + 1;
+
+        const usosMaximos =
+          codigoActual.usos_maximos === null ||
+          codigoActual.usos_maximos === undefined
+            ? null
+            : Number(codigoActual.usos_maximos);
+
+        const debeInactivar =
+          usosMaximos !== null && nuevosUsos >= usosMaximos;
+
         await supabaseAdmin
           .from("codigos_descuento")
           .update({
-            usos_actuales: Number(codigoActual.usos_actuales || 0) + 1,
+            usos_actuales: nuevosUsos,
+            activo: debeInactivar ? false : true,
           })
           .eq("id", codigoActual.id);
       }
