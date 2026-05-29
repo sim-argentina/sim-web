@@ -34,6 +34,13 @@ type FeedbackModalState = {
   message: string;
 };
 
+type CodigoAplicado = {
+  codigo: string;
+  descuento: number;
+  totalOriginal: number;
+  totalFinal: number;
+};
+
 const PRICE = 12000;
 const MAX_BOOKING_DAYS = 15;
 
@@ -262,6 +269,13 @@ export default function ReservasPage() {
   const [acceptedConditions, setAcceptedConditions] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingReservations, setIsLoadingReservations] = useState(false);
+
+  const [codigoInput, setCodigoInput] = useState("");
+  const [codigoAplicado, setCodigoAplicado] = useState<CodigoAplicado | null>(
+    null
+  );
+  const [isApplyingCode, setIsApplyingCode] = useState(false);
+
   const [feedbackModal, setFeedbackModal] = useState<FeedbackModalState>({
     open: false,
     type: "success",
@@ -301,10 +315,16 @@ export default function ReservasPage() {
   }, [reservedForCurrentSelection, selectedTeams]);
 
   const availableCount = availableTeams.filter((team) => !team.reserved).length;
-  const total = selectedTeams.length * PRICE;
+  const totalOriginal = selectedTeams.length * PRICE;
+  const descuentoAplicado = codigoAplicado?.descuento || 0;
+  const totalFinal = Math.max(totalOriginal - descuentoAplicado, 0);
   const selectedDateLabel = selectedDate ? formatFullDateLabel(selectedDate) : "";
   const phoneDigits = getPhoneDigits(phone);
   const isPhoneValid = phoneDigits.length >= 10;
+
+  useEffect(() => {
+    setCodigoAplicado(null);
+  }, [selectedTeams, selectedDate, selectedTime]);
 
   function openFeedbackModal(
     type: "success" | "error",
@@ -370,6 +390,94 @@ export default function ReservasPage() {
     }
   }
 
+  async function aplicarCodigo() {
+    const codigo = codigoInput.trim().toUpperCase();
+
+    if (!codigo) {
+      openFeedbackModal(
+        "error",
+        "Código vacío",
+        "Ingresá un código promocional para aplicarlo."
+      );
+      return;
+    }
+
+    if (selectedTeams.length === 0 || totalOriginal <= 0) {
+      openFeedbackModal(
+        "error",
+        "Seleccioná un simulador",
+        "Primero tenés que seleccionar al menos un simulador para calcular el descuento."
+      );
+      return;
+    }
+
+    setIsApplyingCode(true);
+
+    try {
+      const response = await fetch("/api/codigos-descuento/validar", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          codigo,
+          total: totalOriginal,
+        }),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.valido) {
+        setCodigoAplicado(null);
+        openFeedbackModal(
+          "error",
+          "Código inválido",
+          result?.error || "No se pudo aplicar el código."
+        );
+        return;
+      }
+
+      if (Number(result.totalFinal) <= 0) {
+        setCodigoAplicado(null);
+        openFeedbackModal(
+          "error",
+          "Código no aplicable",
+          "Este código deja el total en $0. Por ahora las reservas online tienen que tener un monto mayor a $0 para pasar por Mercado Pago."
+        );
+        return;
+      }
+
+      setCodigoAplicado({
+        codigo: result.codigo,
+        descuento: Number(result.descuento || 0),
+        totalOriginal: Number(result.totalOriginal || totalOriginal),
+        totalFinal: Number(result.totalFinal || totalOriginal),
+      });
+
+      setCodigoInput(result.codigo);
+
+      openFeedbackModal(
+        "success",
+        "Código aplicado",
+        `Se aplicó el código ${result.codigo} correctamente.`
+      );
+    } catch (error) {
+      console.error("Error aplicando código:", error);
+      openFeedbackModal(
+        "error",
+        "Error al aplicar código",
+        "Ocurrió un problema al validar el código promocional."
+      );
+    } finally {
+      setIsApplyingCode(false);
+    }
+  }
+
+  function quitarCodigo() {
+    setCodigoAplicado(null);
+    setCodigoInput("");
+  }
+
   async function loadReservations(date: string) {
     try {
       setIsLoadingReservations(true);
@@ -417,7 +525,8 @@ export default function ReservasPage() {
 
       setReservations(nextReservations);
 
-      const currentTimeIsValid = getTimeSlotsForDate(date).includes(selectedTime);
+      const currentTimeIsValid =
+        getTimeSlotsForDate(date).includes(selectedTime);
 
       if (!currentTimeIsValid) {
         const firstValidTime = getTimeSlotsForDate(date)[0];
@@ -429,11 +538,13 @@ export default function ReservasPage() {
 
       const currentFree =
         teams.length -
-        (nextReservations[createReservationKey(date, selectedTime)]?.length ?? 0);
+        (nextReservations[createReservationKey(date, selectedTime)]?.length ??
+          0);
 
       if (currentFree === 0) {
         const firstAvailableTime = getTimeSlotsForDate(date).find((time) => {
-          const reserved = nextReservations[createReservationKey(date, time)] ?? [];
+          const reserved =
+            nextReservations[createReservationKey(date, time)] ?? [];
           return reserved.length < teams.length;
         });
 
@@ -516,6 +627,15 @@ export default function ReservasPage() {
       return;
     }
 
+    if (totalFinal <= 0) {
+      openFeedbackModal(
+        "error",
+        "Total inválido",
+        "El total final debe ser mayor a $0 para procesar el pago online."
+      );
+      return;
+    }
+
     setIsSubmitting(true);
 
     const payload = {
@@ -525,7 +645,8 @@ export default function ReservasPage() {
       hora: selectedTime,
       simuladores: selectedTeams,
       cantidad_turnos: selectedTeams.length,
-      total,
+      total: totalFinal,
+      codigo_descuento: codigoAplicado?.codigo || null,
       acepto_condiciones: acceptedConditions,
     };
 
@@ -890,14 +1011,87 @@ export default function ReservasPage() {
                     <span>Precio unitario</span>
                     <span>{formatPrice(PRICE)}</span>
                   </div>
+
+                  {codigoAplicado && (
+                    <>
+                      <div className="flex items-center justify-between text-zinc-200">
+                        <span>Subtotal</span>
+                        <span>{formatPrice(totalOriginal)}</span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-green-400">
+                        <span>Descuento {codigoAplicado.codigo}</span>
+                        <span>-{formatPrice(descuentoAplicado)}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="my-4 h-px bg-white/10" />
 
                 <div className="flex items-center justify-between text-3xl font-black">
                   <span>Total</span>
-                  <span>{formatPrice(total)}</span>
+                  <span>{formatPrice(totalFinal)}</span>
                 </div>
+              </div>
+
+              <div className="mt-5 rounded-[22px] border border-white/10 bg-black/40 p-4">
+                <label className="mb-2 block text-sm font-medium text-zinc-300">
+                  Código promocional
+                </label>
+
+                <div className="flex gap-2">
+                  <input
+                    value={codigoInput}
+                    onChange={(e) => {
+                      setCodigoInput(e.target.value.toUpperCase());
+                      setCodigoAplicado(null);
+                    }}
+                    placeholder="Ej: SIM-ABC123"
+                    disabled={
+                      isSubmitting ||
+                      isLoadingReservations ||
+                      isApplyingCode ||
+                      selectedTeams.length === 0
+                    }
+                    className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-black px-4 py-3 text-sm font-bold uppercase text-white outline-none transition placeholder:text-zinc-500 focus:border-red-500/50 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+
+                  {codigoAplicado ? (
+                    <button
+                      type="button"
+                      onClick={quitarCodigo}
+                      disabled={isSubmitting}
+                      className="rounded-2xl bg-zinc-800 px-4 py-3 text-sm font-black text-white transition hover:bg-zinc-700 disabled:opacity-50"
+                    >
+                      Quitar
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={aplicarCodigo}
+                      disabled={
+                        isSubmitting ||
+                        isApplyingCode ||
+                        selectedTeams.length === 0 ||
+                        !codigoInput.trim()
+                      }
+                      className="rounded-2xl bg-red-600 px-4 py-3 text-sm font-black text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                    >
+                      {isApplyingCode ? "..." : "Aplicar"}
+                    </button>
+                  )}
+                </div>
+
+                {codigoAplicado ? (
+                  <p className="mt-3 text-sm font-medium text-green-400">
+                    Código aplicado: {codigoAplicado.codigo}
+                  </p>
+                ) : (
+                  <p className="mt-3 text-xs text-zinc-500">
+                    El descuento se valida antes de ir a Mercado Pago.
+                  </p>
+                )}
               </div>
 
               <div className="mt-5 space-y-4">
@@ -984,7 +1178,8 @@ export default function ReservasPage() {
                     !phone.trim() ||
                     !isPhoneValid ||
                     !acceptedConditions ||
-                    selectedTeams.length === 0
+                    selectedTeams.length === 0 ||
+                    totalFinal <= 0
                   }
                   className={cn(
                     "w-full rounded-2xl py-4 text-lg font-black transition",
@@ -994,12 +1189,15 @@ export default function ReservasPage() {
                       !phone.trim() ||
                       !isPhoneValid ||
                       !acceptedConditions ||
-                      selectedTeams.length === 0
+                      selectedTeams.length === 0 ||
+                      totalFinal <= 0
                       ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
                       : "bg-red-600 text-white hover:bg-red-500"
                   )}
                 >
-                  {isSubmitting ? "Redirigiendo..." : `Pagar ${formatPrice(total)}`}
+                  {isSubmitting
+                    ? "Redirigiendo..."
+                    : `Pagar ${formatPrice(totalFinal)}`}
                 </button>
               </div>
             </div>

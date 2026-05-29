@@ -57,6 +57,10 @@ export async function POST(req: Request) {
       simuladores,
       cantidad_turnos,
       total,
+      total_original,
+      descuento_aplicado,
+      codigo_descuento,
+      codigo_descuento_id,
       acepto_condiciones,
     } = reserva;
 
@@ -122,26 +126,66 @@ export async function POST(req: Request) {
       );
     }
 
-    const { error } = await supabaseAdmin.from("reservas").insert([
-      {
-        nombre,
-        telefono,
-        fecha,
-        hora,
-        simuladores,
-        cantidad_turnos,
-        total,
-        estado: "activa",
-        acepto_condiciones,
-        mercado_pago_payment_id: String(paymentId),
-      },
-    ]);
+    const { data: nuevaReserva, error: insertError } = await supabaseAdmin
+      .from("reservas")
+      .insert([
+        {
+          nombre,
+          telefono,
+          fecha,
+          hora,
+          simuladores,
+          cantidad_turnos,
+          total,
+          total_original: total_original || total,
+          descuento_aplicado: descuento_aplicado || 0,
+          codigo_descuento: codigo_descuento || null,
+          estado: "activa",
+          acepto_condiciones,
+          mercado_pago_payment_id: String(paymentId),
+        },
+      ])
+      .select()
+      .single();
 
-    if (error) {
+    if (insertError) {
       return NextResponse.json(
-        { error: "Error guardando reserva", details: error.message },
+        { error: "Error guardando reserva", details: insertError.message },
         { status: 500 }
       );
+    }
+
+    if (codigo_descuento && codigo_descuento_id) {
+      const { data: codigoActual, error: codigoError } = await supabaseAdmin
+        .from("codigos_descuento")
+        .select("id, usos_actuales")
+        .eq("id", codigo_descuento_id)
+        .maybeSingle();
+
+      if (!codigoError && codigoActual) {
+        await supabaseAdmin
+          .from("codigos_descuento")
+          .update({
+            usos_actuales: Number(codigoActual.usos_actuales || 0) + 1,
+          })
+          .eq("id", codigo_descuento_id);
+      }
+
+      await supabaseAdmin.from("usos_codigos_descuento").insert([
+        {
+          codigo_id: codigo_descuento_id,
+          codigo: codigo_descuento,
+          reserva_id: nuevaReserva.id,
+          nombre,
+          telefono,
+          fecha_reserva: fecha,
+          hora_reserva: hora,
+          total_original: total_original || total,
+          descuento_aplicado: descuento_aplicado || 0,
+          total_final: total,
+          mercado_pago_payment_id: String(paymentId),
+        },
+      ]);
     }
 
     return NextResponse.json({ received: true }, { status: 201 });

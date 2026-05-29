@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Preference } from "mercadopago";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+
+const PRECIO_SIMULADOR = 12000;
 
 const client = new MercadoPagoConfig({
   accessToken: accessToken!,
@@ -10,6 +13,114 @@ const client = new MercadoPagoConfig({
 
 function isInvalidBaseUrl(url: string) {
   return url.includes("localhost") || url.includes("127.0.0.1");
+}
+
+function calcularDescuento(
+  tipo: string,
+  valor: number,
+  totalOriginal: number
+) {
+  if (tipo === "porcentaje") {
+    return totalOriginal * (valor / 100);
+  }
+
+  if (tipo === "monto_fijo") {
+    return valor;
+  }
+
+  if (tipo === "turno_gratis") {
+    return valor;
+  }
+
+  return 0;
+}
+
+async function validarCodigoDescuento(codigoIngresado: string, totalOriginal: number) {
+  const codigoBuscado = codigoIngresado.trim().toUpperCase();
+
+  if (!codigoBuscado) {
+    return {
+      valido: false,
+      codigo: null,
+      descuento: 0,
+      error: null,
+    };
+  }
+
+  const { data: codigo, error } = await supabaseAdmin
+    .from("codigos_descuento")
+    .select("*")
+    .eq("codigo", codigoBuscado)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!codigo) {
+    return {
+      valido: false,
+      codigo: null,
+      descuento: 0,
+      error: "El código no existe",
+    };
+  }
+
+  if (!codigo.activo) {
+    return {
+      valido: false,
+      codigo,
+      descuento: 0,
+      error: "El código no está activo",
+    };
+  }
+
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  if (codigo.fecha_inicio && hoy < codigo.fecha_inicio) {
+    return {
+      valido: false,
+      codigo,
+      descuento: 0,
+      error: "El código todavía no está vigente",
+    };
+  }
+
+  if (codigo.fecha_fin && hoy > codigo.fecha_fin) {
+    return {
+      valido: false,
+      codigo,
+      descuento: 0,
+      error: "El código está vencido",
+    };
+  }
+
+  if (
+    codigo.usos_maximos !== null &&
+    Number(codigo.usos_actuales || 0) >= Number(codigo.usos_maximos)
+  ) {
+    return {
+      valido: false,
+      codigo,
+      descuento: 0,
+      error: "El código ya alcanzó el máximo de usos",
+    };
+  }
+
+  const descuentoCalculado = calcularDescuento(
+    codigo.tipo_descuento,
+    Number(codigo.valor_descuento),
+    totalOriginal
+  );
+
+  const descuento = Math.min(descuentoCalculado, totalOriginal);
+
+  return {
+    valido: true,
+    codigo,
+    descuento,
+    error: null,
+  };
 }
 
 export async function POST(req: Request) {
@@ -41,29 +152,62 @@ export async function POST(req: Request) {
     const body = await req.json();
 
     const {
-  nombre,
-  telefono,
-  fecha,
-  hora,
-  simuladores,
-  cantidad_turnos,
-  total,
-  acepto_condiciones,
-} = body;
+      nombre,
+      telefono,
+      fecha,
+      hora,
+      simuladores,
+      cantidad_turnos,
+      acepto_condiciones,
+      codigo_descuento,
+    } = body;
 
     if (
-  !nombre ||
-  !telefono ||
-  !fecha ||
-  !hora ||
-  !Array.isArray(simuladores) ||
-  simuladores.length === 0 ||
-  !cantidad_turnos ||
-  !total ||
-  acepto_condiciones !== true
-) {
+      !nombre ||
+      !telefono ||
+      !fecha ||
+      !hora ||
+      !Array.isArray(simuladores) ||
+      simuladores.length === 0 ||
+      !cantidad_turnos ||
+      acepto_condiciones !== true
+    ) {
       return NextResponse.json(
         { error: "Faltan datos para crear la preferencia" },
+        { status: 400 }
+      );
+    }
+
+    const totalOriginal = simuladores.length * PRECIO_SIMULADOR;
+
+    let codigoAplicado = null;
+    let descuentoAplicado = 0;
+
+    if (codigo_descuento && String(codigo_descuento).trim()) {
+      const resultadoCodigo = await validarCodigoDescuento(
+        String(codigo_descuento),
+        totalOriginal
+      );
+
+      if (!resultadoCodigo.valido) {
+        return NextResponse.json(
+          { error: resultadoCodigo.error || "Código inválido" },
+          { status: 400 }
+        );
+      }
+
+      codigoAplicado = resultadoCodigo.codigo;
+      descuentoAplicado = resultadoCodigo.descuento;
+    }
+
+    const totalFinal = Math.max(totalOriginal - descuentoAplicado, 0);
+
+    if (totalFinal <= 0) {
+      return NextResponse.json(
+        {
+          error:
+            "El total final no puede ser $0 para Mercado Pago. Usá un descuento menor al total.",
+        },
         { status: 400 }
       );
     }
@@ -80,7 +224,7 @@ export async function POST(req: Request) {
               ", "
             )}`,
             quantity: 1,
-            unit_price: Number(total),
+            unit_price: totalFinal,
             currency_id: "ARS",
           },
         ],
@@ -93,15 +237,19 @@ export async function POST(req: Request) {
         },
 
         external_reference: JSON.stringify({
-  nombre,
-  telefono,
-  fecha,
-  hora,
-  simuladores,
-  cantidad_turnos,
-  total,
-  acepto_condiciones,
-}),
+          nombre,
+          telefono,
+          fecha,
+          hora,
+          simuladores,
+          cantidad_turnos: simuladores.length,
+          total: totalFinal,
+          total_original: totalOriginal,
+          descuento_aplicado: descuentoAplicado,
+          codigo_descuento: codigoAplicado?.codigo || null,
+          codigo_descuento_id: codigoAplicado?.id || null,
+          acepto_condiciones,
+        }),
 
         back_urls: {
           success: `${baseUrl}/reservas/exito`,
@@ -114,10 +262,7 @@ export async function POST(req: Request) {
         notification_url: `${baseUrl}/api/mercadopago/webhook`,
 
         payment_methods: {
-          excluded_payment_types: [
-            { id: "ticket" },
-            { id: "atm" },
-          ],
+          excluded_payment_types: [{ id: "ticket" }, { id: "atm" }],
         },
       },
     });
@@ -126,6 +271,10 @@ export async function POST(req: Request) {
       id: result.id,
       init_point: result.init_point,
       sandbox_init_point: result.sandbox_init_point,
+      total_original: totalOriginal,
+      descuento_aplicado: descuentoAplicado,
+      total_final: totalFinal,
+      codigo_descuento: codigoAplicado?.codigo || null,
     });
   } catch (error) {
     console.error("Error creando preferencia:", error);
