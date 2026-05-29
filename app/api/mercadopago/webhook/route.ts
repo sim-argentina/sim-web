@@ -72,9 +72,13 @@ export async function POST(req: Request) {
       );
     }
 
-    if (reserva.estado === "activa") {
-      return NextResponse.json({ received: true }, { status: 200 });
-    }
+    const usoYaRegistrado =
+  reserva.mercado_pago_payment_id &&
+  String(reserva.mercado_pago_payment_id) === String(paymentId);
+
+if (usoYaRegistrado) {
+  return NextResponse.json({ received: true }, { status: 200 });
+}
 
     const { data: yaPagada } = await supabaseAdmin
       .from("reservas")
