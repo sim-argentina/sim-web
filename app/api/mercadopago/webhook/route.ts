@@ -8,6 +8,35 @@ const client = new MercadoPagoConfig({
   accessToken: accessToken!,
 });
 
+async function consumirCodigoDescuento(codigo: string) {
+  const { data: codigoActual, error } = await supabaseAdmin
+    .from("codigos_descuento")
+    .select("id, usos_actuales, usos_maximos")
+    .eq("codigo", codigo)
+    .maybeSingle();
+
+  if (error || !codigoActual) return;
+
+  const nuevosUsos = Number(codigoActual.usos_actuales || 0) + 1;
+
+  const usosMaximos =
+    codigoActual.usos_maximos === null ||
+    codigoActual.usos_maximos === undefined
+      ? null
+      : Number(codigoActual.usos_maximos);
+
+  const debeInactivar =
+    usosMaximos !== null && nuevosUsos >= usosMaximos;
+
+  await supabaseAdmin
+    .from("codigos_descuento")
+    .update({
+      usos_actuales: nuevosUsos,
+      activo: debeInactivar ? false : true,
+    })
+    .eq("id", codigoActual.id);
+}
+
 export async function POST(req: Request) {
   try {
     if (!accessToken) {
@@ -44,7 +73,7 @@ export async function POST(req: Request) {
 
     if (!Number.isFinite(reservaId) || reservaId <= 0) {
       return NextResponse.json(
-        { error: "El pago no tiene una external_reference válida" },
+        { error: "External reference inválida" },
         { status: 400 }
       );
     }
@@ -55,106 +84,15 @@ export async function POST(req: Request) {
       .eq("id", reservaId)
       .maybeSingle();
 
-    if (reservaError) {
+    if (reservaError || !reserva) {
       return NextResponse.json(
-        {
-          error: "Error buscando reserva pendiente",
-          details: reservaError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    if (!reserva) {
-      return NextResponse.json(
-        { error: "No existe la reserva pendiente asociada al pago" },
+        { error: "No se encontró la reserva" },
         { status: 404 }
       );
     }
 
-    const usoYaRegistrado =
-  reserva.mercado_pago_payment_id &&
-  String(reserva.mercado_pago_payment_id) === String(paymentId);
-
-if (usoYaRegistrado) {
-  return NextResponse.json({ received: true }, { status: 200 });
-}
-
-    const { data: yaPagada } = await supabaseAdmin
-      .from("reservas")
-      .select("id")
-      .eq("mercado_pago_payment_id", String(paymentId))
-      .maybeSingle();
-
-    if (yaPagada && Number(yaPagada.id) !== reservaId) {
+    if (reserva.mercado_pago_payment_id) {
       return NextResponse.json({ received: true }, { status: 200 });
-    }
-
-    const simuladores = Array.isArray(reserva.simuladores)
-      ? reserva.simuladores
-      : [];
-
-    if (
-      !reserva.nombre ||
-      !reserva.telefono ||
-      !reserva.fecha ||
-      !reserva.hora ||
-      simuladores.length === 0 ||
-      !reserva.cantidad_turnos ||
-      Number(reserva.total) <= 0 ||
-      reserva.acepto_condiciones !== true
-    ) {
-      return NextResponse.json(
-        { error: "Datos de reserva inválidos" },
-        { status: 400 }
-      );
-    }
-
-    const { data: existentes, error: checkError } = await supabaseAdmin
-      .from("reservas")
-      .select("id, simuladores")
-      .eq("fecha", reserva.fecha)
-      .eq("hora", reserva.hora)
-      .eq("estado", "activa")
-      .neq("id", reservaId);
-
-    if (checkError) {
-      return NextResponse.json(
-        {
-          error: "Error validando disponibilidad",
-          details: checkError.message,
-        },
-        { status: 500 }
-      );
-    }
-
-    const ocupados = new Set<string>();
-
-    for (const reservaExistente of existentes || []) {
-      const sims = Array.isArray(reservaExistente.simuladores)
-        ? reservaExistente.simuladores
-        : [];
-
-      for (const sim of sims) {
-        ocupados.add(sim);
-      }
-    }
-
-    const conflicto = simuladores.some((sim: string) => ocupados.has(sim));
-
-    if (conflicto) {
-      await supabaseAdmin
-        .from("reservas")
-        .update({
-          estado: "conflicto_pago_aprobado",
-          mercado_pago_payment_id: String(paymentId),
-        })
-        .eq("id", reservaId);
-
-      return NextResponse.json(
-        { error: "Uno o más simuladores ya están reservados" },
-        { status: 409 }
-      );
     }
 
     const { error: updateError } = await supabaseAdmin
@@ -163,12 +101,13 @@ if (usoYaRegistrado) {
         estado: "activa",
         mercado_pago_payment_id: String(paymentId),
       })
-      .eq("id", reservaId);
+      .eq("id", reservaId)
+      .is("mercado_pago_payment_id", null);
 
     if (updateError) {
       return NextResponse.json(
         {
-          error: "Error activando reserva",
+          error: "Error actualizando reserva",
           details: updateError.message,
         },
         { status: 500 }
@@ -176,38 +115,11 @@ if (usoYaRegistrado) {
     }
 
     if (reserva.codigo_descuento) {
-      const { data: codigoActual, error: codigoError } = await supabaseAdmin
-        .from("codigos_descuento")
-        .select("id, usos_actuales, usos_maximos")
-        .eq("codigo", reserva.codigo_descuento)
-        .maybeSingle();
-
-      if (!codigoError && codigoActual) {
-        const nuevosUsos = Number(codigoActual.usos_actuales || 0) + 1;
-
-        const usosMaximos =
-          codigoActual.usos_maximos === null ||
-          codigoActual.usos_maximos === undefined
-            ? null
-            : Number(codigoActual.usos_maximos);
-
-        const debeInactivar =
-          usosMaximos !== null && nuevosUsos >= usosMaximos;
-
-        await supabaseAdmin
-          .from("codigos_descuento")
-          .update({
-            usos_actuales: nuevosUsos,
-            activo: debeInactivar ? false : true,
-          })
-          .eq("id", codigoActual.id);
-      }
+      await consumirCodigoDescuento(reserva.codigo_descuento);
     }
 
     return NextResponse.json({ received: true }, { status: 200 });
   } catch (error) {
-    console.error("Error en webhook Mercado Pago:", error);
-
     return NextResponse.json(
       {
         error: "Error interno del webhook",

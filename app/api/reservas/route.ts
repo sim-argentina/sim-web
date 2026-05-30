@@ -13,6 +13,58 @@ type ReservaBody = {
   codigo_descuento?: string | null;
 };
 
+async function consumirCodigoDescuento(codigo: string) {
+  const codigoNormalizado = codigo.trim().toUpperCase();
+
+  const { data: codigoActual, error } = await supabaseAdmin
+    .from("codigos_descuento")
+    .select("id, activo, usos_actuales, usos_maximos")
+    .eq("codigo", codigoNormalizado)
+    .maybeSingle();
+
+  if (error || !codigoActual) {
+    return { ok: false, error: "No se encontró el código de descuento" };
+  }
+
+  if (!codigoActual.activo) {
+    return { ok: false, error: "El código ya no está activo" };
+  }
+
+  const usosActuales = Number(codigoActual.usos_actuales || 0);
+
+  const usosMaximos =
+    codigoActual.usos_maximos === null ||
+    codigoActual.usos_maximos === undefined
+      ? null
+      : Number(codigoActual.usos_maximos);
+
+  if (usosMaximos !== null && usosActuales >= usosMaximos) {
+    await supabaseAdmin
+      .from("codigos_descuento")
+      .update({ activo: false })
+      .eq("id", codigoActual.id);
+
+    return { ok: false, error: "El código ya alcanzó el máximo de usos" };
+  }
+
+  const nuevosUsos = usosActuales + 1;
+  const debeInactivar = usosMaximos !== null && nuevosUsos >= usosMaximos;
+
+  const { error: updateError } = await supabaseAdmin
+    .from("codigos_descuento")
+    .update({
+      usos_actuales: nuevosUsos,
+      activo: debeInactivar ? false : true,
+    })
+    .eq("id", codigoActual.id);
+
+  if (updateError) {
+    return { ok: false, error: "No se pudo actualizar el uso del código" };
+  }
+
+  return { ok: true, error: null };
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -26,13 +78,8 @@ export async function GET(req: Request) {
       .order("fecha", { ascending: true })
       .order("hora", { ascending: true });
 
-    if (fecha) {
-      query = query.eq("fecha", fecha);
-    }
-
-    if (estado) {
-      query = query.eq("estado", estado);
-    }
+    if (fecha) query = query.eq("fecha", fecha);
+    if (estado) query = query.eq("estado", estado);
 
     const { data, error } = await query;
 
@@ -119,9 +166,7 @@ export async function POST(req: Request) {
         ? reserva.simuladores
         : [];
 
-      for (const sim of sims) {
-        ocupados.add(sim);
-      }
+      for (const sim of sims) ocupados.add(sim);
     }
 
     const conflicto = simuladores.some((sim) => ocupados.has(sim));
@@ -133,6 +178,17 @@ export async function POST(req: Request) {
         },
         { status: 409 }
       );
+    }
+
+    if (Number(total) === 0 && codigo_descuento) {
+      const consumo = await consumirCodigoDescuento(codigo_descuento);
+
+      if (!consumo.ok) {
+        return NextResponse.json(
+          { error: consumo.error },
+          { status: 400 }
+        );
+      }
     }
 
     const { data, error } = await supabaseAdmin
