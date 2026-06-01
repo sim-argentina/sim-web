@@ -9,5 +9,5 @@ export default async function AdminRedirect() {
     redirect("/admin/metricas");
   }
 
-  redirect("/admin/calendario");
+  redirect("/admin/login");
 }
