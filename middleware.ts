@@ -6,26 +6,30 @@ export function middleware(request: NextRequest) {
   const logged = request.cookies.get("sim-admin-auth")?.value;
   const role = request.cookies.get("sim-admin-role")?.value;
 
-  // Login: dejar pasar GET, POST y cualquier subruta
-  if (pathname.startsWith("/admin/login")) {
+  // Dejar pasar login
+  if (pathname === "/admin/login" || pathname.startsWith("/admin/login/")) {
     return NextResponse.next();
   }
 
-  // Si no está logueado
-  if (!logged && pathname.startsWith("/admin")) {
-    return NextResponse.redirect(new URL("/admin/login", request.url));
-  }
-
-  // Entrada principal según rol
+  // Si entra a /admin, redirigir según estado
   if (pathname === "/admin") {
-    if (role === "staff") {
-      return NextResponse.redirect(new URL("/admin/calendario", request.url));
+    if (!logged) {
+      return NextResponse.redirect(new URL("/admin/login", request.url));
     }
 
     if (role === "admin") {
       return NextResponse.redirect(new URL("/admin/metricas", request.url));
     }
 
+    if (role === "staff") {
+      return NextResponse.redirect(new URL("/admin/calendario", request.url));
+    }
+
+    return NextResponse.redirect(new URL("/admin/login", request.url));
+  }
+
+  // Proteger el resto del admin
+  if (pathname.startsWith("/admin") && !logged) {
     return NextResponse.redirect(new URL("/admin/login", request.url));
   }
 
