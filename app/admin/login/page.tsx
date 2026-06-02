@@ -22,22 +22,27 @@ export default function AdminLoginPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          password,
-        }),
+        body: JSON.stringify({ password }),
       });
 
-      const data = await response.json();
+      let data: any = null;
+
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
 
       if (!response.ok) {
-        setError(data.error || "Error al iniciar sesión");
+        setError(data?.error || "Error al iniciar sesión");
         setLoading(false);
         return;
       }
 
-      window.location.href = "/admin";
+      router.push("/admin");
+      router.refresh();
     } catch (err) {
-      setError("Ocurrió un error");
+      setError("No se pudo conectar con el servidor");
     }
 
     setLoading(false);
@@ -51,9 +56,7 @@ export default function AdminLoginPage() {
             PANEL INTERNO
           </p>
 
-          <h1 className="text-4xl font-bold">
-            SIM Argentina
-          </h1>
+          <h1 className="text-4xl font-bold">SIM Argentina</h1>
 
           <p className="text-zinc-400 mt-3">
             Ingresá tu contraseña para continuar
@@ -67,6 +70,7 @@ export default function AdminLoginPage() {
             </label>
 
             <input
+              required
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -75,16 +79,12 @@ export default function AdminLoginPage() {
             />
           </div>
 
-          {error && (
-            <div className="text-red-500 text-sm">
-              {error}
-            </div>
-          )}
+          {error && <div className="text-red-500 text-sm">{error}</div>}
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-red-600 hover:bg-red-700 transition-all rounded-xl py-3 font-semibold"
+            className="w-full bg-red-600 hover:bg-red-700 transition-all rounded-xl py-3 font-semibold disabled:opacity-60"
           >
             {loading ? "Ingresando..." : "Ingresar"}
           </button>
