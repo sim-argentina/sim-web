@@ -24,10 +24,10 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin", "staff"],
     },
     {
-      label: "Promociones",
-      href: "/admin/promociones",
-      roles: ["admin"],
-    },
+  label: "Promociones",
+  href: "/admin/promociones",
+  roles: ["admin", "staff"],
+},
     {
   label: "Códigos",
   href: "/admin/codigos",
