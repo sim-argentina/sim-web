@@ -8,7 +8,6 @@ export default function Navbar() {
     { href: "/alquiler", label: "Alquiler" },
     { href: "/viaja-con-sim", label: "Viaja con SIM" },
     { href: "/sobre-nosotros", label: "Sobre nosotros" },
-    { href: "/novedades", label: "Novedades" },
     { href: "/tienda", label: "Tienda" },
   ];
 
