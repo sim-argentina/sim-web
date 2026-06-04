@@ -62,7 +62,7 @@ export default function HeroHome() {
           className="absolute inset-0"
           style={{
             background:
-              "linear-gradient(to right, rgba(0,0,0,0.93) 0%, rgba(0,0,0,0.80) 30%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.15) 80%, rgba(0,0,0,0.05) 100%)",
+              "linear-gradient(to right, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.75) 28%, rgba(0,0,0,0.30) 52%, rgba(0,0,0,0.05) 75%, transparent 100%)",
           }}
         />
         {/* overlay inferior: protege stats bar */}
