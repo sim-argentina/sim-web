@@ -3,30 +3,30 @@ import Link from "next/link";
 const novedades = [
   {
     fecha: "Actualidad",
-    categoria: "Experiencia",
-    titulo: "SIM Argentina en Nuevo Centro Shopping",
+    categoria: "Torneo",
+    titulo: "Próximo torneo SIM",
     descripcion:
-      "Viví la experiencia de manejar simuladores de Fórmula 1 con movimiento, competencia y adrenalina en Córdoba.",
+      "Se viene una nueva competencia en SIM Argentina con clasificación, finalistas y premios especiales. Muy pronto vamos a anunciar fechas, formato y condiciones para participar.",
+    link: "https://www.instagram.com/sim_argentina",
+    boton: "Ver novedades",
+  },
+  {
+    fecha: "Promo activa",
+    categoria: "Promoción",
+    titulo: "Promo vigente en SIM",
+    descripcion:
+      "Durante días seleccionados vamos a lanzar promociones especiales para que puedas venir a correr con amigos y vivir la experiencia de Fórmula 1 a un precio especial.",
     link: "/reserva",
     boton: "Reservar turno",
   },
   {
     fecha: "Disponible",
-    categoria: "Gift Cards",
+    categoria: "Gift Card",
     titulo: "Regalá una experiencia SIM",
     descripcion:
-      "Las Gift Cards son virtuales y están disponibles para turnos de 15 o 30 minutos. Una opción distinta para regalar adrenalina.",
+      "Comprá una Gift Card virtual y regalá adrenalina. Disponible para turnos de 15 o 30 minutos. Ideal para cumpleaños, regalos especiales o fanáticos de la Fórmula 1.",
     link: "https://wa.me/5493512520927",
     boton: "Consultar por WhatsApp",
-  },
-  {
-    fecha: "Próximamente",
-    categoria: "Eventos",
-    titulo: "Torneos y desafíos especiales",
-    descripcion:
-      "Muy pronto vamos a anunciar nuevas competencias, rankings y premios para pilotos SIM.",
-    link: "https://www.instagram.com/sim_argentina",
-    boton: "Ver Instagram",
   },
 ];
 
