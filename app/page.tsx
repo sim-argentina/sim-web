@@ -1,418 +1,264 @@
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowRight,
-  CarFront,
-  Flag,
-  Gauge,
-  ShieldCheck,
-  Sparkles,
-  Trophy,
-  Users,
-  Clock3,
-  Mail,
-  Phone,
-  Camera,
-  Music2,
-} from "lucide-react";
+import { ArrowRight, MessageCircle } from "lucide-react";
 import HeroHome from "@/components/HeroHome";
 
-type NavItem = {
-  label: string;
-  href: string;
-};
+// ─── 02 · QUÉ ES SIM ────────────────────────────────────────────
+function QueEsSim() {
+  const bloques = [
+    { val: "UN COCKPIT",  sub: "PROFESIONAL" },
+    { val: "MOVIMIENTO",  sub: "REAL"         },
+    { val: "VOS AL",      sub: "VOLANTE."     },
+  ];
 
-type Feature = {
-  title: string;
-  text: string;
-  icon: React.ElementType;
-};
-
-const navItems: NavItem[] = [
-  { label: "Inicio", href: "/" },
-  { label: "Reserva", href: "/reservas" },
-  { label: "Alquiler", href: "/alquiler" },
-  { label: "Viaja con SIM", href: "/viaja-con-sim" },
-  { label: "Novedades", href: "/novedades" },
-  { label: "Sobre nosotros", href: "/sobre-nosotros" },
-  { label: "Tienda", href: "/tienda" },
-];
-
-const features: Feature[] = [
-  {
-    title: "Experiencia inmersiva",
-    text: "SIM está pensada para que la experiencia se sienta intensa desde el primer vistazo hasta que termina la vuelta.",
-    icon: Sparkles,
-  },
-  {
-    title: "Universo F1",
-    text: "La estética, el lenguaje y la propuesta giran alrededor del automovilismo y la fantasía de sentirse piloto.",
-    icon: Flag,
-  },
-  {
-    title: "Ideal para eventos",
-    text: "La experiencia también se adapta a activaciones, empresas, marcas y formatos especiales.",
-    icon: Users,
-  },
-  {
-    title: "Propuesta diferencial",
-    text: "No compite solo por entretenimiento. Compite por impacto, recordación y potencia visual.",
-    icon: Trophy,
-  },
-];
-
-function cn(...classes: string[]) {
-  return classes.filter(Boolean).join(" ");
-}
-
-function NavBar() {
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-black/80 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 md:px-6 lg:px-8">
-        <Link href="/" className="flex items-center gap-4">
-          <Image
-            src="/sim-logo.jpg"
-            alt="Logo SIM"
-            width={140}
-            height={140}
-            className="h-16 w-16 rounded-md object-contain"
-            priority
-          />
+    <section className="border-y border-white/5">
+      <div className="mx-auto max-w-7xl">
 
-          <div className="flex flex-col justify-center leading-tight">
-            <div className="text-xs font-black uppercase tracking-[0.35em] text-red-500">
-              SIM ARGENTINA
-            </div>
-
-            <div className="mt-1 text-sm text-zinc-400">
-              Simuladores de Fórmula 1
-            </div>
-          </div>
-        </Link>
-
-        <nav className="hidden items-center gap-6 md:flex">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "whitespace-nowrap text-sm font-bold uppercase tracking-[0.08em] text-zinc-300 transition hover:text-white",
-                item.href === "/" ? "text-white" : ""
-              )}
+        <div className="grid md:grid-cols-3">
+          {bloques.map((b, i) => (
+            <div
+              key={i}
+              className={`px-10 py-14 ${i === 1 ? "border-y border-white/5 md:border-x md:border-y-0" : ""}`}
             >
-              {item.label}
-            </Link>
+              <p className="text-[2.6rem] font-black uppercase leading-[1] md:text-[3rem]">
+                {b.val}
+              </p>
+              <p className="text-[2.6rem] font-black uppercase leading-[1] text-red-600 md:text-[3rem]">
+                {b.sub}
+              </p>
+            </div>
           ))}
-        </nav>
-      </div>
-    </header>
-  );
-}
-
-function SectionEyebrow({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <p className="text-xs font-bold uppercase tracking-[0.45em] text-red-500">
-      {children}
-    </p>
-  );
-}
-
-function PrimaryLink({
-  href,
-  children,
-}: {
-  href: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      href={href}
-      className="inline-flex items-center gap-2 rounded-2xl bg-red-600 px-6 py-4 text-sm font-black text-white transition hover:bg-red-500"
-    >
-      {children}
-      <ArrowRight className="h-4 w-4" />
-    </Link>
-  );
-}
-
-function HeroStat({
-  icon: Icon,
-  label,
-  value,
-  text,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string;
-  text: string;
-}) {
-  return (
-    <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-      <div className="mb-3 flex items-center gap-2 text-red-400">
-        <Icon className="h-4 w-4" />
-        <span className="text-sm">{label}</span>
-      </div>
-
-      <div className="text-3xl font-black md:text-4xl">
-        {value}
-      </div>
-
-      <p className="mt-2 text-zinc-400">
-        {text}
-      </p>
-    </div>
-  );
-}
-
-function MissionVisionValuesSection() {
-  return (
-    <section className="mt-8">
-      <div className="mb-5">
-        <h2 className="text-2xl font-black md:text-4xl">
-          Misión, visión y valores
-        </h2>
-
-        <p className="mt-2 text-zinc-400">
-          La base conceptual que sostiene la experiencia SIM.
-        </p>
-      </div>
-
-      <div className="rounded-[28px] border border-white/10 bg-zinc-950/80 p-5 shadow-xl">
-        <div className="grid gap-5 lg:grid-cols-3">
-          <article className="rounded-[24px] border border-white/10 bg-black/40 p-5">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="rounded-2xl bg-red-950/70 p-3 text-red-400">
-                <Flag className="h-5 w-5" />
-              </div>
-
-              <div>
-                <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">
-                  Misión
-                </div>
-
-                <div className="text-lg font-bold text-white">
-                  Hacer que la adrenalina se viva de verdad
-                </div>
-              </div>
-            </div>
-
-            <p className="leading-8 text-zinc-400">
-              Ofrecer una experiencia de simulación inspirada en la Fórmula 1 que combine emoción, estética y tecnología.
-            </p>
-          </article>
-
-          <article className="rounded-[24px] border border-white/10 bg-black/40 p-5">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="rounded-2xl bg-red-950/70 p-3 text-red-400">
-                <Gauge className="h-5 w-5" />
-              </div>
-
-              <div>
-                <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">
-                  Visión
-                </div>
-
-                <div className="text-lg font-bold text-white">
-                  Ser referentes en sim racing
-                </div>
-              </div>
-            </div>
-
-            <p className="leading-8 text-zinc-400">
-              Posicionar a SIM como una propuesta fuerte, escalable y reconocible.
-            </p>
-          </article>
-
-          <article className="rounded-[24px] border border-white/10 bg-black/40 p-5">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="rounded-2xl bg-red-950/70 p-3 text-red-400">
-                <ShieldCheck className="h-5 w-5" />
-              </div>
-
-              <div>
-                <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">
-                  Valores
-                </div>
-
-                <div className="text-lg font-bold text-white">
-                  Intensidad e identidad
-                </div>
-              </div>
-            </div>
-
-            <ul className="space-y-3 text-zinc-400">
-              <li>• Pasión por el automovilismo.</li>
-              <li>• Impacto visual.</li>
-              <li>• Calidad en la experiencia.</li>
-              <li>• Innovación constante.</li>
-            </ul>
-          </article>
         </div>
+
+        <div className="flex flex-col gap-6 border-t border-white/5 px-10 py-8 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-white/35">
+            Fórmula 1 sin licencia. Nuevo Centro Shopping, Córdoba.
+          </p>
+          <Link
+            href="/reservas"
+            className="inline-flex w-fit items-center gap-3 bg-red-600 px-8 py-4 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-white hover:text-black"
+          >
+            Reservar turno <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+
       </div>
     </section>
   );
 }
 
-function CollageSection() {
+// ─── 03 · GALERÍA ───────────────────────────────────────────────
+function Galeria() {
   return (
-    <section className="mt-8">
-      <div className="mb-5">
-        <h2 className="text-2xl font-black md:text-4xl">
-          La experiencia SIM
-        </h2>
+    <section className="px-6 py-12 md:px-12 md:py-16">
+      <div className="mx-auto max-w-7xl">
+        <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
 
-        <p className="mt-2 text-zinc-400">
-          Una propuesta visual pensada para impactar.
-        </p>
-      </div>
-
-      <div className="rounded-[28px] border border-white/10 bg-zinc-950/80 p-5 shadow-xl">
-        <div className="grid gap-4 md:grid-cols-[0.9fr_1.1fr]">
-          <div className="grid gap-4">
-            <div className="relative min-h-[220px] overflow-hidden rounded-[24px] border border-white/10">
-              <Image
-                src="/sim-home-3.jpg"
-                alt="SIM"
-                fill
-                className="object-cover"
-              />
-            </div>
-
-            <div className="relative min-h-[220px] overflow-hidden rounded-[24px] border border-white/10">
-              <Image
-                src="/sim-home-11.jpg"
-                alt="SIM"
-                fill
-                className="object-cover"
-              />
-            </div>
-          </div>
-
-          <div className="relative min-h-[460px] overflow-hidden rounded-[24px] border border-white/10">
+          {/* foto grande izquierda */}
+          <div className="group relative min-h-[380px] overflow-hidden md:min-h-[580px]">
             <Image
               src="/sim-home-2.jpg"
-              alt="SIM"
+              alt="SIM Argentina"
               fill
-              className="object-cover"
+              className="object-cover transition-transform duration-700 group-hover:scale-[1.02]"
             />
-
-            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
-
-            <div className="absolute bottom-0 left-0 right-0 p-6">
-              <div className="max-w-md rounded-[22px] border border-white/10 bg-black/55 p-5 backdrop-blur-md">
-                <p className="text-xs font-bold uppercase tracking-[0.35em] text-red-500">
-                  SIM Argentina
-                </p>
-
-                <h3 className="mt-3 text-2xl font-black md:text-3xl">
-                  Más que un simulador.
-                </h3>
-
-                <p className="mt-3 leading-7 text-zinc-300">
-                  Velocidad, estética y universo F1 en una propuesta diseñada para impactar.
-                </p>
-              </div>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+            <div className="absolute bottom-0 left-0 p-8">
+              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.5em] text-red-500">
+                SIM Argentina
+              </p>
+              <h2 className="text-5xl font-black uppercase leading-[0.88] text-white md:text-6xl">
+                LA<br />EXPERIENCIA.
+              </h2>
             </div>
           </div>
+
+          {/* fotos apiladas derecha */}
+          <div className="grid gap-3">
+            <div className="group relative min-h-[186px] overflow-hidden md:min-h-0">
+              <Image
+                src="/sim-home-3.jpg"
+                alt="SIM Argentina"
+                fill
+                className="object-cover transition-transform duration-700 group-hover:scale-[1.03]"
+              />
+              <div className="absolute inset-0 bg-black/20 transition-opacity duration-300 group-hover:bg-black/10" />
+            </div>
+            <div className="group relative min-h-[186px] overflow-hidden md:min-h-0">
+              <Image
+                src="/sim-home-11.jpg"
+                alt="SIM Argentina"
+                fill
+                className="object-cover transition-transform duration-700 group-hover:scale-[1.03]"
+              />
+              <div className="absolute inset-0 bg-black/20 transition-opacity duration-300 group-hover:bg-black/10" />
+            </div>
+          </div>
+
         </div>
       </div>
     </section>
   );
 }
 
-function ContactSection() {
+// ─── 04 · TESTIMONIOS ───────────────────────────────────────────
+const TESTIMONIOS = [
+  {
+    quote: "Nunca manejé algo tan parecido a un F1 real.",
+    nombre: "MATÍAS G.",
+    ciudad: "Córdoba",
+  },
+  {
+    quote: "Una experiencia que no se olvida. Pura adrenalina desde el primer segundo.",
+    nombre: "LUCAS M.",
+    ciudad: "Buenos Aires",
+  },
+  {
+    quote: "Vine con amigos y quedamos todos enganchados. Ya volvimos tres veces.",
+    nombre: "SOFÍA R.",
+    ciudad: "Córdoba",
+  },
+];
+
+function Testimonios() {
   return (
-    <section className="mt-8">
-      <div className="overflow-hidden rounded-[32px] border border-white/10 bg-zinc-950/90 p-6 shadow-xl md:p-8">
-        <div className="mb-6">
-          <SectionEyebrow>Contacto</SectionEyebrow>
+    <section className="bg-white text-black">
+      <div className="mx-auto max-w-7xl">
 
-          <h2 className="mt-4 text-3xl font-black md:text-5xl">
-            Hablemos de SIM
-          </h2>
-
-          <p className="mt-3 max-w-2xl text-zinc-400">
-            Consultas, reservas, eventos o propuestas comerciales.
+        <div className="border-b border-black/8 px-10 py-10">
+          <p className="text-[10px] font-black uppercase tracking-[0.55em] text-red-600">
+            Pilotos SIM
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <a
-            href="mailto:sim.cafe.racer@gmail.com"
-            className="rounded-[24px] border border-white/10 bg-black/40 p-5 transition hover:border-red-500/40 hover:bg-black/60"
-          >
-            <div className="mb-4 inline-flex rounded-2xl bg-red-950/70 p-3 text-red-400">
-              <Mail className="h-5 w-5" />
+        <div className="grid md:grid-cols-3">
+          {TESTIMONIOS.map((t, i) => (
+            <div
+              key={t.nombre}
+              className={`flex flex-col justify-between px-10 py-12 ${i < 2 ? "border-b border-black/8 md:border-b-0 md:border-r" : ""}`}
+            >
+              <div>
+                <div className="mb-5 flex gap-0.5">
+                  {[...Array(5)].map((_, j) => (
+                    <span key={j} className="text-lg text-red-600">★</span>
+                  ))}
+                </div>
+                <p className="text-2xl font-black uppercase leading-tight md:text-3xl">
+                  "{t.quote}"
+                </p>
+              </div>
+
+              <div className="mt-8 border-t border-black/8 pt-6">
+                <p className="text-sm font-black uppercase tracking-widest text-black">
+                  {t.nombre}
+                </p>
+                <p className="mt-0.5 text-xs font-black uppercase tracking-widest text-black/30">
+                  {t.ciudad}
+                </p>
+              </div>
             </div>
+          ))}
+        </div>
 
-            <h3 className="text-lg font-bold text-white">
-              Mail
-            </h3>
+      </div>
+    </section>
+  );
+}
 
-            <p className="mt-2 break-words text-zinc-400">
-              sim.cafe.racer@gmail.com
-            </p>
-          </a>
+// ─── 05 · TORNEOS / COMUNIDAD ───────────────────────────────────
+const STATS = [
+  { val: "F1",   label: "Experiencia profesional"  },
+  { val: "360°", label: "Inmersión total"           },
+  { val: "2",    label: "Simuladores disponibles"   },
+  { val: "NC",   label: "Nuevo Centro, Córdoba"     },
+];
 
+function Comunidad() {
+  return (
+    <section className="border-y border-white/5 px-6 py-20 md:px-12 md:py-28">
+      <div className="mx-auto max-w-7xl grid gap-16 md:grid-cols-2 md:items-center">
+
+        {/* texto */}
+        <div>
+          <p className="mb-5 text-[10px] font-black uppercase tracking-[0.55em] text-red-500">
+            Comunidad
+          </p>
+          <h2 className="text-5xl font-black uppercase leading-[0.88] md:text-6xl">
+            SIM no es<br />
+            solo un turno.
+          </h2>
+          <p className="mt-7 max-w-sm text-sm leading-8 text-white/40">
+            Torneos, competencias, eventos corporativos y experiencias grupales.
+            Una comunidad de pilotos que compiten, mejoran y vuelven.
+          </p>
+          <Link
+            href="https://www.instagram.com/sim_argentina"
+            target="_blank"
+            className="mt-8 inline-flex items-center gap-3 border border-white/15 px-7 py-4 text-sm font-black uppercase tracking-widest text-white/50 transition-all hover:border-red-600 hover:text-white"
+          >
+            Seguirnos en Instagram <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+
+        {/* grid de datos */}
+        <div className="grid grid-cols-2 gap-px bg-white/5 overflow-hidden">
+          {STATS.map((s) => (
+            <div key={s.label} className="bg-[#0a0a0a] px-8 py-10">
+              <p className="text-4xl font-black text-white md:text-5xl">{s.val}</p>
+              <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-white/25">
+                {s.label}
+              </p>
+            </div>
+          ))}
+        </div>
+
+      </div>
+    </section>
+  );
+}
+
+// ─── 06 · CTA FINAL ─────────────────────────────────────────────
+function CTAFinal() {
+  return (
+    <section className="relative overflow-hidden bg-red-600">
+      {/* patrón de fondo */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.07]"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(90deg, #000 0px, #000 1px, transparent 1px, transparent 80px)",
+        }}
+      />
+
+      <div className="relative mx-auto max-w-4xl px-6 py-28 text-center md:py-36">
+        <p className="mb-5 text-[10px] font-black uppercase tracking-[0.55em] text-white/50">
+          ¿Listo?
+        </p>
+        <h2 className="text-5xl font-black uppercase leading-[0.88] text-white md:text-7xl">
+          ¿LISTO PARA<br />VIVIR LA<br />EXPERIENCIA?
+        </h2>
+        <p className="mt-6 text-sm text-white/60">
+          Reservá tu turno online. Sin vueltas.
+        </p>
+
+        <Link
+          href="/reservas"
+          className="mt-10 inline-flex items-center gap-3 bg-black px-12 py-5 text-sm font-black uppercase tracking-widest text-white transition-all hover:bg-white hover:text-black"
+        >
+          RESERVAR AHORA
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+
+        <div className="mt-5">
           <a
             href="https://wa.me/5493512520927"
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-[24px] border border-white/10 bg-black/40 p-5 transition hover:border-red-500/40 hover:bg-black/60"
+            className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-widest text-white/40 transition-colors hover:text-white"
           >
-            <div className="mb-4 inline-flex rounded-2xl bg-red-950/70 p-3 text-red-400">
-              <Phone className="h-5 w-5" />
-            </div>
-
-            <h3 className="text-lg font-bold text-white">
-              WhatsApp
-            </h3>
-
-            <p className="mt-2 text-zinc-400">
-              3512520927
-            </p>
-          </a>
-
-          <a
-            href="https://www.instagram.com/sim_argentina"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-[24px] border border-white/10 bg-black/40 p-5 transition hover:border-red-500/40 hover:bg-black/60"
-          >
-            <div className="mb-4 inline-flex rounded-2xl bg-red-950/70 p-3 text-red-400">
-              <Camera className="h-5 w-5" />
-            </div>
-
-            <h3 className="text-lg font-bold text-white">
-              Instagram
-            </h3>
-
-            <p className="mt-2 text-zinc-400">
-              @sim_argentina
-            </p>
-          </a>
-
-          <a
-            href="https://www.tiktok.com/@sim_argentina"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-[24px] border border-white/10 bg-black/40 p-5 transition hover:border-red-500/40 hover:bg-black/60"
-          >
-            <div className="mb-4 inline-flex rounded-2xl bg-red-950/70 p-3 text-red-400">
-              <Music2 className="h-5 w-5" />
-            </div>
-
-            <h3 className="text-lg font-bold text-white">
-              TikTok
-            </h3>
-
-            <p className="mt-2 text-zinc-400">
-              @sim_argentina
-            </p>
+            <MessageCircle className="h-3.5 w-3.5" />
+            O consultá por WhatsApp
           </a>
         </div>
       </div>
@@ -420,17 +266,16 @@ function ContactSection() {
   );
 }
 
+// ─── HOME ────────────────────────────────────────────────────────
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-black text-white">
-
       <HeroHome />
-
-      <section className="mx-auto max-w-7xl px-4 py-8 md:px-6 lg:px-8">
-        <MissionVisionValuesSection />
-        <CollageSection />
-        <ContactSection />
-      </section>
+      <QueEsSim />
+      <Galeria />
+      <Testimonios />
+      <Comunidad />
+      <CTAFinal />
     </main>
   );
 }
