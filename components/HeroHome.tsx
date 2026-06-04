@@ -5,11 +5,11 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
 const STATS = [
-  { value: "F1", sup: "", label: "Experiencia\nprofesional" },
-  { value: "15", sup: "MIN", label: "Turnos\nágiles" },
-  { value: "30", sup: "MIN", label: "Máxima\ninmersión" },
-  { value: "NUEVO CENTRO", sup: "", label: "Shopping\nCórdoba" },
-  { value: "EVENTOS", sup: "", label: "Corp.\ny privados" },
+  { value: "F1",            sup: "",    label: "Experiencia\nprofesional" },
+  { value: "15",            sup: "MIN", label: "Turnos\nágiles"           },
+  { value: "30",            sup: "MIN", label: "Máxima\ninmersión"        },
+  { value: "NUEVO CENTRO",  sup: "",    label: "Shopping\nCórdoba"        },
+  { value: "EVENTOS",       sup: "",    label: "Corp.\ny privados"        },
 ];
 
 const TICKER = [
@@ -34,19 +34,21 @@ export default function HeroHome() {
   return (
     <section className="relative flex min-h-[100svh] flex-col overflow-hidden bg-black">
 
-      {/* ── Líneas de velocidad ── */}
-      {LINES.map((l, i) => (
-        <div
-          key={i}
-          className="pointer-events-none absolute left-0 h-px"
-          style={{
-            top: l.top,
-            width: l.w,
-            background: `rgba(${l.color}, ${l.opacity})`,
-            animation: `speedline ${l.dur}s linear ${l.delay}s infinite`,
-          }}
-        />
-      ))}
+      {/* ── Líneas de velocidad (solo desktop) ── */}
+      <div className="hidden md:block">
+        {LINES.map((l, i) => (
+          <div
+            key={i}
+            className="pointer-events-none absolute left-0 h-px"
+            style={{
+              top: l.top,
+              width: l.w,
+              background: `rgba(${l.color}, ${l.opacity})`,
+              animation: `speedline ${l.dur}s linear ${l.delay}s infinite`,
+            }}
+          />
+        ))}
+      </div>
 
       {/* ── Imagen de fondo full bleed ── */}
       <div className="absolute inset-0">
@@ -54,18 +56,23 @@ export default function HeroHome() {
           src="/sim-hero.jpg"
           alt="SIM Argentina — Simulador profesional"
           fill
-          className="object-cover object-center"
+          className="object-cover object-right md:object-center"
           priority
         />
-        {/* overlay izquierda: protege el texto */}
+
+        {/* Mobile: overlay fuerte para legibilidad del texto */}
+        <div className="absolute inset-0 bg-black/70 md:hidden" />
+
+        {/* Desktop: overlay direccional izquierda */}
         <div
-          className="absolute inset-0"
+          className="absolute inset-0 hidden md:block"
           style={{
             background:
               "linear-gradient(to right, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.75) 28%, rgba(0,0,0,0.30) 52%, rgba(0,0,0,0.05) 75%, transparent 100%)",
           }}
         />
-        {/* overlay inferior: protege stats bar */}
+
+        {/* Overlay inferior: protege stats bar */}
         <div
           className="absolute inset-0"
           style={{
@@ -73,7 +80,8 @@ export default function HeroHome() {
               "linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 15%, transparent 35%)",
           }}
         />
-        {/* overlay superior: separa de navbar */}
+
+        {/* Overlay superior */}
         <div
           className="absolute inset-0"
           style={{
@@ -84,9 +92,9 @@ export default function HeroHome() {
       </div>
 
       {/* ── Contenido principal ── */}
-      <div className="relative flex flex-1 flex-col justify-center px-8 pb-10 pt-24 md:px-12 md:py-0 md:pl-16 md:max-w-[52%]">
+      <div className="relative flex flex-1 flex-col justify-center px-6 pb-6 pt-20 md:max-w-[52%] md:px-12 md:py-0 md:pl-16">
 
-        {/* texto vertical */}
+        {/* texto vertical — solo desktop */}
         <div className="absolute left-5 top-1/2 hidden -translate-y-1/2 md:block">
           <p
             className="text-[9px] font-black uppercase tracking-[0.45em] text-white/20"
@@ -96,40 +104,40 @@ export default function HeroHome() {
           </p>
         </div>
 
-        <p className="mb-6 text-[10px] font-black uppercase tracking-[0.5em] text-red-500">
+        <p className="mb-4 text-[10px] font-black uppercase tracking-[0.5em] text-red-500 md:mb-6">
           SIM ARGENTINA · CÓRDOBA
         </p>
 
-        <h1 className="text-[2.6rem] font-black uppercase leading-[0.88] md:text-[3.2rem] lg:text-[4rem] xl:text-[4.8rem]">
+        <h1 className="text-[2rem] font-black uppercase leading-[0.88] sm:text-[2.6rem] md:text-[3.2rem] lg:text-[4rem] xl:text-[4.8rem]">
           LA EXPERIENCIA<br />
           MÁS CERCANA<br />
           A MANEJAR UN{" "}
           <em className="not-italic text-red-600">F1.</em>
         </h1>
 
-        <div className="my-6 h-0.5 w-12 bg-red-600" />
+        <div className="my-5 h-0.5 w-10 bg-red-600 md:my-6 md:w-12" />
 
-        <p className="max-w-xs text-sm leading-8 text-white/60">
+        <p className="max-w-xs text-sm leading-7 text-white/60 md:leading-8">
           Simuladores profesionales diseñados para quienes viven la pasión por el motorsport.
         </p>
 
         <Link
           href="/reservas"
-          className="group mt-8 inline-flex w-fit items-center gap-3 bg-red-600 px-8 py-4 text-sm font-black uppercase tracking-widest text-white transition-all duration-300 hover:bg-white hover:text-black"
+          className="group mt-7 inline-flex w-full items-center justify-center gap-3 bg-red-600 py-4 text-sm font-black uppercase tracking-widest text-white transition-all duration-300 hover:bg-white hover:text-black sm:w-fit sm:px-8 sm:justify-start md:mt-8"
         >
           RESERVAR AHORA
           <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
         </Link>
       </div>
 
-      {/* ── Stats bar ── */}
-      <div className="relative z-10 grid grid-cols-2 divide-x divide-white/8 border-t border-white/8 sm:grid-cols-3 md:grid-cols-5">
+      {/* ── Stats bar — scroll horizontal en mobile ── */}
+      <div className="relative z-10 flex overflow-x-auto border-t border-white/8 scrollbar-none md:grid md:grid-cols-5 md:divide-x md:divide-white/8">
         {STATS.map((s) => (
-          <div key={s.label} className="px-6 py-5">
-            <p className="text-xl font-black leading-none text-white md:text-2xl">
+          <div key={s.label} className="shrink-0 border-r border-white/8 px-5 py-4 md:border-r-0 md:px-6 md:py-5">
+            <p className="text-lg font-black leading-none text-white md:text-2xl">
               {s.value}
               {s.sup && (
-                <span className="ml-1 text-xs font-black text-red-500">{s.sup}</span>
+                <span className="ml-1 text-[10px] font-black text-red-500 md:text-xs">{s.sup}</span>
               )}
             </p>
             <p className="mt-1.5 whitespace-pre-line text-[9px] font-black uppercase tracking-widest text-white/30">
@@ -148,16 +156,16 @@ export default function HeroHome() {
           {[...TICKER, ...TICKER].map((item, i) => (
             <span
               key={i}
-              className="px-6 text-[9px] font-black uppercase tracking-[0.35em] text-white/20"
+              className="px-5 text-[9px] font-black uppercase tracking-[0.35em] text-white/20 md:px-6"
             >
               {item}
-              <span className="mx-5 text-red-600">·</span>
+              <span className="mx-4 text-red-600 md:mx-5">·</span>
             </span>
           ))}
         </div>
 
         <div className="absolute right-6 hidden items-center gap-2 bg-black pl-6 text-[9px] font-black uppercase tracking-widest text-white/20 md:flex">
-          SCROLL <span className="text-red-600 tracking-tight">///</span>
+          SCROLL <span className="tracking-tight text-red-600">///</span>
           <span className="text-white/20">↓</span>
         </div>
       </div>
@@ -173,6 +181,8 @@ export default function HeroHome() {
           from { transform: translateX(0); }
           to   { transform: translateX(-50%); }
         }
+        .scrollbar-none::-webkit-scrollbar { display: none; }
+        .scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
     </section>
   );

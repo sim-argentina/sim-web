@@ -21,7 +21,7 @@ function QueEsSim() {
               Por qué SIM
             </p>
 
-            <h2 className="text-[2.8rem] font-black uppercase leading-[0.88] md:text-[3.8rem] lg:text-[4.5rem]">
+            <h2 className="text-[2rem] font-black uppercase leading-[0.88] sm:text-[2.6rem] md:text-[3.8rem] lg:text-[4.5rem]">
               Entrás como fan.<br />
               <span className="text-white/30">Salís como piloto.</span>
             </h2>
@@ -100,10 +100,10 @@ function Galeria() {
       </div>
 
       {/* FILA 2 — dos fotos asimétricas */}
-      <div className="grid grid-cols-[1.4fr_1fr] gap-0">
+      <div className="grid grid-cols-[1.4fr_1fr] gap-0 sm:grid-cols-[1.4fr_1fr]">
 
         {/* foto izquierda — más alta */}
-        <div className="group relative h-[40vh] min-h-[280px] overflow-hidden md:h-[50vh]">
+        <div className="group relative h-[30vh] min-h-[200px] overflow-hidden sm:h-[40vh] md:h-[50vh]">
           <Image
             src="/sim-home-3.jpg"
             alt="SIM Argentina"
@@ -113,15 +113,15 @@ function Galeria() {
           <div className="absolute inset-0 bg-black/30 transition-opacity duration-300 group-hover:bg-black/15" />
 
           {/* copy superpuesto */}
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-6">
-            <p className="text-xs font-black uppercase tracking-widest text-white/50">
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 md:p-6">
+            <p className="text-[10px] font-black uppercase tracking-widest text-white/50">
               Cockpit · SIM
             </p>
           </div>
         </div>
 
         {/* foto derecha — con copy editorial */}
-        <div className="group relative h-[40vh] min-h-[280px] overflow-hidden border-l border-black md:h-[50vh]">
+        <div className="group relative h-[30vh] min-h-[200px] overflow-hidden border-l border-black sm:h-[40vh] md:h-[50vh]">
           <Image
             src="/sim-home-11.jpg"
             alt="SIM Argentina"
@@ -276,7 +276,7 @@ function Comunidad() {
               Comunidad
             </p>
 
-            <h2 className="text-4xl font-black uppercase leading-[0.88] md:text-5xl">
+            <h2 className="text-[2rem] font-black uppercase leading-[0.88] sm:text-4xl md:text-5xl">
               SIM no es<br />solo un turno.
             </h2>
 
@@ -322,7 +322,7 @@ function Comunidad() {
               <p className="text-[10px] font-black uppercase tracking-[0.55em] text-white/20 mb-6">
                 Volvé a intentarlo
               </p>
-              <p className="text-5xl font-black uppercase leading-[0.88] text-white/10 md:text-7xl">
+              <p className="text-[2.8rem] font-black uppercase leading-[0.88] text-white/10 sm:text-5xl md:text-7xl">
                 CADA<br />VUELTA<br />CUENTA.
               </p>
               <div className="mt-8 h-px w-12 bg-red-600" />
@@ -353,7 +353,7 @@ function CTAFinal() {
         <p className="mb-5 text-[10px] font-black uppercase tracking-[0.55em] text-white/50">
           ¿Listo?
         </p>
-        <h2 className="text-5xl font-black uppercase leading-[0.88] text-white md:text-7xl">
+        <h2 className="text-[2.5rem] font-black uppercase leading-[0.88] text-white sm:text-5xl md:text-7xl">
           ¿LISTO PARA<br />VIVIR LA<br />EXPERIENCIA?
         </h2>
         <p className="mt-6 text-sm text-white/60">
