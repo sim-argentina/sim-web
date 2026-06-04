@@ -48,74 +48,78 @@ export default function HeroHome() {
         />
       ))}
 
+      {/* ── Imagen de fondo full bleed ── */}
+      <div className="absolute inset-0">
+        <Image
+          src="/sim-hero.jpg"
+          alt="SIM Argentina — Simulador profesional"
+          fill
+          className="object-cover object-center"
+          priority
+        />
+        {/* overlay izquierda: protege el texto */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(to right, rgba(0,0,0,0.93) 0%, rgba(0,0,0,0.80) 30%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.15) 80%, rgba(0,0,0,0.05) 100%)",
+          }}
+        />
+        {/* overlay inferior: protege stats bar */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.4) 15%, transparent 35%)",
+          }}
+        />
+        {/* overlay superior: separa de navbar */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 12%)",
+          }}
+        />
+      </div>
+
       {/* ── Contenido principal ── */}
-      <div className="relative flex flex-1 flex-col md:grid md:grid-cols-[40%_60%]">
+      <div className="relative flex flex-1 flex-col justify-center px-8 pb-10 pt-24 md:px-12 md:py-0 md:pl-16 md:max-w-[52%]">
 
-        {/* IZQUIERDA — texto */}
-        <div className="relative flex flex-col justify-center px-8 pb-10 pt-24 md:px-12 md:py-0 md:pl-16">
-
-          {/* texto vertical */}
-          <div className="absolute left-5 top-1/2 hidden -translate-y-1/2 md:block">
-            <p
-              className="text-[9px] font-black uppercase tracking-[0.45em] text-white/20"
-              style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
-            >
-              EXPERIENCIA REAL · ADRENALINA PURA
-            </p>
-          </div>
-
-          <p className="mb-6 text-[10px] font-black uppercase tracking-[0.5em] text-red-500">
-            SIM ARGENTINA · CÓRDOBA
-          </p>
-
-          <h1 className="text-[2.6rem] font-black uppercase leading-[0.88] md:text-[3.2rem] lg:text-[4rem] xl:text-[4.8rem]">
-            LA EXPERIENCIA<br />
-            MÁS CERCANA<br />
-            A MANEJAR UN{" "}
-            <em className="not-italic text-red-600">F1.</em>
-          </h1>
-
-          <div className="my-6 h-0.5 w-12 bg-red-600" />
-
-          <p className="max-w-xs text-sm leading-8 text-white/45">
-            Simuladores profesionales diseñados para quienes viven la pasión por el motorsport.
-          </p>
-
-          <Link
-            href="/reservas"
-            className="group mt-8 inline-flex w-fit items-center gap-3 bg-red-600 px-8 py-4 text-sm font-black uppercase tracking-widest text-white transition-all duration-300 hover:bg-white hover:text-black"
+        {/* texto vertical */}
+        <div className="absolute left-5 top-1/2 hidden -translate-y-1/2 md:block">
+          <p
+            className="text-[9px] font-black uppercase tracking-[0.45em] text-white/20"
+            style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
           >
-            RESERVAR AHORA
-            <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
-          </Link>
+            EXPERIENCIA REAL · ADRENALINA PURA
+          </p>
         </div>
 
-        {/* DERECHA — imagen */}
-        <div className="relative min-h-[55vw] md:min-h-0">
-          <Image
-            src="/sim-home-2.jpg"
-            alt="SIM Argentina — Simulador profesional"
-            fill
-            className="object-cover object-center"
-            priority
-          />
-          {/* overlay para fundir con el texto */}
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                "linear-gradient(to right, black 0%, rgba(0,0,0,0.55) 25%, rgba(0,0,0,0.1) 55%, transparent 100%)",
-            }}
-          />
-          {/* overlay inferior */}
-          <div
-            className="absolute inset-0"
-            style={{
-              background:
-                "linear-gradient(to top, black 0%, transparent 25%)",
-            }}
-          />
-        </div>
+        <p className="mb-6 text-[10px] font-black uppercase tracking-[0.5em] text-red-500">
+          SIM ARGENTINA · CÓRDOBA
+        </p>
+
+        <h1 className="text-[2.6rem] font-black uppercase leading-[0.88] md:text-[3.2rem] lg:text-[4rem] xl:text-[4.8rem]">
+          LA EXPERIENCIA<br />
+          MÁS CERCANA<br />
+          A MANEJAR UN{" "}
+          <em className="not-italic text-red-600">F1.</em>
+        </h1>
+
+        <div className="my-6 h-0.5 w-12 bg-red-600" />
+
+        <p className="max-w-xs text-sm leading-8 text-white/60">
+          Simuladores profesionales diseñados para quienes viven la pasión por el motorsport.
+        </p>
+
+        <Link
+          href="/reservas"
+          className="group mt-8 inline-flex w-fit items-center gap-3 bg-red-600 px-8 py-4 text-sm font-black uppercase tracking-widest text-white transition-all duration-300 hover:bg-white hover:text-black"
+        >
+          RESERVAR AHORA
+          <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
+        </Link>
       </div>
 
       {/* ── Stats bar ── */}
