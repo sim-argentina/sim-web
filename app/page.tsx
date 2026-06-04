@@ -15,6 +15,7 @@ import {
   Camera,
   Music2,
 } from "lucide-react";
+import HeroHome from "@/components/HeroHome";
 
 type NavItem = {
   label: string;
@@ -423,61 +424,9 @@ export default function HomePage() {
   return (
     <main className="min-h-screen bg-black text-white">
 
+      <HeroHome />
+
       <section className="mx-auto max-w-7xl px-4 py-8 md:px-6 lg:px-8">
-        <div className="overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-r from-red-950/40 via-zinc-950 to-zinc-900">
-          <div className="grid gap-8 p-6 md:p-10 lg:grid-cols-[1.5fr_0.9fr]">
-            <div>
-              <SectionEyebrow>
-                Experiencia SIM
-              </SectionEyebrow>
-
-              <h1 className="mt-4 max-w-4xl text-4xl font-black leading-tight md:text-6xl">
-                La experiencia más cercana a manejar un Fórmula 1
-              </h1>
-
-              <p className="mt-5 max-w-2xl text-base leading-8 text-zinc-300 md:text-xl">
-                SIM Argentina mezcla adrenalina, estética y competencia para transformar un turno en algo mucho más grande.
-              </p>
-
-              <div className="mt-8 flex flex-wrap gap-4">
-                <PrimaryLink href="/reservas">
-                  Reservar ahora
-                </PrimaryLink>
-              </div>
-            </div>
-
-            <div className="grid gap-4 self-start sm:grid-cols-2">
-              <HeroStat
-                icon={Gauge}
-                label="Intensidad"
-                value="F1"
-                text="Experiencia inspirada en el automovilismo"
-              />
-
-              <HeroStat
-                icon={Clock3}
-                label="Turnos"
-                value="15 min"
-                text="Experiencias ágiles y dinámicas"
-              />
-
-              <HeroStat
-                icon={Flag}
-                label="Ubicación"
-                value="NC"
-                text="Nuevo Centro Shopping"
-              />
-
-              <HeroStat
-                icon={Users}
-                label="Formato"
-                value="Eventos"
-                text="También adaptable a marcas"
-              />
-            </div>
-          </div>
-        </div>
-
         <MissionVisionValuesSection />
         <CollageSection />
         <ContactSection />
