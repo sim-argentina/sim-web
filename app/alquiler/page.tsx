@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import VideoLoop from "@/components/VideoLoop";
 import {
   ArrowRight,
   Building2,
@@ -87,12 +88,8 @@ export default function AlquilerPage() {
             {/* VIDEO VERTICAL */}
             <div className="grid gap-4">
               <div className="relative min-h-[620px] overflow-hidden rounded-[32px] border border-white/10 bg-zinc-950 shadow-2xl">
-                <video
+                <VideoLoop
                   src="/colectivo-sim.mp4"
-                  autoPlay
-                  muted
-                  loop
-                  playsInline
                   className="absolute inset-0 h-full w-full object-cover"
                 />
 
