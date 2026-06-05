@@ -322,7 +322,7 @@ function Comunidad() {
               <p className="text-[10px] font-black uppercase tracking-[0.55em] text-white/20 mb-6">
                 Volvé a intentarlo
               </p>
-              <p className="text-[2.8rem] font-black uppercase leading-[0.88] text-white/10 sm:text-5xl md:text-7xl">
+              <p className="text-[2.8rem] font-black uppercase leading-[0.88] text-white/25 sm:text-5xl md:text-7xl">
                 CADA<br />VUELTA<br />CUENTA.
               </p>
               <div className="mt-8 h-px w-12 bg-red-600" />
