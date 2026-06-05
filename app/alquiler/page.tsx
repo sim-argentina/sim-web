@@ -90,7 +90,7 @@ export default function AlquilerPage() {
               <div className="relative min-h-[620px] overflow-hidden rounded-[32px] border border-white/10 bg-zinc-950 shadow-2xl">
                 <VideoLoop
                   src="/colectivo-sim.mp4"
-                  className="absolute inset-0 h-full w-full object-cover"
+                  className="absolute inset-0"
                 />
 
                 <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
