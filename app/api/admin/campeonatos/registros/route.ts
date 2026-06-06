@@ -11,6 +11,15 @@ function tiempoASegundos(tiempo: string): number {
   return parseFloat(t) || 999999;
 }
 
+// Calcula la semana ISO del año para agrupar resultados semanales automáticamente
+function getISOWeek(dateStr: string): number {
+  const date = new Date(dateStr + "T00:00:00Z");
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -45,15 +54,17 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    if (!body.nombre?.trim() || !body.fecha || !body.categoria) {
+    if (!body.nombre?.trim() || !body.apellido?.trim() || !body.telefono?.trim() || !body.fecha || !body.categoria) {
       return NextResponse.json(
-        { error: "Nombre, fecha y categoría son obligatorios" },
+        { error: "Nombre, apellido, teléfono, fecha y categoría son obligatorios" },
         { status: 400 }
       );
     }
 
-    const nombre_completo = `${body.nombre || ""} ${body.apellido || ""}`.trim();
+    const nombre_completo = `${body.nombre.trim()} ${body.apellido.trim()}`.trim();
     const tiempo_segundos = tiempoASegundos(body.tiempo || "");
+    // Semana calculada automáticamente desde la fecha (ISO week)
+    const semana = getISOWeek(body.fecha);
 
     const { data, error } = await supabaseAdmin
       .from("campeonato_registros")
@@ -61,22 +72,31 @@ export async function POST(req: Request) {
         {
           fecha: body.fecha,
           hora: body.hora || null,
+          hora_estimada_subida: body.hora_estimada_subida || null,
+          hora_subida: body.hora_subida || null,
+          hora_bajada: body.hora_bajada || null,
           nombre: body.nombre.trim(),
-          apellido: body.apellido?.trim() || null,
+          apellido: body.apellido.trim(),
           nombre_completo,
-          telefono: body.telefono || null,
+          telefono: body.telefono.trim(),
           categoria: body.categoria,
           campeonato_id: body.campeonato_id || null,
           campeonato_fecha_id: body.campeonato_fecha_id || null,
           circuito: body.circuito || null,
           tiempo: body.tiempo || null,
           tiempo_segundos,
-          simulador: body.simulador || null,
-          puntos: Number(body.puntos) || 0,
-          semana: Number(body.semana) || 1,
+          semana,
           escuderia_favorita: body.escuderia_favorita || null,
           observaciones: body.observaciones || null,
-          estado: body.estado || "valido",
+          estado: "valido",
+          cantidad_minutos: Number(body.cantidad_minutos) || 15,
+          cantidad_turnos: Number(body.cantidad_turnos) || 1,
+          turno_listo: body.turno_listo === true,
+          pagos_detalle: body.pagos_detalle || null,
+          total: Number(body.total) || 0,
+          // puntos siempre en 0: se calculan automáticamente por posición en el ranking público
+          puntos: 0,
+          simulador: null,
         },
       ])
       .select()
