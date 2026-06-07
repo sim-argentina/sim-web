@@ -286,7 +286,7 @@ function SecCampeonatos({ campeonatos, onInscribir }: { campeonatos: Campeonato[
             disabled={!c.inscripcion_habilitada || c.estado === "finalizado"}
             className="w-full rounded-2xl bg-red-600 py-3 font-black text-white hover:bg-red-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {c.estado === "finalizado" ? "Finalizado" : !c.inscripcion_habilitada ? "Inscripción cerrada" : c.cupos_disponibles <= 0 ? "Sin cupos" : "Inscribirme →"}
+            {c.estado === "finalizado" ? "Finalizado" : !c.inscripcion_habilitada ? "Inscripción cerrada" : "Inscribirme →"}
           </button>
         </div>
       ))}
