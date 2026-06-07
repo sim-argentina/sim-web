@@ -911,7 +911,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
 
   // ── Edit state ───────────────────────────────────────────────────────────────
   const [editId, setEditId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<Partial<Inscripcion & { monto: string }>>({});
+  const [editForm, setEditForm] = useState<Omit<Partial<Inscripcion>, "monto"> & { monto?: string }>({});
   const [editSaving, setEditSaving] = useState(false);
   const [editMsg, setEditMsg] = useState("");
 
