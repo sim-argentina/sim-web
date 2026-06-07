@@ -73,6 +73,7 @@ type Inscripcion = {
   monto: number;
   estado_pago: string;
   payment_id: string | null;
+  metodo_pago: string | null;
   created_at: string;
   campeonatos?: { nombre: string } | null;
 };
@@ -789,8 +790,26 @@ function TabSorteos({ sorteos, onRefresh }: { sorteos: Sorteo[]; onRefresh: () =
 
 // ─── Tab: Inscripciones ───────────────────────────────────────────────────────
 
-function TabInscripciones({ inscripciones, campeonatos }: { inscripciones: Inscripcion[]; campeonatos: Campeonato[] }) {
+const blankInscripcion = {
+  nombre: "", apellido: "", telefono: "", dni: "", instagram: "",
+  escuderia_favorita: "", categoria: "oro", campeonato_id: "", monto: "", metodo_pago: "efectivo",
+};
+
+function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
+  inscripciones: Inscripcion[];
+  campeonatos: Campeonato[];
+  role: string | null;
+  onRefresh: () => void;
+}) {
   const [filters, setFilters] = useState({ campeonato_id: "", categoria: "", estado_pago: "", q: "" });
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState(blankInscripcion);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
   const filtered = inscripciones.filter((i) => {
     if (filters.campeonato_id && i.campeonato_id !== filters.campeonato_id) return false;
     if (filters.categoria && i.categoria !== filters.categoria) return false;
@@ -803,8 +822,85 @@ function TabInscripciones({ inscripciones, campeonatos }: { inscripciones: Inscr
   });
   const totalRecaudado = filtered.filter((i) => i.estado_pago === "pagado").reduce((s, i) => s + (i.monto || 0), 0);
 
+  const submitNueva = async () => {
+    if (!form.nombre.trim() || !form.apellido.trim() || !form.telefono.trim() || !form.dni.trim() || !form.escuderia_favorita || !form.campeonato_id || !form.monto || !form.metodo_pago) {
+      setMsg("Completá todos los campos obligatorios"); return;
+    }
+    setSaving(true); setMsg("");
+    try {
+      const res = await fetch("/api/admin/campeonatos/inscripciones", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, monto: Number(form.monto) }),
+      });
+      if (!res.ok) { const d = await res.json(); setMsg(d.error || "Error"); return; }
+      setForm(blankInscripcion); setShowForm(false); onRefresh();
+    } finally { setSaving(false); }
+  };
+
+  const cancelarInscripcion = async (id: string) => {
+    if (!confirm("¿Cancelar esta inscripción?")) return;
+    setCancellingId(id);
+    try {
+      const res = await fetch(`/api/admin/campeonatos/inscripciones/${id}`, { method: "PATCH" });
+      if (!res.ok) { const d = await res.json(); alert(d.error || "Error al cancelar"); return; }
+      onRefresh();
+    } finally { setCancellingId(null); }
+  };
+
+  const colCount = role === "admin" ? 11 : 10;
+
   return (
     <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-lg font-black text-white">Inscripciones</h2>
+        {!showForm && (
+          <button onClick={() => setShowForm(true)} className="rounded-xl bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500">
+            + Nueva
+          </button>
+        )}
+      </div>
+
+      {showForm && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
+          <h3 className="font-black text-white">Nueva inscripción (pago en stand)</h3>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field label="Nombre *"><input className={inp} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} /></Field>
+            <Field label="Apellido *"><input className={inp} value={form.apellido} onChange={(e) => set("apellido", e.target.value)} /></Field>
+            <Field label="Teléfono *"><input className={inp} value={form.telefono} onChange={(e) => set("telefono", e.target.value)} /></Field>
+            <Field label="DNI *"><input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} /></Field>
+            <Field label="Instagram"><input className={inp} value={form.instagram} onChange={(e) => set("instagram", e.target.value)} placeholder="@usuario" /></Field>
+            <Field label="Escudería *">
+              <select className={sel} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
+                <option value="">Seleccionar...</option>
+                {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </Field>
+            <Field label="Categoría *">
+              <select className={sel} value={form.categoria} onChange={(e) => set("categoria", e.target.value)}>
+                {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+              </select>
+            </Field>
+            <Field label="Campeonato *">
+              <select className={sel} value={form.campeonato_id} onChange={(e) => set("campeonato_id", e.target.value)}>
+                <option value="">Seleccionar...</option>
+                {campeonatos.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+            </Field>
+            <Field label="Monto *"><input type="number" className={inp} value={form.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
+            <Field label="Método de pago *">
+              <select className={sel} value={form.metodo_pago} onChange={(e) => set("metodo_pago", e.target.value)}>
+                {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </Field>
+          </div>
+          {msg && <p className="text-sm font-bold text-red-400">{msg}</p>}
+          <div className="flex gap-3">
+            <button onClick={submitNueva} disabled={saving} className="rounded-xl bg-red-600 px-6 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-50">{saving ? "Guardando..." : "Crear inscripción"}</button>
+            <button onClick={() => { setShowForm(false); setForm(blankInscripcion); setMsg(""); }} className="rounded-xl bg-zinc-800 px-6 py-2 font-bold text-white hover:bg-zinc-700">Cancelar</button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3">
         <input className={`${inp} flex-1 min-w-[140px]`} placeholder="Nombre, DNI o teléfono..." value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} />
         <select className={`${sel} min-w-[160px]`} value={filters.campeonato_id} onChange={(e) => setFilters((f) => ({ ...f, campeonato_id: e.target.value }))}><option value="">Todos los campeonatos</option>{campeonatos.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select>
@@ -819,10 +915,15 @@ function TabInscripciones({ inscripciones, campeonatos }: { inscripciones: Inscr
       <div className="overflow-x-auto rounded-2xl border border-white/10">
         <table className="w-full text-sm">
           <thead className="bg-zinc-900/80 text-zinc-400">
-            <tr>{["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Campeonato", "Monto", "Estado", "Fecha"].map((h) => <th key={h} className="px-4 py-3 text-left font-bold uppercase text-xs">{h}</th>)}</tr>
+            <tr>
+              {["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Campeonato", "Monto", "Estado", "Fecha"].map((h) => (
+                <th key={h} className="px-4 py-3 text-left font-bold uppercase text-xs">{h}</th>
+              ))}
+              {role === "admin" && <th className="px-4 py-3 text-left font-bold uppercase text-xs">Acción</th>}
+            </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
-            {filtered.length === 0 && <tr><td colSpan={10} className="px-4 py-8 text-center text-zinc-500">Sin inscripciones</td></tr>}
+            {filtered.length === 0 && <tr><td colSpan={colCount} className="px-4 py-8 text-center text-zinc-500">Sin inscripciones</td></tr>}
             {filtered.map((i) => (
               <tr key={i.id} className="bg-black hover:bg-white/[0.02] transition-colors">
                 <td className="px-4 py-3 font-bold text-white">{i.nombre_completo}</td>
@@ -832,9 +933,25 @@ function TabInscripciones({ inscripciones, campeonatos }: { inscripciones: Inscr
                 <td className="px-4 py-3 text-zinc-300">{i.escuderia_favorita}</td>
                 <td className="px-4 py-3"><Badge v={i.categoria} /></td>
                 <td className="px-4 py-3 text-zinc-400">{i.campeonatos?.nombre || "—"}</td>
-                <td className="px-4 py-3 font-bold text-white">{formatoDinero(i.monto)}</td>
+                <td className="px-4 py-3 font-bold text-white">
+                  {formatoDinero(i.monto)}
+                  {i.metodo_pago && <span className="ml-1 text-xs text-zinc-500">({i.metodo_pago})</span>}
+                </td>
                 <td className="px-4 py-3"><Badge v={i.estado_pago} /></td>
                 <td className="px-4 py-3 text-zinc-400 text-xs">{i.created_at?.slice(0, 10)}</td>
+                {role === "admin" && (
+                  <td className="px-4 py-3">
+                    {i.estado_pago !== "cancelado" && (
+                      <button
+                        onClick={() => cancelarInscripcion(i.id)}
+                        disabled={cancellingId === i.id}
+                        className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-bold text-red-400 hover:bg-zinc-700 disabled:opacity-50"
+                      >
+                        {cancellingId === i.id ? "..." : "Cancelar"}
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -847,11 +964,11 @@ function TabInscripciones({ inscripciones, campeonatos }: { inscripciones: Inscr
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 type Tab = "resultados" | "campeonatos" | "sorteos" | "inscripciones";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "resultados", label: "Resultados" },
-  { id: "campeonatos", label: "Campeonatos" },
-  { id: "sorteos", label: "Sorteos" },
-  { id: "inscripciones", label: "Inscripciones" },
+const ALL_TABS: { id: Tab; label: string; adminOnly: boolean }[] = [
+  { id: "resultados", label: "Resultados", adminOnly: false },
+  { id: "campeonatos", label: "Campeonatos", adminOnly: true },
+  { id: "sorteos", label: "Sorteos", adminOnly: true },
+  { id: "inscripciones", label: "Inscripciones", adminOnly: false },
 ];
 
 export default function AdminCampeonatosPage() {
@@ -861,6 +978,11 @@ export default function AdminCampeonatosPage() {
   const [inscripciones, setInscripciones] = useState<Inscripcion[]>([]);
   const [sorteos, setSorteos] = useState<Sorteo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
+  }, []);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -881,6 +1003,8 @@ export default function AdminCampeonatosPage() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  const visibleTabs = ALL_TABS.filter((t) => !t.adminOnly || role === "admin");
+
   return (
     <div className="min-h-screen bg-black p-4 md:p-8">
       <div className="mb-8">
@@ -891,7 +1015,7 @@ export default function AdminCampeonatosPage() {
         </p>
       </div>
       <div className="mb-8 flex gap-1 rounded-2xl bg-white/[0.04] p-1 w-fit overflow-x-auto">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`rounded-xl px-5 py-2 text-sm font-black uppercase transition-all whitespace-nowrap ${tab === t.id ? "bg-red-600 text-white" : "text-zinc-400 hover:text-white"}`}>
             {t.label}
@@ -903,9 +1027,9 @@ export default function AdminCampeonatosPage() {
       ) : (
         <>
           {tab === "resultados" && <TabResultados campeonatos={campeonatos} registros={registros} onRefresh={fetchAll} />}
-          {tab === "campeonatos" && <TabCampeonatos campeonatos={campeonatos} onRefresh={fetchAll} />}
-          {tab === "sorteos" && <TabSorteos sorteos={sorteos} onRefresh={fetchAll} />}
-          {tab === "inscripciones" && <TabInscripciones inscripciones={inscripciones} campeonatos={campeonatos} />}
+          {tab === "campeonatos" && role === "admin" && <TabCampeonatos campeonatos={campeonatos} onRefresh={fetchAll} />}
+          {tab === "sorteos" && role === "admin" && <TabSorteos sorteos={sorteos} onRefresh={fetchAll} />}
+          {tab === "inscripciones" && <TabInscripciones inscripciones={inscripciones} campeonatos={campeonatos} role={role} onRefresh={fetchAll} />}
         </>
       )}
     </div>

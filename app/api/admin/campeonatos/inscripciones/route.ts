@@ -1,6 +1,51 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const {
+      nombre, apellido, telefono, dni, instagram,
+      escuderia_favorita, categoria, campeonato_id, monto, metodo_pago,
+    } = body;
+
+    if (!nombre?.trim() || !apellido?.trim() || !telefono?.trim() || !dni?.trim() || !escuderia_favorita || !categoria || !campeonato_id || !monto || !metodo_pago) {
+      return NextResponse.json({ error: "Faltan datos obligatorios" }, { status: 400 });
+    }
+
+    const montoFinal = Math.round(Number(monto));
+    if (!Number.isFinite(montoFinal) || montoFinal <= 0) {
+      return NextResponse.json({ error: "Monto inválido" }, { status: 400 });
+    }
+
+    const nombre_completo = `${nombre.trim()} ${apellido.trim()}`.trim();
+
+    const { data, error } = await supabaseAdmin
+      .from("campeonato_inscripciones")
+      .insert([{
+        campeonato_id,
+        nombre: nombre.trim(),
+        apellido: apellido.trim(),
+        nombre_completo,
+        telefono: telefono.trim(),
+        dni: dni.trim(),
+        instagram: instagram?.trim() || null,
+        escuderia_favorita,
+        categoria,
+        monto: montoFinal,
+        estado_pago: "pagado",
+        metodo_pago,
+      }])
+      .select("id")
+      .single();
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(data);
+  } catch {
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
