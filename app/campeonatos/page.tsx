@@ -54,6 +54,7 @@ type Resultado = {
   circuito: string | null;
   tiempo: string | null;
   puntos: number;
+  puntos_ganados: number;
   semana: number;
   simulador: string | null;
 };
@@ -281,13 +282,23 @@ function SecCampeonatos({ campeonatos, onInscribir }: { campeonatos: Campeonato[
             )}
             <p>💰 ${c.precio_inscripcion.toLocaleString()} / inscripción</p>
           </div>
-          <button
-            onClick={() => onInscribir(c)}
-            disabled={!c.inscripcion_habilitada || c.estado === "finalizado"}
-            className="w-full rounded-2xl bg-red-600 py-3 font-black text-white hover:bg-red-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {c.estado === "finalizado" ? "Finalizado" : !c.inscripcion_habilitada ? "Inscripción cerrada" : "Inscribirme →"}
-          </button>
+          <div className="flex gap-2 mt-auto">
+            <a
+              href={`https://wa.me/5493512520927?text=${encodeURIComponent(`Hola SIM, quiero más información sobre el campeonato: ${c.nombre}`)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 rounded-2xl border border-zinc-700 py-3 font-black text-zinc-300 hover:border-zinc-500 hover:text-white transition-all text-center text-sm"
+            >
+              Más info
+            </a>
+            <button
+              onClick={() => onInscribir(c)}
+              disabled={!c.inscripcion_habilitada || c.estado === "finalizado"}
+              className="flex-1 rounded-2xl bg-red-600 py-3 font-black text-white hover:bg-red-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+            >
+              {c.estado === "finalizado" ? "Finalizado" : !c.inscripcion_habilitada ? "Inscripción cerrada" : "Inscribirme →"}
+            </button>
+          </div>
         </div>
       ))}
     </div>
@@ -444,17 +455,15 @@ function SecConstructores({ constructores }: { constructores: Constructor[] }) {
 // ─── Section: Resultados ──────────────────────────────────────────────────────
 
 function SecResultados({ resultados, campeonatos }: { resultados: Resultado[]; campeonatos: Campeonato[] }) {
-  const [filters, setFilters] = useState({ campeonato_id: "", categoria: "", circuito: "", semana: "" });
+  const [filters, setFilters] = useState({ campeonato_id: "", circuito: "" });
   const [cat, setCat] = useState<"oro" | "plata" | "bronce" | "">("oro");
 
   const circuitos = Array.from(new Set(resultados.map((r) => r.circuito).filter(Boolean)));
-  const semanas = Array.from(new Set(resultados.map((r) => r.semana))).sort((a, b) => a - b);
 
   const filtered = resultados.filter((r) => {
     if (filters.campeonato_id && r.campeonato_id !== filters.campeonato_id) return false;
     if (cat && r.categoria !== cat) return false;
     if (filters.circuito && r.circuito !== filters.circuito) return false;
-    if (filters.semana && String(r.semana) !== filters.semana) return false;
     return true;
   });
 
@@ -477,10 +486,6 @@ function SecResultados({ resultados, campeonatos }: { resultados: Resultado[]; c
           <option value="">Todos los circuitos</option>
           {circuitos.map((c) => <option key={c!} value={c!}>{c}</option>)}
         </select>
-        <select className={sel} value={filters.semana} onChange={(e) => setFilters((f) => ({ ...f, semana: e.target.value }))}>
-          <option value="">Todas las fechas</option>
-          {semanas.map((s) => <option key={s} value={String(s)}>Semana {s}</option>)}
-        </select>
       </div>
 
       {filtered.length === 0 ? (
@@ -490,7 +495,7 @@ function SecResultados({ resultados, campeonatos }: { resultados: Resultado[]; c
           <table className="w-full text-sm">
             <thead className="bg-zinc-900/80 text-zinc-400">
               <tr>
-                {["Piloto", "Cat", "Circuito", "Semana", "Tiempo", "Pts", "Simulador"].map((h) => (
+                {["Piloto", "Cat", "Circuito", "Tiempo", "Pts"].map((h) => (
                   <th key={h} className="px-5 py-4 text-left font-bold uppercase text-xs tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -501,10 +506,8 @@ function SecResultados({ resultados, campeonatos }: { resultados: Resultado[]; c
                   <td className="px-5 py-4 font-bold text-white">{r.nombre_completo}</td>
                   <td className="px-5 py-4 text-xs font-black uppercase text-zinc-400">{r.categoria}</td>
                   <td className="px-5 py-4 text-zinc-400">{r.circuito || "—"}</td>
-                  <td className="px-5 py-4 text-zinc-400">{r.semana}</td>
                   <td className="px-5 py-4 font-mono text-red-400 font-bold">{r.tiempo || "—"}</td>
-                  <td className="px-5 py-4 font-black text-white">{r.puntos}</td>
-                  <td className="px-5 py-4 text-zinc-400">{r.simulador || "—"}</td>
+                  <td className="px-5 py-4 font-black text-white">{r.puntos_ganados}</td>
                 </tr>
               ))}
             </tbody>

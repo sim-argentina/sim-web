@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -631,6 +631,20 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [subiendo, setSubiendo] = useState(false);
+  const imgRef = useRef<HTMLInputElement>(null);
+
+  const subirImagen = async (file: File) => {
+    setSubiendo(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/admin/campeonatos/upload", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) { setMsg(data.error || "Error subiendo imagen"); return; }
+      set("imagen_url", data.url);
+    } finally { setSubiendo(false); }
+  };
 
   const set = (k: string, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
   const startEdit = (c: Campeonato) => {
@@ -677,7 +691,22 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
             <Field label="Fecha fin"><input type="date" className={inp} value={form.fecha_fin} onChange={(e) => set("fecha_fin", e.target.value)} /></Field>
             <Field label="Precio ($)"><input type="number" className={inp} value={form.precio_inscripcion} onChange={(e) => set("precio_inscripcion", e.target.value)} /></Field>
             <Field label="Descripción"><input className={inp} value={form.descripcion} onChange={(e) => set("descripcion", e.target.value)} /></Field>
-            <Field label="Imagen URL"><input className={inp} value={form.imagen_url} onChange={(e) => set("imagen_url", e.target.value)} /></Field>
+            <Field label="Imagen">
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => imgRef.current?.click()}
+                  disabled={subiendo}
+                  className="w-full rounded-xl border border-dashed border-white/20 py-3 text-sm font-bold text-zinc-400 hover:border-zinc-500 hover:text-white transition disabled:opacity-50"
+                >
+                  {subiendo ? "Subiendo..." : form.imagen_url ? "Cambiar foto" : "Subir foto"}
+                </button>
+                {form.imagen_url && (
+                  <img src={form.imagen_url} alt="preview" className="h-24 w-full object-cover rounded-xl" />
+                )}
+                <input ref={imgRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) subirImagen(f); e.target.value = ""; }} />
+              </div>
+            </Field>
           </div>
           <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
             <input type="checkbox" checked={form.inscripcion_habilitada} onChange={(e) => set("inscripcion_habilitada", e.target.checked)} className="accent-red-500" />

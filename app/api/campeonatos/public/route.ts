@@ -135,10 +135,37 @@ export async function GET() {
       .sort((a, b) => b.puntos - a.puntos)
       .map((c, i) => ({ ...c, posicion: i + 1 }));
 
+    // Calcular puntos ganados por registro individual
+    // Misma lógica que puntos: agrupa por campeonato+categoria+semana, mejor tiempo por piloto, F1 pts
+    const puntosXRegistro: Record<string, number> = {};
+    for (const cat of CATEGORIAS) {
+      const catReg = registros.filter((r) => r.categoria === cat);
+      const grupos: Record<string, typeof catReg> = {};
+      for (const r of catReg) {
+        const gKey = `${r.campeonato_id ?? "libre"}_${r.semana ?? 0}`;
+        if (!grupos[gKey]) grupos[gKey] = [];
+        grupos[gKey].push(r);
+      }
+      for (const grupo of Object.values(grupos)) {
+        const bestPerPilot: Record<string, { id: string; ts: number }> = {};
+        for (const r of grupo) {
+          const pKey = r.nombre_completo || `${r.nombre} ${r.apellido || ""}`.trim();
+          if (!bestPerPilot[pKey] || r.tiempo_segundos < bestPerPilot[pKey].ts) {
+            bestPerPilot[pKey] = { id: r.id, ts: r.tiempo_segundos };
+          }
+        }
+        const sorted = Object.values(bestPerPilot).sort((a, b) => a.ts - b.ts);
+        sorted.forEach(({ id }, idx) => {
+          puntosXRegistro[id] = F1_PUNTOS[idx] ?? 0;
+        });
+      }
+    }
+
     // Resultados por fecha para la sección de resultados
     const resultados_por_fecha = registros.map((r) => ({
       ...r,
       campeonato_nombre: (r as { campeonatos?: { nombre: string } }).campeonatos?.nombre,
+      puntos_ganados: puntosXRegistro[r.id] ?? 0,
     }));
 
     return NextResponse.json({
