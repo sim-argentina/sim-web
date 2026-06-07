@@ -675,17 +675,6 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
             <Field label="Fecha inicio"><input type="date" className={inp} value={form.fecha_inicio} onChange={(e) => set("fecha_inicio", e.target.value)} /></Field>
             <Field label="Fecha fin"><input type="date" className={inp} value={form.fecha_fin} onChange={(e) => set("fecha_fin", e.target.value)} /></Field>
             <Field label="Precio ($)"><input type="number" className={inp} value={form.precio_inscripcion} onChange={(e) => set("precio_inscripcion", e.target.value)} /></Field>
-            <Field label="Cupos máximos">
-              <input type="number" className={inp} value={form.cupos_maximos}
-                disabled={form.cupos_maximos === "0"}
-                onChange={(e) => set("cupos_maximos", e.target.value)} />
-              <label className="mt-1 flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" className="accent-red-500"
-                  checked={form.cupos_maximos === "0"}
-                  onChange={(e) => set("cupos_maximos", e.target.checked ? "0" : "20")} />
-                <span className="text-xs text-zinc-400">Sin límite de cupos</span>
-              </label>
-            </Field>
             <Field label="Descripción"><input className={inp} value={form.descripcion} onChange={(e) => set("descripcion", e.target.value)} /></Field>
             <Field label="Imagen URL"><input className={inp} value={form.imagen_url} onChange={(e) => set("imagen_url", e.target.value)} /></Field>
           </div>

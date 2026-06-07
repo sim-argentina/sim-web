@@ -34,19 +34,7 @@ export async function GET() {
     const registros = registrosRes.data ?? [];
     const inscripciones = inscripcionesRes.data ?? [];
 
-    // Cupos por campeonato
-    const insCount: Record<string, number> = {};
-    for (const ins of inscripciones) {
-      insCount[ins.campeonato_id] = (insCount[ins.campeonato_id] || 0) + 1;
-    }
-    const campeonatosConCupos = campeonatos.map((c) => ({
-      ...c,
-      inscriptos: insCount[c.id] || 0,
-      // cupos_maximos === 0 significa sin límite → cupos_disponibles = null
-      cupos_disponibles: c.cupos_maximos === 0
-        ? null
-        : Math.max(0, c.cupos_maximos - (insCount[c.id] || 0)),
-    }));
+    const campeonatosConCupos = campeonatos.map((c) => ({ ...c }));
 
     // Rankings: mejor tiempo por piloto por categoría
     const rankings: Record<string, unknown[]> = { oro: [], plata: [], bronce: [] };

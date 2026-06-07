@@ -15,7 +15,6 @@ type Campeonato = {
   precio_inscripcion: number;
   cupos_maximos: number;
   inscriptos: number;
-  cupos_disponibles: number | null; // null = sin límite
   inscripcion_habilitada: boolean;
   imagen_url: string | null;
   categorias: string[];
@@ -174,8 +173,7 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
         <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500 mb-2">Inscripción</p>
         <h2 className="text-xl font-black text-white mb-1">{campeonato.nombre}</h2>
         <p className="text-sm text-zinc-400 mb-6">
-          Precio: <strong className="text-white">${campeonato.precio_inscripcion.toLocaleString()}</strong> ·
-          Cupos disponibles: <strong className="text-white">{campeonato.cupos_disponibles}</strong>
+          Precio: <strong className="text-white">${campeonato.precio_inscripcion.toLocaleString()}</strong>
         </p>
 
         <div className="space-y-4">
@@ -281,14 +279,11 @@ function SecCampeonatos({ campeonatos, onInscribir }: { campeonatos: Campeonato[
             {c.fecha_inicio && (
               <p>📅 {c.fecha_inicio} {c.fecha_fin && `→ ${c.fecha_fin}`}</p>
             )}
-            <p>👥 {c.inscriptos} inscriptos · <span className={c.cupos_disponibles === null || c.cupos_disponibles > 0 ? "text-green-400" : "text-red-400"}>
-              {c.cupos_disponibles === null ? "Sin límite de cupos" : `${c.cupos_disponibles} cupos disponibles`}
-            </span></p>
             <p>💰 ${c.precio_inscripcion.toLocaleString()} / inscripción</p>
           </div>
           <button
             onClick={() => onInscribir(c)}
-            disabled={!c.inscripcion_habilitada || (c.cupos_disponibles !== null && c.cupos_disponibles <= 0) || c.estado === "finalizado"}
+            disabled={!c.inscripcion_habilitada || c.estado === "finalizado"}
             className="w-full rounded-2xl bg-red-600 py-3 font-black text-white hover:bg-red-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {c.estado === "finalizado" ? "Finalizado" : !c.inscripcion_habilitada ? "Inscripción cerrada" : c.cupos_disponibles <= 0 ? "Sin cupos" : "Inscribirme →"}
