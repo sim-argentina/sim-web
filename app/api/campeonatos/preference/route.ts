@@ -11,25 +11,6 @@ export async function POST(req: Request) {
   let inscripcionId: string | null = null;
 
   try {
-    if (!accessToken) {
-      return NextResponse.json(
-        { error: "Falta MERCADOPAGO_ACCESS_TOKEN" },
-        { status: 500 }
-      );
-    }
-    if (!baseUrl) {
-      return NextResponse.json(
-        { error: "Falta NEXT_PUBLIC_BASE_URL" },
-        { status: 500 }
-      );
-    }
-    if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1")) {
-      return NextResponse.json(
-        { error: "NEXT_PUBLIC_BASE_URL no puede ser localhost para pagos" },
-        { status: 500 }
-      );
-    }
-
     const body = await req.json();
     const {
       nombre,
@@ -38,10 +19,10 @@ export async function POST(req: Request) {
       dni,
       instagram,
       escuderia_favorita,
-      categoria,
       campeonato_id,
       monto,
       acepto_condiciones,
+      metodo_pago_inscripcion, // "mercadopago" | "stand"
     } = body;
 
     if (
@@ -50,7 +31,6 @@ export async function POST(req: Request) {
       !telefono?.trim() ||
       !dni?.trim() ||
       !escuderia_favorita ||
-      !categoria ||
       !campeonato_id ||
       !monto ||
       acepto_condiciones !== true
@@ -86,10 +66,10 @@ export async function POST(req: Request) {
       );
     }
 
-
     const nombre_completo = `${nombre.trim()} ${apellido.trim()}`.trim();
+    const esPagoStand = metodo_pago_inscripcion === "stand";
 
-    // Crear inscripción pendiente
+    // Crear inscripción
     const { data: inscripcion, error: insertError } = await supabaseAdmin
       .from("campeonato_inscripciones")
       .insert([
@@ -102,9 +82,10 @@ export async function POST(req: Request) {
           dni: dni.trim(),
           instagram: instagram?.trim() || null,
           escuderia_favorita,
-          categoria,
+          categoria: null, // asignada por el staff
           monto: montoFinal,
-          estado_pago: "pendiente_pago",
+          estado_pago: esPagoStand ? "pendiente_pago_stand" : "pendiente_pago_online",
+          metodo_pago: esPagoStand ? "stand" : "mercadopago",
         },
       ])
       .select("id")
@@ -119,7 +100,46 @@ export async function POST(req: Request) {
 
     inscripcionId = inscripcion.id;
 
-    // Crear preferencia MP
+    // Datos de la inscripción para la pantalla de confirmación
+    const inscripcionData = {
+      id: inscripcion.id,
+      nombre: nombre.trim(),
+      apellido: apellido.trim(),
+      telefono: telefono.trim(),
+      dni: dni.trim(),
+      escuderia_favorita,
+      campeonato: campeonato.nombre,
+    };
+
+    // ── Flujo Stand: no genera preferencia MP ───────────────────────────────
+    if (esPagoStand) {
+      return NextResponse.json({
+        metodo: "stand",
+        inscripcion_id: inscripcion.id,
+        inscripcion: inscripcionData,
+      });
+    }
+
+    // ── Flujo Mercado Pago ───────────────────────────────────────────────────
+    if (!accessToken) {
+      return NextResponse.json(
+        { error: "Falta MERCADOPAGO_ACCESS_TOKEN" },
+        { status: 500 }
+      );
+    }
+    if (!baseUrl) {
+      return NextResponse.json(
+        { error: "Falta NEXT_PUBLIC_BASE_URL" },
+        { status: 500 }
+      );
+    }
+    if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1")) {
+      return NextResponse.json(
+        { error: "NEXT_PUBLIC_BASE_URL no puede ser localhost para pagos" },
+        { status: 500 }
+      );
+    }
+
     const preference = new Preference(client);
     const result = await preference.create({
       body: {
@@ -132,7 +152,6 @@ export async function POST(req: Request) {
             currency_id: "ARS",
           },
         ],
-        // Prefijo distintivo para separar de reservas (external_reference de reservas es solo el ID numérico)
         external_reference: `campeonato_inscripcion_${inscripcion.id}`,
         back_urls: {
           success: `${baseUrl}/campeonatos/exito`,
@@ -150,13 +169,14 @@ export async function POST(req: Request) {
       .eq("id", inscripcion.id);
 
     return NextResponse.json({
+      metodo: "mercadopago",
       id: result.id,
       init_point: result.init_point,
       sandbox_init_point: result.sandbox_init_point,
       inscripcion_id: inscripcion.id,
+      inscripcion: inscripcionData,
     });
   } catch (error: unknown) {
-    // Si falla MP, marcar inscripción como cancelada
     if (inscripcionId) {
       await supabaseAdmin
         .from("campeonato_inscripciones")
@@ -165,7 +185,7 @@ export async function POST(req: Request) {
     }
     const msg = error instanceof Error ? error.message : "Error desconocido";
     return NextResponse.json(
-      { error: "No se pudo crear la preferencia de pago", details: msg },
+      { error: "No se pudo procesar la inscripción", details: msg },
       { status: 500 }
     );
   }

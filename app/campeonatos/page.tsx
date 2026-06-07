@@ -130,14 +130,115 @@ function CatTab({ active, cat, onClick }: { active: boolean; cat: string; onClic
 
 // ─── Inscription Modal ────────────────────────────────────────────────────────
 
+type ConfirmacionData = {
+  nombre: string;
+  apellido: string;
+  telefono: string;
+  dni: string;
+  escuderia_favorita: string;
+  campeonato: string;
+  metodo: "mercadopago" | "stand";
+  init_point?: string;
+};
+
+function ConfirmacionScreen({ data, onClose }: { data: ConfirmacionData; onClose: () => void }) {
+  const esMp = data.metodo === "mercadopago";
+  return (
+    <div className="space-y-6">
+      <div className="text-center">
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-500/20 border border-green-500/30">
+          <svg className="h-8 w-8 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <h3 className="text-xl font-black text-white mb-2">¡Inscripción registrada!</h3>
+      </div>
+
+      {/* Datos registrados */}
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-2">
+        <p className="text-xs font-black uppercase tracking-widest text-zinc-500 mb-3">Datos registrados</p>
+        {[
+          ["Nombre", data.nombre],
+          ["Apellido", data.apellido],
+          ["Teléfono", data.telefono],
+          ["DNI", data.dni],
+          ["Escudería", data.escuderia_favorita],
+          ["Campeonato", data.campeonato],
+        ].map(([label, value]) => (
+          <div key={label} className="flex justify-between text-sm">
+            <span className="text-zinc-500">{label}</span>
+            <span className="font-bold text-white">{value}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Mensaje según método de pago */}
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-300 leading-relaxed space-y-3">
+        <p>Tu inscripción fue registrada correctamente.</p>
+        {esMp ? (
+          <p>
+            Ahora debés acercarte al stand de SIM Argentina para realizar tu tanda clasificatoria
+            y registrar tu mejor tiempo. Con ese tiempo serás ubicado en una categoría competitiva.
+          </p>
+        ) : (
+          <p>
+            Recordá que deberás abonar la inscripción al llegar al stand. Luego podrás realizar
+            tu tanda clasificatoria y registrar tu mejor tiempo para ser ubicado en una categoría
+            competitiva.
+          </p>
+        )}
+      </div>
+
+      {/* Ubicación */}
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-sm space-y-2">
+        <p className="text-xs font-black uppercase tracking-widest text-zinc-500 mb-2">Dónde encontrarnos</p>
+        <p className="font-bold text-white">SIM Argentina</p>
+        <p className="text-zinc-400">Nuevo Centro Shopping</p>
+        <p className="text-zinc-400">Av. Duarte Quirós 1400, Córdoba</p>
+        <a
+          href="https://maps.google.com/?q=Av.+Duarte+Quiros+1400+Cordoba"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 flex items-center justify-center gap-2 w-full rounded-xl border border-zinc-700 py-2.5 text-sm font-bold text-zinc-300 hover:border-zinc-500 hover:text-white transition-all"
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Cómo llegar
+        </a>
+      </div>
+
+      {/* CTA */}
+      {esMp && data.init_point ? (
+        <button
+          onClick={() => { window.location.href = data.init_point!; }}
+          className="w-full rounded-2xl bg-red-600 py-4 font-black text-white text-base hover:bg-red-500 transition-all"
+        >
+          Ir a pagar con Mercado Pago →
+        </button>
+      ) : (
+        <button
+          onClick={onClose}
+          className="w-full rounded-2xl bg-zinc-800 py-4 font-black text-white text-base hover:bg-zinc-700 transition-all"
+        >
+          Entendido
+        </button>
+      )}
+    </div>
+  );
+}
+
 function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onClose: () => void }) {
   const [form, setForm] = useState({
     nombre: "", apellido: "", telefono: "", dni: "",
-    instagram: "", escuderia_favorita: "", categoria: campeonato.categorias?.[0] || "oro",
+    instagram: "", escuderia_favorita: "",
     acepto_condiciones: false,
+    metodo_pago_inscripcion: "mercadopago" as "mercadopago" | "stand",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [confirmacion, setConfirmacion] = useState<ConfirmacionData | null>(null);
 
   const set = (k: string, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -151,11 +252,31 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
       const res = await fetch("/api/campeonatos/preference", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, campeonato_id: campeonato.id, monto: campeonato.precio_inscripcion }),
+        body: JSON.stringify({
+          nombre: form.nombre,
+          apellido: form.apellido,
+          telefono: form.telefono,
+          dni: form.dni,
+          instagram: form.instagram,
+          escuderia_favorita: form.escuderia_favorita,
+          acepto_condiciones: form.acepto_condiciones,
+          metodo_pago_inscripcion: form.metodo_pago_inscripcion,
+          campeonato_id: campeonato.id,
+          monto: campeonato.precio_inscripcion,
+        }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data.error || "Error al procesar el pago."); return; }
-      window.location.href = data.init_point || data.sandbox_init_point;
+      if (!res.ok) { setError(data.error || "Error al procesar la inscripción."); return; }
+      setConfirmacion({
+        nombre: form.nombre,
+        apellido: form.apellido,
+        telefono: form.telefono,
+        dni: form.dni,
+        escuderia_favorita: form.escuderia_favorita,
+        campeonato: campeonato.nombre,
+        metodo: data.metodo,
+        init_point: data.init_point || data.sandbox_init_point,
+      });
     } catch {
       setError("Error de conexión. Intentá de nuevo.");
     } finally {
@@ -171,84 +292,112 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
       <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-zinc-800 bg-zinc-950 p-6">
         <button onClick={onClose} className="absolute right-4 top-4 text-zinc-500 hover:text-white text-2xl leading-none">×</button>
 
-        <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500 mb-2">Inscripción</p>
-        <h2 className="text-xl font-black text-white mb-1">{campeonato.nombre}</h2>
-        <p className="text-sm text-zinc-400 mb-6">
-          Precio: <strong className="text-white">${campeonato.precio_inscripcion.toLocaleString()}</strong>
-        </p>
+        {confirmacion ? (
+          <ConfirmacionScreen data={confirmacion} onClose={onClose} />
+        ) : (
+          <>
+            <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500 mb-2">Inscripción</p>
+            <h2 className="text-xl font-black text-white mb-1">{campeonato.nombre}</h2>
+            <p className="text-sm text-zinc-400 mb-6">
+              Precio: <strong className="text-white">${campeonato.precio_inscripcion.toLocaleString()}</strong>
+            </p>
 
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-bold text-zinc-400">Nombre *</label>
-              <input className={inp} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} />
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-zinc-400">Nombre *</label>
+                  <input className={inp} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-zinc-400">Apellido *</label>
+                  <input className={inp} value={form.apellido} onChange={(e) => set("apellido", e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-bold text-zinc-400">Teléfono *</label>
+                <input className={inp} type="tel" value={form.telefono} onChange={(e) => set("telefono", e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-bold text-zinc-400">DNI *</label>
+                <input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-bold text-zinc-400">Escudería favorita de F1 *</label>
+                <select className={sel} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
+                  <option value="">Seleccioná una escudería</option>
+                  {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-bold text-zinc-400">Instagram (opcional)</label>
+                <input className={inp} placeholder="@usuario" value={form.instagram} onChange={(e) => set("instagram", e.target.value)} />
+              </div>
+
+              {/* Método de pago */}
+              <div>
+                <label className="mb-2 block text-xs font-bold text-zinc-400 uppercase tracking-widest">Método de pago *</label>
+                <div className="space-y-2">
+                  {[
+                    { value: "mercadopago", label: "Pagar ahora con Mercado Pago", desc: "Pago online seguro" },
+                    { value: "stand", label: "Pagar en el stand", desc: "Abonás cuando venís a SIM Argentina" },
+                  ].map((opt) => (
+                    <label
+                      key={opt.value}
+                      className={`flex items-center gap-3 rounded-xl border p-4 cursor-pointer transition-all ${
+                        form.metodo_pago_inscripcion === opt.value
+                          ? "border-red-500 bg-red-600/10"
+                          : "border-zinc-700 hover:border-zinc-500"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="metodo_pago"
+                        value={opt.value}
+                        checked={form.metodo_pago_inscripcion === opt.value}
+                        onChange={() => set("metodo_pago_inscripcion", opt.value)}
+                        className="accent-red-500"
+                      />
+                      <div>
+                        <p className="text-sm font-bold text-white">{opt.label}</p>
+                        <p className="text-xs text-zinc-500">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* T&C */}
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.acepto_condiciones}
+                  onChange={(e) => set("acepto_condiciones", e.target.checked)}
+                  className="mt-1 accent-red-500"
+                />
+                <span className="text-sm text-zinc-400">
+                  Antes de inscribirte, confirmá que leíste y aceptás las condiciones de uso.
+                  Para utilizar los simuladores, la <strong className="text-zinc-300">altura mínima es de 1,40 m</strong> y
+                  el <strong className="text-zinc-300">peso máximo permitido es de 110 kg</strong>.
+                  Confirmo que los datos ingresados son correctos.
+                </span>
+              </label>
+
+              {error && <p className="rounded-xl bg-red-900/30 border border-red-500/30 px-4 py-3 text-sm text-red-400">{error}</p>}
+
+              <button
+                onClick={submit}
+                disabled={loading}
+                className="w-full rounded-2xl bg-red-600 py-4 font-black text-white text-lg hover:bg-red-500 transition-all disabled:opacity-50"
+              >
+                {loading
+                  ? "Procesando..."
+                  : form.metodo_pago_inscripcion === "stand"
+                  ? "Inscribirme — pago en el stand"
+                  : `Inscribirme — pagar $${campeonato.precio_inscripcion.toLocaleString()} online`}
+              </button>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-bold text-zinc-400">Apellido *</label>
-              <input className={inp} value={form.apellido} onChange={(e) => set("apellido", e.target.value)} />
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-bold text-zinc-400">Teléfono *</label>
-            <input className={inp} type="tel" value={form.telefono} onChange={(e) => set("telefono", e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-bold text-zinc-400">DNI *</label>
-            <input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-bold text-zinc-400">Escudería favorita de F1 *</label>
-            <select className={sel} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
-              <option value="">Seleccioná una escudería</option>
-              {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-bold text-zinc-400">Categoría *</label>
-            <div className="flex gap-3">
-              {(campeonato.categorias || ["oro", "plata", "bronce"]).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => set("categoria", c)}
-                  className={`flex-1 rounded-xl py-2 text-sm font-black uppercase transition-all border ${
-                    form.categoria === c
-                      ? "bg-red-600 border-red-500 text-white"
-                      : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
-                  }`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-bold text-zinc-400">Instagram (opcional)</label>
-            <input className={inp} placeholder="@usuario" value={form.instagram} onChange={(e) => set("instagram", e.target.value)} />
-          </div>
-
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={form.acepto_condiciones}
-              onChange={(e) => set("acepto_condiciones", e.target.checked)}
-              className="mt-1 accent-red-500"
-            />
-            <span className="text-sm text-zinc-400">
-              Acepto los términos y condiciones del campeonato. Confirmo que los datos ingresados son correctos.
-            </span>
-          </label>
-
-          {error && <p className="rounded-xl bg-red-900/30 border border-red-500/30 px-4 py-3 text-sm text-red-400">{error}</p>}
-
-          <button
-            onClick={submit}
-            disabled={loading}
-            className="w-full rounded-2xl bg-red-600 py-4 font-black text-white text-lg hover:bg-red-500 transition-all disabled:opacity-50"
-          >
-            {loading ? "Procesando..." : `Pagar $${campeonato.precio_inscripcion.toLocaleString()} con Mercado Pago`}
-          </button>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

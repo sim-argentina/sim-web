@@ -68,7 +68,7 @@ type Inscripcion = {
   dni: string;
   instagram: string | null;
   escuderia_favorita: string;
-  categoria: string;
+  categoria: string | null;
   campeonato_id: string;
   monto: number;
   estado_pago: string;
@@ -151,15 +151,22 @@ function Badge({ v }: { v: string }) {
   const map: Record<string, string> = {
     valido: "bg-green-900 text-green-300", pagado: "bg-green-900 text-green-300",
     activo: "bg-green-900 text-green-300", pendiente: "bg-yellow-900 text-yellow-300",
-    pendiente_pago: "bg-yellow-900 text-yellow-300", proximo: "bg-blue-900 text-blue-300",
+    pendiente_pago: "bg-yellow-900 text-yellow-300",
+    pendiente_pago_online: "bg-blue-900 text-blue-300",
+    pendiente_pago_stand: "bg-orange-900 text-orange-300",
+    proximo: "bg-blue-900 text-blue-300",
     anulado: "bg-zinc-800 text-zinc-400", finalizado: "bg-zinc-800 text-zinc-400",
     rechazado: "bg-red-900 text-red-300", cancelado: "bg-zinc-800 text-zinc-400",
     oro: "bg-yellow-900 text-yellow-300", plata: "bg-zinc-700 text-zinc-200",
     bronce: "bg-orange-900 text-orange-300",
   };
+  const labels: Record<string, string> = {
+    pendiente_pago_online: "Pend. Online",
+    pendiente_pago_stand: "Pend. Stand",
+  };
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase ${map[v] ?? "bg-zinc-800 text-zinc-400"}`}>
-      {v.replace(/_/g, " ")}
+      {labels[v] ?? v.replace(/_/g, " ")}
     </span>
   );
 }
@@ -756,6 +763,20 @@ function TabSorteos({ sorteos, onRefresh }: { sorteos: Sorteo[]; onRefresh: () =
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [subiendo, setSubiendo] = useState(false);
+  const imgRef = useRef<HTMLInputElement>(null);
+
+  const subirImagen = async (file: File) => {
+    setSubiendo(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/admin/sorteos/upload", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) { setMsg(data.error || "Error subiendo imagen"); return; }
+      set("imagen_url", data.url);
+    } finally { setSubiendo(false); }
+  };
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const startEdit = (s: Sorteo) => {
@@ -788,7 +809,16 @@ function TabSorteos({ sorteos, onRefresh }: { sorteos: Sorteo[]; onRefresh: () =
             <Field label="Título *"><input className={inp} value={form.titulo} onChange={(e) => set("titulo", e.target.value)} /></Field>
             <Field label="Premio *"><input className={inp} value={form.premio} onChange={(e) => set("premio", e.target.value)} /></Field>
             <Field label="Estado"><select className={sel} value={form.estado} onChange={(e) => set("estado", e.target.value)}>{ESTADOS_CAMP.map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>
-            <Field label="Imagen URL"><input className={inp} value={form.imagen_url} onChange={(e) => set("imagen_url", e.target.value)} /></Field>
+            <Field label="Imagen">
+              <div className="space-y-2">
+                <button type="button" onClick={() => imgRef.current?.click()} disabled={subiendo}
+                  className="w-full rounded-xl border border-dashed border-white/20 py-3 text-sm font-bold text-zinc-400 hover:border-zinc-500 hover:text-white transition disabled:opacity-50">
+                  {subiendo ? "Subiendo..." : form.imagen_url ? "Cambiar foto" : "Subir foto"}
+                </button>
+                {form.imagen_url && <img src={form.imagen_url} alt="preview" className="h-24 w-full object-cover rounded-xl" />}
+                <input ref={imgRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) subirImagen(f); e.target.value = ""; }} />
+              </div>
+            </Field>
             <Field label="Fecha inicio"><input type="date" className={inp} value={form.fecha_inicio} onChange={(e) => set("fecha_inicio", e.target.value)} /></Field>
             <Field label="Fecha fin"><input type="date" className={inp} value={form.fecha_fin} onChange={(e) => set("fecha_fin", e.target.value)} /></Field>
             <Field label="Descripción"><textarea className={`${inp} resize-none`} rows={2} value={form.descripcion} onChange={(e) => set("descripcion", e.target.value)} /></Field>
@@ -870,25 +900,67 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
     if (!confirm("¿Cancelar esta inscripción?")) return;
     setCancellingId(id);
     try {
-      const res = await fetch(`/api/admin/campeonatos/inscripciones/${id}`, { method: "PATCH" });
+      const res = await fetch(`/api/admin/campeonatos/inscripciones/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "cancelar" }),
+      });
       if (!res.ok) { const d = await res.json(); alert(d.error || "Error al cancelar"); return; }
       onRefresh();
     } finally { setCancellingId(null); }
   };
 
-  const colCount = role === "admin" ? 11 : 10;
+  // ── Edit state ───────────────────────────────────────────────────────────────
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Partial<Inscripcion & { monto: string }>>({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editMsg, setEditMsg] = useState("");
+
+  const startEdit = (i: Inscripcion) => {
+    setEditId(i.id);
+    setEditForm({
+      nombre: i.nombre, apellido: i.apellido, telefono: i.telefono,
+      dni: i.dni, instagram: i.instagram || "", escuderia_favorita: i.escuderia_favorita,
+      categoria: i.categoria || "", estado_pago: i.estado_pago,
+      monto: String(i.monto), metodo_pago: i.metodo_pago || "",
+    });
+    setEditMsg("");
+  };
+
+  const cancelEdit = () => { setEditId(null); setEditForm({}); setEditMsg(""); };
+
+  const submitEdit = async () => {
+    if (!editId) return;
+    setEditSaving(true); setEditMsg("");
+    try {
+      const res = await fetch(`/api/admin/campeonatos/inscripciones/${editId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...editForm,
+          monto: editForm.monto ? Number(editForm.monto) : undefined,
+          instagram: editForm.instagram || null,
+          categoria: editForm.categoria || null,
+          metodo_pago: editForm.metodo_pago || null,
+        }),
+      });
+      if (!res.ok) { const d = await res.json(); setEditMsg(d.error || "Error al guardar"); return; }
+      cancelEdit(); onRefresh();
+    } finally { setEditSaving(false); }
+  };
+
+  const colCount = 12; // siempre 12 con acciones
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-lg font-black text-white">Inscripciones</h2>
-        {!showForm && (
+        {!showForm && !editId && (
           <button onClick={() => setShowForm(true)} className="rounded-xl bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500">
             + Nueva
           </button>
         )}
       </div>
 
+      {/* ── Formulario nueva inscripción ── */}
       {showForm && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
           <h3 className="font-black text-white">Nueva inscripción (pago en stand)</h3>
@@ -904,8 +976,9 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                 {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
               </select>
             </Field>
-            <Field label="Categoría *">
+            <Field label="Categoría">
               <select className={sel} value={form.categoria} onChange={(e) => set("categoria", e.target.value)}>
+                <option value="">Sin asignar</option>
                 {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
               </select>
             </Field>
@@ -930,11 +1003,66 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
         </div>
       )}
 
+      {/* ── Formulario editar inscripción ── */}
+      {editId && (
+        <div className="rounded-2xl border border-blue-500/30 bg-blue-900/10 p-6 space-y-4">
+          <h3 className="font-black text-white">Editar inscripción</h3>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field label="Nombre"><input className={inp} value={editForm.nombre || ""} onChange={(e) => setEditForm((f) => ({ ...f, nombre: e.target.value }))} /></Field>
+            <Field label="Apellido"><input className={inp} value={editForm.apellido || ""} onChange={(e) => setEditForm((f) => ({ ...f, apellido: e.target.value }))} /></Field>
+            <Field label="Teléfono"><input className={inp} value={editForm.telefono || ""} onChange={(e) => setEditForm((f) => ({ ...f, telefono: e.target.value }))} /></Field>
+            <Field label="DNI"><input className={inp} value={editForm.dni || ""} onChange={(e) => setEditForm((f) => ({ ...f, dni: e.target.value }))} /></Field>
+            <Field label="Instagram"><input className={inp} value={editForm.instagram || ""} onChange={(e) => setEditForm((f) => ({ ...f, instagram: e.target.value }))} placeholder="@usuario" /></Field>
+            <Field label="Escudería">
+              <select className={sel} value={editForm.escuderia_favorita || ""} onChange={(e) => setEditForm((f) => ({ ...f, escuderia_favorita: e.target.value }))}>
+                <option value="">Seleccionar...</option>
+                {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </Field>
+            <Field label="Categoría">
+              <select className={sel} value={editForm.categoria || ""} onChange={(e) => setEditForm((f) => ({ ...f, categoria: e.target.value }))}>
+                <option value="">Sin asignar</option>
+                {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+              </select>
+            </Field>
+            <Field label="Estado">
+              <select className={sel} value={editForm.estado_pago || ""} onChange={(e) => setEditForm((f) => ({ ...f, estado_pago: e.target.value }))}>
+                <option value="pendiente_pago_online">Pendiente online</option>
+                <option value="pendiente_pago_stand">Pendiente stand</option>
+                <option value="pagado">Pagado</option>
+                <option value="rechazado">Rechazado</option>
+              </select>
+            </Field>
+            <Field label="Monto"><input type="number" className={inp} value={editForm.monto || ""} onChange={(e) => setEditForm((f) => ({ ...f, monto: e.target.value }))} /></Field>
+            <Field label="Método de pago">
+              <select className={sel} value={editForm.metodo_pago || ""} onChange={(e) => setEditForm((f) => ({ ...f, metodo_pago: e.target.value }))}>
+                <option value="">Sin especificar</option>
+                <option value="mercadopago">Mercado Pago</option>
+                <option value="stand">Stand</option>
+                {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </Field>
+          </div>
+          {editMsg && <p className="text-sm font-bold text-red-400">{editMsg}</p>}
+          <div className="flex gap-3">
+            <button onClick={submitEdit} disabled={editSaving} className="rounded-xl bg-blue-600 px-6 py-2 font-bold text-white hover:bg-blue-500 disabled:opacity-50">{editSaving ? "Guardando..." : "Guardar cambios"}</button>
+            <button onClick={cancelEdit} className="rounded-xl bg-zinc-800 px-6 py-2 font-bold text-white hover:bg-zinc-700">Cancelar</button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3">
         <input className={`${inp} flex-1 min-w-[140px]`} placeholder="Nombre, DNI o teléfono..." value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} />
         <select className={`${sel} min-w-[160px]`} value={filters.campeonato_id} onChange={(e) => setFilters((f) => ({ ...f, campeonato_id: e.target.value }))}><option value="">Todos los campeonatos</option>{campeonatos.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select>
         <select className={`${sel} min-w-[130px]`} value={filters.categoria} onChange={(e) => setFilters((f) => ({ ...f, categoria: e.target.value }))}><option value="">Todas las cat.</option>{CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-        <select className={`${sel} min-w-[140px]`} value={filters.estado_pago} onChange={(e) => setFilters((f) => ({ ...f, estado_pago: e.target.value }))}><option value="">Todos los estados</option><option value="pagado">Pagado</option><option value="pendiente_pago">Pendiente</option><option value="rechazado">Rechazado</option><option value="cancelado">Cancelado</option></select>
+        <select className={`${sel} min-w-[160px]`} value={filters.estado_pago} onChange={(e) => setFilters((f) => ({ ...f, estado_pago: e.target.value }))}>
+          <option value="">Todos los estados</option>
+          <option value="pagado">Pagado</option>
+          <option value="pendiente_pago_online">Pendiente online</option>
+          <option value="pendiente_pago_stand">Pendiente stand</option>
+          <option value="rechazado">Rechazado</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
       </div>
       <div className="flex gap-4 text-sm">
         <span className="text-zinc-400">Total: <strong className="text-white">{filtered.length}</strong></span>
@@ -945,22 +1073,22 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
         <table className="w-full text-sm">
           <thead className="bg-zinc-900/80 text-zinc-400">
             <tr>
-              {["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Campeonato", "Monto", "Estado", "Fecha"].map((h) => (
+              {["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Campeonato", "Monto", "Estado", "Fecha", "Editar"].map((h) => (
                 <th key={h} className="px-4 py-3 text-left font-bold uppercase text-xs">{h}</th>
               ))}
-              {role === "admin" && <th className="px-4 py-3 text-left font-bold uppercase text-xs">Acción</th>}
+              {role === "admin" && <th className="px-4 py-3 text-left font-bold uppercase text-xs">Cancelar</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {filtered.length === 0 && <tr><td colSpan={colCount} className="px-4 py-8 text-center text-zinc-500">Sin inscripciones</td></tr>}
             {filtered.map((i) => (
-              <tr key={i.id} className="bg-black hover:bg-white/[0.02] transition-colors">
+              <tr key={i.id} className={`transition-colors ${editId === i.id ? "bg-blue-900/10" : "bg-black hover:bg-white/[0.02]"}`}>
                 <td className="px-4 py-3 font-bold text-white">{i.nombre_completo}</td>
                 <td className="px-4 py-3 text-zinc-400">{i.dni}</td>
                 <td className="px-4 py-3 text-zinc-400">{i.telefono}</td>
                 <td className="px-4 py-3 text-zinc-400">{i.instagram || "—"}</td>
                 <td className="px-4 py-3 text-zinc-300">{i.escuderia_favorita}</td>
-                <td className="px-4 py-3"><Badge v={i.categoria} /></td>
+                <td className="px-4 py-3">{i.categoria ? <Badge v={i.categoria} /> : <span className="text-zinc-600 text-xs italic">sin asignar</span>}</td>
                 <td className="px-4 py-3 text-zinc-400">{i.campeonatos?.nombre || "—"}</td>
                 <td className="px-4 py-3 font-bold text-white">
                   {formatoDinero(i.monto)}
@@ -968,6 +1096,14 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                 </td>
                 <td className="px-4 py-3"><Badge v={i.estado_pago} /></td>
                 <td className="px-4 py-3 text-zinc-400 text-xs">{i.created_at?.slice(0, 10)}</td>
+                <td className="px-4 py-3">
+                  <button
+                    onClick={() => editId === i.id ? cancelEdit() : startEdit(i)}
+                    className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-bold text-blue-400 hover:bg-zinc-700"
+                  >
+                    {editId === i.id ? "Cerrar" : "Editar"}
+                  </button>
+                </td>
                 {role === "admin" && (
                   <td className="px-4 py-3">
                     {i.estado_pago !== "cancelado" && (
