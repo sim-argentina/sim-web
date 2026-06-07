@@ -42,7 +42,10 @@ export async function GET() {
     const campeonatosConCupos = campeonatos.map((c) => ({
       ...c,
       inscriptos: insCount[c.id] || 0,
-      cupos_disponibles: Math.max(0, (c.cupos_maximos || 0) - (insCount[c.id] || 0)),
+      // cupos_maximos === 0 significa sin límite → cupos_disponibles = null
+      cupos_disponibles: c.cupos_maximos === 0
+        ? null
+        : Math.max(0, c.cupos_maximos - (insCount[c.id] || 0)),
     }));
 
     // Rankings: mejor tiempo por piloto por categoría

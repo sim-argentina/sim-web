@@ -15,7 +15,7 @@ type Campeonato = {
   precio_inscripcion: number;
   cupos_maximos: number;
   inscriptos: number;
-  cupos_disponibles: number;
+  cupos_disponibles: number | null; // null = sin límite
   inscripcion_habilitada: boolean;
   imagen_url: string | null;
   categorias: string[];
@@ -281,12 +281,14 @@ function SecCampeonatos({ campeonatos, onInscribir }: { campeonatos: Campeonato[
             {c.fecha_inicio && (
               <p>📅 {c.fecha_inicio} {c.fecha_fin && `→ ${c.fecha_fin}`}</p>
             )}
-            <p>👥 {c.inscriptos}/{c.cupos_maximos} inscriptos · <span className={c.cupos_disponibles > 0 ? "text-green-400" : "text-red-400"}>{c.cupos_disponibles} cupos disponibles</span></p>
+            <p>👥 {c.inscriptos} inscriptos · <span className={c.cupos_disponibles === null || c.cupos_disponibles > 0 ? "text-green-400" : "text-red-400"}>
+              {c.cupos_disponibles === null ? "Sin límite de cupos" : `${c.cupos_disponibles} cupos disponibles`}
+            </span></p>
             <p>💰 ${c.precio_inscripcion.toLocaleString()} / inscripción</p>
           </div>
           <button
             onClick={() => onInscribir(c)}
-            disabled={!c.inscripcion_habilitada || c.cupos_disponibles <= 0 || c.estado === "finalizado"}
+            disabled={!c.inscripcion_habilitada || (c.cupos_disponibles !== null && c.cupos_disponibles <= 0) || c.estado === "finalizado"}
             className="w-full rounded-2xl bg-red-600 py-3 font-black text-white hover:bg-red-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {c.estado === "finalizado" ? "Finalizado" : !c.inscripcion_habilitada ? "Inscripción cerrada" : c.cupos_disponibles <= 0 ? "Sin cupos" : "Inscribirme →"}

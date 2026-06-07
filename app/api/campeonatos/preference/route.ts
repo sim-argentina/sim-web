@@ -86,6 +86,22 @@ export async function POST(req: Request) {
       );
     }
 
+    // Verificar cupos solo si cupos_maximos > 0 (0 = sin límite)
+    if (campeonato.cupos_maximos > 0) {
+      const { count } = await supabaseAdmin
+        .from("campeonato_inscripciones")
+        .select("id", { count: "exact", head: true })
+        .eq("campeonato_id", campeonato_id)
+        .eq("estado_pago", "pagado");
+
+      if ((count ?? 0) >= campeonato.cupos_maximos) {
+        return NextResponse.json(
+          { error: "Ya no quedan cupos disponibles para este campeonato" },
+          { status: 400 }
+        );
+      }
+    }
+
     const nombre_completo = `${nombre.trim()} ${apellido.trim()}`.trim();
 
     // Crear inscripción pendiente
