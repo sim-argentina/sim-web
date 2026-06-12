@@ -136,9 +136,9 @@ function EstadoBadge({ estado }: { estado: string }) {
 
 function StatCard({ color, label, children }: { color: string; label: string; children: ReactNode }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-      <div className={`absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r ${color}`} />
-      <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500 mb-2">{label}</p>
+    <div className="relative min-w-0 px-4 py-3">
+      <div className={`absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r ${color}`} />
+      <p className="text-[10px] font-black uppercase tracking-[0.25em] text-zinc-500 mb-1.5">{label}</p>
       {children}
     </div>
   );
@@ -536,17 +536,6 @@ function PilotoModal({ piloto, onClose }: { piloto: PilotoStat; onClose: () => v
               </div>
             ))}
           </div>
-          {piloto.mejor_tiempo && (
-            <div className="mt-3 flex items-center gap-3 rounded-xl bg-green-500/5 border border-green-500/15 px-4 py-3">
-              <svg className="h-4 w-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div>
-                <span className="font-mono text-lg font-black text-green-400">{piloto.mejor_tiempo}</span>
-                <span className="text-xs text-zinc-500 ml-2">mejor tiempo</span>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Historial */}
@@ -559,7 +548,7 @@ function PilotoModal({ piloto, onClose }: { piloto: PilotoStat; onClose: () => v
               <table className="w-full text-sm">
                 <thead className="bg-zinc-900/80 border-b border-zinc-800">
                   <tr>
-                    {["Sem", "Circuito", "Tiempo", "Pos", "Pts"].map((h) => (
+                    {["Circuito", "Tiempo", "Pos", "Pts"].map((h) => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-zinc-500">{h}</th>
                     ))}
                   </tr>
@@ -567,7 +556,6 @@ function PilotoModal({ piloto, onClose }: { piloto: PilotoStat; onClose: () => v
                 <tbody className="divide-y divide-zinc-800/50">
                   {sorted.map((h, i) => (
                     <tr key={i} className="hover:bg-zinc-800/30 transition-colors">
-                      <td className="px-4 py-3 text-zinc-500 font-mono text-xs">{h.semana || "—"}</td>
                       <td className="px-4 py-3 text-zinc-300">{h.circuito || "—"}</td>
                       <td className="px-4 py-3 font-mono text-green-400 font-bold">{h.tiempo || "—"}</td>
                       <td className="px-4 py-3 font-black text-white">{h.posicion}</td>
@@ -587,30 +575,24 @@ function PilotoModal({ piloto, onClose }: { piloto: PilotoStat; onClose: () => v
 // ─── Section: Clasificación ───────────────────────────────────────────────────
 
 function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]; campeonatos: Campeonato[] }) {
-  const [filtros, setFiltros] = useState({ campeonato_id: "", categoria: "", piloto: "", circuito: "", semana: "" });
+  const [filtros, setFiltros] = useState({ campeonato_id: "", categoria: "", piloto: "", circuito: "" });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [pilotoSeleccionado, setPilotoSeleccionado] = useState<PilotoStat | null>(null);
 
   const setFiltro = (k: keyof typeof filtros, v: string) => setFiltros((f) => ({ ...f, [k]: v }));
-  const limpiarFiltros = () => setFiltros({ campeonato_id: "", categoria: "", piloto: "", circuito: "", semana: "" });
+  const limpiarFiltros = () => setFiltros({ campeonato_id: "", categoria: "", piloto: "", circuito: "" });
   const activeFilters = Object.values(filtros).filter(Boolean).length;
 
   const circuitos = useMemo(
     () => Array.from(new Set(resultados.map((r) => r.circuito).filter((c): c is string => Boolean(c)))).sort(),
     [resultados]
   );
-  const semanas = useMemo(
-    () => Array.from(new Set(resultados.map((r) => r.semana).filter((v) => v != null))).sort((a, b) => a - b),
-    [resultados]
-  );
-
   const filtrados = useMemo(
     () =>
       resultados.filter((r) => {
         if (filtros.campeonato_id && r.campeonato_id !== filtros.campeonato_id) return false;
         if (filtros.categoria && r.categoria !== filtros.categoria) return false;
         if (filtros.circuito && r.circuito !== filtros.circuito) return false;
-        if (filtros.semana && String(r.semana) !== filtros.semana) return false;
         if (filtros.piloto && !r.nombre_completo.toLowerCase().includes(filtros.piloto.toLowerCase())) return false;
         return true;
       }),
@@ -666,16 +648,6 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
     () => pilotos.reduce<PilotoStat | null>((best, p) => (!best || p.victorias > best.victorias ? p : best), null),
     [pilotos]
   );
-  const mejorTiempoAbs = useMemo(
-    () =>
-      filtrados.reduce<{ piloto: string; tiempo: string; circuito: string | null; ts: number } | null>((best, r) => {
-        if (!r.tiempo || !r.tiempo_segundos) return best;
-        if (!best || r.tiempo_segundos < best.ts)
-          return { piloto: r.nombre_completo, tiempo: r.tiempo, circuito: r.circuito, ts: r.tiempo_segundos };
-        return best;
-      }, null),
-    [filtrados]
-  );
 
   // ── UI helpers ──
   const sel =
@@ -701,58 +673,46 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
 
   return (
     <>
-      <div className="space-y-5">
+      <div className="space-y-4">
 
-        {/* ── Stats cards ── */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {/* ── Stats strip ── */}
+        <div className="grid grid-cols-1 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/50 divide-y divide-zinc-800 sm:grid-cols-3 sm:divide-y-0 sm:divide-x">
           <StatCard color="from-yellow-400 to-yellow-600" label="Líder">
             {lider ? (
-              <>
-                <p className="text-sm font-black text-white leading-tight truncate">{lider.piloto}</p>
-                <p className="text-2xl font-black text-yellow-400 mt-1">
-                  {lider.puntos} <span className="text-xs text-zinc-500">pts</span>
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-sm font-black text-white truncate">{lider.piloto}</p>
+                <p className="shrink-0 text-xl font-black text-yellow-400 tabular-nums">
+                  {lider.puntos} <span className="text-[10px] font-bold text-zinc-500">PTS</span>
                 </p>
-              </>
+              </div>
             ) : (
-              <p className="text-zinc-600 text-sm mt-2">Sin datos</p>
+              <p className="text-sm text-zinc-600">Sin datos</p>
             )}
           </StatCard>
 
-          <StatCard color="from-green-400 to-emerald-600" label="Mejor Tiempo">
-            {mejorTiempoAbs ? (
-              <>
-                <p className="font-mono text-xl font-black text-green-400">{mejorTiempoAbs.tiempo}</p>
-                <p className="text-xs text-zinc-500 truncate mt-1">{mejorTiempoAbs.piloto}</p>
-                {mejorTiempoAbs.circuito && (
-                  <p className="text-xs text-zinc-600 truncate">{mejorTiempoAbs.circuito}</p>
-                )}
-              </>
-            ) : (
-              <p className="text-zinc-600 text-sm mt-2">Sin datos</p>
-            )}
-          </StatCard>
-
-          <StatCard color="from-red-500 to-red-700" label="+ Victorias">
+          <StatCard color="from-red-500 to-red-700" label="Más victorias">
             {masVictorias && masVictorias.victorias > 0 ? (
-              <>
-                <p className="text-sm font-black text-white leading-tight truncate">{masVictorias.piloto}</p>
-                <p className="text-2xl font-black text-red-500 mt-1">
-                  {masVictorias.victorias} <span className="text-xs text-zinc-500">vic.</span>
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-sm font-black text-white truncate">{masVictorias.piloto}</p>
+                <p className="shrink-0 text-xl font-black text-red-500 tabular-nums">
+                  {masVictorias.victorias} <span className="text-[10px] font-bold text-zinc-500">VIC</span>
                 </p>
-              </>
+              </div>
             ) : (
-              <p className="text-zinc-600 text-sm mt-2">Sin datos</p>
+              <p className="text-sm text-zinc-600">Sin datos</p>
             )}
           </StatCard>
 
           <StatCard color="from-blue-400 to-blue-600" label="Participantes">
-            <p className="text-4xl font-black text-blue-400 mt-1">{pilotos.length}</p>
-            <p className="text-xs text-zinc-500 mt-1">pilotos</p>
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-sm font-bold text-zinc-500">Pilotos en pista</p>
+              <p className="shrink-0 text-xl font-black text-blue-400 tabular-nums">{pilotos.length}</p>
+            </div>
           </StatCard>
         </div>
 
         {/* ── Filter bar: desktop ── */}
-        <div className="hidden md:flex flex-wrap gap-2.5 items-center bg-zinc-900/40 rounded-2xl border border-zinc-800 p-4">
+        <div className="hidden md:flex flex-wrap gap-2 items-center bg-zinc-900/40 rounded-xl border border-zinc-800 p-3">
           <select className={sel} value={filtros.campeonato_id} onChange={(e) => setFiltro("campeonato_id", e.target.value)}>
             <option value="">Todos los campeonatos</option>
             {campeonatos.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -773,12 +733,6 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
             <option value="">Todos los circuitos</option>
             {circuitos.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          {semanas.length > 0 && (
-            <select className={sel} value={filtros.semana} onChange={(e) => setFiltro("semana", e.target.value)}>
-              <option value="">Todas las semanas</option>
-              {semanas.map((s) => <option key={s} value={String(s)}>Semana {s}</option>)}
-            </select>
-          )}
           {activeFilters > 0 && (
             <button
               onClick={limpiarFiltros}
@@ -836,12 +790,6 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
                 <option value="">Todos los circuitos</option>
                 {circuitos.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
-              {semanas.length > 0 && (
-                <select className={`${sel} w-full`} value={filtros.semana} onChange={(e) => setFiltro("semana", e.target.value)}>
-                  <option value="">Todas las semanas</option>
-                  {semanas.map((s) => <option key={s} value={String(s)}>Semana {s}</option>)}
-                </select>
-              )}
               {activeFilters > 0 && (
                 <button
                   onClick={limpiarFiltros}
@@ -856,25 +804,24 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
 
         {/* ── Main table ── */}
         {pilotos.length === 0 ? (
-          <div className="text-center py-20 border border-zinc-800/50 rounded-2xl">
-            <p className="text-4xl mb-4">🏁</p>
+          <div className="text-center py-14 border border-zinc-800/50 rounded-2xl">
+            <p className="text-3xl mb-3">🏁</p>
             <p className="text-lg font-black text-zinc-500">Sin resultados</p>
-            <p className="text-sm text-zinc-600 mt-2">Aún no hay registros para los filtros seleccionados.</p>
+            <p className="text-sm text-zinc-600 mt-1.5">Aún no hay registros para los filtros seleccionados.</p>
           </div>
         ) : (
           <div className="overflow-x-auto rounded-2xl border border-zinc-800">
             <table className="w-full text-sm">
               <thead className="bg-zinc-900/90 border-b border-zinc-800">
                 <tr>
-                  <th className="px-4 py-4 text-left text-xs font-black uppercase tracking-wider text-zinc-500 w-14">Pos</th>
-                  <th className="px-4 py-4 text-left text-xs font-black uppercase tracking-wider text-zinc-500">Piloto</th>
-                  <th className="px-4 py-4 text-left text-xs font-black uppercase tracking-wider text-zinc-500 hidden sm:table-cell">Cat</th>
-                  <th className="px-4 py-4 text-left text-xs font-black uppercase tracking-wider text-zinc-500 hidden lg:table-cell">Campeonato</th>
-                  <th className="px-4 py-4 text-center text-xs font-black uppercase tracking-wider text-zinc-500 hidden md:table-cell">Carr.</th>
-                  <th className="px-4 py-4 text-center text-xs font-black uppercase tracking-wider text-zinc-500 hidden md:table-cell">Vict.</th>
-                  <th className="px-4 py-4 text-center text-xs font-black uppercase tracking-wider text-zinc-500 hidden lg:table-cell">Podios</th>
-                  <th className="px-4 py-4 text-left text-xs font-black uppercase tracking-wider text-zinc-500 hidden xl:table-cell">Mejor T.</th>
-                  <th className="px-4 py-4 text-right text-xs font-black uppercase tracking-wider text-red-500">PTS</th>
+                  <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-zinc-500 w-14">Pos</th>
+                  <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-zinc-500">Piloto</th>
+                  <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-zinc-500 hidden sm:table-cell">Cat</th>
+                  <th className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider text-zinc-500 hidden lg:table-cell">Campeonato</th>
+                  <th className="px-4 py-3 text-center text-xs font-black uppercase tracking-wider text-zinc-500 hidden md:table-cell">Carreras</th>
+                  <th className="px-4 py-3 text-center text-xs font-black uppercase tracking-wider text-zinc-500 hidden md:table-cell">Victorias</th>
+                  <th className="px-4 py-3 text-center text-xs font-black uppercase tracking-wider text-zinc-500 hidden lg:table-cell">Podios</th>
+                  <th className="px-4 py-3 text-right text-xs font-black uppercase tracking-wider text-red-500">PTS</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/40">
@@ -888,14 +835,14 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
                       p.posicion === 3 ? "bg-orange-500/[0.04]" : ""
                     }`}
                   >
-                    <td className="px-4 py-4">
+                    <td className="px-4 py-3">
                       {p.posicion <= 3 ? (
                         <span className="text-xl leading-none">{MEDALS[p.posicion - 1]}</span>
                       ) : (
                         <span className={`text-base font-black tabular-nums ${medalCls(p.posicion)}`}>{p.posicion}</span>
                       )}
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="px-4 py-3">
                       <span className="font-black text-white group-hover:text-red-400 transition-colors leading-tight block">
                         {p.piloto}
                       </span>
@@ -903,23 +850,20 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
                         <span className="text-xs text-zinc-600 block mt-0.5">{p.escuderia}</span>
                       )}
                     </td>
-                    <td className="px-4 py-4 hidden sm:table-cell">{catBadge(p.categoria)}</td>
-                    <td className="px-4 py-4 text-zinc-500 hidden lg:table-cell text-xs max-w-[160px] truncate">
+                    <td className="px-4 py-3 hidden sm:table-cell">{catBadge(p.categoria)}</td>
+                    <td className="px-4 py-3 text-zinc-500 hidden lg:table-cell text-xs max-w-[160px] truncate">
                       {p.campeonato || "—"}
                     </td>
-                    <td className="px-4 py-4 text-center font-bold text-zinc-300 hidden md:table-cell tabular-nums">
+                    <td className="px-4 py-3 text-center font-bold text-zinc-300 hidden md:table-cell tabular-nums">
                       {p.carreras}
                     </td>
-                    <td className="px-4 py-4 text-center hidden md:table-cell">
+                    <td className="px-4 py-3 text-center hidden md:table-cell">
                       <span className={`font-black text-base tabular-nums ${p.victorias > 0 ? "text-yellow-400" : "text-zinc-700"}`}>
                         {p.victorias}
                       </span>
                     </td>
-                    <td className="px-4 py-4 text-center text-zinc-400 hidden lg:table-cell tabular-nums">{p.podios}</td>
-                    <td className="px-4 py-4 hidden xl:table-cell">
-                      <span className="font-mono text-green-400 font-bold text-xs">{p.mejor_tiempo || "—"}</span>
-                    </td>
-                    <td className="px-4 py-4 text-right">
+                    <td className="px-4 py-3 text-center text-zinc-400 hidden lg:table-cell tabular-nums">{p.podios}</td>
+                    <td className="px-4 py-3 text-right">
                       <span className="font-black text-lg text-red-500 tabular-nums">{p.puntos}</span>
                     </td>
                   </tr>
@@ -929,7 +873,7 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
           </div>
         )}
 
-        <p className="text-xs text-zinc-700 text-center pt-1">
+        <p className="text-xs text-zinc-700 text-center">
           Tocá un piloto para ver su historial completo →
         </p>
       </div>
@@ -1003,7 +947,7 @@ export default function CampeonatosPage() {
       </nav>
 
       {/* Content */}
-      <section className="mx-auto max-w-6xl px-5 py-10">
+      <section className="mx-auto max-w-6xl px-5 py-8">
         {loading && (
           <div className="flex items-center justify-center py-24 text-zinc-500">
             <div className="text-center">
