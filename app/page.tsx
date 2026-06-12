@@ -105,8 +105,8 @@ function Galeria() {
         {/* foto izquierda — más alta */}
         <div className="group relative h-[30vh] min-h-[200px] overflow-hidden sm:h-[40vh] md:h-[50vh]">
           <Image
-            src="/sim-home-3.jpg"
-            alt="SIM Argentina"
+            src="/sim-bus.jpg"
+            alt="Colectivo SIM Racer Argentina"
             fill
             className="object-cover object-center transition-transform duration-700 group-hover:scale-[1.03]"
           />
@@ -115,7 +115,7 @@ function Galeria() {
           {/* copy superpuesto */}
           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 md:p-6">
             <p className="text-[10px] font-black uppercase tracking-widest text-white/50">
-              Cockpit · SIM
+              SIM Racer · Argentina
             </p>
           </div>
         </div>
