@@ -104,19 +104,11 @@ function Galeria() {
 
         {/* foto izquierda — más alta */}
         <div className="group relative h-[30vh] min-h-[200px] overflow-hidden sm:h-[40vh] md:h-[50vh]">
-          {/* fondo difuminado que rellena el panel sin recortar el colectivo */}
-          <Image
-            src="/sim-bus.jpg"
-            alt=""
-            aria-hidden
-            fill
-            className="scale-110 object-cover object-center opacity-50 blur-2xl"
-          />
           <Image
             src="/sim-bus.jpg"
             alt="Colectivo SIM Racer Argentina"
             fill
-            className="object-contain object-center transition-transform duration-700 group-hover:scale-[1.03]"
+            className="object-cover object-center transition-transform duration-700 group-hover:scale-[1.03]"
           />
           <div className="absolute inset-0 bg-black/30 transition-opacity duration-300 group-hover:bg-black/15" />
 
