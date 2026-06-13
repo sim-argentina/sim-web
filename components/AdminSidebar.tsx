@@ -44,6 +44,11 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin", "staff"],
     },
     {
+      label: "Gift Cards",
+      href: "/admin/gift-cards",
+      roles: ["admin", "staff"],
+    },
+    {
       label: "Reservas / Gestión",
       href: "/admin",
       roles: ["admin"],

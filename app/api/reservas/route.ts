@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getOccupiedSlots, construirOcupacion } from "@/lib/reservasSlots";
 
 type ReservaBody = {
   nombre: string;
@@ -11,6 +12,7 @@ type ReservaBody = {
   total: number;
   acepto_condiciones: boolean;
   codigo_descuento?: string | null;
+  duracion_minutos?: number;
 };
 
 async function consumirCodigoDescuento(codigo: string) {
@@ -119,6 +121,7 @@ export async function POST(req: Request) {
       total,
       acepto_condiciones,
       codigo_descuento,
+      duracion_minutos,
     } = body;
 
     if (
@@ -142,11 +145,23 @@ export async function POST(req: Request) {
       );
     }
 
+    const duracion = Number(duracion_minutos) === 30 ? 30 : 15;
+    const reqSlots = getOccupiedSlots(fecha, hora, duracion);
+
+    if (duracion === 30 && reqSlots.length < 2) {
+      return NextResponse.json(
+        {
+          error:
+            "No hay un turno consecutivo disponible para reservar 30 minutos en ese horario.",
+        },
+        { status: 409 }
+      );
+    }
+
     const { data: existentes, error: checkError } = await supabaseAdmin
       .from("reservas")
-      .select("id, simuladores")
+      .select("id, hora, duracion_minutos, simuladores")
       .eq("fecha", fecha)
-      .eq("hora", hora)
       .eq("estado", "activa");
 
     if (checkError) {
@@ -159,22 +174,19 @@ export async function POST(req: Request) {
       );
     }
 
-    const ocupados = new Set<string>();
+    const ocupacion = construirOcupacion(fecha, existentes || []);
 
-    for (const reserva of existentes || []) {
-      const sims = Array.isArray(reserva.simuladores)
-        ? reserva.simuladores
-        : [];
-
-      for (const sim of sims) ocupados.add(sim);
-    }
-
-    const conflicto = simuladores.some((sim) => ocupados.has(sim));
+    const conflicto = reqSlots.some((slot) =>
+      simuladores.some((sim) => ocupacion[slot]?.has(sim))
+    );
 
     if (conflicto) {
       return NextResponse.json(
         {
-          error: "Uno o más simuladores ya están reservados en ese horario",
+          error:
+            duracion === 30
+              ? "Uno o más simuladores no tienen los dos turnos consecutivos libres."
+              : "Uno o más simuladores ya están reservados en ese horario",
         },
         { status: 409 }
       );
@@ -205,6 +217,7 @@ export async function POST(req: Request) {
           estado: "activa",
           acepto_condiciones,
           codigo_descuento: codigo_descuento ?? null,
+          duracion_minutos: duracion,
         },
       ])
       .select()

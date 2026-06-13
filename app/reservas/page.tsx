@@ -11,9 +11,15 @@ import {
   CircleAlert,
 } from "lucide-react";
 import TeamCard from "@/components/TeamCard";
+import {
+  getOccupiedSlots,
+  getNextSlot,
+  precioPorSimulador,
+} from "@/lib/reservasSlots";
 
 type TeamKey = "Ferrari" | "McLaren" | "Red Bull" | "Alpine";
 type ReservationMap = Record<string, TeamKey[]>;
+type Duracion = 15 | 30;
 
 type ReservaApi = {
   id: number;
@@ -25,6 +31,7 @@ type ReservaApi = {
   cantidad_turnos: number;
   total: number;
   estado?: string | null;
+  duracion_minutos?: number | null;
 };
 
 type FeedbackModalState = {
@@ -262,6 +269,7 @@ export default function ReservasPage() {
 
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedTime, setSelectedTime] = useState<string>("");
+  const [duracion, setDuracion] = useState<Duracion>(15);
   const [selectedTeams, setSelectedTeams] = useState<TeamKey[]>([]);
   const [reservations, setReservations] = useState<ReservationMap>({});
   const [name, setName] = useState("");
@@ -303,8 +311,24 @@ export default function ReservasPage() {
     [selectedDate]
   );
 
-  const reservationKey = createReservationKey(selectedDate, selectedTime);
-  const reservedForCurrentSelection = reservations[reservationKey] ?? [];
+  // Slots de 20 min que ocupa la selección actual (1 para 15 min, 2 para 30 min).
+  const occupiedSlotsForSelection = useMemo(
+    () => getOccupiedSlots(selectedDate, selectedTime, duracion),
+    [selectedDate, selectedTime, duracion]
+  );
+
+  // Para 30 min: no se puede reservar si no existe el turno consecutivo.
+  const cannotFit30 = duracion === 30 && occupiedSlotsForSelection.length < 2;
+
+  const reservedForCurrentSelection = useMemo<TeamKey[]>(() => {
+    if (cannotFit30) return teams.map((t) => t.key);
+    const set = new Set<TeamKey>();
+    for (const slot of occupiedSlotsForSelection) {
+      const key = createReservationKey(selectedDate, slot);
+      for (const t of reservations[key] ?? []) set.add(t);
+    }
+    return Array.from(set);
+  }, [cannotFit30, occupiedSlotsForSelection, reservations, selectedDate]);
 
   const availableTeams = useMemo(() => {
     return teams.map((team) => ({
@@ -315,7 +339,11 @@ export default function ReservasPage() {
   }, [reservedForCurrentSelection, selectedTeams]);
 
   const availableCount = availableTeams.filter((team) => !team.reserved).length;
-  const totalOriginal = selectedTeams.length * PRICE;
+  const pricePerSim = useMemo(
+    () => precioPorSimulador(selectedDate, duracion),
+    [selectedDate, duracion]
+  );
+  const totalOriginal = selectedTeams.length * pricePerSim;
   const descuentoAplicado = codigoAplicado?.descuento || 0;
   const totalFinal = Math.max(totalOriginal - descuentoAplicado, 0);
   const selectedDateLabel = selectedDate ? formatFullDateLabel(selectedDate) : "";
@@ -324,7 +352,13 @@ export default function ReservasPage() {
 
   useEffect(() => {
     setCodigoAplicado(null);
-  }, [selectedTeams, selectedDate, selectedTime]);
+  }, [selectedTeams, selectedDate, selectedTime, duracion]);
+
+  function handleChangeDuracion(next: Duracion) {
+    if (isSubmitting || isLoadingReservations) return;
+    setDuracion(next);
+    setSelectedTeams([]);
+  }
 
   function openFeedbackModal(
     type: "success" | "error",
@@ -347,9 +381,14 @@ export default function ReservasPage() {
   }
 
   function getFreeCount(date: string, time: string) {
-    const key = createReservationKey(date, time);
-    const reserved = reservations[key] ?? [];
-    return teams.length - reserved.length;
+    const slots = getOccupiedSlots(date, time, duracion);
+    if (duracion === 30 && slots.length < 2) return 0;
+    const occupied = new Set<string>();
+    for (const slot of slots) {
+      const reserved = reservations[createReservationKey(date, slot)] ?? [];
+      for (const r of reserved) occupied.add(r);
+    }
+    return teams.length - occupied.size;
   }
 
   function toggleTeam(teamKey: TeamKey) {
@@ -517,18 +556,21 @@ export default function ReservasPage() {
       reservasApi
         .filter((reserva) => !reserva.estado || reserva.estado === "activa")
         .forEach((reserva) => {
-          const key = createReservationKey(reserva.fecha, reserva.hora);
-
-          if (!nextReservations[key]) {
-            nextReservations[key] = [];
-          }
-
           const simuladores = normalizeSimuladores(reserva.simuladores);
+          const dur = Number(reserva.duracion_minutos) || 15;
+          // Una reserva de 30 min ocupa su slot y el siguiente.
+          const slots = getOccupiedSlots(reserva.fecha, reserva.hora, dur);
 
-          simuladores.forEach((simulador) => {
-            if (!nextReservations[key].includes(simulador)) {
-              nextReservations[key].push(simulador);
+          slots.forEach((slot) => {
+            const key = createReservationKey(reserva.fecha, slot);
+            if (!nextReservations[key]) {
+              nextReservations[key] = [];
             }
+            simuladores.forEach((simulador) => {
+              if (!nextReservations[key].includes(simulador)) {
+                nextReservations[key].push(simulador);
+              }
+            });
           });
         });
 
@@ -636,6 +678,15 @@ export default function ReservasPage() {
       return;
     }
 
+    if (duracion === 30 && !getNextSlot(selectedDate, selectedTime)) {
+      openFeedbackModal(
+        "error",
+        "Sin turno consecutivo",
+        "Para reservar 30 minutos necesitás dos turnos seguidos. Elegí un horario más temprano."
+      );
+      return;
+    }
+
     setIsSubmitting(true);
 
     const payload = {
@@ -648,6 +699,7 @@ export default function ReservasPage() {
       total: totalOriginal,
       codigo_descuento: codigoAplicado?.codigo || null,
       acepto_condiciones: acceptedConditions,
+      duracion_minutos: duracion,
     };
 
     if (totalFinal <= 0) {
@@ -765,8 +817,9 @@ export default function ReservasPage() {
               </h1>
 
               <p className="mt-5 max-w-2xl text-base leading-8 text-zinc-300 md:text-xl">
-                Elegí una fecha y un horario, seleccioná una o varias escuderías disponibles
-                y armá tu reserva. Cada turno dura 15 minutos, sale cada 20 minutos y vale{" "}
+                Elegí una fecha, una duración (15 o 30 minutos) y un horario, seleccioná
+                una o varias escuderías disponibles y armá tu reserva. Las largadas salen
+                cada 20 minutos. Turno de 15 min:{" "}
                 <span className="font-semibold text-white">{formatPrice(PRICE)}</span> por
                 simulador/persona.
               </p>
@@ -785,7 +838,7 @@ export default function ReservasPage() {
                   Hasta 15 días de anticipación
                 </div>
                 <div className="rounded-full border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm font-medium text-red-300">
-                  {formatPrice(PRICE)} por simulador
+                  Desde {formatPrice(PRICE)} por simulador
                 </div>
               </div>
             </div>
@@ -887,6 +940,61 @@ export default function ReservasPage() {
                     </div>
                     <div>
                       <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">
+                        Duración
+                      </div>
+                      <div className="text-lg font-bold text-white">
+                        ¿Cuánto querés manejar?
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    {([15, 30] as Duracion[]).map((d) => {
+                      const isSel = duracion === d;
+                      const precio = precioPorSimulador(selectedDate, d);
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => handleChangeDuracion(d)}
+                          disabled={isSubmitting || isLoadingReservations}
+                          className={cn(
+                            "rounded-[18px] border px-4 py-4 text-center transition",
+                            isSel
+                              ? "border-red-500/50 bg-red-500/10 shadow-[0_0_18px_rgba(239,68,68,0.10)]"
+                              : "border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]"
+                          )}
+                        >
+                          <div className="text-lg font-black text-white">
+                            {d} min
+                          </div>
+                          <div
+                            className={cn(
+                              "mt-1 text-[11px]",
+                              isSel ? "text-red-300" : "text-zinc-400"
+                            )}
+                          >
+                            {formatPrice(precio)} por simulador
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {duracion === 30 && (
+                    <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300">
+                      La sesión de 30 min ocupa dos turnos consecutivos de 20 min.
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-[24px] border border-white/10 bg-black/40 p-4 md:p-5">
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="rounded-2xl bg-red-950/70 p-3 text-red-400">
+                      <Clock3 className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">
                         Horario
                       </div>
                       <div className="text-lg font-bold text-white">
@@ -948,7 +1056,7 @@ export default function ReservasPage() {
                   </div>
 
                   <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300">
-                    Turno de 15 min · salida cada 20 min
+                    Turno de {duracion} min · salida cada 20 min
                   </div>
                 </div>
               </div>
@@ -983,8 +1091,8 @@ export default function ReservasPage() {
                     code={team.code}
                     car={team.car}
                     subtitle={team.subtitle}
-                    time={`${selectedDateLabel} · ${selectedTime}`}
-                    price={PRICE}
+                    time={`${selectedDateLabel} · ${selectedTime} · ${duracion} min`}
+                    price={pricePerSim}
                     selected={team.selected}
                     reserved={team.reserved}
                     colorFrom={team.colorFrom}
@@ -1056,12 +1164,16 @@ export default function ReservasPage() {
                     <span>{selectedTime}</span>
                   </div>
                   <div className="flex items-center justify-between text-zinc-200">
+                    <span>Duración</span>
+                    <span>{duracion} min</span>
+                  </div>
+                  <div className="flex items-center justify-between text-zinc-200">
                     <span>Simuladores</span>
                     <span>{selectedTeams.length}</span>
                   </div>
                   <div className="flex items-center justify-between text-zinc-200">
                     <span>Precio unitario</span>
-                    <span>{formatPrice(PRICE)}</span>
+                    <span>{formatPrice(pricePerSim)}</span>
                   </div>
 
                   {codigoAplicado && (
