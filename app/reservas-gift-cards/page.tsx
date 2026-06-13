@@ -1,9 +1,9 @@
 import Link from "next/link";
 import Image from "next/image";
 import {
+  Zap,
   Clock3,
-  Flag,
-  ShieldCheck,
+  Users,
   CalendarCheck,
   Download,
   ShoppingCart,
@@ -133,9 +133,9 @@ export default function ReservasGiftCardsPage() {
             subtitle="Viví la pista en primera persona"
             priority
             stats={[
-              { icon: <Flag className={iconCls} />, label: "Simuladores", value: "4" },
               { icon: <Clock3 className={iconCls} />, label: "Duración", value: "15 / 30" },
-              { icon: <ShieldCheck className={iconCls} />, label: "Pilotos", value: "1-4" },
+              { icon: <Users className={iconCls} />, label: "Pilotos", value: "1-4" },
+              { icon: <Zap className={iconCls} />, label: "Ranking", value: "En vivo" },
             ]}
             cta="Reservar ahora"
           />

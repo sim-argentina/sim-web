@@ -13,37 +13,38 @@ function QueEsSim() {
         <div className="grid md:grid-cols-[1fr_auto]">
 
           {/* izquierda — frase de impacto */}
-          <div className="relative border-b border-white/5 px-8 py-16 md:border-b-0 md:border-r md:px-14 md:py-20">
+          <div className="relative flex flex-col justify-center border-b border-white/5 px-8 py-14 md:border-b-0 md:border-r md:px-14 md:py-16">
             {/* franja roja vertical */}
-            <div className="absolute left-0 top-8 bottom-8 w-[3px] bg-red-600" />
+            <div className="absolute left-0 top-10 bottom-10 w-[3px] bg-red-600" />
 
-            <p className="mb-6 text-[10px] font-black uppercase tracking-[0.55em] text-red-500">
+            <p className="mb-5 text-[10px] font-black uppercase tracking-[0.55em] text-red-500">
               Por qué SIM
             </p>
 
-            <h2 className="text-[2rem] font-black uppercase leading-[0.88] sm:text-[2.6rem] md:text-[3.8rem] lg:text-[4.5rem]">
+            <h2 className="text-[2.1rem] font-black uppercase leading-[0.9] sm:text-[2.6rem] md:text-[3.3rem] lg:text-[4rem]">
               Entrás como fan.<br />
-              <span className="text-white/30">Salís como piloto.</span>
+              <span className="text-white/40">Salís como piloto.</span>
             </h2>
 
-            <p className="mt-7 max-w-md text-sm leading-8 text-white/40">
-              El cockpit no sabe si sos profesional o no. Solo sabe que tenés el volante en las manos y la pista en la pantalla.
+            <p className="mt-6 max-w-md text-base leading-7 text-white/55">
+              El cockpit no sabe si sos profesional o no. Solo sabe que tenés el
+              volante en las manos y la pista en la pantalla.
             </p>
           </div>
 
           {/* derecha — detalles verticales */}
-          <div className="flex flex-col justify-center gap-0 divide-y divide-white/5 px-8 py-10 md:min-w-[260px] md:px-10">
+          <div className="flex flex-col justify-center divide-y divide-white/5 px-8 py-8 md:min-w-[260px] md:px-10">
             {[
               { label: "UBICACIÓN",   val: "Nuevo Centro · Córdoba" },
               { label: "SIMULADORES", val: "Fórmula 1 y GT"         },
               { label: "HARDWARE",    val: "Moza R5 Bundle"          },
               { label: "SESIONES",    val: "15 y 30 minutos"         },
             ].map((d) => (
-              <div key={d.label} className="py-5">
+              <div key={d.label} className="py-4">
                 <p className="text-[9px] font-black uppercase tracking-[0.45em] text-white/25">
                   {d.label}
                 </p>
-                <p className="mt-1.5 text-sm font-black uppercase text-white/70">
+                <p className="mt-1 text-sm font-black uppercase text-white/70">
                   {d.val}
                 </p>
               </div>
@@ -52,7 +53,7 @@ function QueEsSim() {
             <div className="pt-6">
               <Link
                 href="/reservas"
-                className="inline-flex items-center gap-2 bg-red-600 px-6 py-3.5 text-xs font-black uppercase tracking-widest text-white transition-all hover:bg-white hover:text-black"
+                className="inline-flex w-full items-center justify-center gap-2 bg-red-600 px-6 py-3.5 text-xs font-black uppercase tracking-widest text-white transition-all hover:bg-white hover:text-black sm:w-fit sm:justify-start"
               >
                 Reservar <ArrowRight className="h-3.5 w-3.5" />
               </Link>
@@ -102,12 +103,13 @@ function Galeria() {
       {/* FILA 2 — dos fotos asimétricas */}
       <div className="grid grid-cols-[1.4fr_1fr] gap-0 sm:grid-cols-[1.4fr_1fr]">
 
-        {/* foto izquierda — más alta */}
+        {/* foto izquierda — más alta — stand lleno de gente */}
         <div className="group relative h-[30vh] min-h-[200px] overflow-hidden sm:h-[40vh] md:h-[50vh]">
           <Image
-            src="/sim-bus.jpg"
-            alt="Colectivo SIM Racer Argentina"
+            src="/sim-stand.jpg"
+            alt="Stand SIM Argentina lleno de gente"
             fill
+            sizes="(max-width: 640px) 100vw, 58vw"
             className="object-cover object-center transition-transform duration-700 group-hover:scale-[1.03]"
           />
           <div className="absolute inset-0 bg-black/30 transition-opacity duration-300 group-hover:bg-black/15" />
@@ -115,17 +117,18 @@ function Galeria() {
           {/* copy superpuesto */}
           <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 md:p-6">
             <p className="text-[10px] font-black uppercase tracking-widest text-white/50">
-              SIM Racer · Argentina
+              El stand · En vivo
             </p>
           </div>
         </div>
 
-        {/* foto derecha — con copy editorial */}
+        {/* foto derecha — persona conduciendo + copy editorial */}
         <div className="group relative h-[30vh] min-h-[200px] overflow-hidden border-l border-black sm:h-[40vh] md:h-[50vh]">
           <Image
-            src="/sim-home-11.jpg"
-            alt="SIM Argentina"
+            src="/sim-driver.jpg"
+            alt="Piloto manejando un simulador SIM Argentina"
             fill
+            sizes="(max-width: 640px) 100vw, 42vw"
             className="object-cover object-center transition-transform duration-700 group-hover:scale-[1.03]"
           />
           <div className="absolute inset-0 bg-black/50 transition-opacity duration-300 group-hover:bg-black/35" />

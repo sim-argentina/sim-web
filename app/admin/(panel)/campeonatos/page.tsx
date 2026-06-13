@@ -123,6 +123,33 @@ function hoy() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+type RangoModo = "hoy" | "semana" | "mes" | "custom";
+function fmtFecha(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+// Calcula { desde, hasta } según el modo rápido elegido.
+function rangoDeFechas(modo: RangoModo, customDesde: string, customHasta: string) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  if (modo === "semana") {
+    const dow = now.getDay() || 7; // 1=lunes ... 7=domingo
+    const lunes = new Date(now);
+    lunes.setDate(now.getDate() - (dow - 1));
+    const domingo = new Date(lunes);
+    domingo.setDate(lunes.getDate() + 6);
+    return { desde: fmtFecha(lunes), hasta: fmtFecha(domingo) };
+  }
+  if (modo === "mes") {
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return { desde: fmtFecha(first), hasta: fmtFecha(last) };
+  }
+  if (modo === "custom") {
+    return { desde: customDesde, hasta: customHasta };
+  }
+  const t = fmtFecha(now);
+  return { desde: t, hasta: t };
+}
 function horaActual() {
   const d = new Date();
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -187,11 +214,15 @@ const sel = inp;
 
 // ─── Tab: Resultados ─────────────────────────────────────────────────────────
 
-function TabResultados({ campeonatos, registros, fechaResultados, onChangeFecha, onRefresh }: {
+function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoDesde, setRangoDesde, rangoHasta, setRangoHasta, onRefresh }: {
   campeonatos: Campeonato[];
   registros: Registro[];
-  fechaResultados: string;
-  onChangeFecha: (fecha: string) => void;
+  rangoModo: RangoModo;
+  setRangoModo: (m: RangoModo) => void;
+  rangoDesde: string;
+  setRangoDesde: (f: string) => void;
+  rangoHasta: string;
+  setRangoHasta: (f: string) => void;
   onRefresh: () => void;
 }) {
   const blankForm = {
@@ -551,16 +582,40 @@ function TabResultados({ campeonatos, registros, fechaResultados, onChangeFecha,
         {msg && <p className="mt-3 text-sm font-bold text-red-400">{msg}</p>}
       </div>
 
+      {/* ── Filtros rápidos de fecha ───────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
+        {([
+          ["hoy", "Hoy"],
+          ["semana", "Esta semana"],
+          ["mes", "Este mes"],
+          ["custom", "Personalizado"],
+        ] as [RangoModo, string][]).map(([modo, label]) => (
+          <button
+            key={modo}
+            type="button"
+            onClick={() => setRangoModo(modo)}
+            className={`rounded-xl px-4 py-2 text-xs font-black uppercase tracking-wider transition ${
+              rangoModo === modo
+                ? "bg-red-600 text-white"
+                : "border border-white/15 text-white/60 hover:border-red-500 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        {rangoModo === "custom" && (
+          <div className="flex items-center gap-2">
+            <input type="date" className={`${sel} min-w-[150px]`} value={rangoDesde}
+              onChange={(e) => setRangoDesde(e.target.value)} />
+            <span className="text-white/40">→</span>
+            <input type="date" className={`${sel} min-w-[150px]`} value={rangoHasta}
+              onChange={(e) => setRangoHasta(e.target.value)} />
+          </div>
+        )}
+      </div>
+
       {/* ── Filtros tabla ──────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <input type="date" className={`${sel} min-w-[150px]`} value={fechaResultados}
-            onChange={(e) => onChangeFecha(e.target.value)} />
-          <button type="button" onClick={() => onChangeFecha(hoy())}
-            className="rounded-xl border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/60 hover:border-red-500 hover:text-white">
-            Hoy
-          </button>
-        </div>
         <input className={`${inp} flex-1 min-w-[140px]`} placeholder="Buscar nombre..."
           value={filters.nombre} onChange={(e) => setFilters((f) => ({ ...f, nombre: e.target.value }))} />
         <select className={`${sel} min-w-[160px]`} value={filters.campeonato_id}
@@ -1187,7 +1242,10 @@ export default function AdminCampeonatosPage() {
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<string | null>(null);
   // Resultados: por defecto solo el día de hoy (no cargar todo el histórico)
-  const [fechaResultados, setFechaResultados] = useState(hoy());
+  const [rangoModo, setRangoModo] = useState<RangoModo>("hoy");
+  const [rangoDesde, setRangoDesde] = useState(hoy());
+  const [rangoHasta, setRangoHasta] = useState(hoy());
+  const { desde: regDesde, hasta: regHasta } = rangoDeFechas(rangoModo, rangoDesde, rangoHasta);
 
   useEffect(() => {
     fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
@@ -1198,7 +1256,7 @@ export default function AdminCampeonatosPage() {
     try {
       const [camRes, regRes, insRes, sorRes] = await Promise.all([
         fetch("/api/admin/campeonatos").then((r) => r.json()),
-        fetch(`/api/admin/campeonatos/registros?fecha=${fechaResultados}`).then((r) => r.json()),
+        fetch(`/api/admin/campeonatos/registros?desde=${regDesde}&hasta=${regHasta}`).then((r) => r.json()),
         fetch("/api/admin/campeonatos/inscripciones").then((r) => r.json()),
         fetch("/api/admin/sorteos").then((r) => r.json()),
       ]);
@@ -1208,7 +1266,7 @@ export default function AdminCampeonatosPage() {
       setSorteos(Array.isArray(sorRes) ? sorRes : []);
     } catch { /* silent */ }
     finally { setLoading(false); }
-  }, [fechaResultados]);
+  }, [regDesde, regHasta]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -1220,7 +1278,7 @@ export default function AdminCampeonatosPage() {
         <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500 mb-1">Panel Admin</p>
         <h1 className="text-3xl font-black text-white">Campeonatos</h1>
         <p className="text-zinc-500 text-sm mt-1">
-          {campeonatos.length} campeonatos · {registros.length} resultados del día · {inscripciones.length} inscripciones
+          {campeonatos.length} campeonatos · {registros.length} resultados · {inscripciones.length} inscripciones
         </p>
       </div>
       <div className="mb-8 flex gap-1 rounded-2xl bg-white/[0.04] p-1 w-fit overflow-x-auto">
@@ -1235,7 +1293,7 @@ export default function AdminCampeonatosPage() {
         <div className="flex items-center justify-center py-24 text-zinc-500">Cargando...</div>
       ) : (
         <>
-          {tab === "resultados" && <TabResultados campeonatos={campeonatos} registros={registros} fechaResultados={fechaResultados} onChangeFecha={setFechaResultados} onRefresh={fetchAll} />}
+          {tab === "resultados" && <TabResultados campeonatos={campeonatos} registros={registros} rangoModo={rangoModo} setRangoModo={setRangoModo} rangoDesde={rangoDesde} setRangoDesde={setRangoDesde} rangoHasta={rangoHasta} setRangoHasta={setRangoHasta} onRefresh={fetchAll} />}
           {tab === "campeonatos" && role === "admin" && <TabCampeonatos campeonatos={campeonatos} onRefresh={fetchAll} />}
           {tab === "sorteos" && role === "admin" && <TabSorteos sorteos={sorteos} onRefresh={fetchAll} />}
           {tab === "inscripciones" && <TabInscripciones inscripciones={inscripciones} campeonatos={campeonatos} role={role} onRefresh={fetchAll} />}

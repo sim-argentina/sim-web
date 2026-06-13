@@ -29,6 +29,8 @@ export async function GET(req: Request) {
     const circuito = url.searchParams.get("circuito");
     const estado = url.searchParams.get("estado");
     const fecha = url.searchParams.get("fecha");
+    const desde = url.searchParams.get("desde");
+    const hasta = url.searchParams.get("hasta");
 
     let query = supabaseAdmin
       .from("campeonato_registros")
@@ -41,6 +43,9 @@ export async function GET(req: Request) {
     if (circuito) query = query.eq("circuito", circuito);
     if (estado) query = query.eq("estado", estado);
     if (fecha) query = query.eq("fecha", fecha);
+    // Rango de fechas (fecha es texto ISO YYYY-MM-DD, el orden lexicográfico coincide)
+    if (desde) query = query.gte("fecha", desde);
+    if (hasta) query = query.lte("fecha", hasta);
 
     const { data, error } = await query;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

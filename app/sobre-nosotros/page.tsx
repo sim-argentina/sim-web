@@ -43,41 +43,7 @@ export default function SobreNosotrosPage() {
             </div>
           </div>
 
-          <div className="relative">
-            <div className="rounded-[2rem] border border-white/10 bg-white/[0.03] p-6 backdrop-blur">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-3xl bg-red-600 p-6">
-                  <p className="text-5xl font-black">F1</p>
-                  <p className="mt-3 text-sm font-bold uppercase tracking-widest">
-                    Simulación
-                  </p>
-                </div>
-
-                <div className="rounded-3xl border border-white/10 bg-black p-6">
-                  <p className="text-4xl font-black">360°</p>
-                  <p className="mt-3 text-sm text-zinc-400">
-                    Experiencia inmersiva
-                  </p>
-                </div>
-
-                <div className="rounded-3xl border border-white/10 bg-black p-6">
-                  <p className="text-4xl font-black">15’</p>
-                  <p className="mt-3 text-sm text-zinc-400">
-                    Turnos dinámicos
-                  </p>
-                </div>
-
-                <div className="rounded-3xl bg-white p-6 text-black">
-                  <p className="text-4xl font-black">CBA</p>
-                  <p className="mt-3 text-sm font-bold">
-                    Nuevo Centro Shopping
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="absolute -bottom-8 -right-8 -z-10 h-48 w-48 rounded-full bg-red-600 blur-3xl opacity-30" />
-          </div>
+          {/* Espacio reservado para futuras mejoras (mosaico eliminado a pedido) */}
         </div>
       </section>
 
