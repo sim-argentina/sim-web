@@ -104,10 +104,6 @@ export default function HeroHome() {
           </p>
         </div>
 
-        <p className="mb-4 text-[10px] font-black uppercase tracking-[0.5em] text-red-500 md:mb-6">
-          SIM ARGENTINA · CÓRDOBA
-        </p>
-
         <h1 className="text-[2rem] font-black uppercase leading-[0.88] sm:text-[2.6rem] md:text-[3.2rem] lg:text-[4rem] xl:text-[4.8rem]">
           LA EXPERIENCIA<br />
           MÁS CERCANA<br />

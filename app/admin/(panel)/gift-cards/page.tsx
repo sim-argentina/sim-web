@@ -46,6 +46,7 @@ function formatFechaHora(value: string | null) {
 const USO_LABEL: Record<string, string> = {
   pendiente: "Pendiente de usar",
   usada: "Usada",
+  vencida: "Vencida",
   cancelada: "Cancelada",
 };
 
@@ -53,6 +54,7 @@ function BadgeUso({ estado }: { estado: string }) {
   const map: Record<string, string> = {
     pendiente: "bg-blue-500/15 text-blue-400 border-blue-500/30",
     usada: "bg-green-500/15 text-green-400 border-green-500/30",
+    vencida: "bg-orange-500/15 text-orange-400 border-orange-500/30",
     cancelada: "bg-red-500/15 text-red-400 border-red-500/30",
   };
   return (
@@ -145,6 +147,7 @@ export default function AdminGiftCardsPage() {
           <option value="">Todas</option>
           <option value="pendiente">Pendiente de usar</option>
           <option value="usada">Usada</option>
+          <option value="vencida">Vencida</option>
           <option value="cancelada">Cancelada</option>
         </select>
         {(codigo || estadoUso) && (
@@ -208,6 +211,13 @@ export default function AdminGiftCardsPage() {
                           </button>
                           <button
                             disabled={accionId === c.id}
+                            onClick={() => accion(c.id, { accion: "marcar_vencida" })}
+                            className="rounded-lg border border-orange-500/40 px-3 py-1.5 text-xs font-bold text-orange-400 hover:bg-orange-500/10 disabled:opacity-50"
+                          >
+                            Vencida
+                          </button>
+                          <button
+                            disabled={accionId === c.id}
                             onClick={() => { if (confirm("¿Cancelar esta Gift Card?")) accion(c.id, { accion: "marcar_cancelada" }); }}
                             className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10 disabled:opacity-50"
                           >
@@ -215,7 +225,7 @@ export default function AdminGiftCardsPage() {
                           </button>
                         </>
                       )}
-                      {(c.estado_uso === "usada" || c.estado_uso === "cancelada") && (
+                      {c.estado_uso !== "pendiente" && (
                         <button
                           disabled={accionId === c.id}
                           onClick={() => accion(c.id, { accion: "marcar_pendiente" })}
@@ -283,6 +293,13 @@ export default function AdminGiftCardsPage() {
                   </button>
                   <button
                     disabled={accionId === detalle.id}
+                    onClick={() => accion(detalle.id, { accion: "marcar_vencida" })}
+                    className="rounded-xl border border-orange-500/40 px-5 py-2 font-bold text-orange-400 hover:bg-orange-500/10 disabled:opacity-50"
+                  >
+                    Marcar vencida
+                  </button>
+                  <button
+                    disabled={accionId === detalle.id}
                     onClick={() => { if (confirm("¿Cancelar esta Gift Card?")) accion(detalle.id, { accion: "marcar_cancelada" }); }}
                     className="rounded-xl border border-red-500/40 px-5 py-2 font-bold text-red-400 hover:bg-red-500/10 disabled:opacity-50"
                   >
@@ -290,7 +307,7 @@ export default function AdminGiftCardsPage() {
                   </button>
                 </>
               )}
-              {(detalle.estado_uso === "usada" || detalle.estado_uso === "cancelada") && (
+              {detalle.estado_uso !== "pendiente" && (
                 <button
                   disabled={accionId === detalle.id}
                   onClick={() => accion(detalle.id, { accion: "marcar_pendiente" })}

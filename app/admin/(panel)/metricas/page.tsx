@@ -768,12 +768,14 @@ export default function AdminMetricasPage() {
       const historicosJson = await resHistoricos.json();
 
       setReservas(
-        (Array.isArray(reservasJson) ? reservasJson : reservasJson.reservas || []).map(
-          (r: Reserva) => ({
+        (Array.isArray(reservasJson) ? reservasJson : reservasJson.reservas || [])
+          // Solo reservas con pago aprobado (activa) o canceladas tras estar
+          // activas. Se excluyen pendientes/errores de pago para no contarlas.
+          .filter((r: Reserva) => r.estado === "activa" || r.estado === "cancelada")
+          .map((r: Reserva) => ({
             ...r,
             simuladores: normalizeArray(r.simuladores),
-          })
-        )
+          }))
       );
 
       setTurnosStand(Array.isArray(standJson) ? standJson : standJson.turnos || []);

@@ -34,6 +34,9 @@ export async function PATCH(
       updates.estado_uso = "pendiente";
       updates.fecha_uso = null;
       break;
+    case "marcar_vencida":
+      updates.estado_uso = "vencida";
+      break;
     case "marcar_cancelada":
       updates.estado_uso = "cancelada";
       break;

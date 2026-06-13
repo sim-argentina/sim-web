@@ -40,13 +40,13 @@ export default function Navbar() {
             <Image
               src="/sim-logo.jpg"
               alt="Logo SIM"
-              width={140}
-              height={140}
-              className="h-11 w-11 rounded-md object-contain md:h-14 md:w-14"
+              width={160}
+              height={160}
+              className="h-12 w-12 rounded-md object-contain md:h-16 md:w-16"
               priority
             />
-            {/* En desktop se muestra solo el logo; el texto queda para mobile */}
-            <div className="flex flex-col leading-tight md:hidden">
+            {/* En desktop (xl) se muestra solo el logo; el texto queda hasta lg */}
+            <div className="flex flex-col leading-tight xl:hidden">
               <span className="text-[11px] font-black uppercase tracking-[0.35em] text-red-500">
                 SIM ARGENTINA
               </span>
@@ -56,13 +56,13 @@ export default function Navbar() {
             </div>
           </Link>
 
-          {/* Desktop nav */}
-          <nav className="hidden items-center gap-9 md:flex lg:gap-12">
+          {/* Desktop nav (xl+: hay espacio para todos los ítems sin apretar) */}
+          <nav className="hidden items-center gap-7 xl:flex 2xl:gap-10">
             {LINKS.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`whitespace-nowrap text-sm font-bold uppercase tracking-[0.08em] transition hover:text-white ${
+                className={`whitespace-nowrap text-sm font-bold uppercase tracking-[0.06em] transition hover:text-white ${
                   pathname === link.href ? "text-white" : "text-zinc-400"
                 }`}
               >
@@ -76,26 +76,26 @@ export default function Navbar() {
             href="https://wa.me/5493512520927"
             target="_blank"
             rel="noopener noreferrer"
-            className="hidden items-center gap-2 border border-white/15 px-4 py-2.5 text-[11px] font-black uppercase tracking-widest text-white/60 transition hover:border-red-600 hover:text-white md:flex"
+            className="hidden items-center gap-2 border border-white/15 px-4 py-2.5 text-[11px] font-black uppercase tracking-widest text-white/60 transition hover:border-red-600 hover:text-white xl:flex"
           >
             <MessageCircle className="h-3.5 w-3.5" />
             WhatsApp
           </a>
 
-          {/* Mobile — botón hamburguesa */}
+          {/* Menú hamburguesa (hasta lg) */}
           <button
             onClick={() => setOpen(true)}
-            className="flex h-11 w-11 items-center justify-center text-white md:hidden"
+            className="flex h-11 w-11 items-center justify-center text-white xl:hidden"
             aria-label="Abrir menú"
           >
-            <Menu className="h-6 w-6" />
+            <Menu className="h-7 w-7" />
           </button>
         </div>
       </header>
 
-      {/* ── Menú mobile fullscreen ── */}
+      {/* ── Menú fullscreen (hasta lg) ── */}
       <div
-        className={`fixed inset-0 z-[60] flex flex-col bg-black transition-transform duration-300 ease-in-out md:hidden ${
+        className={`fixed inset-0 z-[60] flex flex-col bg-black transition-transform duration-300 ease-in-out xl:hidden ${
           open ? "translate-y-0" : "-translate-y-full"
         }`}
       >

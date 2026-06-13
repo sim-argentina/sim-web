@@ -127,7 +127,9 @@ export default function CalendarioAdminPage() {
 
   const reservasFiltradas = useMemo(() => {
     return reservas
-      .filter((reserva) => reserva.estado !== "cancelada")
+      // Solo reservas con pago aprobado (estado "activa"); se excluyen
+      // pendientes de pago, errores de pago y canceladas.
+      .filter((reserva) => reserva.estado === "activa")
       .filter((reserva) => {
         const texto = busqueda.toLowerCase().trim();
 

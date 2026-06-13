@@ -187,9 +187,11 @@ const sel = inp;
 
 // ─── Tab: Resultados ─────────────────────────────────────────────────────────
 
-function TabResultados({ campeonatos, registros, onRefresh }: {
+function TabResultados({ campeonatos, registros, fechaResultados, onChangeFecha, onRefresh }: {
   campeonatos: Campeonato[];
   registros: Registro[];
+  fechaResultados: string;
+  onChangeFecha: (fecha: string) => void;
   onRefresh: () => void;
 }) {
   const blankForm = {
@@ -550,7 +552,15 @@ function TabResultados({ campeonatos, registros, onRefresh }: {
       </div>
 
       {/* ── Filtros tabla ──────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2">
+          <input type="date" className={`${sel} min-w-[150px]`} value={fechaResultados}
+            onChange={(e) => onChangeFecha(e.target.value)} />
+          <button type="button" onClick={() => onChangeFecha(hoy())}
+            className="rounded-xl border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/60 hover:border-red-500 hover:text-white">
+            Hoy
+          </button>
+        </div>
         <input className={`${inp} flex-1 min-w-[140px]`} placeholder="Buscar nombre..."
           value={filters.nombre} onChange={(e) => setFilters((f) => ({ ...f, nombre: e.target.value }))} />
         <select className={`${sel} min-w-[160px]`} value={filters.campeonato_id}
@@ -854,6 +864,28 @@ const blankInscripcion = {
   escuderia_favorita: "", categoria: "oro", campeonato_id: "", monto: "", metodo_pago: "efectivo",
 };
 
+// Unifica los estados internos en 3 estados visuales: Pagado / Pendiente / Cancelado.
+function estadoVisualInscripcion(estado: string): "pagado" | "pendiente" | "cancelado" {
+  if (estado === "pagado") return "pagado";
+  if (estado === "cancelado" || estado === "rechazado") return "cancelado";
+  return "pendiente";
+}
+
+function BadgeInscripcion({ estado }: { estado: string }) {
+  const v = estadoVisualInscripcion(estado);
+  const map = {
+    pagado: "bg-green-900 text-green-300",
+    pendiente: "bg-yellow-900 text-yellow-300",
+    cancelado: "bg-zinc-800 text-zinc-400",
+  } as const;
+  const label = { pagado: "Pagado", pendiente: "Pendiente", cancelado: "Cancelado" } as const;
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-bold uppercase ${map[v]}`}>
+      {label[v]}
+    </span>
+  );
+}
+
 function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   inscripciones: Inscripcion[];
   campeonatos: Campeonato[];
@@ -872,7 +904,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   const filtered = inscripciones.filter((i) => {
     if (filters.campeonato_id && i.campeonato_id !== filters.campeonato_id) return false;
     if (filters.categoria && i.categoria !== filters.categoria) return false;
-    if (filters.estado_pago && i.estado_pago !== filters.estado_pago) return false;
+    if (filters.estado_pago && estadoVisualInscripcion(i.estado_pago) !== filters.estado_pago) return false;
     if (filters.q) {
       const q = filters.q.toLowerCase();
       if (!i.nombre_completo?.toLowerCase().includes(q) && !i.dni?.includes(q) && !i.telefono?.includes(q)) return false;
@@ -1026,11 +1058,23 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
               </select>
             </Field>
             <Field label="Estado">
-              <select className={sel} value={editForm.estado_pago || ""} onChange={(e) => setEditForm((f) => ({ ...f, estado_pago: e.target.value }))}>
-                <option value="pendiente_pago_online">Pendiente online</option>
-                <option value="pendiente_pago_stand">Pendiente stand</option>
+              <select
+                className={sel}
+                value={editForm.estado_pago ? estadoVisualInscripcion(editForm.estado_pago) : ""}
+                onChange={(e) => {
+                  const grupo = e.target.value;
+                  const real =
+                    grupo === "pagado"
+                      ? "pagado"
+                      : grupo === "cancelado"
+                      ? "cancelado"
+                      : "pendiente_pago_stand";
+                  setEditForm((f) => ({ ...f, estado_pago: real }));
+                }}
+              >
                 <option value="pagado">Pagado</option>
-                <option value="rechazado">Rechazado</option>
+                <option value="pendiente">Pendiente</option>
+                <option value="cancelado">Cancelado</option>
               </select>
             </Field>
             <Field label="Monto"><input type="number" className={inp} value={editForm.monto || ""} onChange={(e) => setEditForm((f) => ({ ...f, monto: e.target.value }))} /></Field>
@@ -1058,9 +1102,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
         <select className={`${sel} min-w-[160px]`} value={filters.estado_pago} onChange={(e) => setFilters((f) => ({ ...f, estado_pago: e.target.value }))}>
           <option value="">Todos los estados</option>
           <option value="pagado">Pagado</option>
-          <option value="pendiente_pago_online">Pendiente online</option>
-          <option value="pendiente_pago_stand">Pendiente stand</option>
-          <option value="rechazado">Rechazado</option>
+          <option value="pendiente">Pendiente</option>
           <option value="cancelado">Cancelado</option>
         </select>
       </div>
@@ -1094,7 +1136,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                   {formatoDinero(i.monto)}
                   {i.metodo_pago && <span className="ml-1 text-xs text-zinc-500">({i.metodo_pago})</span>}
                 </td>
-                <td className="px-4 py-3"><Badge v={i.estado_pago} /></td>
+                <td className="px-4 py-3"><BadgeInscripcion estado={i.estado_pago} /></td>
                 <td className="px-4 py-3 text-zinc-400 text-xs">{i.created_at?.slice(0, 10)}</td>
                 <td className="px-4 py-3">
                   <button
@@ -1144,6 +1186,8 @@ export default function AdminCampeonatosPage() {
   const [sorteos, setSorteos] = useState<Sorteo[]>([]);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<string | null>(null);
+  // Resultados: por defecto solo el día de hoy (no cargar todo el histórico)
+  const [fechaResultados, setFechaResultados] = useState(hoy());
 
   useEffect(() => {
     fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
@@ -1154,7 +1198,7 @@ export default function AdminCampeonatosPage() {
     try {
       const [camRes, regRes, insRes, sorRes] = await Promise.all([
         fetch("/api/admin/campeonatos").then((r) => r.json()),
-        fetch("/api/admin/campeonatos/registros").then((r) => r.json()),
+        fetch(`/api/admin/campeonatos/registros?fecha=${fechaResultados}`).then((r) => r.json()),
         fetch("/api/admin/campeonatos/inscripciones").then((r) => r.json()),
         fetch("/api/admin/sorteos").then((r) => r.json()),
       ]);
@@ -1164,7 +1208,7 @@ export default function AdminCampeonatosPage() {
       setSorteos(Array.isArray(sorRes) ? sorRes : []);
     } catch { /* silent */ }
     finally { setLoading(false); }
-  }, []);
+  }, [fechaResultados]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -1176,7 +1220,7 @@ export default function AdminCampeonatosPage() {
         <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500 mb-1">Panel Admin</p>
         <h1 className="text-3xl font-black text-white">Campeonatos</h1>
         <p className="text-zinc-500 text-sm mt-1">
-          {campeonatos.length} campeonatos · {registros.length} resultados · {inscripciones.length} inscripciones
+          {campeonatos.length} campeonatos · {registros.length} resultados del día · {inscripciones.length} inscripciones
         </p>
       </div>
       <div className="mb-8 flex gap-1 rounded-2xl bg-white/[0.04] p-1 w-fit overflow-x-auto">
@@ -1191,7 +1235,7 @@ export default function AdminCampeonatosPage() {
         <div className="flex items-center justify-center py-24 text-zinc-500">Cargando...</div>
       ) : (
         <>
-          {tab === "resultados" && <TabResultados campeonatos={campeonatos} registros={registros} onRefresh={fetchAll} />}
+          {tab === "resultados" && <TabResultados campeonatos={campeonatos} registros={registros} fechaResultados={fechaResultados} onChangeFecha={setFechaResultados} onRefresh={fetchAll} />}
           {tab === "campeonatos" && role === "admin" && <TabCampeonatos campeonatos={campeonatos} onRefresh={fetchAll} />}
           {tab === "sorteos" && role === "admin" && <TabSorteos sorteos={sorteos} onRefresh={fetchAll} />}
           {tab === "inscripciones" && <TabInscripciones inscripciones={inscripciones} campeonatos={campeonatos} role={role} onRefresh={fetchAll} />}
