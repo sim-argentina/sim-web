@@ -26,12 +26,13 @@ export async function PATCH(
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
   switch (body.accion) {
-    case "marcar_lista":
-      updates.estado_uso = "lista";
-      break;
     case "marcar_usada":
       updates.estado_uso = "usada";
       updates.fecha_uso = new Date().toISOString();
+      break;
+    case "marcar_pendiente":
+      updates.estado_uso = "pendiente";
+      updates.fecha_uso = null;
       break;
     case "marcar_cancelada":
       updates.estado_uso = "cancelada";

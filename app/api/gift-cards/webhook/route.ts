@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
 
 // Webhook exclusivo para Gift Cards. Se distingue por el prefijo
 // "gift_card_" en external_reference. No toca la tabla "reservas".
@@ -36,7 +37,7 @@ export async function POST(req: Request) {
 
     const { data: giftCard } = await supabaseAdmin
       .from("gift_cards")
-      .select("id, mercado_pago_payment_id")
+      .select("id, mercado_pago_payment_id, codigo_descuento")
       .eq("id", giftCardId)
       .maybeSingle();
 
@@ -57,13 +58,18 @@ export async function POST(req: Request) {
         .from("gift_cards")
         .update({
           estado_pago: "pagado",
-          estado_uso: "lista",
+          estado_uso: "pendiente",
           mercado_pago_payment_id: String(paymentId),
           fecha_pago: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .eq("id", giftCardId)
         .is("mercado_pago_payment_id", null);
+
+      // Consumir el código de descuento al aprobarse el pago (igual que reservas)
+      if (giftCard.codigo_descuento) {
+        await consumirCodigoDescuento(giftCard.codigo_descuento);
+      }
     } else if (
       paymentData.status === "rejected" ||
       paymentData.status === "cancelled"

@@ -13,16 +13,16 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const codigo = url.searchParams.get("codigo");
-    const estado_pago = url.searchParams.get("estado_pago");
     const estado_uso = url.searchParams.get("estado_uso");
 
+    // El panel solo muestra Gift Cards efectivamente vendidas (pago aprobado).
     let query = supabaseAdmin
       .from("gift_cards")
       .select("*")
+      .eq("estado_pago", "pagado")
       .order("created_at", { ascending: false });
 
     if (codigo) query = query.ilike("codigo_unico", `%${codigo.trim().toUpperCase()}%`);
-    if (estado_pago) query = query.eq("estado_pago", estado_pago);
     if (estado_uso) query = query.eq("estado_uso", estado_uso);
 
     const { data, error } = await query;

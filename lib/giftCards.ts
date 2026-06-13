@@ -39,8 +39,9 @@ export function generarCodigoGiftCard(): string {
 }
 
 export const GIFT_CARD_CONDICIONES = [
-  "Válida por 6 meses desde la fecha de compra.",
+  "Válida por 30 días desde la fecha de compra.",
   "Canjeable por una sesión en SIM Argentina presentando este código.",
-  "No acumulable con otras promociones. No reembolsable en efectivo.",
-  "Sujeta a disponibilidad de turnos. Coordiná tu visita por WhatsApp.",
+  "Altura mínima para usar los simuladores: 1,40 m.",
+  "Peso máximo permitido: 110 kg.",
+  "No reembolsable en efectivo. Sujeta a disponibilidad de turnos.",
 ];

@@ -45,7 +45,8 @@ export default function Navbar() {
               className="h-11 w-11 rounded-md object-contain md:h-14 md:w-14"
               priority
             />
-            <div className="flex flex-col leading-tight">
+            {/* En desktop se muestra solo el logo; el texto queda para mobile */}
+            <div className="flex flex-col leading-tight md:hidden">
               <span className="text-[11px] font-black uppercase tracking-[0.35em] text-red-500">
                 SIM ARGENTINA
               </span>
@@ -56,7 +57,7 @@ export default function Navbar() {
           </Link>
 
           {/* Desktop nav */}
-          <nav className="hidden items-center gap-6 md:flex">
+          <nav className="hidden items-center gap-9 md:flex lg:gap-12">
             {LINKS.map((link) => (
               <Link
                 key={link.href}
