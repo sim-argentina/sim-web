@@ -98,11 +98,11 @@ export default function VideoLoop({ src, mobileSrc, poster, className = "" }: Pr
           */}
         </video>
       ) : (
-        // Mientras no entra en viewport: muestra el poster (carga instantánea, sin salto)
+        // Mientras no entra en viewport: muestra el poster o fondo negro
         <div className="h-full w-full bg-zinc-950" style={{ minHeight: "inherit" }}>
           {poster && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={poster} alt="" className="h-full w-full object-cover" />
+            <img src={poster} alt="" className="h-full w-full object-cover opacity-60" />
           )}
         </div>
       )}

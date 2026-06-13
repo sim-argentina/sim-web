@@ -107,7 +107,7 @@ export default function TiendaPage() {
 
         <div className="relative grid min-h-[100svh] md:grid-cols-2">
           {/* texto */}
-          <div className="flex flex-col justify-center px-8 py-24 md:px-16 md:py-0">
+          <div className="relative z-10 flex flex-col justify-start px-8 pt-28 pb-16 md:px-16 md:pt-36 md:pb-16">
             <div className="mb-8 flex items-center gap-4">
               <div className="h-px w-8 bg-red-600" />
               <p className="text-[10px] font-black uppercase tracking-[0.5em] text-red-500">
