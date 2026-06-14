@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Gift, ArrowLeft, ShieldCheck, CircleAlert } from "lucide-react";
-import { GIFT_CARD_PRODUCTOS, GIFT_CARD_CONDICIONES } from "@/lib/giftCards";
+import { GIFT_CARD_PRODUCTOS, GIFT_CARD_CONDICIONES, GIFT_CARD_MAX_CANTIDAD } from "@/lib/giftCards";
 
 function formatPrice(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -22,6 +22,8 @@ type CodigoAplicado = {
 
 export default function GiftCardsPage() {
   const [duracion, setDuracion] = useState<number>(GIFT_CARD_PRODUCTOS[0].duracion);
+  const [cantidad, setCantidad] = useState<number>(1);
+  const [modoUso, setModoUso] = useState<"juntas" | "separadas">("separadas");
   const [compradorNombre, setCompradorNombre] = useState("");
   const [compradorTelefono, setCompradorTelefono] = useState("");
   const [destinatario, setDestinatario] = useState("");
@@ -37,7 +39,8 @@ export default function GiftCardsPage() {
     GIFT_CARD_PRODUCTOS.find((p) => p.duracion === duracion) ??
     GIFT_CARD_PRODUCTOS[0];
 
-  const totalOriginal = producto.monto;
+  const unit = producto.monto;
+  const totalOriginal = unit * cantidad;
   const descuento = codigoAplicado?.descuento || 0;
   const totalFinal = Math.max(totalOriginal - descuento, 0);
 
@@ -48,6 +51,12 @@ export default function GiftCardsPage() {
   function elegirDuracion(d: number) {
     setDuracion(d);
     setCodigoAplicado(null); // el monto cambia: hay que revalidar el código
+  }
+
+  function cambiarCantidad(n: number) {
+    setCantidad(n);
+    setCodigoAplicado(null); // el total cambia: hay que revalidar el código
+    if (n <= 1) setModoUso("separadas");
   }
 
   async function aplicarCodigo() {
@@ -114,6 +123,8 @@ export default function GiftCardsPage() {
           comprador_telefono: compradorTelefono.trim(),
           destinatario_nombre: destinatario.trim() || null,
           duracion_minutos: duracion,
+          cantidad,
+          modo_uso: modoUso,
           codigo_descuento: codigoAplicado?.codigo || null,
         }),
       });
@@ -123,8 +134,8 @@ export default function GiftCardsPage() {
         return;
       }
       // Gift Card 100% bonificada: salta Mercado Pago
-      if (data.free && data.gift_card_id) {
-        window.location.href = `/gift-cards/exito?external_reference=gift_card_${data.gift_card_id}`;
+      if (data.free && data.grupo_compra_id) {
+        window.location.href = `/gift-cards/exito?external_reference=gift_card_${data.grupo_compra_id}`;
         return;
       }
       const url = data.init_point || data.sandbox_init_point;
@@ -201,6 +212,64 @@ export default function GiftCardsPage() {
                   </button>
                 );
               })}
+            </div>
+
+            {/* Cantidad + modo de uso */}
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-3xl border border-white/10 bg-zinc-950/80 p-5">
+                <label className="mb-2 block text-xs font-black uppercase tracking-[0.2em] text-zinc-500">
+                  Cantidad
+                </label>
+                <select
+                  value={cantidad}
+                  onChange={(e) => cambiarCantidad(Number(e.target.value))}
+                  className="w-full rounded-2xl border border-white/10 bg-black px-4 py-3 text-white outline-none transition focus:border-red-500/50"
+                >
+                  {Array.from({ length: GIFT_CARD_MAX_CANTIDAD }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      {n} {n === 1 ? "gift card" : "gift cards"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-zinc-950/80 p-5">
+                <label className="mb-2 block text-xs font-black uppercase tracking-[0.2em] text-zinc-500">
+                  Modo de uso
+                </label>
+                {cantidad > 1 ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        ["separadas", "Por separado"],
+                        ["juntas", "Van juntas"],
+                      ] as const).map(([v, label]) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => setModoUso(v)}
+                          className={`rounded-2xl border px-3 py-3 text-sm font-bold transition ${
+                            modoUso === v
+                              ? "border-red-500/60 bg-red-950/30 text-white"
+                              : "border-white/10 text-zinc-400 hover:border-white/25"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-zinc-500">
+                      {modoUso === "juntas"
+                        ? "Un solo código con todos los usos."
+                        : "Un código único por cada gift card."}
+                    </p>
+                  </>
+                ) : (
+                  <p className="pt-2 text-sm text-zinc-500">
+                    Elegí 2 o más para decidir si van juntas o separadas.
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="mt-6 rounded-3xl border border-white/10 bg-zinc-950/80 p-6">
@@ -321,6 +390,17 @@ export default function GiftCardsPage() {
                   <div className="flex items-center justify-between text-zinc-200">
                     <span>Gift Card</span>
                     <span>{producto.duracion} min</span>
+                  </div>
+                  <div className="flex items-center justify-between text-zinc-200">
+                    <span>Cantidad</span>
+                    <span>
+                      {cantidad}
+                      {cantidad > 1 ? ` · ${modoUso === "juntas" ? "juntas" : "separadas"}` : ""}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-zinc-200">
+                    <span>Precio unitario</span>
+                    <span>{formatPrice(unit)}</span>
                   </div>
                   {codigoAplicado && (
                     <>

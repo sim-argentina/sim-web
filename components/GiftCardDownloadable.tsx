@@ -10,6 +10,9 @@ export type GiftCardData = {
   monto: number;
   destinatario_nombre?: string | null;
   fecha?: string | null;
+  usos_totales?: number | null;
+  modo_uso?: string | null;
+  indexLabel?: string | null; // ej: "2 / 5" para compras separadas
 };
 
 function formatPrice(value: number) {
@@ -50,6 +53,14 @@ function buildGiftCardSvg(card: GiftCardData): string {
     ? escapeXml(card.destinatario_nombre)
     : "—";
 
+  const usos = Number(card.usos_totales) || 1;
+  const subtitulo =
+    usos > 1
+      ? escapeXml(`${usos} usos en este código · valor total ${formatPrice(Number(card.monto))}`)
+      : escapeXml(`Sesión de simulador · valor ${formatPrice(Number(card.monto))}`);
+
+  const indexLabel = card.indexLabel ? escapeXml(card.indexLabel) : "";
+
   const cond1 = escapeXml(GIFT_CARD_CONDICIONES[0]);
   const cond2 = escapeXml(GIFT_CARD_CONDICIONES[1]);
 
@@ -76,13 +87,14 @@ function buildGiftCardSvg(card: GiftCardData): string {
   <!-- marca -->
   <text x="48" y="84" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="800" letter-spacing="10" fill="#ef4444">SIM ARGENTINA</text>
   <text x="48" y="116" font-family="Arial, Helvetica, sans-serif" font-size="15" letter-spacing="3" fill="#71717a">SIMULADORES DE FÓRMULA 1</text>
+  ${indexLabel ? `<text x="952" y="84" text-anchor="end" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="800" letter-spacing="2" fill="#71717a">${indexLabel}</text>` : ""}
 
   <!-- título -->
   <text x="48" y="210" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="800" letter-spacing="2" fill="#ffffff">GIFT CARD</text>
 
   <!-- duración + monto -->
   <text x="48" y="290" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="800" fill="#ef4444">${duracion}</text>
-  <text x="48" y="324" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#a1a1aa">Sesión de simulador · valor ${monto}</text>
+  <text x="48" y="324" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#a1a1aa">${subtitulo}</text>
 
   <!-- código -->
   <rect x="48" y="360" width="560" height="92" rx="16" fill="#000000" stroke="#3f3f46" stroke-width="2"/>
@@ -105,17 +117,11 @@ function buildGiftCardSvg(card: GiftCardData): string {
 </svg>`;
 }
 
-export default function GiftCardDownloadable({ card }: { card: GiftCardData }) {
-  const [downloading, setDownloading] = useState(false);
-  const svg = useMemo(() => buildGiftCardSvg(card), [card]);
-  const previewUrl = useMemo(
-    () => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
-    [svg]
-  );
-
-  function descargar() {
-    setDownloading(true);
+// Genera y dispara la descarga PNG de una gift card. Reutilizable (ej: "descargar todas").
+export function downloadGiftCardPng(card: GiftCardData): Promise<void> {
+  return new Promise((resolve) => {
     try {
+      const svg = buildGiftCardSvg(card);
       const scale = 2;
       const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
       const url = URL.createObjectURL(blob);
@@ -126,8 +132,8 @@ export default function GiftCardDownloadable({ card }: { card: GiftCardData }) {
         canvas.height = 600 * scale;
         const ctx = canvas.getContext("2d");
         if (!ctx) {
-          setDownloading(false);
           URL.revokeObjectURL(url);
+          resolve();
           return;
         }
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -142,17 +148,32 @@ export default function GiftCardDownloadable({ card }: { card: GiftCardData }) {
             a.remove();
             URL.revokeObjectURL(a.href);
           }
-          setDownloading(false);
+          resolve();
         }, "image/png");
       };
       img.onerror = () => {
-        setDownloading(false);
         URL.revokeObjectURL(url);
+        resolve();
       };
       img.src = url;
     } catch {
-      setDownloading(false);
+      resolve();
     }
+  });
+}
+
+export default function GiftCardDownloadable({ card }: { card: GiftCardData }) {
+  const [downloading, setDownloading] = useState(false);
+  const svg = useMemo(() => buildGiftCardSvg(card), [card]);
+  const previewUrl = useMemo(
+    () => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
+    [svg]
+  );
+
+  async function descargar() {
+    setDownloading(true);
+    await downloadGiftCardPng(card);
+    setDownloading(false);
   }
 
   return (
@@ -166,10 +187,10 @@ export default function GiftCardDownloadable({ card }: { card: GiftCardData }) {
         type="button"
         onClick={descargar}
         disabled={downloading}
-        className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-red-600 py-4 text-lg font-black text-white transition hover:bg-red-500 disabled:opacity-50"
+        className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-red-600 py-3.5 text-base font-black text-white transition hover:bg-red-500 disabled:opacity-50"
       >
         <Download className="h-5 w-5" />
-        {downloading ? "Generando..." : "Descargar Gift Card"}
+        {downloading ? "Generando..." : "Descargar"}
       </button>
     </div>
   );

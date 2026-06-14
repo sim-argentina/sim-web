@@ -3,63 +3,106 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle2, Loader2, ArrowRight } from "lucide-react";
-import GiftCardDownloadable, { type GiftCardData } from "@/components/GiftCardDownloadable";
+import { CheckCircle2, Loader2, ArrowRight, Download } from "lucide-react";
+import GiftCardDownloadable, {
+  downloadGiftCardPng,
+  type GiftCardData,
+} from "@/components/GiftCardDownloadable";
 
-type ApiGiftCard = GiftCardData & {
+type ApiCard = {
+  id: string;
   estado_pago: string;
   estado_uso: string;
+  duracion_minutos: number;
+  monto: number;
+  cantidad: number;
+  modo_uso: string;
+  usos_totales: number;
+  usos_disponibles: number;
+  destinatario_nombre: string | null;
   fecha_pago: string | null;
   created_at: string;
+  codigo_unico: string | null;
 };
+
+type GrupoResp = {
+  grupo_compra_id: string;
+  pagado: boolean;
+  modo_uso: string;
+  cards: ApiCard[];
+};
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function ExitoContent() {
   const params = useSearchParams();
   const extRef = params.get("external_reference") || "";
-  const id = extRef.startsWith("gift_card_")
+  const grupoId = extRef.startsWith("gift_card_")
     ? extRef.replace("gift_card_", "")
-    : params.get("gift_card_id") || "";
+    : params.get("grupo_compra_id") || "";
 
-  const [card, setCard] = useState<ApiGiftCard | null>(null);
+  const [grupo, setGrupo] = useState<GrupoResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [intentos, setIntentos] = useState(0);
+  const [bulk, setBulk] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchCard = useCallback(async () => {
-    if (!id) {
+  const fetchGrupo = useCallback(async () => {
+    if (!grupoId) {
       setLoading(false);
       return;
     }
     try {
-      const res = await fetch(`/api/gift-cards/${id}`, { cache: "no-store" });
+      const res = await fetch(`/api/gift-cards/grupo/${grupoId}`, { cache: "no-store" });
       const data = await res.json();
-      if (res.ok) setCard(data);
+      if (res.ok) setGrupo(data);
     } catch {
       // se reintenta
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [grupoId]);
 
   useEffect(() => {
-    fetchCard();
-  }, [fetchCard]);
+    fetchGrupo();
+  }, [fetchGrupo]);
 
   // Auto-reintento mientras el webhook confirma el pago (hasta ~40s)
   useEffect(() => {
-    if (!card) return;
-    if (card.estado_pago === "pagado") return;
+    if (!grupo) return;
+    if (grupo.pagado) return;
     if (intentos >= 10) return;
     timerRef.current = setTimeout(() => {
       setIntentos((n) => n + 1);
-      fetchCard();
+      fetchGrupo();
     }, 4000);
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [card, intentos, fetchCard]);
+  }, [grupo, intentos, fetchGrupo]);
 
-  const pagada = card?.estado_pago === "pagado" && card?.codigo_unico;
+  const pagado = !!grupo?.pagado && grupo.cards.every((c) => c.codigo_unico);
+  const cards = grupo?.cards ?? [];
+
+  const toCardData = (c: ApiCard, i: number): GiftCardData => ({
+    codigo_unico: c.codigo_unico ?? "",
+    duracion_minutos: c.duracion_minutos,
+    monto: c.monto,
+    destinatario_nombre: c.destinatario_nombre,
+    fecha: c.fecha_pago || c.created_at,
+    usos_totales: c.usos_totales,
+    modo_uso: c.modo_uso,
+    indexLabel: cards.length > 1 ? `${i + 1} / ${cards.length}` : null,
+  });
+
+  async function descargarTodas() {
+    setBulk(true);
+    for (let i = 0; i < cards.length; i++) {
+      await downloadGiftCardPng(toCardData(cards[i], i));
+      await sleep(500);
+    }
+    setBulk(false);
+  }
 
   return (
     <main className="min-h-screen bg-black px-4 py-20 text-white">
@@ -76,28 +119,36 @@ function ExitoContent() {
         {loading ? (
           <div className="mt-10 flex items-center gap-3 text-zinc-400">
             <Loader2 className="h-5 w-5 animate-spin" />
-            Buscando tu Gift Card...
+            Buscando tu compra...
           </div>
-        ) : !card ? (
+        ) : !grupo ? (
           <p className="mt-6 max-w-lg text-lg leading-8 text-zinc-300">
-            No pudimos encontrar la Gift Card. Si ya pagaste, escribinos por
-            WhatsApp y te la enviamos al instante.
+            No pudimos encontrar la compra. Si ya pagaste, escribinos por
+            WhatsApp y te enviamos las Gift Cards al instante.
           </p>
-        ) : pagada ? (
+        ) : pagado ? (
           <>
             <p className="mt-5 max-w-lg text-lg leading-8 text-zinc-300">
-              Tu Gift Card está lista. Descargala y compartila con quien quieras.
+              {cards.length > 1
+                ? `Se generaron ${cards.length} Gift Cards. Descargalas y compartilas con quien quieras.`
+                : "Tu Gift Card está lista. Descargala y compartila con quien quieras."}
             </p>
-            <div className="mt-8 w-full">
-              <GiftCardDownloadable
-                card={{
-                  codigo_unico: card.codigo_unico,
-                  duracion_minutos: card.duracion_minutos,
-                  monto: card.monto,
-                  destinatario_nombre: card.destinatario_nombre,
-                  fecha: card.fecha_pago || card.created_at,
-                }}
-              />
+
+            {cards.length > 1 && (
+              <button
+                onClick={descargarTodas}
+                disabled={bulk}
+                className="mt-8 inline-flex items-center gap-2 rounded-2xl bg-red-600 px-6 py-4 text-base font-black text-white transition hover:bg-red-500 disabled:opacity-50"
+              >
+                <Download className="h-5 w-5" />
+                {bulk ? "Generando..." : `Descargar todas (${cards.length})`}
+              </button>
+            )}
+
+            <div className={cards.length > 1 ? "mt-8 grid w-full gap-8 sm:grid-cols-2" : "mt-8 w-full"}>
+              {cards.map((c, i) => (
+                <GiftCardDownloadable key={c.id} card={toCardData(c, i)} />
+              ))}
             </div>
           </>
         ) : (
@@ -114,7 +165,7 @@ function ExitoContent() {
               onClick={() => {
                 setIntentos(0);
                 setLoading(true);
-                fetchCard();
+                fetchGrupo();
               }}
               className="mt-6 rounded-2xl border border-white/10 bg-white/5 px-6 py-3 font-black text-white transition hover:bg-white/10"
             >

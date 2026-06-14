@@ -27,6 +27,18 @@ export function getProductoPorDuracion(duracion: number): GiftCardProducto | nul
   return GIFT_CARD_PRODUCTOS.find((p) => p.duracion === Number(duracion)) ?? null;
 }
 
+export const GIFT_CARD_MAX_CANTIDAD = 10;
+export type ModoUso = "juntas" | "separadas";
+
+// Reparte un total en enteros entre n filas (el resto se suma a la primera),
+// de modo que la suma sea exactamente el total.
+export function repartirMonto(total: number, n: number): number[] {
+  if (n <= 1) return [total];
+  const base = Math.floor(total / n);
+  const resto = total - base * n;
+  return Array.from({ length: n }, (_, i) => base + (i === 0 ? resto : 0));
+}
+
 // Código único legible: SIM-XXXX-XXXX
 export function generarCodigoGiftCard(): string {
   const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sin 0/O/1/I

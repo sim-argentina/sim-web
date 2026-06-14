@@ -23,15 +23,38 @@ export async function PATCH(
     return NextResponse.json({ error: "Body inválido" }, { status: 400 });
   }
 
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  const nowIso = new Date().toISOString();
+  const updates: Record<string, unknown> = { updated_at: nowIso };
+
+  // Acciones que dependen de los usos actuales necesitan leer la fila.
+  type UsosRow = { usos_totales: number; usos_disponibles: number };
+  let fila: UsosRow | null = null;
+  if (body.accion === "registrar_uso" || body.accion === "marcar_pendiente") {
+    const { data } = await supabaseAdmin
+      .from("gift_cards")
+      .select("usos_totales, usos_disponibles")
+      .eq("id", id)
+      .maybeSingle();
+    fila = (data as UsosRow | null) ?? null;
+  }
 
   switch (body.accion) {
+    case "registrar_uso": {
+      // Descuenta un uso; cuando llega a 0, la gift card queda "usada".
+      const disponibles = Math.max(0, (fila?.usos_disponibles ?? 1) - 1);
+      updates.usos_disponibles = disponibles;
+      updates.estado_uso = disponibles <= 0 ? "usada" : "pendiente";
+      updates.fecha_uso = disponibles <= 0 ? nowIso : null;
+      break;
+    }
     case "marcar_usada":
       updates.estado_uso = "usada";
-      updates.fecha_uso = new Date().toISOString();
+      updates.usos_disponibles = 0;
+      updates.fecha_uso = nowIso;
       break;
     case "marcar_pendiente":
       updates.estado_uso = "pendiente";
+      updates.usos_disponibles = fila?.usos_totales ?? 1;
       updates.fecha_uso = null;
       break;
     case "marcar_vencida":

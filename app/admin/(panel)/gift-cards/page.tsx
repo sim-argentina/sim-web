@@ -15,6 +15,11 @@ type GiftCard = {
   monto_original: number | null;
   descuento_aplicado: number | null;
   codigo_descuento: string | null;
+  cantidad: number;
+  modo_uso: string;
+  grupo_compra_id: string | null;
+  usos_totales: number;
+  usos_disponibles: number;
   estado_uso: string;
   mercado_pago_payment_id: string | null;
   fecha_pago: string | null;
@@ -60,6 +65,21 @@ function BadgeUso({ estado }: { estado: string }) {
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-black ${map[estado] ?? "bg-zinc-700/40 text-zinc-300 border-zinc-600"}`}>
       {USO_LABEL[estado] ?? estado}
+    </span>
+  );
+}
+
+function ModoBadge({ modo }: { modo: string }) {
+  const isJuntas = modo === "juntas";
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-black ${
+        isJuntas
+          ? "bg-purple-500/15 text-purple-300 border-purple-500/30"
+          : "bg-zinc-600/20 text-zinc-300 border-zinc-600/40"
+      }`}
+    >
+      {isJuntas ? "Juntas" : "Separadas"}
     </span>
   );
 }
@@ -172,7 +192,7 @@ export default function AdminGiftCardsPage() {
           <table className="w-full text-sm">
             <thead className="bg-white/[0.04] text-zinc-400">
               <tr>
-                {["Código", "Comprador", "Duración", "Monto", "Estado", "Vendida", "Acciones"].map((h) => (
+                {["Código", "Comprador", "Duración", "Usos", "Disp.", "Modo", "Monto", "Estado", "Vendida", "Acciones"].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-xs font-black uppercase tracking-wider">{h}</th>
                 ))}
               </tr>
@@ -189,6 +209,13 @@ export default function AdminGiftCardsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-zinc-300">{c.duracion_minutos} min</td>
+                  <td className="px-4 py-3 text-zinc-300 tabular-nums">{c.usos_totales}</td>
+                  <td className="px-4 py-3 tabular-nums">
+                    <span className={c.usos_disponibles > 0 ? "text-white font-bold" : "text-zinc-500"}>
+                      {c.usos_disponibles}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3"><ModoBadge modo={c.modo_uso} /></td>
                   <td className="px-4 py-3 font-black text-white">{formatPrice(c.monto)}</td>
                   <td className="px-4 py-3"><BadgeUso estado={c.estado_uso} /></td>
                   <td className="px-4 py-3 text-xs text-zinc-500">{formatFechaHora(c.fecha_pago || c.created_at)}</td>
@@ -202,6 +229,15 @@ export default function AdminGiftCardsPage() {
                       </button>
                       {c.estado_uso === "pendiente" && (
                         <>
+                          {c.usos_totales > 1 && c.usos_disponibles > 0 && (
+                            <button
+                              disabled={accionId === c.id}
+                              onClick={() => accion(c.id, { accion: "registrar_uso" })}
+                              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-500 disabled:opacity-50"
+                            >
+                              Registrar uso
+                            </button>
+                          )}
                           <button
                             disabled={accionId === c.id}
                             onClick={() => accion(c.id, { accion: "marcar_usada" })}
@@ -263,7 +299,10 @@ export default function AdminGiftCardsPage() {
                 ["Comprador", detalle.comprador_nombre],
                 ["Teléfono", detalle.comprador_telefono],
                 ["Destinatario", detalle.destinatario_nombre || "—"],
-                ["Duración", `${detalle.duracion_minutos} min`],
+                ["Duración individual", `${detalle.duracion_minutos} min`],
+                ["Modo", detalle.modo_uso === "juntas" ? "Juntas" : "Separadas"],
+                ["Usos totales", String(detalle.usos_totales)],
+                ["Usos disponibles", String(detalle.usos_disponibles)],
                 ["Monto", formatPrice(detalle.monto)],
                 ["Código descuento", detalle.codigo_descuento || "—"],
                 ["Vendida", formatFechaHora(detalle.fecha_pago || detalle.created_at)],
@@ -284,6 +323,15 @@ export default function AdminGiftCardsPage() {
             <div className="mt-4 flex flex-wrap gap-2">
               {detalle.estado_uso === "pendiente" && (
                 <>
+                  {detalle.usos_totales > 1 && detalle.usos_disponibles > 0 && (
+                    <button
+                      disabled={accionId === detalle.id}
+                      onClick={() => accion(detalle.id, { accion: "registrar_uso" })}
+                      className="rounded-xl bg-blue-600 px-5 py-2 font-bold text-white hover:bg-blue-500 disabled:opacity-50"
+                    >
+                      Registrar uso
+                    </button>
+                  )}
                   <button
                     disabled={accionId === detalle.id}
                     onClick={() => accion(detalle.id, { accion: "marcar_usada" })}
