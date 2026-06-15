@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 
-type Vista = "reservas" | "stand";
+type Vista = "reservas" | "stand" | "campeonatos";
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
 type Agrupacion = "dia" | "semana" | "mes";
 
@@ -18,6 +18,7 @@ type Reserva = {
   cantidad_turnos: number;
   total: number;
   estado: string;
+  duracion_minutos?: number | null;
 };
 
 type TurnoStand = {
@@ -53,6 +54,32 @@ type ChartItem = {
   label: string;
   value: number;
 };
+
+type CampRegistro = {
+  id: string;
+  fecha: string;
+  nombre_completo: string;
+  categoria: string;
+  campeonato_id: string | null;
+  circuito: string | null;
+  estado: string;
+  cantidad_turnos?: number | null;
+  campeonatos?: { nombre: string } | null;
+};
+
+type CampInscripcion = {
+  id: string;
+  created_at: string;
+  fecha?: string; // derivada de created_at para reutilizar el filtro por fecha
+  categoria: string | null;
+  campeonato_id: string | null;
+  monto: number;
+  estado_pago: string;
+  nombre_completo?: string;
+  campeonatos?: { nombre: string } | null;
+};
+
+type CampeonatoLite = { id: string; nombre: string };
 
 function normalizeText(value: any) {
   return String(value ?? "")
@@ -709,6 +736,14 @@ export default function AdminMetricasPage() {
   const [turnosStand, setTurnosStand] = useState<TurnoStand[]>([]);
   const [turnosHistoricos, setTurnosHistoricos] = useState<TurnoStand[]>([]);
 
+  // Campeonatos
+  const [campRegistros, setCampRegistros] = useState<CampRegistro[]>([]);
+  const [campInscripciones, setCampInscripciones] = useState<CampInscripcion[]>([]);
+  const [campeonatos, setCampeonatos] = useState<CampeonatoLite[]>([]);
+  const [campFiltroCampeonato, setCampFiltroCampeonato] = useState("");
+  const [campFiltroCategoria, setCampFiltroCategoria] = useState("");
+  const [campFiltroCircuito, setCampFiltroCircuito] = useState("");
+
   const [loading, setLoading] = useState(true);
   const [importando, setImportando] = useState(false);
 
@@ -757,15 +792,22 @@ export default function AdminMetricasPage() {
     try {
       setLoading(true);
 
-      const [resReservas, resStand, resHistoricos] = await Promise.all([
-        fetch("/api/reservas", { cache: "no-store" }),
-        fetch("/api/turnos-stand", { cache: "no-store" }),
-        fetch("/api/turnos-historicos", { cache: "no-store" }),
-      ]);
+      const [resReservas, resStand, resHistoricos, resCampReg, resCampIns, resCamp] =
+        await Promise.all([
+          fetch("/api/reservas", { cache: "no-store" }),
+          fetch("/api/turnos-stand", { cache: "no-store" }),
+          fetch("/api/turnos-historicos", { cache: "no-store" }),
+          fetch("/api/admin/campeonatos/registros", { cache: "no-store" }),
+          fetch("/api/admin/campeonatos/inscripciones", { cache: "no-store" }),
+          fetch("/api/admin/campeonatos", { cache: "no-store" }),
+        ]);
 
       const reservasJson = await resReservas.json();
       const standJson = await resStand.json();
       const historicosJson = await resHistoricos.json();
+      const campRegJson = await resCampReg.json();
+      const campInsJson = await resCampIns.json();
+      const campJson = await resCamp.json();
 
       setReservas(
         (Array.isArray(reservasJson) ? reservasJson : reservasJson.reservas || [])
@@ -787,6 +829,17 @@ export default function AdminMetricasPage() {
           total: Number(t.total || 0),
         }))
       );
+
+      // Campeonatos
+      setCampRegistros(Array.isArray(campRegJson) ? campRegJson : []);
+      setCampInscripciones(
+        (Array.isArray(campInsJson) ? campInsJson : []).map((i: CampInscripcion) => ({
+          ...i,
+          // reutiliza el filtro por fecha (created_at -> YYYY-MM-DD)
+          fecha: (i.created_at || "").slice(0, 10),
+        }))
+      );
+      setCampeonatos(Array.isArray(campJson) ? campJson : []);
     } catch (error) {
       console.error(error);
       alert("Error cargando métricas");
@@ -1053,6 +1106,10 @@ export default function AdminMetricasPage() {
     const porCantidadTurnos = countBy(activas, (r) => `${r.cantidad_turnos} turno/s`);
     const porDia = countBy(reservasFiltradas, (r) => r.fecha);
 
+    // Duración: si una reserva vieja no tiene duración, se asume 15 min.
+    const reservas30 = reservasFiltradas.filter((r) => Number(r.duracion_minutos) === 30).length;
+    const reservas15 = reservasFiltradas.length - reservas30;
+
     const porSimulador: Record<string, number> = {};
     const ingresosPorDia: Record<string, number> = {};
     const ingresosPorSimulador: Record<string, number> = {};
@@ -1096,6 +1153,12 @@ export default function AdminMetricasPage() {
         label: i.label.slice(5),
       })),
       ingresosPorSimulador: toChart(ingresosPorSimulador),
+      reservas15,
+      reservas30,
+      reservasPorDuracion: [
+        { label: "15 min", value: reservas15 },
+        { label: "30 min", value: reservas30 },
+      ] as ChartItem[],
     };
   }, [reservasFiltradas]);
 
@@ -1151,6 +1214,9 @@ export default function AdminMetricasPage() {
       }
     > = [];
 
+    let standTurnos15 = 0;
+    let standTurnos30 = 0;
+
     standFiltrado.forEach((t) => {
       const monto = numberValue(t.total ?? t.monto);
       const metodo = normalizarMetodoPago(t.metodo_pago);
@@ -1192,6 +1258,11 @@ export default function AdminMetricasPage() {
 
       if (duracion > 0) addToRecord(porDuracion, `${duracion} min`, 1);
       if (sims > 0) addToRecord(porPersonas, `${sims} persona/s`, 1);
+
+      // Comparativo 15 vs 30 min (si no hay dato, se asume 15 min).
+      const durNorm = (duracion || numberValue(t.cantidad_minutos)) === 30 ? 30 : 15;
+      if (durNorm === 30) standTurnos30 += cantTurnos;
+      else standTurnos15 += cantTurnos;
 
       obtenerEscuderias(escuderiaRaw).forEach((escuderia) => {
         addToRecord(porSimulador, escuderia, 1);
@@ -1243,8 +1314,127 @@ export default function AdminMetricasPage() {
         filtroIngresos
       ),
       ingresosPorMetodo: toChart(ingresosPorMetodo),
+      turnos15min: standTurnos15,
+      turnos30min: standTurnos30,
+      porDuracionComparativo: [
+        { label: "15 min", value: standTurnos15 },
+        { label: "30 min", value: standTurnos30 },
+      ] as ChartItem[],
     };
   }, [standFiltrado, agrupacionIngresos, filtroIngresos, limiteRankingDemora]);
+
+  // ── Campeonatos ──────────────────────────────────────────────────────────
+  const campCircuitosOpciones = useMemo(() => {
+    const set = new Set<string>();
+    campRegistros.forEach((r) => {
+      if (r.circuito) set.add(r.circuito);
+    });
+    return Array.from(set).sort();
+  }, [campRegistros]);
+
+  const campRegistrosFiltrados = useMemo(() => {
+    const q = normalizeText(busqueda);
+    return filtrarPorFecha<CampRegistro>(campRegistros)
+      .filter((r) => r.estado === "valido") // ignora anulados/cancelados
+      .filter((r) => !campFiltroCampeonato || r.campeonato_id === campFiltroCampeonato)
+      .filter((r) => !campFiltroCategoria || normalizeText(r.categoria) === campFiltroCategoria)
+      .filter((r) => !campFiltroCircuito || (r.circuito || "Sin circuito") === campFiltroCircuito)
+      .filter((r) => !q || normalizeText(r.nombre_completo).includes(q));
+  }, [
+    campRegistros,
+    fechaDesde,
+    fechaHasta,
+    campFiltroCampeonato,
+    campFiltroCategoria,
+    campFiltroCircuito,
+    busqueda,
+  ]);
+
+  const campInscripcionesFiltradas = useMemo(() => {
+    const q = normalizeText(busqueda);
+    return filtrarPorFecha<CampInscripcion>(campInscripciones)
+      .filter((i) => i.estado_pago !== "cancelado" && i.estado_pago !== "rechazado")
+      .filter((i) => !campFiltroCampeonato || i.campeonato_id === campFiltroCampeonato)
+      .filter((i) => !campFiltroCategoria || normalizeText(i.categoria || "") === campFiltroCategoria)
+      .filter((i) => !q || normalizeText(i.nombre_completo || "").includes(q));
+  }, [
+    campInscripciones,
+    fechaDesde,
+    fechaHasta,
+    campFiltroCampeonato,
+    campFiltroCategoria,
+    busqueda,
+  ]);
+
+  const metricasCampeonatos = useMemo(() => {
+    const registros = campRegistrosFiltrados;
+    const inscripciones = campInscripcionesFiltradas;
+    const pagadas = inscripciones.filter((i) => i.estado_pago === "pagado");
+
+    const nombreCamp = (id: string | null, fallback?: string | null) =>
+      fallback || campeonatos.find((c) => c.id === id)?.nombre || "Sin campeonato";
+
+    const totalInscriptos = inscripciones.length;
+    const totalTurnos = sumBy(registros, (r) => numberValue(r.cantidad_turnos) || 1);
+    const facturado = sumBy(pagadas, (i) => numberValue(i.monto));
+
+    const turnosPorCampeonato: Record<string, number> = {};
+    const turnosPorCategoria: Record<string, number> = {};
+    const turnosPorCircuito: Record<string, number> = {};
+    const personasPorCircuitoSet: Record<string, Set<string>> = {};
+
+    registros.forEach((r) => {
+      const camp = r.campeonatos?.nombre || nombreCamp(r.campeonato_id);
+      const turnos = numberValue(r.cantidad_turnos) || 1;
+      addToRecord(turnosPorCampeonato, camp, turnos);
+      addToRecord(turnosPorCategoria, capitalizar(r.categoria || "Sin categoría"), turnos);
+      const circ = r.circuito || "Sin circuito";
+      addToRecord(turnosPorCircuito, circ, turnos);
+      if (!personasPorCircuitoSet[circ]) personasPorCircuitoSet[circ] = new Set();
+      personasPorCircuitoSet[circ].add(normalizeText(r.nombre_completo));
+    });
+
+    const personasPorCircuito: Record<string, number> = {};
+    Object.entries(personasPorCircuitoSet).forEach(([k, v]) => {
+      personasPorCircuito[k] = v.size;
+    });
+
+    const inscriptosPorCampeonato: Record<string, number> = {};
+    const inscriptosPorCategoria: Record<string, number> = {};
+    const facturacionPorCampeonato: Record<string, number> = {};
+
+    inscripciones.forEach((i) => {
+      addToRecord(inscriptosPorCampeonato, i.campeonatos?.nombre || nombreCamp(i.campeonato_id), 1);
+      addToRecord(inscriptosPorCategoria, i.categoria ? capitalizar(i.categoria) : "Sin asignar", 1);
+    });
+    pagadas.forEach((i) => {
+      addToRecord(
+        facturacionPorCampeonato,
+        i.campeonatos?.nombre || nombreCamp(i.campeonato_id),
+        numberValue(i.monto)
+      );
+    });
+
+    const campMasParticipacion =
+      Object.entries(turnosPorCampeonato).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+    const categoriaMasParticipacion =
+      Object.entries(turnosPorCategoria).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+
+    return {
+      totalInscriptos,
+      totalTurnos,
+      facturado,
+      campMasParticipacion,
+      categoriaMasParticipacion,
+      turnosPorCampeonato: toChart(turnosPorCampeonato),
+      turnosPorCategoria: toChart(turnosPorCategoria),
+      turnosPorCircuito: toChart(turnosPorCircuito),
+      personasPorCircuito: toChart(personasPorCircuito),
+      inscriptosPorCampeonato: toChart(inscriptosPorCampeonato),
+      inscriptosPorCategoria: toChart(inscriptosPorCategoria),
+      facturacionPorCampeonato: toChart(facturacionPorCampeonato),
+    };
+  }, [campRegistrosFiltrados, campInscripcionesFiltradas, campeonatos]);
 
   const rangoTexto =
     !fechaDesde && !fechaHasta ? "Todo el histórico" : `${fechaDesde || "Inicio"} → ${fechaHasta || "Hoy"}`;
@@ -1288,6 +1478,15 @@ export default function AdminMetricasPage() {
             }`}
           >
             Stand
+          </button>
+
+          <button
+            onClick={() => setVista("campeonatos")}
+            className={`rounded-xl px-6 py-3 text-sm font-bold ${
+              vista === "campeonatos" ? "bg-red-600 text-white" : "text-white/50 hover:text-white"
+            }`}
+          >
+            Campeonatos
           </button>
         </div>
 
@@ -1348,7 +1547,7 @@ export default function AdminMetricasPage() {
                   <option value="cancelada">Canceladas</option>
                 </select>
               </div>
-            ) : (
+            ) : vista === "stand" ? (
               <div>
   <label className="mb-2 block text-sm text-white/70">Importar Excel</label>
 
@@ -1365,6 +1564,22 @@ export default function AdminMetricasPage() {
     />
   </label>
 </div>
+            ) : (
+              <div>
+                <label className="mb-2 block text-sm text-white/70">Campeonato</label>
+                <select
+                  value={campFiltroCampeonato}
+                  onChange={(e) => setCampFiltroCampeonato(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                >
+                  <option value="">Todos</option>
+                  {campeonatos.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
 
             <div>
@@ -1377,6 +1592,39 @@ export default function AdminMetricasPage() {
               />
             </div>
           </div>
+
+          {vista === "campeonatos" && (
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm text-white/70">Categoría</label>
+                <select
+                  value={campFiltroCategoria}
+                  onChange={(e) => setCampFiltroCategoria(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                >
+                  <option value="">Todas</option>
+                  <option value="oro">Oro</option>
+                  <option value="plata">Plata</option>
+                  <option value="bronce">Bronce</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm text-white/70">Circuito / Carrera</label>
+                <select
+                  value={campFiltroCircuito}
+                  onChange={(e) => setCampFiltroCircuito(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                >
+                  <option value="">Todos</option>
+                  {campCircuitosOpciones.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
 
           <div className="mt-4 rounded-xl border border-white/10 bg-black/25 px-4 py-3">
             <p className="text-sm text-white/50">Rango activo</p>
@@ -1403,6 +1651,8 @@ export default function AdminMetricasPage() {
               <KpiCard title="Ingreso/turno" value={formatMoney(metricasReservas.ingresoPorTurno)} />
               <KpiCard title="Ingreso/simulador" value={formatMoney(metricasReservas.ingresoPorSimulador)} />
               <KpiCard title="Hora pico" value={metricasReservas.horaPico} />
+              <KpiCard title="Reservas 15 min" value={String(metricasReservas.reservas15)} />
+              <KpiCard title="Reservas 30 min" value={String(metricasReservas.reservas30)} />
             </div>
 
             <div className="mb-8">
@@ -1416,9 +1666,10 @@ export default function AdminMetricasPage() {
               <BarChart title="Reservas por cantidad de turnos" data={metricasReservas.reservasPorCantidadTurnos} />
               <BarChart title="Ingresos por simulador" data={metricasReservas.ingresosPorSimulador} valueFormatter={formatMoney} />
               <BarChart title="Reservas por día" data={metricasReservas.reservasPorDia} />
+              <BarChart title="Reservas: 15 vs 30 min" data={metricasReservas.reservasPorDuracion} />
             </div>
           </>
-        ) : (
+        ) : vista === "stand" ? (
           <>
             <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
               <p className="text-sm text-white/60">
@@ -1464,6 +1715,8 @@ export default function AdminMetricasPage() {
               <KpiCard title="Prom. personas" value={metricasStand.promedioPersonas.toFixed(2)} />
               <KpiCard title="Horas vendidas" value={metricasStand.horasVendidas.toFixed(1)} />
               <KpiCard title="Minutos vendidos" value={String(metricasStand.totalMinutos)} />
+              <KpiCard title="Turnos 15 min" value={String(metricasStand.turnos15min)} />
+              <KpiCard title="Turnos 30 min" value={String(metricasStand.turnos30min)} />
               <KpiCard title="Ingreso/minuto" value={formatMoney(metricasStand.ingresoPorMinuto)} />
               <KpiCard title="Ingreso/persona" value={formatMoney(metricasStand.ingresoPorPersona)} />
               <KpiCard title="Ingreso promedio/sim" value={formatMoney(metricasStand.ingresoPromedioPorSimulador)} />
@@ -1611,9 +1864,30 @@ export default function AdminMetricasPage() {
               <PieChart title="Turnos por método de pago" data={metricasStand.porMetodoPago} />
               <BarChart title="Ingresos por método de pago" data={metricasStand.ingresosPorMetodo} valueFormatter={formatMoney} />
               <BarChart title="Turnos por duración" data={metricasStand.porDuracion} />
+              <BarChart title="Stand: 15 vs 30 min" data={metricasStand.porDuracionComparativo} />
               <BarChart title="Turnos por cantidad de personas" data={metricasStand.porPersonas} />
               <BarChart title="Turnos por hora" data={metricasStand.porHora} />
               <BarChart title="Turnos por día de semana" data={metricasStand.porDia} />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mb-8 grid gap-4 md:grid-cols-3 xl:grid-cols-5">
+              <KpiCard title="Total inscriptos" value={String(metricasCampeonatos.totalInscriptos)} subtext="Según filtros" />
+              <KpiCard title="Turnos realizados" value={String(metricasCampeonatos.totalTurnos)} subtext="Sin anulados" />
+              <KpiCard title="Facturado" value={formatMoney(metricasCampeonatos.facturado)} subtext="Inscripciones pagadas" />
+              <KpiCard title="Campeonato + participación" value={metricasCampeonatos.campMasParticipacion} />
+              <KpiCard title="Categoría + participación" value={metricasCampeonatos.categoriaMasParticipacion} />
+            </div>
+
+            <div className="mb-8 grid gap-6 xl:grid-cols-3">
+              <PieChart title="Turnos por categoría" data={metricasCampeonatos.turnosPorCategoria} />
+              <PieChart title="Inscriptos por categoría" data={metricasCampeonatos.inscriptosPorCategoria} />
+              <BarChart title="Turnos por campeonato" data={metricasCampeonatos.turnosPorCampeonato} />
+              <BarChart title="Inscriptos por campeonato" data={metricasCampeonatos.inscriptosPorCampeonato} />
+              <BarChart title="Turnos por circuito" data={metricasCampeonatos.turnosPorCircuito} />
+              <BarChart title="Personas por circuito" data={metricasCampeonatos.personasPorCircuito} />
+              <BarChart title="Facturación por campeonato" data={metricasCampeonatos.facturacionPorCampeonato} valueFormatter={formatMoney} />
             </div>
           </>
         )}
