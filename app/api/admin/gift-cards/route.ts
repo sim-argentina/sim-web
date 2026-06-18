@@ -1,14 +1,11 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
 // Listado de Gift Cards para el panel (admin y staff).
 export async function GET(req: Request) {
-  const cookieStore = await cookies();
-  const role = cookieStore.get("sim-admin-role")?.value;
-  if (!role) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  }
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
 
   try {
     const url = new URL(req.url);

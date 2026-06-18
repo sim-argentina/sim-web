@@ -1,15 +1,13 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
+import { getCurrentAdminRole } from "@/lib/adminGuards";
 
 export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const cookieStore = await cookies();
-
-  const role = cookieStore.get("sim-admin-role")?.value;
+  const role = await getCurrentAdminRole();
 
   if (!role) {
     redirect("/admin/login");

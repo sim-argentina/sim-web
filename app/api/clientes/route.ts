@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { sanitizeSearchTerm } from "@/lib/security";
 
 export async function GET(req: Request) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
+
   const { searchParams } = new URL(req.url);
-  const q = searchParams.get("q")?.trim();
+  const q = sanitizeSearchTerm(searchParams.get("q"));
 
   if (!q || q.length < 2) {
     return NextResponse.json({ clientes: [] });

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { sanitizeSearchTerm } from "@/lib/security";
 
 export async function POST(req: Request) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const body = await req.json();
     const {
@@ -47,12 +51,14 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const url = new URL(req.url);
     const campeonato_id = url.searchParams.get("campeonato_id");
     const categoria = url.searchParams.get("categoria");
     const estado_pago = url.searchParams.get("estado_pago");
-    const q = url.searchParams.get("q");
+    const q = sanitizeSearchTerm(url.searchParams.get("q"));
 
     let query = supabaseAdmin
       .from("campeonato_inscripciones")

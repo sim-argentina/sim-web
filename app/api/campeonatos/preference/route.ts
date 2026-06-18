@@ -20,7 +20,6 @@ export async function POST(req: Request) {
       instagram,
       escuderia_favorita,
       campeonato_id,
-      monto,
       acepto_condiciones,
       metodo_pago_inscripcion, // "mercadopago" | "stand"
     } = body;
@@ -32,7 +31,6 @@ export async function POST(req: Request) {
       !dni?.trim() ||
       !escuderia_favorita ||
       !campeonato_id ||
-      !monto ||
       acepto_condiciones !== true
     ) {
       return NextResponse.json(
@@ -41,12 +39,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const montoFinal = Math.round(Number(monto));
-    if (!Number.isFinite(montoFinal) || montoFinal <= 0) {
-      return NextResponse.json({ error: "Monto inválido" }, { status: 400 });
-    }
-
-    // Verificar campeonato
+    // Verificar campeonato y usar SU precio (nunca el monto enviado por el cliente)
     const { data: campeonato } = await supabaseAdmin
       .from("campeonatos")
       .select("id, nombre, inscripcion_habilitada, cupos_maximos, precio_inscripcion")
@@ -62,6 +55,14 @@ export async function POST(req: Request) {
     if (!campeonato.inscripcion_habilitada) {
       return NextResponse.json(
         { error: "La inscripción no está habilitada para este campeonato" },
+        { status: 400 }
+      );
+    }
+
+    const montoFinal = Math.round(Number(campeonato.precio_inscripcion));
+    if (!Number.isFinite(montoFinal) || montoFinal <= 0) {
+      return NextResponse.json(
+        { error: "El precio de inscripción no está configurado" },
         { status: 400 }
       );
     }

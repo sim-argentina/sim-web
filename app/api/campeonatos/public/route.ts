@@ -45,7 +45,18 @@ export async function GET() {
         const key = r.nombre_completo || `${r.nombre} ${r.apellido || ""}`.trim();
         const ex = pilotos[key] as { tiempo_segundos: number } | undefined;
         if (!ex || r.tiempo_segundos < ex.tiempo_segundos) {
-          pilotos[key] = { ...r, piloto: key };
+          // DTO sin PII (nunca telefono/observaciones/pagos)
+          pilotos[key] = {
+            piloto: key,
+            tiempo: r.tiempo,
+            tiempo_segundos: r.tiempo_segundos,
+            circuito: r.circuito,
+            fecha: r.fecha,
+            categoria: r.categoria,
+            escuderia_favorita: r.escuderia_favorita,
+            campeonato_id: r.campeonato_id,
+            simulador: r.simulador ?? null,
+          };
         }
       }
       rankings[cat] = Object.values(pilotos)
@@ -161,10 +172,20 @@ export async function GET() {
       }
     }
 
-    // Resultados por fecha para la sección de resultados
+    // Resultados por fecha — DTO público sin PII ni datos financieros internos.
     const resultados_por_fecha = registros.map((r) => ({
-      ...r,
-      campeonato_nombre: (r as { campeonatos?: { nombre: string } }).campeonatos?.nombre,
+      id: r.id,
+      fecha: r.fecha,
+      nombre_completo: r.nombre_completo || `${r.nombre} ${r.apellido || ""}`.trim(),
+      categoria: r.categoria,
+      campeonato_id: r.campeonato_id,
+      campeonato_nombre: (r as { campeonatos?: { nombre: string } }).campeonatos?.nombre ?? null,
+      circuito: r.circuito,
+      tiempo: r.tiempo,
+      tiempo_segundos: r.tiempo_segundos,
+      escuderia_favorita: r.escuderia_favorita,
+      semana: r.semana,
+      simulador: r.simulador ?? null,
       puntos_ganados: puntosXRegistro[r.id] ?? 0,
     }));
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Preference } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getOccupiedSlots, construirOcupacion } from "@/lib/reservasSlots";
+import { getOccupiedSlots, construirOcupacion, precioPorSimulador } from "@/lib/reservasSlots";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
@@ -137,7 +137,6 @@ export async function POST(req: Request) {
       hora,
       simuladores,
       cantidad_turnos,
-      total,
       acepto_condiciones,
       codigo_descuento,
       duracion_minutos,
@@ -161,11 +160,12 @@ export async function POST(req: Request) {
 
     const duracion = Number(duracion_minutos) === 30 ? 30 : 15;
 
-    const totalOriginal = Math.round(Number(total));
+    // Precio recalculado server-side; se ignora cualquier total enviado por el cliente.
+    const totalOriginal = precioPorSimulador(fecha, duracion) * simuladores.length;
 
     if (!Number.isFinite(totalOriginal) || totalOriginal <= 0) {
       return NextResponse.json(
-        { error: "Total original inválido" },
+        { error: "No se pudo calcular el precio de la reserva" },
         { status: 400 }
       );
     }
@@ -296,7 +296,7 @@ export async function POST(req: Request) {
           },
         ],
 
-        external_reference: String(reservaPendiente.id),
+        external_reference: `reserva_${reservaPendiente.id}`,
 
         back_urls: {
           success: `${baseUrl}/reservas/exito`,

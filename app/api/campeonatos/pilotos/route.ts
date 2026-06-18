@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { sanitizeSearchTerm } from "@/lib/security";
 
-// Busca pilotos en inscripciones y registros de campeonatos.
+// Busca pilotos en inscripciones y registros de campeonatos (uso interno del panel).
 // Devuelve nombre, apellido, telefono, categoria y escuderia para autocompletar el formulario.
 
 export async function GET(req: Request) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
+
   const { searchParams } = new URL(req.url);
-  const q = searchParams.get("q")?.trim();
+  const q = sanitizeSearchTerm(searchParams.get("q"));
 
   if (!q || q.length < 2) {
     return NextResponse.json({ pilotos: [] });

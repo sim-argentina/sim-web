@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { sanitizeSearchTerm } from "@/lib/security";
 
 function tiempoASegundos(tiempo: string): number {
   if (!tiempo?.trim()) return 999999;
@@ -21,9 +23,11 @@ function getISOWeek(dateStr: string): number {
 }
 
 export async function GET(req: Request) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const url = new URL(req.url);
-    const nombre = url.searchParams.get("nombre");
+    const nombre = sanitizeSearchTerm(url.searchParams.get("nombre"));
     const campeonato_id = url.searchParams.get("campeonato_id");
     const categoria = url.searchParams.get("categoria");
     const circuito = url.searchParams.get("circuito");
@@ -56,6 +60,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const body = await req.json();
 

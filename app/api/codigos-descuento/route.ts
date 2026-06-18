@@ -1,18 +1,22 @@
 import { NextResponse } from "next/server";
+import { randomInt } from "crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireAdmin } from "@/lib/adminGuards";
 
 function generarCodigo() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let codigo = "SIM-";
 
   for (let i = 0; i < 6; i++) {
-    codigo += chars[Math.floor(Math.random() * chars.length)];
+    codigo += chars[randomInt(0, chars.length)];
   }
 
   return codigo;
 }
 
 export async function GET() {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
   const { data, error } = await supabaseAdmin
     .from("codigos_descuento")
     .select("*")
@@ -29,6 +33,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
+
   const body = await req.json();
 
   const {

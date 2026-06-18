@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
 function limpiarPagosDetalle(pagos: any[]) {
   if (!Array.isArray(pagos)) return [];
@@ -17,6 +18,8 @@ export async function PATCH(
   req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const { id } = await context.params;
     const body = await req.json();

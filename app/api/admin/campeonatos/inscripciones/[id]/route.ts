@@ -1,17 +1,14 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const cookieStore = await cookies();
-  const role = cookieStore.get("sim-admin-role")?.value;
-
-  if (!role) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  }
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
+  const role = auth.role;
 
   const { id } = await params;
 

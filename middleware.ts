@@ -1,35 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ADMIN_COOKIE, verifySessionToken } from "@/lib/adminSession";
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-
-  const logged = request.cookies.get("sim-admin-auth")?.value;
-  const role = request.cookies.get("sim-admin-role")?.value;
 
   // Dejar pasar login
   if (pathname === "/admin/login" || pathname.startsWith("/admin/login/")) {
     return NextResponse.next();
   }
 
+  // Validar sesión firmada (no se confía en el valor crudo de la cookie)
+  const token = request.cookies.get(ADMIN_COOKIE)?.value;
+  const role = await verifySessionToken(token);
+
   // Si entra a /admin, redirigir según estado
   if (pathname === "/admin") {
-    if (!logged) {
+    if (!role) {
       return NextResponse.redirect(new URL("/admin/login", request.url));
     }
-
     if (role === "admin") {
       return NextResponse.redirect(new URL("/admin/metricas", request.url));
     }
-
-    if (role === "staff") {
-      return NextResponse.redirect(new URL("/admin/calendario", request.url));
-    }
-
-    return NextResponse.redirect(new URL("/admin/login", request.url));
+    return NextResponse.redirect(new URL("/admin/calendario", request.url));
   }
 
-  // Proteger el resto del admin
-  if (pathname.startsWith("/admin") && !logged) {
+  // Proteger el resto del admin (la autorización real está en cada API route)
+  if (pathname.startsWith("/admin") && !role) {
     return NextResponse.redirect(new URL("/admin/login", request.url));
   }
 

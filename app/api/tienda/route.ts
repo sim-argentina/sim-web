@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireAdmin } from "@/lib/adminGuards";
 
 export async function GET() {
   const { data, error } = await supabaseAdmin
@@ -14,6 +15,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
+
   const body = await req.json();
   const { nombre, descripcion, imagenes, caracteristicas, orden } = body;
 

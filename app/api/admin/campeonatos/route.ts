@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
 export async function GET() {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const { data, error } = await supabaseAdmin
       .from("campeonatos")
@@ -16,6 +19,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const body = await req.json();
 

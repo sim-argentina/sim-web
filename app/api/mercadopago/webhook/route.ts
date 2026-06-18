@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { verifyMpWebhook } from "@/lib/mercadopago";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
@@ -39,6 +41,10 @@ async function consumirCodigoDescuento(codigo: string) {
 
 export async function POST(req: Request) {
   try {
+    if (!rateLimit(`wh-reserva:${clientIp(req)}`, 300, 60_000)) {
+      return NextResponse.json({ error: "Demasiadas solicitudes" }, { status: 429 });
+    }
+
     if (!accessToken) {
       return NextResponse.json(
         { error: "Falta MERCADOPAGO_ACCESS_TOKEN" },
@@ -62,6 +68,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
+    if (!verifyMpWebhook(req, paymentId)) {
+      return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
+    }
+
     const payment = new Payment(client);
     const paymentData = await payment.get({ id: paymentId });
 
@@ -69,7 +79,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    const reservaId = Number(paymentData.external_reference);
+    const extRef = paymentData.external_reference || "";
+    // No procesar referencias de otros flujos.
+    if (extRef.startsWith("gift_card_") || extRef.startsWith("campeonato_")) {
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+    const reservaId = Number(extRef.replace(/^reserva_/, ""));
 
     if (!Number.isFinite(reservaId) || reservaId <= 0) {
       return NextResponse.json(

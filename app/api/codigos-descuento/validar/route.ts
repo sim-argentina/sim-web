@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 
 export async function POST(req: Request) {
+  // Rate limit anti enumeración de códigos.
+  if (!rateLimit(`validar:${clientIp(req)}`, 20, 60_000)) {
+    return NextResponse.json(
+      { valido: false, error: "Demasiados intentos. Esperá un minuto." },
+      { status: 429 }
+    );
+  }
+
   const body = await req.json();
 
-  const codigoBuscado = String(body.codigo || "").trim().toUpperCase();
+  const codigoBuscado = String(body.codigo || "").trim().toUpperCase().slice(0, 40);
   const totalOriginal = Number(body.total || 0);
 
   if (!codigoBuscado || totalOriginal <= 0) {

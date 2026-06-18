@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { pickFields } from "@/lib/security";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -13,25 +15,50 @@ function tiempoASegundos(tiempo: string): number {
   return parseFloat(t) || 999999;
 }
 
+const CAMPOS = [
+  "fecha",
+  "hora",
+  "hora_estimada_subida",
+  "hora_subida",
+  "hora_bajada",
+  "nombre",
+  "apellido",
+  "telefono",
+  "categoria",
+  "campeonato_id",
+  "campeonato_fecha_id",
+  "circuito",
+  "tiempo",
+  "escuderia_favorita",
+  "observaciones",
+  "estado",
+  "cantidad_minutos",
+  "cantidad_turnos",
+  "turno_listo",
+  "pagos_detalle",
+  "total",
+] as const;
+
 export async function PATCH(req: Request, { params }: RouteContext) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "ID inválido" }, { status: 400 });
 
     const body = await req.json();
+    const updates: Record<string, unknown> = pickFields(body, CAMPOS);
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ error: "Sin campos válidos para actualizar" }, { status: 400 });
+    }
 
-    const updates: Record<string, unknown> = {
-      ...body,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (body.nombre !== undefined || body.apellido !== undefined) {
+    if ("nombre" in updates || "apellido" in updates) {
       updates.nombre_completo = `${body.nombre || ""} ${body.apellido || ""}`.trim();
     }
-
-    if (body.tiempo !== undefined) {
-      updates.tiempo_segundos = tiempoASegundos(body.tiempo || "");
+    if ("tiempo" in updates) {
+      updates.tiempo_segundos = tiempoASegundos(String(body.tiempo || ""));
     }
+    updates.updated_at = new Date().toISOString();
 
     const { data, error } = await supabaseAdmin
       .from("campeonato_registros")

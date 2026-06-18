@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
+import { verifyMpWebhook } from "@/lib/mercadopago";
+import { rateLimit, clientIp } from "@/lib/rateLimit";
 
 // Webhook exclusivo para Gift Cards. Se distingue por el prefijo
 // "gift_card_" en external_reference. No toca la tabla "reservas".
@@ -12,6 +14,10 @@ const client = new MercadoPagoConfig({
 
 export async function POST(req: Request) {
   try {
+    if (!rateLimit(`wh-giftcard:${clientIp(req)}`, 300, 60_000)) {
+      return NextResponse.json({ error: "Demasiadas solicitudes" }, { status: 429 });
+    }
+
     const body = await req.json();
 
     const paymentId =
@@ -22,6 +28,10 @@ export async function POST(req: Request) {
 
     if (!paymentId || topic !== "payment") {
       return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    if (!verifyMpWebhook(req, paymentId)) {
+      return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
     }
 
     const payment = new Payment(client);

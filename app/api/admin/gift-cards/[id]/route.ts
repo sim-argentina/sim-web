@@ -1,6 +1,6 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
 // Actualiza el estado de uso / observaciones de una Gift Card.
 // Disponible para admin y staff. No se elimina físicamente: se usan estados.
@@ -8,11 +8,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const cookieStore = await cookies();
-  const role = cookieStore.get("sim-admin-role")?.value;
-  if (!role) {
-    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  }
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
 function limpiarPagosDetalle(pagos: any[]) {
   if (!Array.isArray(pagos)) return [];
@@ -14,6 +15,8 @@ function limpiarPagosDetalle(pagos: any[]) {
 }
 
 export async function GET() {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const { data, error } = await supabaseAdmin
       .from("turnos_stand")
@@ -35,6 +38,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
   try {
     const body = await req.json();
 

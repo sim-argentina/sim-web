@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getOccupiedSlots, construirOcupacion } from "@/lib/reservasSlots";
+import {
+  getOccupiedSlots,
+  construirOcupacion,
+  precioPorSimulador,
+} from "@/lib/reservasSlots";
+import { validarCodigoDescuento, consumirCodigoDescuento } from "@/lib/codigosDescuento";
+import { getCurrentAdminRole } from "@/lib/adminGuards";
 
 type ReservaBody = {
   nombre: string;
@@ -8,75 +14,27 @@ type ReservaBody = {
   fecha: string;
   hora: string;
   simuladores: string[];
-  cantidad_turnos: number;
-  total: number;
   acepto_condiciones: boolean;
   codigo_descuento?: string | null;
   duracion_minutos?: number;
 };
 
-async function consumirCodigoDescuento(codigo: string) {
-  const codigoNormalizado = codigo.trim().toUpperCase();
-
-  const { data: codigoActual, error } = await supabaseAdmin
-    .from("codigos_descuento")
-    .select("id, activo, usos_actuales, usos_maximos")
-    .eq("codigo", codigoNormalizado)
-    .maybeSingle();
-
-  if (error || !codigoActual) {
-    return { ok: false, error: "No se encontró el código de descuento" };
-  }
-
-  if (!codigoActual.activo) {
-    return { ok: false, error: "El código ya no está activo" };
-  }
-
-  const usosActuales = Number(codigoActual.usos_actuales || 0);
-
-  const usosMaximos =
-    codigoActual.usos_maximos === null ||
-    codigoActual.usos_maximos === undefined
-      ? null
-      : Number(codigoActual.usos_maximos);
-
-  if (usosMaximos !== null && usosActuales >= usosMaximos) {
-    await supabaseAdmin
-      .from("codigos_descuento")
-      .update({ activo: false })
-      .eq("id", codigoActual.id);
-
-    return { ok: false, error: "El código ya alcanzó el máximo de usos" };
-  }
-
-  const nuevosUsos = usosActuales + 1;
-  const debeInactivar = usosMaximos !== null && nuevosUsos >= usosMaximos;
-
-  const { error: updateError } = await supabaseAdmin
-    .from("codigos_descuento")
-    .update({
-      usos_actuales: nuevosUsos,
-      activo: debeInactivar ? false : true,
-    })
-    .eq("id", codigoActual.id);
-
-  if (updateError) {
-    return { ok: false, error: "No se pudo actualizar el uso del código" };
-  }
-
-  return { ok: true, error: null };
-}
-
+// GET público: para la grilla de disponibilidad NO se devuelve PII
+// (nombre/teléfono). El admin autenticado recibe los datos completos.
 export async function GET(req: Request) {
   try {
+    const role = await getCurrentAdminRole();
     const { searchParams } = new URL(req.url);
-
     const fecha = searchParams.get("fecha");
     const estado = searchParams.get("estado");
 
+    const cols = role
+      ? "*"
+      : "fecha, hora, simuladores, estado, duracion_minutos, cantidad_turnos";
+
     let query = supabaseAdmin
       .from("reservas")
-      .select("*")
+      .select(cols)
       .order("fecha", { ascending: true })
       .order("hora", { ascending: true });
 
@@ -86,27 +44,17 @@ export async function GET(req: Request) {
     const { data, error } = await query;
 
     if (error) {
-      return NextResponse.json(
-        {
-          error: "Error al obtener reservas",
-          details: error.message,
-        },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Error al obtener reservas" }, { status: 500 });
     }
 
     return NextResponse.json(data ?? [], { status: 200 });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: "Error al obtener reservas",
-        details: error instanceof Error ? error.message : "Error desconocido",
-      },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: "Error al obtener reservas" }, { status: 500 });
   }
 }
 
+// POST: SOLO crea reservas 100% bonificadas (gratis). Con saldo > 0 se exige
+// pago online (preferencia MP). El precio se recalcula siempre en el server.
 export async function POST(req: Request) {
   try {
     const body: ReservaBody = await req.json();
@@ -117,30 +65,22 @@ export async function POST(req: Request) {
       fecha,
       hora,
       simuladores,
-      cantidad_turnos,
-      total,
       acepto_condiciones,
       codigo_descuento,
       duracion_minutos,
     } = body;
 
     if (
-      !nombre ||
-      !telefono ||
+      !nombre?.trim() ||
+      !telefono?.trim() ||
       !fecha ||
       !hora ||
       !Array.isArray(simuladores) ||
       simuladores.length === 0 ||
-      !cantidad_turnos ||
-      total === undefined ||
-      total === null ||
-      Number(total) < 0 ||
       acepto_condiciones !== true
     ) {
       return NextResponse.json(
-        {
-          error: "Faltan campos obligatorios o no se aceptaron las condiciones",
-        },
+        { error: "Faltan campos obligatorios o no se aceptaron las condiciones" },
         { status: 400 }
       );
     }
@@ -150,10 +90,7 @@ export async function POST(req: Request) {
 
     if (duracion === 30 && reqSlots.length < 2) {
       return NextResponse.json(
-        {
-          error:
-            "No hay un turno consecutivo disponible para reservar 30 minutos en ese horario.",
-        },
+        { error: "No hay un turno consecutivo disponible para reservar 30 minutos en ese horario." },
         { status: 409 }
       );
     }
@@ -165,17 +102,10 @@ export async function POST(req: Request) {
       .eq("estado", "activa");
 
     if (checkError) {
-      return NextResponse.json(
-        {
-          error: "Error al validar disponibilidad",
-          details: checkError.message,
-        },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Error al validar disponibilidad" }, { status: 500 });
     }
 
     const ocupacion = construirOcupacion(fecha, existentes || []);
-
     const conflicto = reqSlots.some((slot) =>
       simuladores.some((sim) => ocupacion[slot]?.has(sim))
     );
@@ -192,31 +122,51 @@ export async function POST(req: Request) {
       );
     }
 
-    if (Number(total) === 0 && codigo_descuento) {
-      const consumo = await consumirCodigoDescuento(codigo_descuento);
+    // ── Precio recalculado server-side (nunca se confía en el cliente) ──
+    const precioUnitario = precioPorSimulador(fecha, duracion);
+    const totalOriginal = precioUnitario * simuladores.length;
 
-      if (!consumo.ok) {
-        return NextResponse.json(
-          { error: consumo.error },
-          { status: 400 }
-        );
+    let descuento = 0;
+    let codigoValido: string | null = null;
+    if (codigo_descuento && String(codigo_descuento).trim()) {
+      const r = await validarCodigoDescuento(String(codigo_descuento), totalOriginal);
+      if (!r.valido) {
+        return NextResponse.json({ error: r.error || "Código inválido" }, { status: 400 });
       }
+      descuento = Math.round(r.descuento || 0);
+      codigoValido = r.codigo;
+    }
+
+    const totalFinal = Math.max(totalOriginal - descuento, 0);
+
+    // Esta ruta es exclusiva para reservas gratuitas (100% bonificadas).
+    if (totalFinal > 0) {
+      return NextResponse.json(
+        { error: "Esta reserva requiere pago online con Mercado Pago." },
+        { status: 400 }
+      );
+    }
+
+    if (codigoValido) {
+      await consumirCodigoDescuento(codigoValido);
     }
 
     const { data, error } = await supabaseAdmin
       .from("reservas")
       .insert([
         {
-          nombre,
-          telefono,
+          nombre: nombre.trim(),
+          telefono: telefono.trim(),
           fecha,
           hora,
           simuladores,
-          cantidad_turnos,
-          total,
+          cantidad_turnos: simuladores.length,
+          total: 0,
+          total_original: totalOriginal,
+          descuento_aplicado: descuento,
           estado: "activa",
           acepto_condiciones,
-          codigo_descuento: codigo_descuento ?? null,
+          codigo_descuento: codigoValido,
           duracion_minutos: duracion,
         },
       ])
@@ -224,23 +174,11 @@ export async function POST(req: Request) {
       .single();
 
     if (error) {
-      return NextResponse.json(
-        {
-          error: "Error al guardar la reserva",
-          details: error.message,
-        },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Error al guardar la reserva" }, { status: 500 });
     }
 
     return NextResponse.json(data, { status: 201 });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: "Error interno del servidor",
-        details: error instanceof Error ? error.message : "Error desconocido",
-      },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
   }
 }
