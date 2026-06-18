@@ -6,6 +6,7 @@ import {
   isSessionConfigured,
 } from "@/lib/adminSession";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
+import { logSecurityEvent } from "@/lib/apiError";
 
 async function sha256Hex(s: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -22,8 +23,8 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export async function POST(req: Request) {
-  // Rate limit anti fuerza bruta (por IP).
-  if (!rateLimit(`login:${clientIp(req)}`, 8, 60_000)) {
+  // Rate limit anti fuerza bruta (por IP, durable si hay Upstash).
+  if (!(await rateLimit(`login:${clientIp(req)}`, 8, 60_000))) {
     return NextResponse.json(
       { error: "Demasiados intentos. Esperá un minuto." },
       { status: 429 }
@@ -50,7 +51,8 @@ export async function POST(req: Request) {
     else if (staffPassword && safeEqual(pw, await sha256Hex(staffPassword))) role = "staff";
 
     if (!role) {
-      return NextResponse.json({ error: "Contraseña incorrecta" }, { status: 401 });
+      logSecurityEvent("admin_login_failed", { ip: clientIp(req) });
+      return NextResponse.json({ error: "Credenciales inválidas" }, { status: 401 });
     }
 
     const token = await createSessionToken(role);

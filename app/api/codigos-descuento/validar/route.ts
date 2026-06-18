@@ -4,7 +4,7 @@ import { rateLimit, clientIp } from "@/lib/rateLimit";
 
 export async function POST(req: Request) {
   // Rate limit anti enumeración de códigos.
-  if (!rateLimit(`validar:${clientIp(req)}`, 20, 60_000)) {
+  if (!(await rateLimit(`validar:${clientIp(req)}`, 20, 60_000))) {
     return NextResponse.json(
       { valido: false, error: "Demasiados intentos. Esperá un minuto." },
       { status: 429 }

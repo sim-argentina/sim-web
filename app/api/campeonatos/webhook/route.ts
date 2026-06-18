@@ -14,7 +14,7 @@ const client = new MercadoPagoConfig({
 
 export async function POST(req: Request) {
   try {
-    if (!rateLimit(`wh-campeonato:${clientIp(req)}`, 300, 60_000)) {
+    if (!(await rateLimit(`wh-campeonato:${clientIp(req)}`, 300, 60_000))) {
       return NextResponse.json({ error: "Demasiadas solicitudes" }, { status: 429 });
     }
 

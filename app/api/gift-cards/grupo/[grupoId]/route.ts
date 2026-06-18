@@ -12,7 +12,7 @@ export async function GET(
   const { data, error } = await supabaseAdmin
     .from("gift_cards")
     .select(
-      "id, codigo_unico, comprador_nombre, destinatario_nombre, duracion_minutos, monto, cantidad, modo_uso, usos_totales, usos_disponibles, estado_pago, estado_uso, fecha_pago, created_at"
+      "id, codigo_unico, destinatario_nombre, duracion_minutos, monto, cantidad, modo_uso, usos_totales, usos_disponibles, estado_pago, estado_uso, fecha_pago, created_at"
     )
     .eq("grupo_compra_id", grupoId)
     .order("created_at", { ascending: true });
@@ -36,7 +36,6 @@ export async function GET(
     modo_uso: d.modo_uso,
     usos_totales: d.usos_totales,
     usos_disponibles: d.usos_disponibles,
-    comprador_nombre: d.comprador_nombre,
     destinatario_nombre: d.destinatario_nombre,
     fecha_pago: d.fecha_pago,
     created_at: d.created_at,

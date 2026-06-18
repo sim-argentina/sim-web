@@ -849,6 +849,17 @@ export default function AdminMetricasPage() {
   }
 
   async function leerExcel(file: File) {
+    // Validación defensiva antes de parsear (tamaño + extensión).
+    const MAX_EXCEL_BYTES = 5 * 1024 * 1024;
+    if (file.size > MAX_EXCEL_BYTES) {
+      alert("El archivo supera el máximo de 5 MB.");
+      return [];
+    }
+    if (!/\.(xlsx|xls)$/i.test(file.name)) {
+      alert("Formato inválido. Subí un archivo .xlsx.");
+      return [];
+    }
+
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(new Uint8Array(buffer), {
       type: "array",

@@ -12,7 +12,7 @@ export async function GET(
   const { data, error } = await supabaseAdmin
     .from("gift_cards")
     .select(
-      "id, codigo_unico, comprador_nombre, destinatario_nombre, duracion_minutos, monto, estado_pago, estado_uso, fecha_pago, created_at"
+      "id, codigo_unico, destinatario_nombre, duracion_minutos, monto, estado_pago, estado_uso, fecha_pago, created_at"
     )
     .eq("id", id)
     .maybeSingle();
@@ -32,7 +32,6 @@ export async function GET(
     estado_uso: data.estado_uso,
     duracion_minutos: data.duracion_minutos,
     monto: data.monto,
-    comprador_nombre: data.comprador_nombre,
     destinatario_nombre: data.destinatario_nombre,
     fecha_pago: data.fecha_pago,
     created_at: data.created_at,

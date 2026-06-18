@@ -71,26 +71,20 @@ export async function validarCodigoDescuento(
   };
 }
 
-export async function consumirCodigoDescuento(codigo: string) {
+// Consumo ATÓMICO vía RPC (UPDATE ... WHERE usos_actuales < usos_maximos).
+// Devuelve true si se consumió un uso, false si estaba agotado/inválido.
+// Elimina la race condition del read-modify-write anterior (SIM-A02).
+export async function consumirCodigoDescuento(codigo: string): Promise<boolean> {
   const codigoNormalizado = String(codigo || "").trim().toUpperCase();
+  if (!codigoNormalizado) return false;
 
-  const { data: codigoActual, error } = await supabaseAdmin
-    .from("codigos_descuento")
-    .select("id, usos_actuales, usos_maximos")
-    .eq("codigo", codigoNormalizado)
-    .maybeSingle();
+  const { data, error } = await supabaseAdmin.rpc("consumir_codigo_descuento", {
+    p_codigo: codigoNormalizado,
+  });
 
-  if (error || !codigoActual) return;
-
-  const nuevosUsos = Number(codigoActual.usos_actuales || 0) + 1;
-  const usosMaximos =
-    codigoActual.usos_maximos === null || codigoActual.usos_maximos === undefined
-      ? null
-      : Number(codigoActual.usos_maximos);
-  const debeInactivar = usosMaximos !== null && nuevosUsos >= usosMaximos;
-
-  await supabaseAdmin
-    .from("codigos_descuento")
-    .update({ usos_actuales: nuevosUsos, activo: debeInactivar ? false : true })
-    .eq("id", codigoActual.id);
+  if (error) {
+    console.error("Error consumiendo código de descuento:", error.message);
+    return false;
+  }
+  return data === true;
 }

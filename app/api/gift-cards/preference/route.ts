@@ -13,6 +13,8 @@ import {
   validarCodigoDescuento,
   consumirCodigoDescuento,
 } from "@/lib/codigosDescuento";
+import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { failResponse } from "@/lib/apiError";
 
 // Flujo de pago de Gift Cards, totalmente separado del de reservas.
 // external_reference usa el prefijo "gift_card_" + grupo_compra_id y la
@@ -35,23 +37,27 @@ function generarCodigosUnicos(n: number): string[] {
 }
 
 export async function POST(req: Request) {
+  if (!(await rateLimit(`pref-gift:${clientIp(req)}`, 10, 60_000))) {
+    return tooManyResponse();
+  }
+
   let grupoId: string | null = null;
 
   try {
-    const body = await req.json();
-    const {
-      comprador_nombre,
-      comprador_telefono,
-      destinatario_nombre,
-      duracion_minutos,
-      codigo_descuento,
-    } = body;
+    const body = await req.json().catch(() => ({}));
+    const comprador_nombre = String(body?.comprador_nombre ?? "").trim();
+    const comprador_telefono = String(body?.comprador_telefono ?? "").trim();
+    const destinatario_nombre = body?.destinatario_nombre
+      ? String(body.destinatario_nombre).trim().slice(0, 80)
+      : null;
+    const duracion_minutos = body?.duracion_minutos;
+    const codigo_descuento = body?.codigo_descuento;
 
-    if (!comprador_nombre?.trim() || !comprador_telefono?.trim()) {
-      return NextResponse.json(
-        { error: "Faltan datos del comprador" },
-        { status: 400 }
-      );
+    if (!comprador_nombre || comprador_nombre.length > 80) {
+      return NextResponse.json({ error: "Nombre del comprador inválido" }, { status: 400 });
+    }
+    if (!/^[0-9+()\s-]{6,30}$/.test(comprador_telefono)) {
+      return NextResponse.json({ error: "Teléfono del comprador inválido" }, { status: 400 });
     }
 
     const producto = getProductoPorDuracion(Number(duracion_minutos));
@@ -148,14 +154,29 @@ export async function POST(req: Request) {
       .insert(rows);
 
     if (insertError) {
-      return NextResponse.json(
-        { error: insertError.message || "Error creando la Gift Card" },
-        { status: 500 }
-      );
+      return failResponse(500, "Error creando la Gift Card", {
+        logContext: "pref-gift insert",
+        error: insertError,
+      });
     }
 
     // Gift Card 100% bonificada: no pasa por Mercado Pago.
     if (montoFinal <= 0) {
+      // Consumir el código atómicamente ANTES de habilitar la gift card gratis.
+      if (codigoAplicado) {
+        const consumido = await consumirCodigoDescuento(codigoAplicado);
+        if (!consumido) {
+          await supabaseAdmin
+            .from("gift_cards")
+            .update({ estado_pago: "cancelado", updated_at: nowIso })
+            .eq("grupo_compra_id", grupoId);
+          return NextResponse.json(
+            { error: "El código de descuento ya no está disponible" },
+            { status: 409 }
+          );
+        }
+      }
+
       await supabaseAdmin
         .from("gift_cards")
         .update({
@@ -166,22 +187,13 @@ export async function POST(req: Request) {
         })
         .eq("grupo_compra_id", grupoId);
 
-      if (codigoAplicado) await consumirCodigoDescuento(codigoAplicado);
-
       return NextResponse.json({ free: true, grupo_compra_id: grupoId });
     }
 
-    if (!accessToken) {
-      return NextResponse.json({ error: "Falta MERCADOPAGO_ACCESS_TOKEN" }, { status: 500 });
-    }
-    if (!baseUrl) {
-      return NextResponse.json({ error: "Falta NEXT_PUBLIC_BASE_URL" }, { status: 500 });
-    }
-    if (isInvalidBaseUrl(baseUrl)) {
-      return NextResponse.json(
-        { error: "NEXT_PUBLIC_BASE_URL no puede ser localhost para pagos" },
-        { status: 500 }
-      );
+    if (!accessToken || !baseUrl || isInvalidBaseUrl(baseUrl)) {
+      return failResponse(500, "Servicio de pago no disponible", {
+        logContext: "pref-gift config",
+      });
     }
 
     const titulo =
@@ -229,10 +241,9 @@ export async function POST(req: Request) {
         .update({ estado_pago: "cancelado", updated_at: new Date().toISOString() })
         .eq("grupo_compra_id", grupoId);
     }
-    const msg = error instanceof Error ? error.message : "Error desconocido";
-    return NextResponse.json(
-      { error: "No se pudo crear la preferencia de Gift Card", details: msg },
-      { status: 500 }
-    );
+    return failResponse(500, "No se pudo crear la preferencia de Gift Card", {
+      logContext: "pref-gift",
+      error,
+    });
   }
 }

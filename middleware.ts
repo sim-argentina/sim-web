@@ -29,6 +29,16 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/admin/login", request.url));
   }
 
+  // Páginas solo-admin: el staff no debe verlas (datos protegidos igual por las
+  // APIs con requireAdmin, esto evita mostrar la cáscara y aplica mínimo privilegio).
+  const ADMIN_ONLY = ["/admin/codigos", "/admin/tienda", "/admin/novedades"];
+  if (
+    role !== "admin" &&
+    ADMIN_ONLY.some((p) => pathname === p || pathname.startsWith(p + "/"))
+  ) {
+    return NextResponse.redirect(new URL("/admin/calendario", request.url));
+  }
+
   return NextResponse.next();
 }
 

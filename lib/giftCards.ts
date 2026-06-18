@@ -1,3 +1,5 @@
+import { randomInt } from "crypto";
+
 // Catálogo de Gift Cards y helpers compartidos.
 // El precio se define acá (server-side) para que el monto no dependa del cliente.
 
@@ -39,14 +41,11 @@ export function repartirMonto(total: number, n: number): number[] {
   return Array.from({ length: n }, (_, i) => base + (i === 0 ? resto : 0));
 }
 
-// Código único legible: SIM-XXXX-XXXX
+// Código único legible: SIM-XXXX-XXXX (entropía criptográfica, no Math.random).
 export function generarCodigoGiftCard(): string {
   const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sin 0/O/1/I
   const bloque = () =>
-    Array.from(
-      { length: 4 },
-      () => alfabeto[Math.floor(Math.random() * alfabeto.length)]
-    ).join("");
+    Array.from({ length: 4 }, () => alfabeto[randomInt(alfabeto.length)]).join("");
   return `SIM-${bloque()}-${bloque()}`;
 }
 

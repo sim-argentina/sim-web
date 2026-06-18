@@ -1,32 +1,33 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getOccupiedSlots, precioPorSimulador } from "@/lib/reservasSlots";
 import {
-  getOccupiedSlots,
-  construirOcupacion,
-  precioPorSimulador,
-} from "@/lib/reservasSlots";
-import { validarCodigoDescuento, consumirCodigoDescuento } from "@/lib/codigosDescuento";
+  validarCodigoDescuento,
+  consumirCodigoDescuento,
+} from "@/lib/codigosDescuento";
 import { getCurrentAdminRole } from "@/lib/adminGuards";
+import { validarReservaInput } from "@/lib/reservasValidation";
+import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { failResponse } from "@/lib/apiError";
 
-type ReservaBody = {
-  nombre: string;
-  telefono: string;
-  fecha: string;
-  hora: string;
-  simuladores: string[];
-  acepto_condiciones: boolean;
-  codigo_descuento?: string | null;
-  duracion_minutos?: number;
-};
-
-// GET público: para la grilla de disponibilidad NO se devuelve PII
-// (nombre/teléfono). El admin autenticado recibe los datos completos.
+// GET: disponibilidad. Público requiere ?fecha (evita scraping del calendario
+// completo) y recibe un DTO sin PII. El admin autenticado recibe datos completos.
 export async function GET(req: Request) {
+  if (!(await rateLimit(`resv-get:${clientIp(req)}`, 60, 60_000))) {
+    return tooManyResponse();
+  }
   try {
     const role = await getCurrentAdminRole();
     const { searchParams } = new URL(req.url);
     const fecha = searchParams.get("fecha");
     const estado = searchParams.get("estado");
+
+    if (!role && !fecha) {
+      return NextResponse.json({ error: "Especificá una fecha" }, { status: 400 });
+    }
+    if (fecha && !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      return NextResponse.json({ error: "Fecha inválida" }, { status: 400 });
+    }
 
     const cols = role
       ? "*"
@@ -42,85 +43,38 @@ export async function GET(req: Request) {
     if (estado) query = query.eq("estado", estado);
 
     const { data, error } = await query;
-
     if (error) {
-      return NextResponse.json({ error: "Error al obtener reservas" }, { status: 500 });
+      return failResponse(500, "Error al obtener reservas", {
+        logContext: "reservas GET",
+        error,
+      });
     }
-
     return NextResponse.json(data ?? [], { status: 200 });
-  } catch {
-    return NextResponse.json({ error: "Error al obtener reservas" }, { status: 500 });
+  } catch (error) {
+    return failResponse(500, "Error al obtener reservas", {
+      logContext: "reservas GET",
+      error,
+    });
   }
 }
 
 // POST: SOLO crea reservas 100% bonificadas (gratis). Con saldo > 0 se exige
-// pago online (preferencia MP). El precio se recalcula siempre en el server.
+// pago online. Precio recalculado server-side; turno reservado con garantía DB.
 export async function POST(req: Request) {
+  if (!(await rateLimit(`resv-post:${clientIp(req)}`, 10, 60_000))) {
+    return tooManyResponse();
+  }
+
+  let reservaCreadaId: number | null = null;
   try {
-    const body: ReservaBody = await req.json();
+    const body = await req.json().catch(() => null);
 
-    const {
-      nombre,
-      telefono,
-      fecha,
-      hora,
-      simuladores,
-      acepto_condiciones,
-      codigo_descuento,
-      duracion_minutos,
-    } = body;
-
-    if (
-      !nombre?.trim() ||
-      !telefono?.trim() ||
-      !fecha ||
-      !hora ||
-      !Array.isArray(simuladores) ||
-      simuladores.length === 0 ||
-      acepto_condiciones !== true
-    ) {
-      return NextResponse.json(
-        { error: "Faltan campos obligatorios o no se aceptaron las condiciones" },
-        { status: 400 }
-      );
+    const v = validarReservaInput(body);
+    if (!v.ok) {
+      return NextResponse.json({ error: v.error }, { status: 400 });
     }
-
-    const duracion = Number(duracion_minutos) === 30 ? 30 : 15;
-    const reqSlots = getOccupiedSlots(fecha, hora, duracion);
-
-    if (duracion === 30 && reqSlots.length < 2) {
-      return NextResponse.json(
-        { error: "No hay un turno consecutivo disponible para reservar 30 minutos en ese horario." },
-        { status: 409 }
-      );
-    }
-
-    const { data: existentes, error: checkError } = await supabaseAdmin
-      .from("reservas")
-      .select("id, hora, duracion_minutos, simuladores")
-      .eq("fecha", fecha)
-      .eq("estado", "activa");
-
-    if (checkError) {
-      return NextResponse.json({ error: "Error al validar disponibilidad" }, { status: 500 });
-    }
-
-    const ocupacion = construirOcupacion(fecha, existentes || []);
-    const conflicto = reqSlots.some((slot) =>
-      simuladores.some((sim) => ocupacion[slot]?.has(sim))
-    );
-
-    if (conflicto) {
-      return NextResponse.json(
-        {
-          error:
-            duracion === 30
-              ? "Uno o más simuladores no tienen los dos turnos consecutivos libres."
-              : "Uno o más simuladores ya están reservados en ese horario",
-        },
-        { status: 409 }
-      );
-    }
+    const { nombre, telefono, fecha, hora, simuladores, duracion, codigo_descuento } =
+      v.value;
 
     // ── Precio recalculado server-side (nunca se confía en el cliente) ──
     const precioUnitario = precioPorSimulador(fecha, duracion);
@@ -128,8 +82,8 @@ export async function POST(req: Request) {
 
     let descuento = 0;
     let codigoValido: string | null = null;
-    if (codigo_descuento && String(codigo_descuento).trim()) {
-      const r = await validarCodigoDescuento(String(codigo_descuento), totalOriginal);
+    if (codigo_descuento) {
+      const r = await validarCodigoDescuento(codigo_descuento, totalOriginal);
       if (!r.valido) {
         return NextResponse.json({ error: r.error || "Código inválido" }, { status: 400 });
       }
@@ -138,8 +92,6 @@ export async function POST(req: Request) {
     }
 
     const totalFinal = Math.max(totalOriginal - descuento, 0);
-
-    // Esta ruta es exclusiva para reservas gratuitas (100% bonificadas).
     if (totalFinal > 0) {
       return NextResponse.json(
         { error: "Esta reserva requiere pago online con Mercado Pago." },
@@ -147,16 +99,13 @@ export async function POST(req: Request) {
       );
     }
 
-    if (codigoValido) {
-      await consumirCodigoDescuento(codigoValido);
-    }
-
+    // 1) Crear la reserva activa.
     const { data, error } = await supabaseAdmin
       .from("reservas")
       .insert([
         {
-          nombre: nombre.trim(),
-          telefono: telefono.trim(),
+          nombre,
+          telefono,
           fecha,
           hora,
           simuladores,
@@ -165,7 +114,7 @@ export async function POST(req: Request) {
           total_original: totalOriginal,
           descuento_aplicado: descuento,
           estado: "activa",
-          acepto_condiciones,
+          acepto_condiciones: true,
           codigo_descuento: codigoValido,
           duracion_minutos: duracion,
         },
@@ -173,12 +122,67 @@ export async function POST(req: Request) {
       .select()
       .single();
 
-    if (error) {
-      return NextResponse.json({ error: "Error al guardar la reserva" }, { status: 500 });
+    if (error || !data) {
+      return failResponse(500, "Error al guardar la reserva", {
+        logContext: "reservas POST insert",
+        error,
+      });
+    }
+    reservaCreadaId = data.id;
+
+    // 2) Reservar los slots (garantía DB anti doble-reserva).
+    const slotRows = getOccupiedSlots(fecha, hora, duracion).flatMap((slot) =>
+      simuladores.map((sim) => ({
+        reserva_id: data.id,
+        fecha,
+        hora: slot,
+        simulador: sim,
+        estado: "activa",
+      }))
+    );
+    const { error: slotErr } = await supabaseAdmin
+      .from("reserva_slots")
+      .insert(slotRows);
+    if (slotErr) {
+      await supabaseAdmin.from("reservas").delete().eq("id", data.id);
+      reservaCreadaId = null;
+      if ((slotErr as { code?: string }).code === "23505") {
+        return NextResponse.json(
+          { error: "Uno o más simuladores ya están reservados en ese horario" },
+          { status: 409 }
+        );
+      }
+      return failResponse(500, "Error al reservar el turno", {
+        logContext: "reservas POST slots",
+        error: slotErr,
+      });
+    }
+
+    // 3) Consumir el código atómicamente. Si ya no está disponible, revertir.
+    if (codigoValido) {
+      const consumido = await consumirCodigoDescuento(codigoValido);
+      if (!consumido) {
+        await supabaseAdmin.from("reservas").delete().eq("id", data.id);
+        reservaCreadaId = null;
+        return NextResponse.json(
+          { error: "El código de descuento ya no está disponible" },
+          { status: 409 }
+        );
+      }
     }
 
     return NextResponse.json(data, { status: 201 });
-  } catch {
-    return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
+  } catch (error) {
+    if (reservaCreadaId) {
+      try {
+        await supabaseAdmin.from("reservas").delete().eq("id", reservaCreadaId);
+      } catch {
+        /* best-effort */
+      }
+    }
+    return failResponse(500, "Error interno del servidor", {
+      logContext: "reservas POST",
+      error,
+    });
   }
 }

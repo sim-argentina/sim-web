@@ -1,3 +1,5 @@
+import { randomBytes } from "crypto";
+
 // Helpers de validación / sanitización server-side.
 
 // Sanitiza un término de búsqueda para usarlo dentro de filtros PostgREST
@@ -76,5 +78,5 @@ export async function validateImageUpload(
 }
 
 export function safeUploadName(ext: string): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 12)}.${ext}`;
+  return `${Date.now()}-${randomBytes(8).toString("hex")}.${ext}`;
 }

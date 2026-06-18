@@ -3,6 +3,9 @@ import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
+import { getOccupiedSlots } from "@/lib/reservasSlots";
+import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
+import { logSecurityEvent } from "@/lib/apiError";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
@@ -10,59 +13,22 @@ const client = new MercadoPagoConfig({
   accessToken: accessToken!,
 });
 
-async function consumirCodigoDescuento(codigo: string) {
-  const { data: codigoActual, error } = await supabaseAdmin
-    .from("codigos_descuento")
-    .select("id, usos_actuales, usos_maximos")
-    .eq("codigo", codigo)
-    .maybeSingle();
-
-  if (error || !codigoActual) return;
-
-  const nuevosUsos = Number(codigoActual.usos_actuales || 0) + 1;
-
-  const usosMaximos =
-    codigoActual.usos_maximos === null ||
-    codigoActual.usos_maximos === undefined
-      ? null
-      : Number(codigoActual.usos_maximos);
-
-  const debeInactivar =
-    usosMaximos !== null && nuevosUsos >= usosMaximos;
-
-  await supabaseAdmin
-    .from("codigos_descuento")
-    .update({
-      usos_actuales: nuevosUsos,
-      activo: debeInactivar ? false : true,
-    })
-    .eq("id", codigoActual.id);
-}
-
 export async function POST(req: Request) {
   try {
-    if (!rateLimit(`wh-reserva:${clientIp(req)}`, 300, 60_000)) {
+    if (!(await rateLimit(`wh-reserva:${clientIp(req)}`, 300, 60_000))) {
       return NextResponse.json({ error: "Demasiadas solicitudes" }, { status: 429 });
     }
 
     if (!accessToken) {
-      return NextResponse.json(
-        { error: "Falta MERCADOPAGO_ACCESS_TOKEN" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Servicio no disponible" }, { status: 500 });
     }
 
     const body = await req.json();
 
     const paymentId =
-      body?.data?.id ||
-      body?.id ||
-      new URL(req.url).searchParams.get("id");
-
+      body?.data?.id || body?.id || new URL(req.url).searchParams.get("id");
     const topic =
-      body?.type ||
-      body?.topic ||
-      new URL(req.url).searchParams.get("topic");
+      body?.type || body?.topic || new URL(req.url).searchParams.get("topic");
 
     if (!paymentId || topic !== "payment") {
       return NextResponse.json({ received: true }, { status: 200 });
@@ -87,10 +53,7 @@ export async function POST(req: Request) {
     const reservaId = Number(extRef.replace(/^reserva_/, ""));
 
     if (!Number.isFinite(reservaId) || reservaId <= 0) {
-      return NextResponse.json(
-        { error: "External reference inválida" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Referencia inválida" }, { status: 400 });
     }
 
     const { data: reserva, error: reservaError } = await supabaseAdmin
@@ -100,47 +63,71 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (reservaError || !reserva) {
-      return NextResponse.json(
-        { error: "No se encontró la reserva" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "No se encontró la reserva" }, { status: 404 });
     }
 
+    // Idempotencia: si ya tiene payment_id, ya se procesó.
     if (reserva.mercado_pago_payment_id) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    const { error: updateError } = await supabaseAdmin
-      .from("reservas")
-      .update({
+    // Reservar los slots ocupados (garantía DB anti doble-reserva). Si chocan
+    // con otra reserva activa, se marca conflicto_pago (no se pisa el turno).
+    const sims: string[] = Array.isArray(reserva.simuladores)
+      ? reserva.simuladores.map((s: unknown) => String(s))
+      : [];
+    const dur = Number(reserva.duracion_minutos) || 15;
+    const slots = getOccupiedSlots(reserva.fecha, reserva.hora, dur);
+    const slotRows = slots.flatMap((slot) =>
+      sims.map((sim) => ({
+        reserva_id: reservaId,
+        fecha: reserva.fecha,
+        hora: slot,
+        simulador: sim,
         estado: "activa",
-        mercado_pago_payment_id: String(paymentId),
-      })
-      .eq("id", reservaId)
-      .is("mercado_pago_payment_id", null);
+      }))
+    );
 
-    if (updateError) {
-      return NextResponse.json(
-        {
-          error: "Error actualizando reserva",
-          details: updateError.message,
-        },
-        { status: 500 }
-      );
+    let estadoFinal = "activa";
+    if (slotRows.length > 0) {
+      const { error: slotErr } = await supabaseAdmin
+        .from("reserva_slots")
+        .insert(slotRows);
+      if (slotErr) {
+        if ((slotErr as { code?: string }).code === "23505") {
+          // El turno ya está tomado por otra reserva activa.
+          estadoFinal = "conflicto_pago";
+          logSecurityEvent("reserva_conflicto_pago", { reservaId });
+        } else {
+          // Error no-conflicto: no bloquear al cliente que pagó; activar y loguear.
+          console.error("reserva_slots insert error:", slotErr.message);
+        }
+      }
     }
 
-    if (reserva.codigo_descuento) {
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from("reservas")
+      .update({ estado: estadoFinal, mercado_pago_payment_id: String(paymentId) })
+      .eq("id", reservaId)
+      .is("mercado_pago_payment_id", null)
+      .select("id");
+
+    if (updateError) {
+      return NextResponse.json({ error: "Error actualizando reserva" }, { status: 500 });
+    }
+
+    // Consumir el código solo si esta llamada activó realmente la reserva.
+    if (
+      estadoFinal === "activa" &&
+      updated &&
+      updated.length > 0 &&
+      reserva.codigo_descuento
+    ) {
       await consumirCodigoDescuento(reserva.codigo_descuento);
     }
 
     return NextResponse.json({ received: true }, { status: 200 });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: "Error interno del webhook",
-        details: error instanceof Error ? error.message : "Error desconocido",
-      },
-      { status: 500 }
-    );
+  } catch {
+    return NextResponse.json({ error: "Error interno del webhook" }, { status: 500 });
   }
 }

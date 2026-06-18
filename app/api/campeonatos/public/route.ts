@@ -189,14 +189,23 @@ export async function GET() {
       puntos_ganados: puntosXRegistro[r.id] ?? 0,
     }));
 
-    return NextResponse.json({
-      campeonatos: campeonatosConCupos,
-      sorteos,
-      rankings,
-      puntos,
-      constructores,
-      resultados_por_fecha,
-    });
+    return NextResponse.json(
+      {
+        campeonatos: campeonatosConCupos,
+        sorteos,
+        rankings,
+        puntos,
+        constructores,
+        resultados_por_fecha,
+      },
+      {
+        // Cache en el edge de Vercel: la query pesada pega a la DB como máximo
+        // una vez por minuto, sin importar el volumen de tráfico (defensa DoS).
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      }
+    );
   } catch (error) {
     console.error("Error en API pública campeonatos:", error);
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

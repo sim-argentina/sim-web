@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Preference } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { failResponse } from "@/lib/apiError";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
@@ -8,27 +10,33 @@ const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
 const client = new MercadoPagoConfig({ accessToken: accessToken! });
 
 export async function POST(req: Request) {
+  if (!(await rateLimit(`pref-camp:${clientIp(req)}`, 10, 60_000))) {
+    return tooManyResponse();
+  }
+
   let inscripcionId: string | null = null;
 
   try {
-    const body = await req.json();
-    const {
-      nombre,
-      apellido,
-      telefono,
-      dni,
-      instagram,
-      escuderia_favorita,
-      campeonato_id,
-      acepto_condiciones,
-      metodo_pago_inscripcion, // "mercadopago" | "stand"
-    } = body;
+    const body = await req.json().catch(() => ({}));
+    const nombre = String(body?.nombre ?? "").trim();
+    const apellido = String(body?.apellido ?? "").trim();
+    const telefono = String(body?.telefono ?? "").trim();
+    const dni = String(body?.dni ?? "").trim();
+    const instagram = body?.instagram
+      ? String(body.instagram).trim().slice(0, 60)
+      : null;
+    const escuderia_favorita = body?.escuderia_favorita
+      ? String(body.escuderia_favorita).trim().slice(0, 60)
+      : "";
+    const campeonato_id = body?.campeonato_id;
+    const acepto_condiciones = body?.acepto_condiciones;
+    const metodo_pago_inscripcion = body?.metodo_pago_inscripcion; // "mercadopago" | "stand"
 
     if (
-      !nombre?.trim() ||
-      !apellido?.trim() ||
-      !telefono?.trim() ||
-      !dni?.trim() ||
+      !nombre ||
+      nombre.length > 60 ||
+      !apellido ||
+      apellido.length > 60 ||
       !escuderia_favorita ||
       !campeonato_id ||
       acepto_condiciones !== true
@@ -37,6 +45,12 @@ export async function POST(req: Request) {
         { error: "Faltan datos obligatorios" },
         { status: 400 }
       );
+    }
+    if (!/^[0-9+()\s-]{6,30}$/.test(telefono)) {
+      return NextResponse.json({ error: "Teléfono inválido" }, { status: 400 });
+    }
+    if (!/^[0-9.\s-]{6,15}$/.test(dni)) {
+      return NextResponse.json({ error: "DNI inválido" }, { status: 400 });
     }
 
     // Verificar campeonato y usar SU precio (nunca el monto enviado por el cliente)
@@ -57,6 +71,21 @@ export async function POST(req: Request) {
         { error: "La inscripción no está habilitada para este campeonato" },
         { status: 400 }
       );
+    }
+
+    // Control de cupos: las inscripciones pagadas no pueden superar cupos_maximos.
+    if (campeonato.cupos_maximos != null) {
+      const { count } = await supabaseAdmin
+        .from("campeonato_inscripciones")
+        .select("id", { count: "exact", head: true })
+        .eq("campeonato_id", campeonato_id)
+        .eq("estado_pago", "pagado");
+      if (count != null && count >= Number(campeonato.cupos_maximos)) {
+        return NextResponse.json(
+          { error: "No quedan cupos disponibles para este campeonato" },
+          { status: 409 }
+        );
+      }
     }
 
     const montoFinal = Math.round(Number(campeonato.precio_inscripcion));
@@ -93,10 +122,10 @@ export async function POST(req: Request) {
       .single();
 
     if (insertError || !inscripcion) {
-      return NextResponse.json(
-        { error: insertError?.message || "Error creando inscripción" },
-        { status: 500 }
-      );
+      return failResponse(500, "Error creando la inscripción", {
+        logContext: "pref-camp insert",
+        error: insertError,
+      });
     }
 
     inscripcionId = inscripcion.id;
@@ -122,23 +151,10 @@ export async function POST(req: Request) {
     }
 
     // ── Flujo Mercado Pago ───────────────────────────────────────────────────
-    if (!accessToken) {
-      return NextResponse.json(
-        { error: "Falta MERCADOPAGO_ACCESS_TOKEN" },
-        { status: 500 }
-      );
-    }
-    if (!baseUrl) {
-      return NextResponse.json(
-        { error: "Falta NEXT_PUBLIC_BASE_URL" },
-        { status: 500 }
-      );
-    }
-    if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1")) {
-      return NextResponse.json(
-        { error: "NEXT_PUBLIC_BASE_URL no puede ser localhost para pagos" },
-        { status: 500 }
-      );
+    if (!accessToken || !baseUrl || baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1")) {
+      return failResponse(500, "Servicio de pago no disponible", {
+        logContext: "pref-camp config",
+      });
     }
 
     const preference = new Preference(client);
@@ -184,10 +200,9 @@ export async function POST(req: Request) {
         .update({ estado_pago: "cancelado" })
         .eq("id", inscripcionId);
     }
-    const msg = error instanceof Error ? error.message : "Error desconocido";
-    return NextResponse.json(
-      { error: "No se pudo procesar la inscripción", details: msg },
-      { status: 500 }
-    );
+    return failResponse(500, "No se pudo procesar la inscripción", {
+      logContext: "pref-camp",
+      error,
+    });
   }
 }

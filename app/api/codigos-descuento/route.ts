@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomInt } from "crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
+import { failResponse } from "@/lib/apiError";
 
 function generarCodigo() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -23,10 +24,10 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json(
-      { error: "Error cargando códigos", details: error.message },
-      { status: 500 }
-    );
+    return failResponse(500, "Error cargando códigos", {
+      logContext: "codigos-descuento GET",
+      error,
+    });
   }
 
   return NextResponse.json({ codigos: data || [] });
@@ -77,10 +78,10 @@ export async function POST(req: Request) {
     .single();
 
   if (error) {
-    return NextResponse.json(
-      { error: "Error creando código", details: error.message },
-      { status: 500 }
-    );
+    return failResponse(500, "Error creando código", {
+      logContext: "codigos-descuento POST",
+      error,
+    });
   }
 
   return NextResponse.json({ codigo: data }, { status: 201 });
