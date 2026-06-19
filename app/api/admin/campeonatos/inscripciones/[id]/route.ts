@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
@@ -33,7 +34,7 @@ export async function PATCH(
       .update({ estado_pago: "cancelado" })
       .eq("id", id);
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/inscripciones/[id]", error });
     return NextResponse.json({ ok: true });
   }
 
@@ -73,7 +74,7 @@ export async function PATCH(
       .update(updates)
       .eq("id", id);
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/inscripciones/[id]", error });
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

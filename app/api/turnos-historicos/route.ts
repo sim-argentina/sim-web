@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
@@ -35,7 +36,7 @@ export async function GET() {
         .range(from, from + pageSize - 1);
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-historicos", error });
       }
 
       allData = [...allData, ...(data || [])];
@@ -95,7 +96,7 @@ export async function POST(req: Request) {
       });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-historicos", error });
     }
 
     return NextResponse.json({
@@ -131,7 +132,7 @@ export async function DELETE(req: Request) {
       .eq("archivo_key", archivoKey);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-historicos", error });
     }
 
     return NextResponse.json({ ok: true });

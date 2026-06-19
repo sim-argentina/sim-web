@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { ADMIN_COOKIE, verifySessionToken, type AdminRole } from "@/lib/adminSession";
+import { logSecurityEvent } from "@/lib/apiError";
 
 // Guards de autorización para route handlers y server components.
 // Validan la sesión firmada en el backend (no se confía en UI ni middleware).
@@ -15,6 +16,7 @@ type GuardOk = { ok: true; role: AdminRole };
 type GuardFail = { ok: false; response: NextResponse };
 
 function unauthorized(): GuardFail {
+  logSecurityEvent("auth_401_sin_sesion");
   return { ok: false, response: NextResponse.json({ error: "No autenticado" }, { status: 401 }) };
 }
 function forbidden(): GuardFail {
@@ -25,7 +27,10 @@ function forbidden(): GuardFail {
 export async function requireAdmin(): Promise<GuardOk | GuardFail> {
   const role = await getCurrentAdminRole();
   if (!role) return unauthorized();
-  if (role !== "admin") return forbidden();
+  if (role !== "admin") {
+    logSecurityEvent("auth_403_ruta_solo_admin", { role });
+    return forbidden();
+  }
   return { ok: true, role };
 }
 

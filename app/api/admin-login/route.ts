@@ -25,6 +25,7 @@ function safeEqual(a: string, b: string): boolean {
 export async function POST(req: Request) {
   // Rate limit anti fuerza bruta (por IP, durable si hay Upstash).
   if (!(await rateLimit(`login:${clientIp(req)}`, 8, 60_000))) {
+    logSecurityEvent("admin_login_429", { ip: clientIp(req) });
     return NextResponse.json(
       { error: "Demasiados intentos. Esperá un minuto." },
       { status: 429 }

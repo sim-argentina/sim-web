@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { sanitizeSearchTerm } from "@/lib/security";
@@ -52,7 +53,7 @@ export async function GET(req: Request) {
     if (hasta) query = query.lte("fecha", hasta);
 
     const { data, error } = await query;
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/registros", error });
     return NextResponse.json(data ?? []);
   } catch {
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
@@ -113,7 +114,7 @@ export async function POST(req: Request) {
       .select()
       .single();
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/registros", error });
     return NextResponse.json(data);
   } catch {
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

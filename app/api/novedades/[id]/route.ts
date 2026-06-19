@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { pickFields } from "@/lib/security";
@@ -40,7 +41,7 @@ export async function PATCH(
     .single();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return failResponse(500, "No se pudo completar la operación", { logContext: "novedades/[id]", error });
   }
 
   return NextResponse.json({ novedad: data });
@@ -58,7 +59,7 @@ export async function DELETE(
   const { error } = await supabaseAdmin.from("novedades").delete().eq("id", id);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return failResponse(500, "No se pudo completar la operación", { logContext: "novedades/[id]", error });
   }
 
   return NextResponse.json({ ok: true });

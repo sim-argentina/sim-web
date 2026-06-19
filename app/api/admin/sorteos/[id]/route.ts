@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { pickFields } from "@/lib/security";
@@ -37,7 +38,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       .select()
       .single();
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/sorteos/[id]", error });
     return NextResponse.json(data);
   } catch {
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

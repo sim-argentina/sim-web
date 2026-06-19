@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { validateImageUpload, safeUploadName } from "@/lib/security";
@@ -18,7 +19,7 @@ export async function POST(req: Request) {
     .from("tienda")
     .upload(nombre, valid.buffer, { contentType: valid.contentType, upsert: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "tienda/upload", error });
 
   const { data } = supabaseAdmin.storage.from("tienda").getPublicUrl(nombre);
   return NextResponse.json({ url: data.publicUrl });

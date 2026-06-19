@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 
@@ -10,7 +11,7 @@ export async function GET() {
     .order("orden", { ascending: true })
     .order("created_at", { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "tienda", error });
   return NextResponse.json({ productos: data });
 }
 
@@ -38,6 +39,6 @@ export async function POST(req: Request) {
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "tienda", error });
   return NextResponse.json({ producto: data }, { status: 201 });
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logSecurityEvent } from "@/lib/apiError";
 
 // Rate limiting durable para serverless (Upstash Redis REST) con fallback en
 // memoria para desarrollo. En producción sin Upstash configurado, advierte
@@ -111,6 +112,7 @@ export function clientIp(req: Request): string {
 
 // Respuesta 429 consistente y genérica (sin detalles internos).
 export function tooManyResponse(): NextResponse {
+  logSecurityEvent("rate_limit_429");
   return NextResponse.json(
     { error: "Demasiadas solicitudes. Esperá un momento e intentá de nuevo." },
     { status: 429 }
