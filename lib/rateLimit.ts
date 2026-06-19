@@ -6,8 +6,18 @@ import { NextResponse } from "next/server";
 //
 // Variables de entorno (producción): UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN.
 
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+// Acepta tanto los nombres originales como los que genera automáticamente la
+// integración de Vercel/Upstash (prefijados con el nombre del store).
+// Se usa el par REST de ESCRITURA (KV_REST_API_URL + KV_REST_API_TOKEN), nunca
+// el READ_ONLY_TOKEN (necesitamos INCR) ni las URLs redis:// (KV_URL/REDIS_URL).
+const UPSTASH_URL =
+  process.env.UPSTASH_REDIS_REST_URL ||
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_URL;
+
+const UPSTASH_TOKEN =
+  process.env.UPSTASH_REDIS_REST_TOKEN ||
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN;
+
 const IS_PROD = process.env.NODE_ENV === "production";
 
 let warnedNoDurable = false;
@@ -79,7 +89,9 @@ export async function rateLimit(
   if (IS_PROD && !warnedNoDurable) {
     warnedNoDurable = true;
     console.warn(
-      "[rateLimit] PRODUCCIÓN sin UPSTASH_REDIS_REST_URL/TOKEN: rate limit en memoria (no durable). Configurar Upstash."
+      "[rateLimit] PRODUCCIÓN sin Upstash configurado: no se encontró ni " +
+        "UPSTASH_REDIS_REST_URL/TOKEN ni UPSTASH_REDIS_REST_KV_REST_API_URL/TOKEN. " +
+        "Rate limit en memoria (no durable). El durable se activa con cualquiera de los dos pares."
     );
   }
   return memRateLimit(key, limit, windowMs);
