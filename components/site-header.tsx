@@ -7,7 +7,6 @@ export default function SiteHeader() {
     { href: "/alquiler", label: "Alquiler" },
     { href: "/viaja-con-sim", label: "Viaja con SIM", isBrasil: true },
     { href: "/sobre-nosotros", label: "Nosotros" },
-    { href: "/novedades", label: "Novedades" },
   ];
 
   return (

@@ -34,11 +34,6 @@ export default function AdminSidebar({ role }: Props) {
   roles: ["admin"],
 },
     {
-      label: "Tienda",
-      href: "/admin/tienda",
-      roles: ["admin"],
-    },
-    {
       label: "Campeonatos",
       href: "/admin/campeonatos",
       roles: ["admin", "staff"],

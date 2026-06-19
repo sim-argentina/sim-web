@@ -21,7 +21,6 @@ export default function Footer() {
             <Link href="/reservas">Reserva tu turno</Link>
             <Link href="/alquiler">Alquiler de simuladores</Link>
             <Link href="/sobre-nosotros">Sobre nosotros</Link>
-            <Link href="/novedades">Novedades</Link>
           </div>
         </div>
 
