@@ -18,7 +18,8 @@ export async function GET(
     .order("created_at", { ascending: true });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("gift-cards/grupo:", error.message);
+    return NextResponse.json({ error: "Error al obtener la compra" }, { status: 500 });
   }
   if (!data || data.length === 0) {
     return NextResponse.json({ error: "Compra no encontrada" }, { status: 404 });

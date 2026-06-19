@@ -12,7 +12,8 @@ export async function GET() {
     .order("created_at", { ascending: false });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("novedades GET:", error.message);
+    return NextResponse.json({ error: "Error al cargar novedades" }, { status: 500 });
   }
 
   return NextResponse.json({ novedades: data });

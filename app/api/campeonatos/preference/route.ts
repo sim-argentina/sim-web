@@ -73,14 +73,29 @@ export async function POST(req: Request) {
       );
     }
 
-    // Control de cupos: las inscripciones pagadas no pueden superar cupos_maximos.
+    // Control de cupos: pagadas + pendientes recientes (TTL 30m) no superan
+    // cupos_maximos. Las pendientes viejas (abandonadas) no bloquean.
     if (campeonato.cupos_maximos != null) {
-      const { count } = await supabaseAdmin
-        .from("campeonato_inscripciones")
-        .select("id", { count: "exact", head: true })
-        .eq("campeonato_id", campeonato_id)
-        .eq("estado_pago", "pagado");
-      if (count != null && count >= Number(campeonato.cupos_maximos)) {
+      const cupoTtlIso = new Date(Date.now() - 30 * 60_000).toISOString();
+      const [pagadas, pendientes] = await Promise.all([
+        supabaseAdmin
+          .from("campeonato_inscripciones")
+          .select("id", { count: "exact", head: true })
+          .eq("campeonato_id", campeonato_id)
+          .eq("estado_pago", "pagado"),
+        supabaseAdmin
+          .from("campeonato_inscripciones")
+          .select("id", { count: "exact", head: true })
+          .eq("campeonato_id", campeonato_id)
+          .in("estado_pago", [
+            "pendiente_pago",
+            "pendiente_pago_online",
+            "pendiente_pago_stand",
+          ])
+          .gte("created_at", cupoTtlIso),
+      ]);
+      const ocupados = (pagadas.count ?? 0) + (pendientes.count ?? 0);
+      if (ocupados >= Number(campeonato.cupos_maximos)) {
         return NextResponse.json(
           { error: "No quedan cupos disponibles para este campeonato" },
           { status: 409 }

@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 
 const CATEGORIAS = ["oro", "plata", "bronce"] as const;
 
 // Puntos F1 por posición dentro de cada semana/categoria
 const F1_PUNTOS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
-export async function GET() {
+export async function GET(req: Request) {
+  // Defensa en profundidad: además del cache de edge, límite por IP en cache-miss.
+  if (!(await rateLimit(`camp-public:${clientIp(req)}`, 120, 60_000))) {
+    return tooManyResponse();
+  }
   try {
     const [campeonatosRes, sorteosRes, registrosRes, inscripcionesRes] =
       await Promise.all([

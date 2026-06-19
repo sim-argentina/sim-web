@@ -93,13 +93,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true }, { status: 200 });
   } catch (error) {
     console.error("Error en webhook campeonatos:", error);
-    return NextResponse.json(
-      {
-        error: "Error interno del webhook",
-        details:
-          error instanceof Error ? error.message : "Error desconocido",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Error interno del webhook" }, { status: 500 });
   }
 }

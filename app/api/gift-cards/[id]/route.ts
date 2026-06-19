@@ -18,7 +18,8 @@ export async function GET(
     .maybeSingle();
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("gift-cards/[id]:", error.message);
+    return NextResponse.json({ error: "Error al obtener la Gift Card" }, { status: 500 });
   }
   if (!data) {
     return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
