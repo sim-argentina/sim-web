@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -256,6 +257,9 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
     () => sumarMinutosAHora(form.horaSubida, form.cantMinutos),
     [form.horaSubida, form.cantMinutos]
   );
+
+  // Reloj para los temporizadores en vivo (un solo intervalo, se limpia al desmontar).
+  const now = useNow();
 
   const totalPagos = useMemo(
     () => pagosDetalle.reduce((acc, p) => acc + (Number(p.monto) || 0), 0),
@@ -644,9 +648,19 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
           {filtered.map((r) => {
             const pagos = normalizarPagos(r).filter((p) => Number(p.monto) > 0);
             const pagoStr = pagos.map((p) => `${p.metodo_pago.toUpperCase()} ${formatoDinero(Number(p.monto))}`).join(" + ") || "—";
+            const timer = getTurnoTimerState(
+              {
+                fecha: r.fecha,
+                horaSubida: r.hora_subida,
+                minutos: r.cantidad_minutos,
+                listo: r.turno_listo,
+                cancelado: r.estado === "anulado",
+              },
+              now,
+            );
             return (
               <div key={r.id}
-                className={`grid grid-cols-[50px_80px_70px_70px_1.5fr_80px_1fr_120px_100px] items-center gap-2 border-b border-white/5 px-4 py-3 text-sm transition ${r.turno_listo ? "bg-green-950/20" : "bg-black hover:bg-white/[0.02]"}`}>
+                className={`grid grid-cols-[50px_80px_70px_70px_1.5fr_80px_1fr_120px_100px] items-center gap-2 border-b border-white/5 px-4 py-3 text-sm transition ${timer.status === "listo" ? "bg-green-950/20" : timer.status === "rojo" ? "bg-red-950/25" : timer.status === "amarillo" ? "bg-amber-950/15" : "bg-black hover:bg-white/[0.02]"}`}>
                 <label className="flex justify-center">
                   <input type="checkbox" checked={!!r.turno_listo}
                     onChange={() => toggleListo(r)}
@@ -658,6 +672,7 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
                 <div>
                   <p className={`font-black text-white ${r.turno_listo ? "line-through opacity-50" : ""}`}>{r.nombre_completo}</p>
                   <p className="text-xs text-white/40">{r.telefono}</p>
+                  <span className={`mt-1 inline-flex w-fit items-center rounded-md px-2 py-0.5 text-[11px] font-bold ${TURNO_BADGE_CLASS[timer.status]}`}>{timer.label}</span>
                 </div>
                 <span><Badge v={r.categoria} /></span>
                 <div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer";
 
 type PagoDetalle = {
   metodo_pago: string;
@@ -269,6 +270,9 @@ export default function TurneroAdminPage() {
       .filter((turno) => turno.estado !== "cancelado")
       .sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
   }, [turnos, fecha]);
+
+  // Reloj para los temporizadores en vivo (un solo intervalo, se limpia al desmontar).
+  const now = useNow();
 
   const resumenDia = useMemo(() => {
     const porMetodo: Record<string, { cantidad: number; total: number }> = {};
@@ -1007,13 +1011,27 @@ export default function TurneroAdminPage() {
                         .join(" + ") || "-"
                     : turno.posnet_pago || turno.posnet || "-";
                   const listo = Boolean(turno.turno_listo);
+                  const timer = getTurnoTimerState(
+                    {
+                      fecha: turno.fecha,
+                      horaSubida: turno.hora_subida,
+                      minutos: turno.cantidad_minutos,
+                      listo: turno.turno_listo,
+                      cancelado: turno.estado === "cancelado",
+                    },
+                    now,
+                  );
 
                   return (
                     <div
                       key={turno.id}
                       className={`grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_1.4fr_130px_120px_80px] items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
-                        listo
+                        timer.status === "listo"
                           ? "border-green-500/50 bg-green-950/25"
+                          : timer.status === "rojo"
+                          ? "border-red-500/60 bg-red-950/30"
+                          : timer.status === "amarillo"
+                          ? "border-amber-500/50 bg-amber-950/20"
                           : "border-white/10 bg-black hover:border-red-500/60"
                       }`}
                     >
@@ -1074,6 +1092,11 @@ export default function TurneroAdminPage() {
                         <p className="truncate text-xs text-white/40">
                           {turno.telefono || "Sin teléfono"}
                         </p>
+                        <span
+                          className={`mt-1 inline-flex w-fit items-center rounded-md px-2 py-0.5 text-[11px] font-bold ${TURNO_BADGE_CLASS[timer.status]}`}
+                        >
+                          {timer.label}
+                        </span>
                       </div>
 
                       <span className="truncate text-white/70">
