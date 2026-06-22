@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 
 // GET público de una Gift Card para la pantalla de éxito / descarga.
 // El código único solo se revela si el pago está aprobado.
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  if (!(await rateLimit(`gc-id:${clientIp(req)}`, 40, 60_000))) {
+    return tooManyResponse();
+  }
   const { id } = await params;
 
   const { data, error } = await supabaseAdmin
