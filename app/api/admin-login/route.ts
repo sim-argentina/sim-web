@@ -40,7 +40,8 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { password } = await req.json();
+    const body = await req.json().catch(() => null);
+    const password = typeof body?.password === "string" ? body.password : "";
 
     const adminPassword = process.env.ADMIN_PASSWORD || "";
     const staffPassword = process.env.STAFF_PASSWORD || "";

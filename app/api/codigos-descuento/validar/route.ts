@@ -11,7 +11,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}) as Record<string, unknown>);
 
   const codigoBuscado = String(body.codigo || "").trim().toUpperCase().slice(0, 40);
   const totalOriginal = Number(body.total || 0);
