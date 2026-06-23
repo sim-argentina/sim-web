@@ -164,27 +164,30 @@ async function Testimonios() {
   return (
     <section className="bg-white text-black">
 
-      {/* header */}
+      {/* header — sobrio, con atribución real a Google */}
       <div className="border-b border-black/8 px-8 py-10 md:px-14">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.55em] text-red-600">
-              Pilotos SIM
-            </p>
-            <h2 className="mt-2 text-3xl font-black uppercase leading-tight md:text-4xl">
-              Lo que dicen.
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div className="flex items-center gap-3">
+            <svg viewBox="0 0 48 48" className="h-8 w-8 shrink-0" aria-hidden="true">
+              <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+              <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
+              <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+              <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+            </svg>
+            <h2 className="text-2xl font-bold leading-tight text-black md:text-3xl">
+              Reseñas de Google
             </h2>
           </div>
-          {/* badge Google Maps */}
-          <div className="flex items-center gap-2 border border-black/10 px-4 py-2 w-fit">
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none">
-              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#EA4335"/>
-              <circle cx="12" cy="9" r="2.5" fill="white"/>
-            </svg>
-            <p className="text-[10px] font-black uppercase tracking-widest text-black/40">
-              Google Maps · Reseñas verificadas
-            </p>
-          </div>
+          {placeUrl && (
+            <a
+              href={placeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-black/45 transition-colors hover:text-black/75"
+            >
+              Ver todas en Google Maps ↗
+            </a>
+          )}
         </div>
       </div>
 
