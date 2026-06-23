@@ -162,28 +162,38 @@ async function Testimonios() {
   const tieneReviews = reviews.length > 0;
 
   return (
-    <section className="bg-white text-black">
+    <section className="relative overflow-hidden border-y border-white/5 bg-black text-white">
+      {/* degradado sutil + leve glow rojo racing */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/[0.03] via-transparent to-black" />
+      <div className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[36rem] -translate-x-1/2 rounded-full bg-red-600/10 blur-[100px]" />
 
-      {/* header — sobrio, con atribución real a Google */}
-      <div className="border-b border-black/8 px-8 py-10 md:px-14">
-        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div className="flex items-center gap-3">
-            <svg viewBox="0 0 48 48" className="h-8 w-8 shrink-0" aria-hidden="true">
-              <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
-              <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
-              <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
-              <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
-            </svg>
-            <h2 className="text-2xl font-bold leading-tight text-black md:text-3xl">
-              Reseñas de Google
+      {/* header */}
+      <div className="relative px-6 pb-6 pt-14 md:px-12 md:pb-8 md:pt-16">
+        <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="mb-3 text-[10px] font-black uppercase tracking-[0.55em] text-red-500">
+              Lo que importa
+            </p>
+            <h2 className="text-2xl font-black uppercase leading-[0.95] md:text-[2.6rem]">
+              Clientes que ya vivieron la{" "}
+              <span className="text-red-600">experiencia SIM.</span>
             </h2>
+            <p className="mt-3 flex items-center gap-2 text-sm text-white/45">
+              <svg viewBox="0 0 48 48" className="h-4 w-4 shrink-0" aria-hidden="true">
+                <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+                <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
+                <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+                <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+              </svg>
+              Reseñas reales de Google Maps.
+            </p>
           </div>
           {placeUrl && (
             <a
               href={placeUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-black/45 transition-colors hover:text-black/75"
+              className="inline-flex w-fit shrink-0 items-center gap-1.5 text-xs font-medium text-white/50 transition-colors hover:text-white"
             >
               Ver todas en Google Maps ↗
             </a>
@@ -194,33 +204,32 @@ async function Testimonios() {
       {tieneReviews ? (
         <ReviewsCarousel reviews={reviews} placeUrl={placeUrl} />
       ) : (
-        // Estado: próximamente
-        <div className="flex flex-col items-center justify-center gap-6 px-8 py-20 text-center md:py-24">
-          {/* 3 slots skeleton */}
-          <div className="grid w-full max-w-4xl gap-px bg-black/5 md:grid-cols-3">
+        // Fallback oscuro elegante
+        <div className="relative flex flex-col items-center justify-center gap-6 px-6 pb-16 text-center md:pb-20">
+          <div className="grid w-full max-w-5xl gap-4 md:grid-cols-3">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="flex flex-col gap-4 bg-white px-8 py-10">
+              <div key={i} className="flex flex-col gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-6">
                 <div className="flex gap-1">
                   {[...Array(5)].map((_, j) => (
-                    <span key={j} className="text-lg text-black/10">★</span>
+                    <span key={j} className="text-base text-white/10">★</span>
                   ))}
                 </div>
                 <div className="space-y-2">
-                  <div className="h-2.5 w-full rounded-none bg-black/5" />
-                  <div className="h-2.5 w-4/5 rounded-none bg-black/5" />
-                  <div className="h-2.5 w-3/5 rounded-none bg-black/5" />
+                  <div className="h-2.5 w-full rounded bg-white/5" />
+                  <div className="h-2.5 w-4/5 rounded bg-white/5" />
+                  <div className="h-2.5 w-3/5 rounded bg-white/5" />
                 </div>
-                <div className="mt-2 flex items-center gap-3 border-t border-black/5 pt-5">
-                  <div className="h-9 w-9 rounded-full bg-black/5" />
+                <div className="mt-2 flex items-center gap-3 border-t border-white/10 pt-5">
+                  <div className="h-9 w-9 rounded-full bg-white/5" />
                   <div className="space-y-1.5">
-                    <div className="h-2 w-20 bg-black/5" />
-                    <div className="h-2 w-12 bg-black/5" />
+                    <div className="h-2 w-20 bg-white/5" />
+                    <div className="h-2 w-12 bg-white/5" />
                   </div>
                 </div>
               </div>
             ))}
           </div>
-          <p className="text-[10px] font-black uppercase tracking-[0.45em] text-black/25">
+          <p className="text-[10px] font-black uppercase tracking-[0.45em] text-white/25">
             Reseñas verificadas · En camino
           </p>
         </div>

@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { GoogleReview } from "@/lib/googleReviews";
 
 const AUTO_MS = 6000;
 
-// 1 reseña por vista en mobile, 3 en desktop (md+).
+// 1 reseña visible en mobile, 3 en desktop (md+).
 function useItemsPerView(): number {
   const [n, setN] = useState(1);
   useEffect(() => {
@@ -16,13 +16,6 @@ function useItemsPerView(): number {
     return () => mq.removeEventListener("change", apply);
   }, []);
   return n;
-}
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  if (size <= 1) return arr.map((x) => [x]);
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
 }
 
 // Logo "G" de Google (atribución real, no un sello inventado).
@@ -50,41 +43,55 @@ function Stars() {
   );
 }
 
+function Chevron({ dir }: { dir: "left" | "right" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={dir === "left" ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6"} />
+    </svg>
+  );
+}
+
 function ReviewCard({ r, placeUrl }: { r: GoogleReview; placeUrl: string | null }) {
   return (
-    <article className="flex h-full flex-col gap-3 rounded-xl border border-black/10 bg-white p-6 shadow-sm">
-      {/* autor */}
+    <article className="flex h-full flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-5">
+      {/* autor + marca Google */}
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-black/[0.06] text-sm font-semibold text-black/70">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-sm font-semibold text-white/80">
           {r.author.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-black/85">{r.author}</p>
-          {r.relativeTime && <p className="text-xs text-black/40">{r.relativeTime}</p>}
+          <p className="truncate text-sm font-semibold text-white/90">{r.author}</p>
+          {r.relativeTime && <p className="text-xs text-white/40">{r.relativeTime}</p>}
         </div>
+        <GoogleG className="ml-auto h-5 w-5 shrink-0" />
       </div>
 
       <Stars />
 
       {/* texto exacto de la reseña (truncado solo visualmente) */}
-      <p className="line-clamp-6 flex-1 text-sm leading-6 text-black/70">{r.text}</p>
+      <p className="line-clamp-5 flex-1 text-sm leading-6 text-white/70">{r.text}</p>
 
-      {/* atribución sobria a Google */}
+      {/* link a la reseña en Google Maps */}
       {placeUrl ? (
         <a
           href={placeUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-xs text-black/45 transition-colors hover:text-black/75"
+          className="text-xs font-medium text-white/45 transition-colors hover:text-white/80"
         >
-          <GoogleG className="h-4 w-4" />
-          Reseña en Google
+          Reseña en Google Maps ↗
         </a>
       ) : (
-        <span className="inline-flex items-center gap-1.5 text-xs text-black/45">
-          <GoogleG className="h-4 w-4" />
-          Reseña en Google
-        </span>
+        <span className="text-xs font-medium text-white/45">Reseña en Google Maps</span>
       )}
     </article>
   );
@@ -98,40 +105,72 @@ export default function ReviewsCarousel({
   placeUrl: string | null;
 }) {
   const perView = useItemsPerView();
-  const slides = useMemo(() => chunk(reviews, perView), [reviews, perView]);
+  const maxActive = Math.max(0, reviews.length - perView);
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
 
   // Clamp del índice cuando cambia el layout (resize mobile<->desktop).
   useEffect(() => {
-    setActive((a) => Math.min(a, Math.max(0, slides.length - 1)));
-  }, [slides.length]);
+    setActive((a) => Math.min(a, maxActive));
+  }, [maxActive]);
 
-  // Auto-avance (pausa al hover y si hay una sola slide). Sin indicador visual.
+  // Auto-avance (pausa al hover; sin indicador visual de páginas).
   useEffect(() => {
-    if (paused || slides.length <= 1) return;
-    const id = setInterval(() => setActive((a) => (a + 1) % slides.length), AUTO_MS);
+    if (paused || maxActive <= 0) return;
+    const id = setInterval(() => setActive((a) => (a >= maxActive ? 0 : a + 1)), AUTO_MS);
     return () => clearInterval(id);
-  }, [paused, slides.length]);
+  }, [paused, maxActive]);
+
+  const canMove = maxActive > 0;
+  const step = 100 / perView;
+  const go = (dir: number) =>
+    setActive((a) => {
+      const n = a + dir;
+      if (n < 0) return maxActive;
+      if (n > maxActive) return 0;
+      return n;
+    });
 
   return (
     <div
-      className="overflow-hidden px-8 py-10 md:px-14"
+      className="relative px-9 py-6 md:px-14 md:py-8"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
-      <div
-        className="flex transition-transform duration-700 ease-out"
-        style={{ transform: `translateX(-${active * 100}%)` }}
-      >
-        {slides.map((group, gi) => (
-          <div key={gi} className="grid w-full shrink-0 gap-5 md:grid-cols-3">
-            {group.map((r) => (
-              <ReviewCard key={r.id} r={r} placeUrl={placeUrl} />
-            ))}
-          </div>
-        ))}
+      <div className="overflow-hidden">
+        <div
+          className="flex transition-transform duration-700 ease-out"
+          style={{ transform: `translateX(-${active * step}%)` }}
+        >
+          {reviews.map((r) => (
+            <div key={r.id} className="w-full shrink-0 px-2 md:w-1/3">
+              <ReviewCard r={r} placeUrl={placeUrl} />
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* flechas laterales discretas */}
+      {canMove && (
+        <>
+          <button
+            type="button"
+            aria-label="Reseñas anteriores"
+            onClick={() => go(-1)}
+            className="absolute left-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-black/60 text-white/70 transition-colors hover:border-white/40 hover:text-white md:left-3"
+          >
+            <Chevron dir="left" />
+          </button>
+          <button
+            type="button"
+            aria-label="Reseñas siguientes"
+            onClick={() => go(1)}
+            className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white/15 bg-black/60 text-white/70 transition-colors hover:border-white/40 hover:text-white md:right-3"
+          >
+            <Chevron dir="right" />
+          </button>
+        </>
+      )}
     </div>
   );
 }
