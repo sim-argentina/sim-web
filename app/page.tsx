@@ -2,6 +2,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import HeroHome from "@/components/HeroHome";
+import ReviewsCarousel from "@/components/ReviewsCarousel";
+import { getGoogleReviews, getGooglePlaceUrl } from "@/lib/googleReviews";
+
+// ISR: la Home se revalida cada 6h para refrescar las reseñas de Google.
+export const revalidate = 21600;
 
 // ─── 01 · QUÉ ES SIM ────────────────────────────────────────────
 function QueEsSim() {
@@ -149,21 +154,12 @@ function Galeria() {
 }
 
 // ─── 03 · TESTIMONIOS — PREPARADO PARA GOOGLE MAPS ──────────────
-function Testimonios() {
-  // Estructura lista para reseñas reales.
-  // Cuando lleguen las reales, reemplazar REVIEWS con los datos reales.
-  const REVIEWS: Array<{
-    nombre: string;
-    ciudad: string;
-    estrellas: number;
-    texto: string;
-    foto?: string;
-  }> = [
-    // Descomentar y completar cuando lleguen las reseñas reales:
-    // { nombre: "Nombre Apellido", ciudad: "Córdoba", estrellas: 5, texto: "...", foto: undefined },
-  ];
-
-  const tieneReviews = REVIEWS.length > 0;
+async function Testimonios() {
+  // Reseñas reales de Google Places (server-side, solo 5★). Ante error o falta
+  // de envs, getGoogleReviews() devuelve [] y se muestra el fallback elegante.
+  const reviews = await getGoogleReviews();
+  const placeUrl = getGooglePlaceUrl();
+  const tieneReviews = reviews.length > 0;
 
   return (
     <section className="bg-white text-black">
@@ -193,42 +189,7 @@ function Testimonios() {
       </div>
 
       {tieneReviews ? (
-        // Layout de reviews reales
-        <div className="grid md:grid-cols-3">
-          {REVIEWS.map((r, i) => (
-            <div
-              key={i}
-              className={`flex flex-col justify-between px-8 py-10 ${i < REVIEWS.length - 1 ? "border-b border-black/8 md:border-b-0 md:border-r" : ""}`}
-            >
-              {/* stars */}
-              <div className="mb-4 flex gap-0.5">
-                {[...Array(5)].map((_, j) => (
-                  <span key={j} className={`text-lg ${j < r.estrellas ? "text-red-600" : "text-black/15"}`}>★</span>
-                ))}
-              </div>
-
-              <p className="flex-1 text-base leading-8 text-black/70">
-                "{r.texto}"
-              </p>
-
-              <div className="mt-6 flex items-center gap-3 border-t border-black/8 pt-5">
-                {r.foto ? (
-                  <div className="relative h-9 w-9 overflow-hidden rounded-full bg-black/10">
-                    <Image src={r.foto} alt={r.nombre} fill className="object-cover" />
-                  </div>
-                ) : (
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-600 text-xs font-black text-white">
-                    {r.nombre.charAt(0)}
-                  </div>
-                )}
-                <div>
-                  <p className="text-sm font-black uppercase tracking-wide">{r.nombre}</p>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-black/30">{r.ciudad}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <ReviewsCarousel reviews={reviews} placeUrl={placeUrl} />
       ) : (
         // Estado: próximamente
         <div className="flex flex-col items-center justify-center gap-6 px-8 py-20 text-center md:py-24">
