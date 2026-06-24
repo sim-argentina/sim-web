@@ -146,6 +146,7 @@ function formatearPago(pago?: string) {
   if (pago === "credito") return "Crédito";
   if (pago === "efectivo") return "Efectivo";
   if (pago === "transferencia") return "Transferencia";
+  if (pago === "gratis") return "Gratis";
   return pago;
 }
 
@@ -196,6 +197,7 @@ export default function TurneroAdminPage() {
     { metodo_pago: "qr", monto: "", posnet_pago: "" },
   ]);
   const [observaciones, setObservaciones] = useState("");
+  const [turnoGratis, setTurnoGratis] = useState(false);
 
   const [turnoEditando, setTurnoEditando] = useState<TurnoStand | null>(null);
 
@@ -456,9 +458,30 @@ export default function TurneroAdminPage() {
     setCantidadTurnos(1);
     setPagosDetalle([{ metodo_pago: "qr", monto: "", posnet_pago: "" }]);
     setObservaciones("");
+    setTurnoGratis(false);
   }
 
   function armarPayload() {
+    if (turnoGratis) {
+      return {
+        nombre,
+        telefono,
+        fecha,
+        hora,
+        hora_estimada_subida: horaEstimadaSubida,
+        hora_subida: horaSubida,
+        hora_bajada: horaBajada,
+        simuladores,
+        cantidad_personas: cantidadPersonas,
+        cantidad_minutos: cantidadMinutos,
+        cantidad_turnos: cantidadTurnos,
+        metodo_pago: "gratis",
+        posnet_pago: null,
+        pagos_detalle: [],
+        total: 0,
+        observaciones,
+      };
+    }
     const pagosLimpios = limpiarPagosParaGuardar(pagosDetalle);
     const primerPago = pagosLimpios[0];
     const totalFinal = pagosLimpios.reduce((acc, pago) => acc + pago.monto, 0);
@@ -496,7 +519,7 @@ export default function TurneroAdminPage() {
       return;
     }
 
-    if (totalPagos <= 0) {
+    if (!turnoGratis && totalPagos <= 0) {
       alert("Cargá al menos un pago con monto mayor a 0.");
       return;
     }
@@ -543,6 +566,7 @@ export default function TurneroAdminPage() {
     setCantidadTurnos(turno.cantidad_turnos || 1);
     setPagosDetalle(normalizarPagos(turno));
     setObservaciones(turno.observaciones || "");
+    setTurnoGratis(turno.metodo_pago === "gratis");
   }
 
   async function guardarEdicion(e: React.FormEvent) {
@@ -550,7 +574,7 @@ export default function TurneroAdminPage() {
 
     if (!turnoEditando) return;
 
-    if (totalPagos <= 0) {
+    if (!turnoGratis && totalPagos <= 0) {
       alert("Cargá al menos un pago con monto mayor a 0.");
       return;
     }
@@ -720,7 +744,7 @@ export default function TurneroAdminPage() {
             <Campo label="Total">
               <input
                 type="text"
-                value={formatoDinero(totalPagos)}
+                value={formatoDinero(turnoGratis ? 0 : totalPagos)}
                 readOnly
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm font-bold text-white/60 outline-none"
               />
@@ -770,8 +794,11 @@ export default function TurneroAdminPage() {
                 data-turnero-cell
                 type="number"
                 min={1}
+                max={4}
                 value={cantidadPersonas}
-                onChange={(e) => setCantidadPersonas(Number(e.target.value))}
+                onChange={(e) =>
+                  setCantidadPersonas(Math.min(4, Math.max(1, Number(e.target.value) || 1)))
+                }
                 className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
               />
             </Campo>
@@ -828,6 +855,25 @@ export default function TurneroAdminPage() {
             </div>
           </div>
 
+          {/* Turno gratis */}
+          <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-2xl border border-white/10 bg-black/60 p-3">
+            <input
+              type="checkbox"
+              checked={turnoGratis}
+              onChange={(e) => setTurnoGratis(e.target.checked)}
+              className="h-4 w-4 accent-red-500"
+            />
+            <span className="text-sm font-black uppercase tracking-[0.12em] text-white/80">
+              Turno gratis
+            </span>
+            <span className="text-xs font-bold text-white/40">Sin cobro · total $0</span>
+          </label>
+
+          {turnoGratis ? (
+            <div className="mt-3 rounded-2xl border border-green-500/25 bg-green-500/10 p-4 text-sm font-bold text-green-300">
+              Turno gratuito — no se registra cobro. Se guarda con método “Gratis” y total $0.
+            </div>
+          ) : (
           <div className="mt-4 rounded-2xl border border-white/10 bg-black/60 p-3">
             <div className="mb-3 flex items-center justify-between gap-3">
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/40">
@@ -915,6 +961,7 @@ export default function TurneroAdminPage() {
               </span>
             </div>
           </div>
+          )}
 
           <div className="mt-4">
             <p className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/40">

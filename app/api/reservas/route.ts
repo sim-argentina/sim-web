@@ -160,7 +160,16 @@ export async function POST(req: Request) {
 
     // 3) Consumir el código atómicamente. Si ya no está disponible, revertir.
     if (codigoValido) {
-      const consumido = await consumirCodigoDescuento(codigoValido);
+      const consumido = await consumirCodigoDescuento(codigoValido, {
+        reserva_id: data.id,
+        nombre: data.nombre,
+        telefono: data.telefono,
+        fecha_reserva: data.fecha,
+        hora_reserva: data.hora,
+        total_original: data.total_original,
+        descuento_aplicado: data.descuento_aplicado,
+        total_final: data.total,
+      });
       if (!consumido) {
         await supabaseAdmin.from("reservas").delete().eq("id", data.id);
         reservaCreadaId = null;

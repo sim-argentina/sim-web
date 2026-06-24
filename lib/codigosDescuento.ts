@@ -71,10 +71,28 @@ export async function validarCodigoDescuento(
   };
 }
 
+export type UsoCodigoContexto = {
+  reserva_id?: number | null;
+  nombre?: string | null;
+  telefono?: string | null;
+  fecha_reserva?: string | null;
+  hora_reserva?: string | null;
+  total_original?: number | null;
+  descuento_aplicado?: number | null;
+  total_final?: number | null;
+  mercado_pago_payment_id?: string | null;
+};
+
 // Consumo ATÓMICO vía RPC (UPDATE ... WHERE usos_actuales < usos_maximos).
 // Devuelve true si se consumió un uso, false si estaba agotado/inválido.
 // Elimina la race condition del read-modify-write anterior (SIM-A02).
-export async function consumirCodigoDescuento(codigo: string): Promise<boolean> {
+// Si el consumo tuvo éxito, registra el uso en usos_codigos_descuento (un solo
+// registro por consumo → no duplica). Es best-effort: si la auditoría falla, el
+// consumo igual quedó hecho y no se bloquea el flujo de pago.
+export async function consumirCodigoDescuento(
+  codigo: string,
+  contexto?: UsoCodigoContexto
+): Promise<boolean> {
   const codigoNormalizado = String(codigo || "").trim().toUpperCase();
   if (!codigoNormalizado) return false;
 
@@ -86,5 +104,31 @@ export async function consumirCodigoDescuento(codigo: string): Promise<boolean> 
     console.error("Error consumiendo código de descuento:", error.message);
     return false;
   }
-  return data === true;
+  if (data !== true) return false;
+
+  try {
+    const { data: cod } = await supabaseAdmin
+      .from("codigos_descuento")
+      .select("id")
+      .eq("codigo", codigoNormalizado)
+      .maybeSingle();
+
+    await supabaseAdmin.from("usos_codigos_descuento").insert({
+      codigo_id: cod?.id ?? null,
+      codigo: codigoNormalizado,
+      reserva_id: contexto?.reserva_id ?? null,
+      nombre: contexto?.nombre ?? null,
+      telefono: contexto?.telefono ?? null,
+      fecha_reserva: contexto?.fecha_reserva ?? null,
+      hora_reserva: contexto?.hora_reserva ?? null,
+      total_original: contexto?.total_original ?? null,
+      descuento_aplicado: contexto?.descuento_aplicado ?? null,
+      total_final: contexto?.total_final ?? null,
+      mercado_pago_payment_id: contexto?.mercado_pago_payment_id ?? null,
+    });
+  } catch (e) {
+    console.warn("No se pudo registrar el uso del código:", (e as Error)?.message);
+  }
+
+  return true;
 }

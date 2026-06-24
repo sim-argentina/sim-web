@@ -153,6 +153,29 @@ export default function AdminCodigosPage() {
     await cargarCodigos();
   }
 
+  async function eliminarCodigo(codigo: CodigoDescuento) {
+    const usado = Number(codigo.usos_actuales || 0) > 0;
+    const aviso = codigo.activo
+      ? `El código "${codigo.codigo}" está ACTIVO. ¿Seguro que querés eliminarlo de la lista?`
+      : `¿Eliminar el código "${codigo.codigo}" de la lista?`;
+    if (!confirm(usado ? `${aviso}\n\nSu historial de usos se conserva.` : aviso)) {
+      return;
+    }
+
+    const res = await fetch(`/api/codigos-descuento/${codigo.id}`, {
+      method: "DELETE",
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || "Error eliminando código");
+      return;
+    }
+
+    // UI sin recargar: lo saco de la lista local.
+    setCodigos((prev) => prev.filter((c) => c.id !== codigo.id));
+  }
+
   return (
     <main className="min-h-screen bg-black px-4 py-8 text-white md:px-6">
       <section className="mx-auto max-w-7xl">
@@ -298,8 +321,8 @@ export default function AdminCodigosPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1100px] space-y-2">
-                <div className="grid grid-cols-[1.1fr_1.2fr_1fr_100px_110px_110px_110px_130px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
+              <div className="min-w-[1200px] space-y-2">
+                <div className="grid grid-cols-[1.1fr_1.2fr_1fr_90px_90px_95px_95px_110px_96px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
                   <span>Código</span>
                   <span>Para</span>
                   <span>Tipo</span>
@@ -308,12 +331,13 @@ export default function AdminCodigosPage() {
                   <span>Inicio</span>
                   <span>Fin</span>
                   <span>Estado</span>
+                  <span>Eliminar</span>
                 </div>
 
                 {codigos.map((codigo) => (
                   <div
                     key={codigo.id}
-                    className={`grid grid-cols-[1.1fr_1.2fr_1fr_100px_110px_110px_110px_130px] items-center gap-2 rounded-xl border px-3 py-3 text-sm ${
+                    className={`grid grid-cols-[1.1fr_1.2fr_1fr_90px_90px_95px_95px_110px_96px] items-center gap-2 rounded-xl border px-3 py-3 text-sm ${
                       codigo.activo
                         ? "border-white/10 bg-black"
                         : "border-white/5 bg-white/[0.02] opacity-50"
@@ -352,6 +376,14 @@ export default function AdminCodigosPage() {
                       }`}
                     >
                       {codigo.activo ? "Activo" : "Inactivo"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => eliminarCodigo(codigo)}
+                      className="rounded-xl border border-red-500/40 px-3 py-2 text-xs font-black uppercase text-red-400 transition hover:bg-red-600 hover:text-white"
+                    >
+                      Eliminar
                     </button>
                   </div>
                 ))}

@@ -123,7 +123,17 @@ export async function POST(req: Request) {
       updated.length > 0 &&
       reserva.codigo_descuento
     ) {
-      await consumirCodigoDescuento(reserva.codigo_descuento);
+      await consumirCodigoDescuento(reserva.codigo_descuento, {
+        reserva_id: reserva.id,
+        nombre: reserva.nombre,
+        telefono: reserva.telefono,
+        fecha_reserva: reserva.fecha,
+        hora_reserva: reserva.hora,
+        total_original: reserva.total_original,
+        descuento_aplicado: reserva.descuento_aplicado,
+        total_final: reserva.total,
+        mercado_pago_payment_id: String(paymentId),
+      });
     }
 
     return NextResponse.json({ received: true }, { status: 200 });

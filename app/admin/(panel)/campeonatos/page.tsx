@@ -777,6 +777,29 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
             <Field label="Fecha inicio"><input type="date" className={inp} value={form.fecha_inicio} onChange={(e) => set("fecha_inicio", e.target.value)} /></Field>
             <Field label="Fecha fin"><input type="date" className={inp} value={form.fecha_fin} onChange={(e) => set("fecha_fin", e.target.value)} /></Field>
             <Field label="Precio ($)"><input type="number" className={inp} value={form.precio_inscripcion} onChange={(e) => set("precio_inscripcion", e.target.value)} /></Field>
+            <Field label="Cupos">
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Number(form.cupos_maximos) <= 0}
+                    onChange={(e) => set("cupos_maximos", e.target.checked ? "0" : "10")}
+                    className="accent-red-500"
+                  />
+                  Sin límite de cupos (ilimitado)
+                </label>
+                {Number(form.cupos_maximos) > 0 && (
+                  <input
+                    type="number"
+                    min={1}
+                    className={inp}
+                    value={form.cupos_maximos}
+                    onChange={(e) => set("cupos_maximos", e.target.value)}
+                    placeholder="Cantidad de cupos"
+                  />
+                )}
+              </div>
+            </Field>
             <Field label="Descripción"><input className={inp} value={form.descripcion} onChange={(e) => set("descripcion", e.target.value)} /></Field>
             <Field label="Imagen">
               <div className="space-y-2">
@@ -824,7 +847,7 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
                 <Badge v={c.estado} />
                 {c.inscripcion_habilitada && <span className="text-xs text-green-400 font-bold">Inscripción abierta</span>}
               </div>
-              <p className="text-sm text-zinc-500 mt-1">{c.fecha_inicio && `${c.fecha_inicio} → ${c.fecha_fin}`} · ${c.precio_inscripcion.toLocaleString()} · {c.cupos_maximos} cupos</p>
+              <p className="text-sm text-zinc-500 mt-1">{c.fecha_inicio && `${c.fecha_inicio} → ${c.fecha_fin}`} · ${c.precio_inscripcion.toLocaleString()} · {Number(c.cupos_maximos) > 0 ? `${c.cupos_maximos} cupos` : "Cupos ilimitados"}</p>
             </div>
             <button onClick={() => startEdit(c)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700 shrink-0">Editar</button>
           </div>

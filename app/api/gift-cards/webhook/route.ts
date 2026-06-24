@@ -88,7 +88,10 @@ export async function POST(req: Request) {
 
       // Consumir el código de descuento una sola vez (igual que reservas)
       const codigo = filas.find((f) => f.codigo_descuento)?.codigo_descuento;
-      if (codigo) await consumirCodigoDescuento(codigo);
+      if (codigo)
+        await consumirCodigoDescuento(codigo, {
+          mercado_pago_payment_id: String(paymentId),
+        });
     } else if (
       paymentData.status === "rejected" ||
       paymentData.status === "cancelled"

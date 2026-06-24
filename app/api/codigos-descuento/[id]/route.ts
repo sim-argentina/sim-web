@@ -47,3 +47,26 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
   return NextResponse.json({ codigo: data });
 }
+
+export async function DELETE(_req: Request, { params }: RouteContext) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
+
+  const { id } = await params;
+  if (!id) {
+    return NextResponse.json({ error: "ID inválido" }, { status: 400 });
+  }
+
+  // Soft delete: oculta el código de la lista sin romper la auditoría de usos
+  // (FK usos_codigos_descuento.codigo_id) ni borrar registros históricos.
+  const { error } = await supabaseAdmin
+    .from("codigos_descuento")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    return NextResponse.json({ error: "Error eliminando código" }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
+}

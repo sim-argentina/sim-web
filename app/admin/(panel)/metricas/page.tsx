@@ -650,21 +650,44 @@ function LineChart({
   data: ChartItem[];
   valueFormatter?: (n: number) => string;
 }) {
-  const width = 900;
-  const height = 280;
-  const padding = 40;
-  const max = Math.max(...data.map((d) => d.value), 1);
+  const width = 920;
+  const height = 300;
+  const padL = 70;
+  const padR = 24;
+  const padT = 22;
+  const padB = 46;
 
-  const points = data.map((item, index) => {
-    const x =
-      data.length === 1
-        ? width / 2
-        : padding + (index * (width - padding * 2)) / (data.length - 1);
+  const { points, gridLines, labelEvery } = useMemo(() => {
+    const max = Math.max(...data.map((d) => d.value), 1);
+    const innerW = width - padL - padR;
+    const innerH = height - padT - padB;
 
-    const y = height - padding - (item.value / max) * (height - padding * 2);
+    const points = data.map((item, index) => {
+      const x =
+        data.length === 1
+          ? padL + innerW / 2
+          : padL + (index * innerW) / (data.length - 1);
+      const y = padT + innerH - (item.value / max) * innerH;
+      return { ...item, x, y };
+    });
 
-    return { ...item, x, y };
-  });
+    const steps = 4;
+    const gridLines = Array.from({ length: steps + 1 }, (_, i) => {
+      const value = (max * i) / steps;
+      return { value, y: padT + innerH - (i / steps) * innerH };
+    });
+
+    // Como máximo ~12 etiquetas en el eje X para que no se pisen.
+    const labelEvery = Math.max(1, Math.ceil(data.length / 12));
+
+    return { points, gridLines, labelEvery };
+  }, [data]);
+
+  // Ancho mínimo dinámico: pocos períodos no se estiran, muchos hacen scroll.
+  const minWidth = Math.min(1600, Math.max(560, data.length * 64));
+  const showValues = data.length <= 14;
+  const fmt = (n: number) =>
+    valueFormatter ? valueFormatter(Math.round(n)) : String(Math.round(n));
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
@@ -674,53 +697,78 @@ function LineChart({
         <p className="text-sm text-white/55">Sin datos para este período.</p>
       ) : (
         <div className="overflow-x-auto">
-          <div className="min-w-[700px]">
+          <div style={{ minWidth }}>
             <svg viewBox={`0 0 ${width} ${height}`} className="h-72 w-full">
-              <line
-                x1={padding}
-                y1={height - padding}
-                x2={width - padding}
-                y2={height - padding}
-                stroke="rgba(255,255,255,0.15)"
+              {/* grilla horizontal + escala Y en moneda */}
+              {gridLines.map((g, i) => (
+                <g key={i}>
+                  <line
+                    x1={padL}
+                    y1={g.y}
+                    x2={width - padR}
+                    y2={g.y}
+                    stroke="rgba(255,255,255,0.08)"
+                  />
+                  <text
+                    x={padL - 12}
+                    y={g.y + 4}
+                    textAnchor="end"
+                    fontSize="11"
+                    fill="rgba(255,255,255,0.4)"
+                  >
+                    {fmt(g.value)}
+                  </text>
+                </g>
+              ))}
+
+              {/* área suave bajo la línea */}
+              <polygon
+                fill="rgba(239,68,68,0.12)"
+                points={`${padL},${height - padB} ${points
+                  .map((p) => `${p.x},${p.y}`)
+                  .join(" ")} ${width - padR},${height - padB}`}
               />
-              <line
-                x1={padding}
-                y1={padding}
-                x2={padding}
-                y2={height - padding}
-                stroke="rgba(255,255,255,0.15)"
-              />
+
               <polyline
                 fill="none"
                 stroke="#ef4444"
-                strokeWidth="4"
+                strokeWidth="3"
                 strokeLinejoin="round"
                 strokeLinecap="round"
                 points={points.map((p) => `${p.x},${p.y}`).join(" ")}
               />
-              {points.map((p) => (
-                <g key={p.label}>
-                  <circle cx={p.x} cy={p.y} r="5" fill="#ef4444" />
-                  <text
-                    x={p.x}
-                    y={p.y - 12}
-                    textAnchor="middle"
-                    fontSize="12"
-                    fill="white"
-                  >
-                    {valueFormatter ? valueFormatter(p.value) : p.value}
-                  </text>
-                  <text
-                    x={p.x}
-                    y={height - 10}
-                    textAnchor="middle"
-                    fontSize="11"
-                    fill="rgba(255,255,255,0.7)"
-                  >
-                    {p.label}
-                  </text>
-                </g>
-              ))}
+
+              {points.map((p, i) => {
+                const mostrar = i % labelEvery === 0 || i === points.length - 1;
+                return (
+                  <g key={`${p.label}-${i}`}>
+                    <circle cx={p.x} cy={p.y} r="3.5" fill="#ef4444" />
+                    {showValues && mostrar && (
+                      <text
+                        x={p.x}
+                        y={p.y - 12}
+                        textAnchor="middle"
+                        fontSize="11"
+                        fontWeight="700"
+                        fill="white"
+                      >
+                        {valueFormatter ? valueFormatter(p.value) : p.value}
+                      </text>
+                    )}
+                    {mostrar && (
+                      <text
+                        x={p.x}
+                        y={height - 16}
+                        textAnchor="middle"
+                        fontSize="11"
+                        fill="rgba(255,255,255,0.7)"
+                      >
+                        {p.label}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
             </svg>
           </div>
         </div>
@@ -1243,7 +1291,8 @@ export default function AdminMetricasPage() {
       const tiempoHastaSubida = minutosEntre(horaTomado, horaSubida);
       const tieneDemora = Boolean(horaEstimadaSubida);
 
-      if (tiempoHastaSubida !== null) {
+      // Demora/subida: SOLO turnos del turnero (no datos importados de Excel).
+      if (t.origen !== "excel" && tiempoHastaSubida !== null) {
         if (tieneDemora) {
           tiemposSubidaConDemora.push(tiempoHastaSubida);
           turnosConDemoraRanking.push({
@@ -1267,8 +1316,9 @@ export default function AdminMetricasPage() {
       addToRecord(porHora, hora, cantTurnos);
       addToRecord(porDiaSemana, diaSemana, cantTurnos);
 
-      if (duracion > 0) addToRecord(porDuracion, `${duracion} min`, 1);
-      if (sims > 0) addToRecord(porPersonas, `${sims} persona/s`, 1);
+      // Solo duraciones válidas (múltiplos de 15) y 1–4 personas (4 simuladores).
+      if (duracion > 0 && duracion % 15 === 0) addToRecord(porDuracion, `${duracion} min`, 1);
+      if (sims >= 1 && sims <= 4) addToRecord(porPersonas, `${sims} persona/s`, 1);
 
       // Comparativo 15 vs 30 min (si no hay dato, se asume 15 min).
       const durNorm = (duracion || numberValue(t.cantidad_minutos)) === 30 ? 30 : 15;
@@ -1726,14 +1776,10 @@ export default function AdminMetricasPage() {
               <KpiCard title="Prom. personas" value={metricasStand.promedioPersonas.toFixed(2)} />
               <KpiCard title="Horas vendidas" value={metricasStand.horasVendidas.toFixed(1)} />
               <KpiCard title="Minutos vendidos" value={String(metricasStand.totalMinutos)} />
-              <KpiCard title="Turnos 15 min" value={String(metricasStand.turnos15min)} />
-              <KpiCard title="Turnos 30 min" value={String(metricasStand.turnos30min)} />
               <KpiCard title="Ingreso/minuto" value={formatMoney(metricasStand.ingresoPorMinuto)} />
               <KpiCard title="Ingreso/persona" value={formatMoney(metricasStand.ingresoPorPersona)} />
               <KpiCard title="Ingreso promedio/sim" value={formatMoney(metricasStand.ingresoPromedioPorSimulador)} />
-              <KpiCard title="Hora pico" value={metricasStand.horaPico} />
               <KpiCard title="Mejor día" value={metricasStand.mejorDia} />
-              <KpiCard title="Sim más usado" value={metricasStand.simuladorMasUsado} />
               <KpiCard
                 title="Prom. subida sin demora"
                 value={`${metricasStand.promedioSubidaSinDemora.toFixed(1)} min`}
@@ -1748,19 +1794,6 @@ export default function AdminMetricasPage() {
                 title="Turnos con demora"
                 value={String(metricasStand.cantidadTurnosConDemora)}
                 subtext="Con hora estimada cargada"
-              />
-              <KpiCard
-                title="Mayor demora"
-                value={
-                  metricasStand.turnoMayorDemora
-                    ? `${metricasStand.turnoMayorDemora.demora_minutos} min`
-                    : "-"
-                }
-                subtext={
-                  metricasStand.turnoMayorDemora
-                    ? metricasStand.turnoMayorDemora.nombre || metricasStand.turnoMayorDemora.telefono || "Turno sin nombre"
-                    : "Sin datos"
-                }
               />
             </div>
 
