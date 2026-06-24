@@ -73,9 +73,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // Control de cupos: pagadas + pendientes recientes (TTL 30m) no superan
-    // cupos_maximos. Las pendientes viejas (abandonadas) no bloquean.
-    if (campeonato.cupos_maximos != null) {
+    // Control de cupos: SOLO si hay un límite positivo real configurado.
+    // cupos_maximos null / 0 / negativo / vacío = sin límite (cupos ilimitados).
+    // Se cuentan pagadas + pendientes recientes (TTL 30m); las pendientes viejas
+    // (abandonadas) y las canceladas/anuladas no ocupan cupo.
+    const limiteCupos = Number(campeonato.cupos_maximos);
+    if (Number.isFinite(limiteCupos) && limiteCupos > 0) {
       const cupoTtlIso = new Date(Date.now() - 30 * 60_000).toISOString();
       const [pagadas, pendientes] = await Promise.all([
         supabaseAdmin
@@ -95,7 +98,7 @@ export async function POST(req: Request) {
           .gte("created_at", cupoTtlIso),
       ]);
       const ocupados = (pagadas.count ?? 0) + (pendientes.count ?? 0);
-      if (ocupados >= Number(campeonato.cupos_maximos)) {
+      if (ocupados >= limiteCupos) {
         return NextResponse.json(
           { error: "No quedan cupos disponibles para este campeonato" },
           { status: 409 }
