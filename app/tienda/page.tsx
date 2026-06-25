@@ -175,6 +175,7 @@ export default function TiendaPage() {
                   src="/Sim-f1.png"
                   alt="Simulador F1 SIM Argentina"
                   fill
+                  quality={90}
                   sizes="(max-width: 768px) 100vw, 45vw"
                   className="object-cover"
                 />

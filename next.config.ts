@@ -36,6 +36,12 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  images: {
+    // Next 16 exige declarar las calidades permitidas para next/image.
+    // 90 para fotos de producto HD (Simulador F1 en la tienda); 75 es el default
+    // que usan el resto de las imágenes.
+    qualities: [75, 90],
+  },
   async headers() {
     return [
       {
