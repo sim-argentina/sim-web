@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { MessageCircle, ArrowRight, Check } from "lucide-react";
@@ -166,7 +167,18 @@ export default function TiendaPage() {
           {/* F1 */}
           <FadeIn delay={0} className="group flex flex-col bg-[#080808] transition-all duration-500 hover:bg-[#0f0f0f]">
             <div className="relative overflow-hidden">
-              <PlaceholderCard label="Simulador F1" />
+              <div
+                className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-[#0d0d0d]"
+                style={{ background: "radial-gradient(ellipse 80% 70% at 50% 110%, rgba(220,38,38,0.12) 0%, #0d0d0d 65%)" }}
+              >
+                <Image
+                  src="/Sim-f1.png"
+                  alt="Simulador F1 SIM Argentina"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 45vw"
+                  className="object-contain"
+                />
+              </div>
               <div className="absolute inset-0 bg-red-600/0 transition-all duration-500 group-hover:bg-red-600/5" />
               <div className="absolute top-4 left-4">
                 <span className="border border-red-600/60 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-red-500">
