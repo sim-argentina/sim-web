@@ -12,7 +12,7 @@ const LINKS = [
   { href: "/campeonatos",         label: "Campeonatos"          },
   { href: "/alquiler",      label: "Alquiler"      },
   { href: "/viaja-con-sim", label: "Viaja con SIM" },
-  { href: "/tienda",        label: "Tienda"        },
+  { href: "/tienda",        label: "Sim Store"     },
   { href: "/sobre-nosotros",label: "Sobre nosotros"},
 ];
 

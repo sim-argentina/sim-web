@@ -111,7 +111,7 @@ export default function TiendaPage() {
             <div className="mb-8 flex items-center gap-4">
               <div className="h-px w-8 bg-red-600" />
               <p className="text-[10px] font-black uppercase tracking-[0.5em] text-red-500">
-                Tienda Oficial · SIM Argentina
+                Sim Store · SIM Argentina
               </p>
             </div>
 
