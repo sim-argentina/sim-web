@@ -79,9 +79,10 @@ function Galeria() {
       {/* FILA 1 — foto full width */}
       <div className="group relative h-[55vh] min-h-[360px] overflow-hidden md:h-[65vh]">
         <Image
-          src="/sim-home-2.jpg"
-          alt="SIM Argentina"
+          src="/sim-home-correr.jpg"
+          alt="Simulador en SIM Argentina"
           fill
+          sizes="100vw"
           className="object-cover object-center transition-transform duration-700 group-hover:scale-[1.02]"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
