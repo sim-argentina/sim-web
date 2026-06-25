@@ -176,7 +176,7 @@ export default function TiendaPage() {
                   alt="Simulador F1 SIM Argentina"
                   fill
                   sizes="(max-width: 768px) 100vw, 45vw"
-                  className="object-contain"
+                  className="object-cover"
                 />
               </div>
               <div className="absolute inset-0 bg-red-600/0 transition-all duration-500 group-hover:bg-red-600/5" />
