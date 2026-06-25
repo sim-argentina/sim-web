@@ -284,6 +284,20 @@ function minutosEntre(horaInicio?: any, horaFin?: any) {
   return fin >= inicio ? fin - inicio : fin + 1440 - inicio;
 }
 
+// Tiempo entre la toma del turno y la subida real, SIN asumir cambio de día.
+// Devuelve null si la subida es anterior a la toma o el lapso es absurdo (> 4 h),
+// para que el "Prom. subida sin demora" no dé valores disparatados.
+function diferenciaSubidaMin(horaToma?: any, horaSubida?: any) {
+  const toma = normalizarHora(horaToma);
+  const subida = normalizarHora(horaSubida);
+  if (!toma || !subida) return null;
+  const [hT, mT] = toma.split(":").map(Number);
+  const [hS, mS] = subida.split(":").map(Number);
+  const diff = hS * 60 + mS - (hT * 60 + mT);
+  if (diff < 0 || diff > 240) return null;
+  return diff;
+}
+
 function promedioNumeros(valores: number[]) {
   if (!valores.length) return 0;
   return valores.reduce((acc, n) => acc + n, 0) / valores.length;
@@ -655,7 +669,7 @@ function LineChart({
   const padL = 70;
   const padR = 24;
   const padT = 22;
-  const padB = 46;
+  const padB = 70;
 
   const { points, gridLines, labelEvery } = useMemo(() => {
     const max = Math.max(...data.map((d) => d.value), 1);
@@ -758,12 +772,13 @@ function LineChart({
                     {mostrar && (
                       <text
                         x={p.x}
-                        y={height - 16}
-                        textAnchor="middle"
+                        y={height - 50}
+                        textAnchor="end"
                         fontSize="11"
                         fill="rgba(255,255,255,0.7)"
+                        transform={`rotate(-32 ${p.x} ${height - 50})`}
                       >
-                        {p.label}
+                        {p.label.replace(/^Semana /, "Sem ")}
                       </text>
                     )}
                   </g>
@@ -1288,7 +1303,7 @@ export default function AdminMetricasPage() {
       const horaTomado = obtenerHoraTomaTurno(t);
       const horaSubida = normalizarHora(t.hora_subida);
       const horaEstimadaSubida = normalizarHora(t.hora_estimada_subida);
-      const tiempoHastaSubida = minutosEntre(horaTomado, horaSubida);
+      const tiempoHastaSubida = diferenciaSubidaMin(horaTomado, horaSubida);
       const tieneDemora = Boolean(horaEstimadaSubida);
 
       // Demora/subida: SOLO turnos del turnero (no datos importados de Excel).

@@ -82,9 +82,9 @@ function PlaceholderCard({ label }: { label: string }) {
 }
 
 const TABLA = [
-  { campo: "Tipo de butaca",      f1: "Monoposto F1",         gt: "Deportiva GT" },
+  { campo: "Tipo de butaca",      f1: "F1",                   gt: "Deportiva GT" },
   { campo: "Posición de manejo",  f1: "Extrema / recostada",  gt: "Tradicional / erguida" },
-  { campo: "Uso recomendado",     f1: "Fórmula 1 y open wheel", gt: "GT, turismo, rally" },
+  { campo: "Uso recomendado",     f1: "Fórmula 1",              gt: "GT, turismo, rally" },
   { campo: "Nivel de inmersión",  f1: "Máximo",               gt: "Alto" },
   { campo: "Estética",            f1: "Agresiva",             gt: "Profesional" },
 ];
@@ -105,7 +105,7 @@ export default function TiendaPage() {
           <div className="absolute bottom-0 left-0 right-0 h-px bg-white/5" />
         </div>
 
-        <div className="relative grid min-h-[100svh] md:grid-cols-2">
+        <div className="relative grid min-h-[100svh] md:grid-cols-[1.25fr_0.75fr]">
           {/* texto */}
           <div className="relative z-10 flex flex-col justify-start px-8 pt-28 pb-16 md:px-16 md:pt-36 md:pb-16">
             <div className="mb-8 flex items-center gap-4">
@@ -115,7 +115,7 @@ export default function TiendaPage() {
               </p>
             </div>
 
-            <h1 className="text-[2.8rem] font-black uppercase leading-[0.88] md:text-[3.8rem] lg:text-[4.5rem]">
+            <h1 className="max-w-full break-words text-[2.6rem] font-black uppercase leading-[0.9] md:text-[3.4rem] lg:text-[4rem]">
               Simuladores<br />
               <span className="text-red-600">Profesionales</span>
             </h1>
@@ -135,7 +135,7 @@ export default function TiendaPage() {
             </div>
 
             <div className="mt-14 flex gap-10 border-t border-white/5 pt-8">
-              {[["Componentes","Profesionales"],["Diseño","Ergonómico"],["Máximo","Realismo"]].map(([a,b]) => (
+              {[["Componentes","Profesionales"],["Máximo","Realismo"]].map(([a,b]) => (
                 <div key={a}>
                   <p className="text-xs font-black uppercase text-white/70">{a}</p>
                   <p className="text-xs font-black uppercase text-white/30">{b}</p>
@@ -183,7 +183,7 @@ export default function TiendaPage() {
               </p>
 
               <ul className="mt-6 space-y-2.5">
-                {["Butaca monoposto F1","Posición recostada extrema","Máximo nivel de inmersión","Moza R5 Bundle incluido"].map((f) => (
+                {["Butaca F1","Posición recostada extrema","Máximo nivel de inmersión","Moza R5 Bundle incluido"].map((f) => (
                   <li key={f} className="flex items-center gap-3 text-xs text-white/50">
                     <Check className="h-3.5 w-3.5 shrink-0 text-red-600" />
                     {f}

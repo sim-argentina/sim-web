@@ -819,9 +819,7 @@ export default function ReservasPage() {
               <p className="mt-5 max-w-2xl text-base leading-8 text-zinc-300 md:text-xl">
                 Elegí una fecha, una duración (15 o 30 minutos) y un horario, seleccioná
                 una o varias escuderías disponibles y armá tu reserva. Las largadas salen
-                cada 20 minutos. Turno de 15 min:{" "}
-                <span className="font-semibold text-white">{formatPrice(PRICE)}</span> por
-                simulador/persona.
+                cada 20 minutos.
               </p>
 
               <div className="mt-7 flex flex-wrap gap-3">
@@ -981,11 +979,6 @@ export default function ReservasPage() {
                     })}
                   </div>
 
-                  {duracion === 30 && (
-                    <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300">
-                      La sesión de 30 min ocupa dos turnos consecutivos de 20 min.
-                    </div>
-                  )}
                 </div>
 
                 <div className="rounded-[24px] border border-white/10 bg-black/40 p-4 md:p-5">

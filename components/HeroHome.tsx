@@ -160,10 +160,6 @@ export default function HeroHome() {
           ))}
         </div>
 
-        <div className="absolute right-6 hidden items-center gap-2 bg-black pl-6 text-[9px] font-black uppercase tracking-widest text-white/20 md:flex">
-          SCROLL <span className="tracking-tight text-red-600">///</span>
-          <span className="text-white/20">↓</span>
-        </div>
       </div>
 
       <style jsx global>{`
