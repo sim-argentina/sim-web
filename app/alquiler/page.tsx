@@ -224,6 +224,7 @@ export default function AlquilerPage() {
                   src="/sim-alquiler-1.jpg"
                   alt="Simuladores SIM"
                   fill
+                  sizes="(max-width: 768px) 100vw, 45vw"
                   className="object-cover"
                 />
 
@@ -245,6 +246,7 @@ export default function AlquilerPage() {
                   src="/sim-alquiler-2.jpg"
                   alt="Evento SIM"
                   fill
+                  sizes="(max-width: 768px) 100vw, 45vw"
                   className="object-cover"
                 />
 
@@ -266,6 +268,7 @@ export default function AlquilerPage() {
                   src="/sim-alquiler-3.jpg"
                   alt="Colectivo SIM"
                   fill
+                  sizes="(max-width: 768px) 100vw, 60vw"
                   className="object-cover"
                 />
 

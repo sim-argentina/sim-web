@@ -56,6 +56,7 @@ export default function HeroHome() {
           src="/sim-hero.jpg"
           alt="SIM Argentina — Simulador profesional"
           fill
+          sizes="100vw"
           className="object-cover object-right md:object-center"
           priority
         />

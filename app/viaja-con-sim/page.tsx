@@ -68,6 +68,7 @@ export default function ViajaConSimPage() {
           alt="GP Brasil Interlagos"
           fill
           priority
+          sizes="100vw"
           className="object-cover opacity-65"
         />
 
