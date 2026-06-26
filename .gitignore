@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# wiki interno (no versionar)
+/wiki/
+
+# temporales de build/commit
+*.tmp
+_build*.txt
+_buildout.txt
+_opt.js
