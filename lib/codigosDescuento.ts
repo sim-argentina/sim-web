@@ -10,6 +10,17 @@ function calcularDescuento(tipo: string, valor: number, totalOriginal: number) {
   return 0;
 }
 
+// Devuelve true si la fecha del turno (YYYY-MM-DD, calendario Argentina) cae
+// sábado o domingo. Se arma con componentes locales (no se parsea como ISO con
+// zona) para que el día de la semana sea el del calendario, sin corrimientos por
+// el timezone del servidor (mismo criterio que isWeekendDate del front).
+export function esFinDeSemana(fechaTurno: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(fechaTurno || "").trim());
+  if (!m) return false;
+  const dow = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay();
+  return dow === 0 || dow === 6; // 0 = domingo, 6 = sábado
+}
+
 export type ValidacionCodigo = {
   valido: boolean;
   codigo: string | null;
@@ -19,7 +30,8 @@ export type ValidacionCodigo = {
 
 export async function validarCodigoDescuento(
   codigoIngresado: string,
-  totalOriginal: number
+  totalOriginal: number,
+  fechaTurno?: string | null
 ): Promise<ValidacionCodigo> {
   const codigoBuscado = String(codigoIngresado || "").trim().toUpperCase();
 
@@ -55,6 +67,18 @@ export async function validarCodigoDescuento(
     Number(codigo.usos_actuales || 0) >= Number(codigo.usos_maximos)
   ) {
     return { valido: false, codigo: null, descuento: 0, error: "El código ya alcanzó el máximo de usos" };
+  }
+
+  // Restricción opcional por días: si el código es solo días hábiles (L-V) y el
+  // turno cae sábado/domingo, se rechaza. Solo aplica cuando hay fecha de turno
+  // (reservas); Gift Cards no pasa fecha, así que no cambia su comportamiento.
+  if (codigo.solo_dias_habiles && fechaTurno && esFinDeSemana(fechaTurno)) {
+    return {
+      valido: false,
+      codigo: null,
+      descuento: 0,
+      error: "Este código solo es válido para reservas de lunes a viernes.",
+    };
   }
 
   const descuentoCalculado = calcularDescuento(

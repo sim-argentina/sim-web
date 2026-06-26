@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
+import { esFinDeSemana } from "@/lib/codigosDescuento";
 
 export async function POST(req: Request) {
   // Rate limit anti enumeración de códigos.
@@ -15,6 +16,7 @@ export async function POST(req: Request) {
 
   const codigoBuscado = String(body.codigo || "").trim().toUpperCase().slice(0, 40);
   const totalOriginal = Number(body.total || 0);
+  const fechaTurno = String(body.fecha || "").trim();
 
   if (!codigoBuscado || totalOriginal <= 0) {
     return NextResponse.json(
@@ -73,6 +75,13 @@ export async function POST(req: Request) {
     return NextResponse.json({
       valido: false,
       error: "El código ya alcanzó el máximo de usos",
+    });
+  }
+
+  if (codigo.solo_dias_habiles && fechaTurno && esFinDeSemana(fechaTurno)) {
+    return NextResponse.json({
+      valido: false,
+      error: "Este código solo es válido para reservas de lunes a viernes.",
     });
   }
 

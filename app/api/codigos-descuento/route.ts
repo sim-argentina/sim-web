@@ -49,6 +49,7 @@ export async function POST(req: Request) {
     fecha_inicio,
     fecha_fin,
     creado_para,
+    solo_dias_habiles,
   } = body;
 
   const codigoFinal = codigo?.trim().toUpperCase() || generarCodigo();
@@ -72,6 +73,7 @@ export async function POST(req: Request) {
         fecha_inicio: fecha_inicio || null,
         fecha_fin: fecha_fin || null,
         creado_para: creado_para || null,
+        solo_dias_habiles: solo_dias_habiles === true,
         activo: true,
       },
     ])

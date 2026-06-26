@@ -461,6 +461,7 @@ export default function ReservasPage() {
         body: JSON.stringify({
           codigo,
           total: totalOriginal,
+          fecha: selectedDate,
         }),
       });
 

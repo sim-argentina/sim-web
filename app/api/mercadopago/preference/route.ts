@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     let descuentoAplicado = 0;
     let codigoAplicado: string | null = null;
     if (codigo_descuento) {
-      const r = await validarCodigoDescuento(codigo_descuento, totalOriginal);
+      const r = await validarCodigoDescuento(codigo_descuento, totalOriginal, fecha);
       if (!r.valido) {
         return NextResponse.json({ error: r.error || "Código inválido" }, { status: 400 });
       }

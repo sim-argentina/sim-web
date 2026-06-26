@@ -12,6 +12,7 @@ type CodigoDescuento = {
   usos_actuales: number;
   fecha_inicio?: string | null;
   fecha_fin?: string | null;
+  solo_dias_habiles?: boolean;
   activo: boolean;
   creado_para?: string | null;
   created_at: string;
@@ -45,6 +46,7 @@ export default function AdminCodigosPage() {
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [creadoPara, setCreadoPara] = useState("");
+  const [soloDiasHabiles, setSoloDiasHabiles] = useState(false);
 
   async function cargarCodigos() {
     try {
@@ -104,6 +106,7 @@ export default function AdminCodigosPage() {
           fecha_inicio: fechaInicio || null,
           fecha_fin: fechaFin || null,
           creado_para: creadoPara,
+          solo_dias_habiles: soloDiasHabiles,
         }),
       });
 
@@ -122,6 +125,7 @@ export default function AdminCodigosPage() {
       setFechaInicio("");
       setFechaFin("");
       setCreadoPara("");
+      setSoloDiasHabiles(false);
 
       await cargarCodigos();
     } catch (error) {
@@ -305,6 +309,20 @@ export default function AdminCodigosPage() {
                 />
               </Campo>
             </div>
+
+            <div className="md:col-span-4">
+              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/15 bg-black px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={soloDiasHabiles}
+                  onChange={(e) => setSoloDiasHabiles(e.target.checked)}
+                  className="h-4 w-4 accent-red-600"
+                />
+                <span className="text-sm font-bold">
+                  Solo válido para reservas de lunes a viernes
+                </span>
+              </label>
+            </div>
           </div>
         </form>
 
@@ -348,6 +366,11 @@ export default function AdminCodigosPage() {
                       <p className="truncate text-xs text-white/40">
                         {codigo.descripcion || "Sin descripción"}
                       </p>
+                      {codigo.solo_dias_habiles && (
+                        <span className="mt-1 inline-block rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-400">
+                          Solo Lun–Vie
+                        </span>
+                      )}
                     </div>
 
                     <span className="truncate text-white/70">
