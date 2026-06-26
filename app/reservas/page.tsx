@@ -575,6 +575,54 @@ export default function ReservasPage() {
           });
         });
 
+      // Bloqueos del admin: se fusionan como turnos ocupados para que el
+      // calendario los oculte igual que una reserva. Si falla la carga, se
+      // muestra la disponibilidad normal (el server igual los rechaza).
+      try {
+        const rb = await fetch(`/api/bloqueos?fecha=${date}`, {
+          cache: "no-store",
+        });
+        if (rb.ok) {
+          const db = await rb.json().catch(() => null);
+          const bloqueos: Array<{
+            todo_el_dia: boolean;
+            hora_inicio: string | null;
+            hora_fin: string | null;
+            simulador: string | null;
+          }> = Array.isArray(db?.bloqueos) ? db.bloqueos : [];
+          const allTeams: TeamKey[] = [
+            "Ferrari",
+            "McLaren",
+            "Red Bull",
+            "Alpine",
+          ];
+          const allSlots = getTimeSlotsForDate(date);
+          bloqueos.forEach((b) => {
+            const teamsAfectados: TeamKey[] = b.simulador
+              ? allTeams.filter((t) => t === b.simulador)
+              : allTeams;
+            const slotsAfectados = b.todo_el_dia
+              ? allSlots
+              : allSlots.filter((s) => {
+                  const ini = b.hora_inicio || "00:00";
+                  const fin = b.hora_fin || "23:59";
+                  return s >= ini && s <= fin;
+                });
+            slotsAfectados.forEach((slot) => {
+              const key = createReservationKey(date, slot);
+              if (!nextReservations[key]) nextReservations[key] = [];
+              teamsAfectados.forEach((t) => {
+                if (!nextReservations[key].includes(t)) {
+                  nextReservations[key].push(t);
+                }
+              });
+            });
+          });
+        }
+      } catch {
+        /* disponibilidad normal si falla la carga de bloqueos */
+      }
+
       setReservations(nextReservations);
 
       const currentTimeIsValid =

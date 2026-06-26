@@ -50,6 +50,8 @@ export async function POST(req: Request) {
     fecha_fin,
     creado_para,
     solo_dias_habiles,
+    dias_permitidos,
+    fechas_bloqueadas,
   } = body;
 
   const codigoFinal = codigo?.trim().toUpperCase() || generarCodigo();
@@ -74,6 +76,18 @@ export async function POST(req: Request) {
         fecha_fin: fecha_fin || null,
         creado_para: creado_para || null,
         solo_dias_habiles: solo_dias_habiles === true,
+        dias_permitidos:
+          Array.isArray(dias_permitidos) && dias_permitidos.length > 0
+            ? dias_permitidos
+                .map(Number)
+                .filter((n: number) => n >= 0 && n <= 6)
+            : null,
+        fechas_bloqueadas:
+          Array.isArray(fechas_bloqueadas) && fechas_bloqueadas.length > 0
+            ? fechas_bloqueadas
+                .map((f: unknown) => String(f).slice(0, 10))
+                .filter((f: string) => /^\d{4}-\d{2}-\d{2}$/.test(f))
+            : null,
         activo: true,
       },
     ])

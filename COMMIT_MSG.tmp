@@ -1,0 +1,31 @@
+codigos + reservas: dias/fechas personalizados en codigos y bloqueos de reservas
+
+Parte 1 - Codigos (extiende solo_dias_habiles sin romper compatibilidad):
+- DB: + dias_permitidos int[] (0=dom..6=sab) y fechas_bloqueadas date[] (aditivo).
+- validarCodigoDescuento: si hay fecha de turno valida dias permitidos (prioridad
+  sobre el flag legacy), compat solo_dias_habiles == L-V, y fechas bloqueadas.
+  Mensaje: "Este codigo no esta disponible para la fecha seleccionada." Sin
+  restricciones funciona como antes.
+- /validar refactorizado para usar el lib (DRY) -> mismas reglas que crear reserva.
+- Gift Cards no pasa fecha -> no le aplica (sin cambios).
+- Admin /codigos: checkboxes de dias Lun..Dom (vacio = cualquier dia) + fechas
+  bloqueadas (chips) + badge de restriccion en la tabla.
+
+Parte 2 - Bloqueos de reservas (nuevo):
+- DB: tabla aditiva bloqueos_reservas (fecha, todo_el_dia, hora_inicio/fin,
+  simulador null=todos, motivo, activo) + indice + RLS (solo service role).
+- lib/bloqueos: getBloqueosActivos + turnoBloqueado (rango horario inclusivo,
+  simulador puntual o todos).
+- Enforce server-side ANTES de crear reserva en mercadopago/preference y
+  api/reservas: turno bloqueado -> 400 "Ese horario no esta disponible." -> no se
+  crea reserva ni se consume codigo. Consumo atomico intacto.
+- Publico /api/bloqueos?fecha -> el calendario oculta turnos bloqueados.
+- Admin /api/admin/bloqueos (+[id]): crear/listar/activar-desactivar/eliminar, con
+  advertencia de reservas existentes afectadas (no se borran).
+- Nueva pagina /admin/bloqueos + link en el sidebar.
+
+Migraciones solo aditivas. No toca MP/webhooks (salvo validacion previa), gift
+cards, campeonatos, WAF, resenas, CSP, turnero ni seguridad global. No rompe
+codigos ni reservas existentes.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>

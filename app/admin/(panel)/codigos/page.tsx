@@ -13,6 +13,8 @@ type CodigoDescuento = {
   fecha_inicio?: string | null;
   fecha_fin?: string | null;
   solo_dias_habiles?: boolean;
+  dias_permitidos?: number[] | null;
+  fechas_bloqueadas?: string[] | null;
   activo: boolean;
   creado_para?: string | null;
   created_at: string;
@@ -33,6 +35,36 @@ function formatoValor(codigo: CodigoDescuento) {
   return `$${Number(codigo.valor_descuento).toLocaleString("es-AR")}`;
 }
 
+const DIAS_SEMANA = [
+  { n: 1, label: "Lun" },
+  { n: 2, label: "Mar" },
+  { n: 3, label: "Mié" },
+  { n: 4, label: "Jue" },
+  { n: 5, label: "Vie" },
+  { n: 6, label: "Sáb" },
+  { n: 0, label: "Dom" },
+];
+
+// Etiqueta corta de las restricciones de un código (para la tabla). null = sin restricción.
+function restriccionCodigo(c: CodigoDescuento): string | null {
+  const parts: string[] = [];
+  const dias = Array.isArray(c.dias_permitidos) ? c.dias_permitidos : [];
+  if (dias.length > 0) {
+    parts.push(
+      DIAS_SEMANA.filter((d) => dias.includes(d.n))
+        .map((d) => d.label)
+        .join(", ")
+    );
+  } else if (c.solo_dias_habiles) {
+    parts.push("Lun a Vie");
+  }
+  const fb = Array.isArray(c.fechas_bloqueadas) ? c.fechas_bloqueadas : [];
+  if (fb.length > 0) {
+    parts.push(`${fb.length} fecha${fb.length > 1 ? "s" : ""} bloq.`);
+  }
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export default function AdminCodigosPage() {
   const [codigos, setCodigos] = useState<CodigoDescuento[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +78,9 @@ export default function AdminCodigosPage() {
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [creadoPara, setCreadoPara] = useState("");
-  const [soloDiasHabiles, setSoloDiasHabiles] = useState(false);
+  const [diasPermitidos, setDiasPermitidos] = useState<number[]>([]);
+  const [fechasBloqueadas, setFechasBloqueadas] = useState<string[]>([]);
+  const [fechaBloqueadaInput, setFechaBloqueadaInput] = useState("");
 
   async function cargarCodigos() {
     try {
@@ -106,7 +140,8 @@ export default function AdminCodigosPage() {
           fecha_inicio: fechaInicio || null,
           fecha_fin: fechaFin || null,
           creado_para: creadoPara,
-          solo_dias_habiles: soloDiasHabiles,
+          dias_permitidos: diasPermitidos.length ? diasPermitidos : null,
+          fechas_bloqueadas: fechasBloqueadas.length ? fechasBloqueadas : null,
         }),
       });
 
@@ -125,7 +160,9 @@ export default function AdminCodigosPage() {
       setFechaInicio("");
       setFechaFin("");
       setCreadoPara("");
-      setSoloDiasHabiles(false);
+      setDiasPermitidos([]);
+      setFechasBloqueadas([]);
+      setFechaBloqueadaInput("");
 
       await cargarCodigos();
     } catch (error) {
@@ -311,17 +348,84 @@ export default function AdminCodigosPage() {
             </div>
 
             <div className="md:col-span-4">
-              <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/15 bg-black px-3 py-2.5">
-                <input
-                  type="checkbox"
-                  checked={soloDiasHabiles}
-                  onChange={(e) => setSoloDiasHabiles(e.target.checked)}
-                  className="h-4 w-4 accent-red-600"
-                />
-                <span className="text-sm font-bold">
-                  Solo válido para reservas de lunes a viernes
+              <p className="mb-1 text-[10px] font-black uppercase tracking-[0.18em] text-white/40">
+                Días permitidos{" "}
+                <span className="text-white/25">(vacío = cualquier día)</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {DIAS_SEMANA.map((d) => {
+                  const active = diasPermitidos.includes(d.n);
+                  return (
+                    <button
+                      key={d.n}
+                      type="button"
+                      onClick={() =>
+                        setDiasPermitidos((prev) =>
+                          prev.includes(d.n)
+                            ? prev.filter((x) => x !== d.n)
+                            : [...prev, d.n]
+                        )
+                      }
+                      className={`rounded-xl border px-3 py-2 text-xs font-black uppercase transition ${
+                        active
+                          ? "border-red-500 bg-red-600 text-white"
+                          : "border-white/15 bg-black text-white/50 hover:border-white/30"
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="md:col-span-4">
+              <p className="mb-1 text-[10px] font-black uppercase tracking-[0.18em] text-white/40">
+                Fechas bloqueadas{" "}
+                <span className="text-white/25">
+                  (el código NO se puede usar esas fechas)
                 </span>
-              </label>
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={fechaBloqueadaInput}
+                  onChange={(e) => setFechaBloqueadaInput(e.target.value)}
+                  className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const f = fechaBloqueadaInput;
+                    if (f && !fechasBloqueadas.includes(f)) {
+                      setFechasBloqueadas((prev) => [...prev, f].sort());
+                    }
+                    setFechaBloqueadaInput("");
+                  }}
+                  className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-black uppercase text-white/70 transition hover:border-white/30"
+                >
+                  Agregar
+                </button>
+                {fechasBloqueadas.map((f) => (
+                  <span
+                    key={f}
+                    className="inline-flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs font-bold text-amber-300"
+                  >
+                    {f}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFechasBloqueadas((prev) =>
+                          prev.filter((x) => x !== f)
+                        )
+                      }
+                      className="text-amber-400/70 hover:text-white"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
         </form>
@@ -366,9 +470,9 @@ export default function AdminCodigosPage() {
                       <p className="truncate text-xs text-white/40">
                         {codigo.descripcion || "Sin descripción"}
                       </p>
-                      {codigo.solo_dias_habiles && (
+                      {restriccionCodigo(codigo) && (
                         <span className="mt-1 inline-block rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-400">
-                          Solo Lun–Vie
+                          {restriccionCodigo(codigo)}
                         </span>
                       )}
                     </div>

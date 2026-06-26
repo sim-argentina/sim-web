@@ -16,6 +16,8 @@ const CAMPOS = [
   "fecha_fin",
   "creado_para",
   "solo_dias_habiles",
+  "dias_permitidos",
+  "fechas_bloqueadas",
   "activo",
 ] as const;
 

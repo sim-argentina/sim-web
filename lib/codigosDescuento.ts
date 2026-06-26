@@ -10,16 +10,25 @@ function calcularDescuento(tipo: string, valor: number, totalOriginal: number) {
   return 0;
 }
 
-// Devuelve true si la fecha del turno (YYYY-MM-DD, calendario Argentina) cae
-// sábado o domingo. Se arma con componentes locales (no se parsea como ISO con
-// zona) para que el día de la semana sea el del calendario, sin corrimientos por
-// el timezone del servidor (mismo criterio que isWeekendDate del front).
-export function esFinDeSemana(fechaTurno: string): boolean {
+// Día de la semana (0=domingo … 6=sábado) de una fecha YYYY-MM-DD del calendario
+// Argentina. Se arma con componentes locales (no se parsea como ISO con zona)
+// para que el día sea el del calendario, sin corrimientos por el timezone del
+// servidor (mismo criterio que isWeekendDate del front).
+export function diaSemanaArg(fechaTurno: string): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(fechaTurno || "").trim());
-  if (!m) return false;
-  const dow = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay();
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay();
+}
+
+export function esFinDeSemana(fechaTurno: string): boolean {
+  const dow = diaSemanaArg(fechaTurno);
   return dow === 0 || dow === 6; // 0 = domingo, 6 = sábado
 }
+
+const MSG_FECHA_NO_DISPONIBLE =
+  "Este código no está disponible para la fecha seleccionada.";
+const MSG_SOLO_DIAS_HABILES =
+  "Este código solo es válido para reservas de lunes a viernes.";
 
 export type ValidacionCodigo = {
   valido: boolean;
@@ -69,16 +78,35 @@ export async function validarCodigoDescuento(
     return { valido: false, codigo: null, descuento: 0, error: "El código ya alcanzó el máximo de usos" };
   }
 
-  // Restricción opcional por días: si el código es solo días hábiles (L-V) y el
-  // turno cae sábado/domingo, se rechaza. Solo aplica cuando hay fecha de turno
-  // (reservas); Gift Cards no pasa fecha, así que no cambia su comportamiento.
-  if (codigo.solo_dias_habiles && fechaTurno && esFinDeSemana(fechaTurno)) {
-    return {
-      valido: false,
-      codigo: null,
-      descuento: 0,
-      error: "Este código solo es válido para reservas de lunes a viernes.",
-    };
+  // Restricciones opcionales por fecha del turno. Solo aplican cuando hay
+  // fechaTurno (reservas); Gift Cards no la pasa, así que no cambia su
+  // comportamiento.
+  if (fechaTurno) {
+    const dow = diaSemanaArg(fechaTurno);
+
+    // Días permitidos personalizados (0..6). Tienen prioridad sobre el flag
+    // legacy solo_dias_habiles.
+    const diasPermitidos =
+      Array.isArray(codigo.dias_permitidos) && codigo.dias_permitidos.length > 0
+        ? codigo.dias_permitidos.map(Number)
+        : null;
+
+    if (diasPermitidos) {
+      if (dow !== null && !diasPermitidos.includes(dow)) {
+        return { valido: false, codigo: null, descuento: 0, error: MSG_FECHA_NO_DISPONIBLE };
+      }
+    } else if (codigo.solo_dias_habiles && (dow === 0 || dow === 6)) {
+      // Compatibilidad: solo_dias_habiles ≡ lunes a viernes.
+      return { valido: false, codigo: null, descuento: 0, error: MSG_SOLO_DIAS_HABILES };
+    }
+
+    // Fechas puntuales bloqueadas (feriados, promos no acumulables, etc.).
+    const fechasBloqueadas = Array.isArray(codigo.fechas_bloqueadas)
+      ? codigo.fechas_bloqueadas.map((f: unknown) => String(f).slice(0, 10))
+      : [];
+    if (fechasBloqueadas.includes(fechaTurno)) {
+      return { valido: false, codigo: null, descuento: 0, error: MSG_FECHA_NO_DISPONIBLE };
+    }
   }
 
   const descuentoCalculado = calcularDescuento(

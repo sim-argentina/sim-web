@@ -7,6 +7,7 @@ import {
   precioPorSimulador,
 } from "@/lib/reservasSlots";
 import { validarCodigoDescuento } from "@/lib/codigosDescuento";
+import { reservaEstaBloqueada } from "@/lib/bloqueos";
 import { validarReservaInput } from "@/lib/reservasValidation";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { failResponse } from "@/lib/apiError";
@@ -49,6 +50,16 @@ export async function POST(req: Request) {
     }
     const { nombre, telefono, fecha, hora, simuladores, duracion, codigo_descuento } =
       v.value;
+
+    // Bloqueos admin: si el turno cae en un bloqueo activo, no se crea la reserva
+    // ni la preferencia (server-side, no se puede saltear desde el cliente).
+    const slotsTurno = getOccupiedSlots(fecha, hora, duracion);
+    if (await reservaEstaBloqueada(fecha, slotsTurno, simuladores)) {
+      return NextResponse.json(
+        { error: "Ese horario no está disponible." },
+        { status: 400 }
+      );
+    }
 
     // Precio recalculado server-side; se ignora cualquier total del cliente.
     const totalOriginal = precioPorSimulador(fecha, duracion) * simuladores.length;
