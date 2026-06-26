@@ -9,6 +9,7 @@ import { reservaEstaBloqueada } from "@/lib/bloqueos";
 import { getCurrentAdminRole } from "@/lib/adminGuards";
 import { validarReservaInput } from "@/lib/reservasValidation";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 
 // GET: disponibilidad. Público requiere ?fecha (evita scraping del calendario
@@ -65,6 +66,7 @@ export async function POST(req: Request) {
   if (!(await rateLimit(`resv-post:${clientIp(req)}`, 10, 60_000))) {
     return tooManyResponse();
   }
+  if (!isAllowedOrigin(req)) return forbiddenOrigin();
 
   let reservaCreadaId: number | null = null;
   try {

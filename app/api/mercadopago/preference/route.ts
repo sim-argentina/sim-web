@@ -10,6 +10,7 @@ import { validarCodigoDescuento } from "@/lib/codigosDescuento";
 import { reservaEstaBloqueada } from "@/lib/bloqueos";
 import { validarReservaInput } from "@/lib/reservasValidation";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
@@ -29,6 +30,7 @@ export async function POST(req: Request) {
   if (!(await rateLimit(`pref-resv:${clientIp(req)}`, 10, 60_000))) {
     return tooManyResponse();
   }
+  if (!isAllowedOrigin(req)) return forbiddenOrigin();
 
   let reservaPendienteId: number | null = null;
   try {

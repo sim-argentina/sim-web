@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
+import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { validarCodigoDescuento } from "@/lib/codigosDescuento";
 
 export async function POST(req: Request) {
@@ -10,6 +11,7 @@ export async function POST(req: Request) {
       { status: 429 }
     );
   }
+  if (!isAllowedOrigin(req)) return forbiddenOrigin();
 
   const body = await req.json().catch(() => ({}) as Record<string, unknown>);
 

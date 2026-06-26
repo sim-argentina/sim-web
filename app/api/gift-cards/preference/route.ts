@@ -14,6 +14,7 @@ import {
   consumirCodigoDescuento,
 } from "@/lib/codigosDescuento";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 
 // Flujo de pago de Gift Cards, totalmente separado del de reservas.
@@ -40,6 +41,7 @@ export async function POST(req: Request) {
   if (!(await rateLimit(`pref-gift:${clientIp(req)}`, 10, 60_000))) {
     return tooManyResponse();
   }
+  if (!isAllowedOrigin(req)) return forbiddenOrigin();
 
   let grupoId: string | null = null;
 

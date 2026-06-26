@@ -48,6 +48,11 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: securityHeaders,
       },
+      {
+        // Respuestas del admin: nunca cachear (datos sensibles/PII).
+        source: "/api/admin/:path*",
+        headers: [{ key: "Cache-Control", value: "no-store, max-age=0" }],
+      },
     ];
   },
 };
