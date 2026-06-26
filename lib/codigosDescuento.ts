@@ -29,6 +29,8 @@ const MSG_FECHA_NO_DISPONIBLE =
   "Este código no está disponible para la fecha seleccionada.";
 const MSG_SOLO_DIAS_HABILES =
   "Este código solo es válido para reservas de lunes a viernes.";
+const MSG_DURACION_NO_DISPONIBLE =
+  "Este código no está disponible para la duración seleccionada.";
 
 export type ValidacionCodigo = {
   valido: boolean;
@@ -40,7 +42,8 @@ export type ValidacionCodigo = {
 export async function validarCodigoDescuento(
   codigoIngresado: string,
   totalOriginal: number,
-  fechaTurno?: string | null
+  fechaTurno?: string | null,
+  duracionTurno?: number | null
 ): Promise<ValidacionCodigo> {
   const codigoBuscado = String(codigoIngresado || "").trim().toUpperCase();
 
@@ -106,6 +109,24 @@ export async function validarCodigoDescuento(
       : [];
     if (fechasBloqueadas.includes(fechaTurno)) {
       return { valido: false, codigo: null, descuento: 0, error: MSG_FECHA_NO_DISPONIBLE };
+    }
+  }
+
+  // Restricción opcional por duración del turno (15/30). Solo aplica cuando hay
+  // duracionTurno (reservas); Gift Cards no la pasa, así que no cambia.
+  if (duracionTurno) {
+    const duraciones =
+      Array.isArray(codigo.duraciones_permitidas) &&
+      codigo.duraciones_permitidas.length > 0
+        ? codigo.duraciones_permitidas.map(Number)
+        : null;
+    if (duraciones && !duraciones.includes(Number(duracionTurno))) {
+      return {
+        valido: false,
+        codigo: null,
+        descuento: 0,
+        error: MSG_DURACION_NO_DISPONIBLE,
+      };
     }
   }
 

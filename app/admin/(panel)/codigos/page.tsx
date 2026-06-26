@@ -15,6 +15,7 @@ type CodigoDescuento = {
   solo_dias_habiles?: boolean;
   dias_permitidos?: number[] | null;
   fechas_bloqueadas?: string[] | null;
+  duraciones_permitidas?: number[] | null;
   activo: boolean;
   creado_para?: string | null;
   created_at: string;
@@ -62,6 +63,12 @@ function restriccionCodigo(c: CodigoDescuento): string | null {
   if (fb.length > 0) {
     parts.push(`${fb.length} fecha${fb.length > 1 ? "s" : ""} bloq.`);
   }
+  const durs = Array.isArray(c.duraciones_permitidas) ? c.duraciones_permitidas : [];
+  if (durs.length > 0) {
+    const h15 = durs.includes(15);
+    const h30 = durs.includes(30);
+    parts.push(h15 && h30 ? "15/30 min" : h15 ? "15 min" : "30 min");
+  }
   return parts.length ? parts.join(" · ") : null;
 }
 
@@ -81,6 +88,7 @@ export default function AdminCodigosPage() {
   const [diasPermitidos, setDiasPermitidos] = useState<number[]>([]);
   const [fechasBloqueadas, setFechasBloqueadas] = useState<string[]>([]);
   const [fechaBloqueadaInput, setFechaBloqueadaInput] = useState("");
+  const [duracionesPermitidas, setDuracionesPermitidas] = useState<number[]>([]);
 
   async function cargarCodigos() {
     try {
@@ -142,6 +150,9 @@ export default function AdminCodigosPage() {
           creado_para: creadoPara,
           dias_permitidos: diasPermitidos.length ? diasPermitidos : null,
           fechas_bloqueadas: fechasBloqueadas.length ? fechasBloqueadas : null,
+          duraciones_permitidas: duracionesPermitidas.length
+            ? duracionesPermitidas
+            : null,
         }),
       });
 
@@ -163,6 +174,7 @@ export default function AdminCodigosPage() {
       setDiasPermitidos([]);
       setFechasBloqueadas([]);
       setFechaBloqueadaInput("");
+      setDuracionesPermitidas([]);
 
       await cargarCodigos();
     } catch (error) {
@@ -425,6 +437,38 @@ export default function AdminCodigosPage() {
                     </button>
                   </span>
                 ))}
+              </div>
+            </div>
+
+            <div className="md:col-span-4">
+              <p className="mb-1 text-[10px] font-black uppercase tracking-[0.18em] text-white/40">
+                Duraciones permitidas{" "}
+                <span className="text-white/25">(vacío = todas)</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {[15, 30].map((d) => {
+                  const active = duracionesPermitidas.includes(d);
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() =>
+                        setDuracionesPermitidas((prev) =>
+                          prev.includes(d)
+                            ? prev.filter((x) => x !== d)
+                            : [...prev, d]
+                        )
+                      }
+                      className={`rounded-xl border px-3 py-2 text-xs font-black uppercase transition ${
+                        active
+                          ? "border-red-500 bg-red-600 text-white"
+                          : "border-white/15 bg-black text-white/50 hover:border-white/30"
+                      }`}
+                    >
+                      {d} min
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>

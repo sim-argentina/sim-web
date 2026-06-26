@@ -17,6 +17,8 @@ export async function POST(req: Request) {
   const totalOriginal = Number(body.total || 0);
   // Fecha del turno (opcional): habilita las restricciones por día/fecha.
   const fechaTurno = String(body.fecha || "").trim();
+  // Duración del turno (opcional): habilita la restricción por duración.
+  const duracionTurno = Number(body.duracion) || null;
 
   if (!codigoBuscado || totalOriginal <= 0) {
     return NextResponse.json(
@@ -31,7 +33,8 @@ export async function POST(req: Request) {
     const r = await validarCodigoDescuento(
       codigoBuscado,
       totalOriginal,
-      fechaTurno || null
+      fechaTurno || null,
+      duracionTurno
     );
 
     if (!r.valido) {

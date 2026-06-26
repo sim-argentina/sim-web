@@ -52,6 +52,7 @@ export async function POST(req: Request) {
     solo_dias_habiles,
     dias_permitidos,
     fechas_bloqueadas,
+    duraciones_permitidas,
   } = body;
 
   const codigoFinal = codigo?.trim().toUpperCase() || generarCodigo();
@@ -87,6 +88,13 @@ export async function POST(req: Request) {
             ? fechas_bloqueadas
                 .map((f: unknown) => String(f).slice(0, 10))
                 .filter((f: string) => /^\d{4}-\d{2}-\d{2}$/.test(f))
+            : null,
+        duraciones_permitidas:
+          Array.isArray(duraciones_permitidas) &&
+          duraciones_permitidas.length > 0
+            ? duraciones_permitidas
+                .map(Number)
+                .filter((n: number) => n === 15 || n === 30)
             : null,
         activo: true,
       },

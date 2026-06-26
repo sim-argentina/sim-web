@@ -462,6 +462,7 @@ export default function ReservasPage() {
           codigo,
           total: totalOriginal,
           fecha: selectedDate,
+          duracion,
         }),
       });
 
