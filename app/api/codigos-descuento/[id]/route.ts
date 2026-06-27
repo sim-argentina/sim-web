@@ -27,7 +27,8 @@ export async function PATCH(req: Request, { params }: RouteContext) {
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
-  const body = await req.json();
+  // Body malformado → null; pickFields lo trata como vacío y responde 400 abajo.
+  const body = await req.json().catch(() => null);
 
   if (!id) {
     return NextResponse.json({ error: "ID inválido" }, { status: 400 });

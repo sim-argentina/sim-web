@@ -35,6 +35,21 @@ const securityHeaders = [
   { key: "Content-Security-Policy-Report-Only", value: cspReportOnly },
 ];
 
+// Endpoints autenticados (fuera de /api/admin/*) que devuelven PII o datos
+// internos → nunca cachear. NO incluye /api/campeonatos/public (cache
+// intencional s-maxage) ni otros endpoints públicos cacheables.
+const NO_STORE_HEADER = { key: "Cache-Control", value: "no-store, max-age=0" };
+const SENSITIVE_API_SOURCES = [
+  "/api/admin/:path*",
+  "/api/clientes",
+  "/api/promociones/:path*",
+  "/api/codigos-descuento/:path*",
+  "/api/campeonatos/pilotos",
+  "/api/turnos-historicos",
+  "/api/turnos-stand/:path*",
+  "/api/reservas/:path*",
+];
+
 const nextConfig: NextConfig = {
   images: {
     // Next 16 exige declarar las calidades permitidas para next/image.
@@ -48,11 +63,10 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: securityHeaders,
       },
-      {
-        // Respuestas del admin: nunca cachear (datos sensibles/PII).
-        source: "/api/admin/:path*",
-        headers: [{ key: "Cache-Control", value: "no-store, max-age=0" }],
-      },
+      ...SENSITIVE_API_SOURCES.map((source) => ({
+        source,
+        headers: [NO_STORE_HEADER],
+      })),
     ];
   },
 };
