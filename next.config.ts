@@ -1,10 +1,11 @@
 import type { NextConfig } from "next";
 
 // Cabeceras de seguridad aplicadas a todas las respuestas.
-// La CSP se entrega en modo Report-Only para no romper producción: el browser
-// reporta violaciones pero no bloquea. Una vez verificado que no hay reportes
-// legítimos, se puede migrar la clave a "Content-Security-Policy" (enforce).
-const cspReportOnly = [
+// CSP: las MISMAS directivas en ambos modos. ENFORCE solo en preview
+// (VERCEL_ENV=preview) o si CSP_MODE=enforce explícito; PRODUCCIÓN queda en
+// Report-Only por defecto (no bloquea nada) salvo CSP_MODE=enforce con
+// confirmación manual. Así se prueba enforce sin tocar producción.
+const cspDirectives = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
@@ -20,6 +21,16 @@ const cspReportOnly = [
   "form-action 'self' https://*.mercadopago.com https://*.mercadolibre.com",
 ].join("; ");
 
+// enforce ⇔ CSP_MODE=enforce, o (sin CSP_MODE=report-only) cuando VERCEL_ENV es
+// "preview". En producción (VERCEL_ENV=production) y en dev queda Report-Only.
+const cspEnforce =
+  process.env.CSP_MODE === "enforce" ||
+  (process.env.CSP_MODE !== "report-only" &&
+    process.env.VERCEL_ENV === "preview");
+const cspHeaderKey = cspEnforce
+  ? "Content-Security-Policy"
+  : "Content-Security-Policy-Report-Only";
+
 const securityHeaders = [
   {
     key: "Strict-Transport-Security",
@@ -32,7 +43,7 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",
   },
-  { key: "Content-Security-Policy-Report-Only", value: cspReportOnly },
+  { key: cspHeaderKey, value: cspDirectives },
 ];
 
 // Endpoints autenticados (fuera de /api/admin/*) que devuelven PII o datos
