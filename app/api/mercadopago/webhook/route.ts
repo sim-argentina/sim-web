@@ -35,6 +35,7 @@ export async function POST(req: Request) {
     }
 
     if (!verifyMpWebhook(req, paymentId)) {
+      logSecurityEvent("webhook_firma_invalida", { flujo: "reserva" });
       return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
     }
 

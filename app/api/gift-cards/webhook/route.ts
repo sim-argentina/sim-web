@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
 import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
+import { logSecurityEvent } from "@/lib/apiError";
 
 // Webhook exclusivo para Gift Cards. Se distingue por el prefijo
 // "gift_card_" en external_reference. No toca la tabla "reservas".
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
     }
 
     if (!verifyMpWebhook(req, paymentId)) {
+      logSecurityEvent("webhook_firma_invalida", { flujo: "giftcard" });
       return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
     }
 

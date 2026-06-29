@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logSecurityEvent } from "@/lib/apiError";
 
 // Validación de Origin/Referer para endpoints MUTANTES PÚBLICOS llamados desde el
 // browser. Defensa en profundidad contra CSRF / abuso cross-origin. NO reemplaza
@@ -27,17 +28,38 @@ function originPermitido(origin: string, req: Request): boolean {
   return false;
 }
 
+// Loguea el rechazo para observabilidad de seguridad. Sin PII: solo el path y el
+// origin ajeno (scheme://host, nunca el path/query del Referer). Nunca rompe el flujo.
+function logRechazo(req: Request, originAjeno: string): void {
+  try {
+    logSecurityEvent("origin_rechazado", {
+      path: new URL(req.url).pathname,
+      origin: originAjeno,
+    });
+  } catch {
+    /* el log no debe afectar la respuesta */
+  }
+}
+
 export function isAllowedOrigin(req: Request): boolean {
   const origin = req.headers.get("origin");
-  if (origin) return originPermitido(origin, req);
+  if (origin) {
+    if (originPermitido(origin, req)) return true;
+    logRechazo(req, origin);
+    return false;
+  }
 
   const referer = req.headers.get("referer");
   if (referer) {
+    let refOrigin = "invalid";
     try {
-      return originPermitido(new URL(referer).origin, req);
+      refOrigin = new URL(referer).origin;
+      if (originPermitido(refOrigin, req)) return true;
     } catch {
-      return false;
+      /* referer malformado */
     }
+    logRechazo(req, refOrigin);
+    return false;
   }
 
   // Sin Origin ni Referer: server-to-server (no navegador). Se permite; los

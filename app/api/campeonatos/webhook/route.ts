@@ -3,6 +3,7 @@ import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
+import { logSecurityEvent } from "@/lib/apiError";
 
 // Webhook exclusivo para inscripciones de campeonatos.
 // No toca la tabla "reservas" ni el webhook existente en /api/mercadopago/webhook.
@@ -35,6 +36,7 @@ export async function POST(req: Request) {
     }
 
     if (!verifyMpWebhook(req, paymentId)) {
+      logSecurityEvent("webhook_firma_invalida", { flujo: "campeonato" });
       return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
     }
 
