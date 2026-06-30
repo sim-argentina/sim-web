@@ -14,7 +14,7 @@ export async function GET(req: Request) {
     let query = supabaseAdmin
       .from("campeonato_penalizaciones")
       .select(
-        "id, campeonato_id, categoria, fecha_origen_id, fecha_destino_id, piloto_nombre, posicion, penalizacion_ms, created_at"
+        "id, campeonato_id, categoria, fecha_origen_id, fecha_destino_id, piloto_key, inscripcion_id, piloto_nombre, posicion, penalizacion_ms, created_at"
       )
       .order("created_at", { ascending: false });
     if (campeonato_id) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { formatPenalizacion } from "@/lib/campeonatos";
+import { formatPenalizacion, pilotoKey, msToTiempo, tiempoToMs } from "@/lib/campeonatos";
 import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -19,6 +19,7 @@ type PilotoSugerido = {
   telefono: string | null;
   categoria: string | null;
   escuderia_favorita: string | null;
+  inscripcion_id?: string | null;
 };
 
 type Campeonato = {
@@ -58,6 +59,11 @@ type Registro = {
   turno_listo: boolean;
   pagos_detalle: PagoDetalle[] | null;
   total: number;
+  campeonato_fecha_id: string | null;
+  inscripcion_id: string | null;
+  tiempo_crudo_ms: number | null;
+  penalizacion_ms: number | null;
+  tiempo_oficial_ms: number | null;
   campeonatos?: { nombre: string } | null;
 };
 
@@ -232,6 +238,7 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
     horaEstimada: "", horaSubida: "",
     nombre: "", apellido: "", telefono: "",
     campeonato_id: "", categoria: "oro",
+    campeonato_fecha_id: "", inscripcion_id: "",
     circuito: "", tiempo: "",
     escuderia_favorita: "", observaciones: "",
     cantMinutos: 15, cantTurnos: 1, turnoListo: false,
@@ -253,6 +260,12 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
   // Filtros tabla
   const [filters, setFilters] = useState({ nombre: "", campeonato_id: "", categoria: "" });
 
+  // Fechas/penalizaciones del campeonato seleccionado (Fase 2).
+  const [fechas, setFechas] = useState<Fecha[]>([]);
+  const [penalizaciones, setPenalizaciones] = useState<PenalizacionRow[]>([]);
+  // Al cargar un registro para editar NO queremos pisar su fecha con la vigente.
+  const autoPreselectRef = useRef(true);
+
   // Hora bajada automática
   const horaBajada = useMemo(
     () => sumarMinutosAHora(form.horaSubida, form.cantMinutos),
@@ -269,6 +282,46 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
 
   const set = (k: string, v: string | number | boolean) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  // Al cambiar el campeonato: cargar sus fechas/penalizaciones y preseleccionar la
+  // fecha vigente abierta (hoy entre fecha_inicio y fecha_fin). Al editar, no pisa.
+  useEffect(() => {
+    const cid = form.campeonato_id;
+    if (!cid) { setFechas([]); setPenalizaciones([]); return; }
+    let cancel = false;
+    (async () => {
+      try {
+        const [f, p] = await Promise.all([
+          fetch(`/api/admin/campeonatos/fechas?campeonato_id=${cid}`).then((r) => r.json()),
+          fetch(`/api/admin/campeonatos/penalizaciones?campeonato_id=${cid}`).then((r) => r.json()),
+        ]);
+        if (cancel) return;
+        const fs: Fecha[] = Array.isArray(f) ? f : [];
+        setFechas(fs);
+        setPenalizaciones(Array.isArray(p) ? p : []);
+        if (autoPreselectRef.current) {
+          const t = hoy();
+          const vigente =
+            fs.find((x) => x.estado === "abierta" && (!x.fecha_inicio || x.fecha_inicio <= t) && (!x.fecha_fin || x.fecha_fin >= t)) ||
+            fs.find((x) => x.estado === "abierta") ||
+            null;
+          setForm((cur) => ({ ...cur, campeonato_fecha_id: vigente?.id || "", circuito: vigente?.circuito || cur.circuito }));
+        }
+        autoPreselectRef.current = true;
+      } catch { /* silent */ }
+    })();
+    return () => { cancel = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.campeonato_id]);
+
+  const fechaSel = fechas.find((f) => f.id === form.campeonato_fecha_id) || null;
+  const fechaCerrada = fechaSel?.estado === "cerrada";
+  const penalAplicable = useMemo(() => {
+    if (!form.campeonato_fecha_id) return 0;
+    const pk = pilotoKey(form.inscripcion_id || null, `${form.nombre} ${form.apellido}`.trim());
+    const m = penalizaciones.find((p) => p.fecha_destino_id === form.campeonato_fecha_id && p.piloto_key === pk);
+    return m?.penalizacion_ms ?? 0;
+  }, [form.campeonato_fecha_id, form.inscripcion_id, form.nombre, form.apellido, penalizaciones]);
 
   // ── Autocomplete ────────────────────────────────────────────────────────────
 
@@ -290,6 +343,8 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
       telefono: p.telefono || "",
       categoria: p.categoria || f.categoria,
       escuderia_favorita: p.escuderia_favorita || f.escuderia_favorita,
+      // Identidad estable si el piloto viene de una inscripción.
+      inscripcion_id: p.inscripcion_id || "",
     }));
     setPilotos([]); setMostrarSug(false);
   }
@@ -325,11 +380,13 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
   }
 
   function startEdit(r: Registro) {
+    autoPreselectRef.current = false; // editar: no pisar la fecha del registro
     setEditId(r.id);
     setForm({
       fecha: r.fecha, hora: r.hora || "", horaEstimada: r.hora_estimada_subida || "",
       horaSubida: r.hora_subida || "", nombre: r.nombre, apellido: r.apellido || "",
       telefono: r.telefono || "", campeonato_id: r.campeonato_id || "",
+      campeonato_fecha_id: r.campeonato_fecha_id || "", inscripcion_id: r.inscripcion_id || "",
       categoria: r.categoria, circuito: r.circuito || "", tiempo: r.tiempo || "",
       escuderia_favorita: r.escuderia_favorita || "", observaciones: r.observaciones || "",
       cantMinutos: r.cantidad_minutos || 15, cantTurnos: r.cantidad_turnos || 1,
@@ -342,6 +399,9 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
   const submit = async () => {
     if (!form.nombre.trim() || !form.apellido.trim() || !form.telefono.trim() || !form.fecha || !form.categoria) {
       setMsg("Nombre, apellido, teléfono, fecha y categoría son obligatorios."); return;
+    }
+    if (fechaCerrada) {
+      setMsg("Esta fecha está cerrada. No se pueden cargar nuevos tiempos."); return;
     }
     setSaving(true); setMsg("");
     try {
@@ -358,6 +418,8 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
         nombre: form.nombre.trim(), apellido: form.apellido.trim(),
         telefono: form.telefono.trim(),
         campeonato_id: form.campeonato_id || null,
+        campeonato_fecha_id: form.campeonato_fecha_id || null,
+        inscripcion_id: form.inscripcion_id || null,
         categoria: form.categoria,
         circuito: form.circuito || null,
         tiempo: form.tiempo || null,
@@ -448,17 +510,17 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <Field label="Nombre *">
             <input className={inp} value={form.nombre} placeholder="Nombre"
-              onChange={(e) => { set("nombre", e.target.value); buscarPilotos(e.target.value); }}
+              onChange={(e) => { setForm((f) => ({ ...f, nombre: e.target.value, inscripcion_id: "" })); buscarPilotos(e.target.value); }}
               onFocus={() => { if (pilotos.length > 0) setMostrarSug(true); }} />
           </Field>
           <Field label="Apellido *">
             <input className={inp} value={form.apellido} placeholder="Apellido"
-              onChange={(e) => { set("apellido", e.target.value); buscarPilotos(e.target.value); }}
+              onChange={(e) => { setForm((f) => ({ ...f, apellido: e.target.value, inscripcion_id: "" })); buscarPilotos(e.target.value); }}
               onFocus={() => { if (pilotos.length > 0) setMostrarSug(true); }} />
           </Field>
           <Field label="Teléfono *">
             <input className={inp} value={form.telefono} placeholder="351..."
-              onChange={(e) => { set("telefono", e.target.value); buscarPilotos(e.target.value); }}
+              onChange={(e) => { setForm((f) => ({ ...f, telefono: e.target.value, inscripcion_id: "" })); buscarPilotos(e.target.value); }}
               onFocus={() => { if (pilotos.length > 0) setMostrarSug(true); }} />
           </Field>
         </div>
@@ -499,6 +561,7 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
           <Field label="Circuito">
             <select className={sel} value={form.circuito} onChange={(e) => set("circuito", e.target.value)}>
               <option value="">— seleccionar —</option>
+              {form.circuito && !CIRCUITOS.includes(form.circuito) && <option value={form.circuito}>{form.circuito}</option>}
               {CIRCUITOS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>
@@ -506,6 +569,36 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
             <input className={inp} placeholder="1:23.456" value={form.tiempo} onChange={(e) => set("tiempo", e.target.value)} />
           </Field>
         </div>
+
+        {/* Fila fecha/circuito del campeonato (Fase 2) */}
+        {form.campeonato_id && (
+          <div className="mt-3 rounded-2xl border border-white/10 bg-black/40 p-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <Field label="Fecha / circuito del campeonato">
+                <select className={sel} value={form.campeonato_fecha_id} onChange={(e) => {
+                  const ff = fechas.find((x) => x.id === e.target.value);
+                  setForm((cur) => ({ ...cur, campeonato_fecha_id: e.target.value, circuito: ff?.circuito || cur.circuito }));
+                }}>
+                  <option value="">— sin fecha (manual) —</option>
+                  {fechas.map((ff) => (
+                    <option key={ff.id} value={ff.id}>
+                      F{ff.numero_fecha}{ff.nombre ? ` · ${ff.nombre}` : ""}{ff.circuito ? ` · ${ff.circuito}` : ""}{ff.estado === "cerrada" ? " · CERRADA" : ""}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <div className="flex flex-col justify-center gap-1 text-xs">
+                {fechas.length === 0 && <p className="text-amber-300">Este campeonato no tiene fechas. Cargalas en el tab &quot;Fechas&quot; o seguí en modo manual.</p>}
+                {fechas.length > 0 && !form.campeonato_fecha_id && <p className="text-amber-300">No hay fecha vigente abierta: elegí una manualmente.</p>}
+                {fechaCerrada && <p className="font-bold text-red-400">Esta fecha está cerrada. No se pueden cargar nuevos tiempos.</p>}
+                {penalAplicable > 0 && !fechaCerrada && <p className="font-bold text-amber-300">Penalización aplicable: {formatPenalizacion(penalAplicable)}s</p>}
+                {form.tiempo && tiempoToMs(form.tiempo) != null && penalAplicable > 0 && !fechaCerrada && (
+                  <p className="text-white/60">Oficial: {form.tiempo} {formatPenalizacion(penalAplicable)} = {msToTiempo((tiempoToMs(form.tiempo) || 0) + penalAplicable)}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Fila 4: escudería / observaciones */}
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -682,6 +775,9 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
                 </div>
                 <div>
                   <p className="font-mono text-red-400 font-bold text-xs">{r.tiempo || "—"}</p>
+                  {r.penalizacion_ms ? (
+                    <p className="font-mono text-[10px] text-amber-300">{formatPenalizacion(r.penalizacion_ms)} = {msToTiempo(r.tiempo_oficial_ms)}</p>
+                  ) : null}
                   <p className="text-xs text-white/40">{pagoStr}</p>
                 </div>
                 <div className="flex gap-1">
@@ -1283,6 +1379,8 @@ type PenalizacionRow = {
   categoria: string;
   fecha_origen_id: string;
   fecha_destino_id: string;
+  piloto_key: string;
+  inscripcion_id: string | null;
   piloto_nombre: string | null;
   posicion: number;
   penalizacion_ms: number;

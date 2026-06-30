@@ -7,6 +7,20 @@ const CATEGORIAS = ["oro", "plata", "bronce"] as const;
 // Puntos F1 por posición dentro de cada semana/categoria
 const F1_PUNTOS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 
+// Tiempo OFICIAL en ms para rankear. Usa tiempo_oficial_ms (crudo+penalización)
+// cuando existe; fallback seguro a tiempo_crudo_ms y, para históricos sin ms, a
+// tiempo_segundos. 999999000 = "sin tiempo" (sentinela, ordena último).
+function oficialMs(r: {
+  tiempo_oficial_ms?: number | null;
+  tiempo_crudo_ms?: number | null;
+  tiempo_segundos?: number | null;
+}): number {
+  if (r.tiempo_oficial_ms != null) return r.tiempo_oficial_ms;
+  if (r.tiempo_crudo_ms != null) return r.tiempo_crudo_ms;
+  if (r.tiempo_segundos != null) return Math.round(Number(r.tiempo_segundos) * 1000);
+  return 999999000;
+}
+
 export async function GET(req: Request) {
   // Defensa en profundidad: además del cache de edge, límite por IP en cache-miss.
   if (!(await rateLimit(`camp-public:${clientIp(req)}`, 120, 60_000))) {
@@ -48,13 +62,18 @@ export async function GET(req: Request) {
       const pilotos: Record<string, unknown> = {};
       for (const r of catReg) {
         const key = r.nombre_completo || `${r.nombre} ${r.apellido || ""}`.trim();
-        const ex = pilotos[key] as { tiempo_segundos: number } | undefined;
-        if (!ex || r.tiempo_segundos < ex.tiempo_segundos) {
+        const ofi = oficialMs(r);
+        const ex = pilotos[key] as { oficial_ms: number } | undefined;
+        if (!ex || ofi < ex.oficial_ms) {
           // DTO sin PII (nunca telefono/observaciones/pagos)
           pilotos[key] = {
             piloto: key,
             tiempo: r.tiempo,
             tiempo_segundos: r.tiempo_segundos,
+            tiempo_crudo_ms: r.tiempo_crudo_ms ?? null,
+            penalizacion_ms: r.penalizacion_ms ?? 0,
+            tiempo_oficial_ms: r.tiempo_oficial_ms ?? null,
+            oficial_ms: ofi,
             circuito: r.circuito,
             fecha: r.fecha,
             categoria: r.categoria,
@@ -65,7 +84,7 @@ export async function GET(req: Request) {
         }
       }
       rankings[cat] = Object.values(pilotos)
-        .sort((a, b) => (a as { tiempo_segundos: number }).tiempo_segundos - (b as { tiempo_segundos: number }).tiempo_segundos)
+        .sort((a, b) => (a as { oficial_ms: number }).oficial_ms - (b as { oficial_ms: number }).oficial_ms)
         .map((r, i) => ({ ...(r as object), posicion: i + 1 }));
     }
 
@@ -92,8 +111,9 @@ export async function GET(req: Request) {
         const bestPerPilot: Record<string, { r: (typeof catReg)[0]; ts: number }> = {};
         for (const r of grupo) {
           const pKey = r.nombre_completo || `${r.nombre} ${r.apellido || ""}`.trim();
-          if (!bestPerPilot[pKey] || r.tiempo_segundos < bestPerPilot[pKey].ts) {
-            bestPerPilot[pKey] = { r, ts: r.tiempo_segundos };
+          const ofi = oficialMs(r);
+          if (!bestPerPilot[pKey] || ofi < bestPerPilot[pKey].ts) {
+            bestPerPilot[pKey] = { r, ts: ofi };
           }
         }
 
@@ -130,8 +150,9 @@ export async function GET(req: Request) {
         const bestPerPilot: Record<string, { r: (typeof catReg)[0]; ts: number }> = {};
         for (const r of grupo) {
           const pKey = r.nombre_completo || `${r.nombre} ${r.apellido || ""}`.trim();
-          if (!bestPerPilot[pKey] || r.tiempo_segundos < bestPerPilot[pKey].ts) {
-            bestPerPilot[pKey] = { r, ts: r.tiempo_segundos };
+          const ofi = oficialMs(r);
+          if (!bestPerPilot[pKey] || ofi < bestPerPilot[pKey].ts) {
+            bestPerPilot[pKey] = { r, ts: ofi };
           }
         }
         const sorted = Object.entries(bestPerPilot).sort((a, b) => a[1].ts - b[1].ts);
@@ -166,8 +187,9 @@ export async function GET(req: Request) {
         const bestPerPilot: Record<string, { id: string; ts: number }> = {};
         for (const r of grupo) {
           const pKey = r.nombre_completo || `${r.nombre} ${r.apellido || ""}`.trim();
-          if (!bestPerPilot[pKey] || r.tiempo_segundos < bestPerPilot[pKey].ts) {
-            bestPerPilot[pKey] = { id: r.id, ts: r.tiempo_segundos };
+          const ofi = oficialMs(r);
+          if (!bestPerPilot[pKey] || ofi < bestPerPilot[pKey].ts) {
+            bestPerPilot[pKey] = { id: r.id, ts: ofi };
           }
         }
         const sorted = Object.values(bestPerPilot).sort((a, b) => a.ts - b.ts);
@@ -188,6 +210,9 @@ export async function GET(req: Request) {
       circuito: r.circuito,
       tiempo: r.tiempo,
       tiempo_segundos: r.tiempo_segundos,
+      tiempo_crudo_ms: r.tiempo_crudo_ms ?? null,
+      penalizacion_ms: r.penalizacion_ms ?? 0,
+      tiempo_oficial_ms: r.tiempo_oficial_ms ?? null,
       escuderia_favorita: r.escuderia_favorita,
       semana: r.semana,
       simulador: r.simulador ?? null,

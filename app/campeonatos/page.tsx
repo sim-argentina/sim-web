@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, type ReactNode } from "react";
 import Link from "next/link";
+import { formatPenalizacion, msToTiempo } from "@/lib/campeonatos";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,9 @@ type Resultado = {
   circuito: string | null;
   tiempo: string | null;
   tiempo_segundos: number;
+  tiempo_crudo_ms: number | null;
+  penalizacion_ms: number;
+  tiempo_oficial_ms: number | null;
   escuderia_favorita: string | null;
   puntos: number;
   puntos_ganados: number;
@@ -71,6 +75,8 @@ type HistorialItem = {
   fecha: string;
   circuito: string | null;
   tiempo: string | null;
+  penalizacion_ms: number;
+  tiempo_oficial_ms: number | null;
   posicion: string;
   puntos: number;
   semana: number;
@@ -574,7 +580,12 @@ function PilotoModal({ piloto, onClose }: { piloto: PilotoStat; onClose: () => v
                   {sorted.map((h, i) => (
                     <tr key={i} className="hover:bg-zinc-800/30 transition-colors">
                       <td className="px-4 py-3 text-zinc-300">{h.circuito || "—"}</td>
-                      <td className="px-4 py-3 font-mono text-green-400 font-bold">{h.tiempo || "—"}</td>
+                      <td className="px-4 py-3 font-mono text-green-400 font-bold">
+                        {h.tiempo || "—"}
+                        {h.penalizacion_ms ? (
+                          <span className="ml-1 text-xs font-normal text-amber-400">{formatPenalizacion(h.penalizacion_ms)} = {msToTiempo(h.tiempo_oficial_ms)}</span>
+                        ) : null}
+                      </td>
                       <td className="px-4 py-3 font-black text-white">{h.posicion}</td>
                       <td className="px-4 py-3 font-black text-red-400">{h.puntos}</td>
                     </tr>
@@ -649,6 +660,8 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
         fecha: r.fecha,
         circuito: r.circuito,
         tiempo: r.tiempo,
+        penalizacion_ms: r.penalizacion_ms ?? 0,
+        tiempo_oficial_ms: r.tiempo_oficial_ms ?? null,
         posicion: ptsToPos(r.puntos_ganados),
         puntos: r.puntos_ganados,
         semana: r.semana,

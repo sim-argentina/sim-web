@@ -20,19 +20,29 @@ export async function GET(req: Request) {
   const [insRes, regRes] = await Promise.all([
     supabaseAdmin
       .from("campeonato_inscripciones")
-      .select("nombre, apellido, nombre_completo, telefono, categoria, escuderia_favorita")
+      .select("id, nombre, apellido, nombre_completo, telefono, categoria, escuderia_favorita")
       .or(`nombre_completo.ilike.%${q}%,telefono.ilike.%${q}%`)
       .eq("estado_pago", "pagado")
       .limit(10),
     supabaseAdmin
       .from("campeonato_registros")
-      .select("nombre, apellido, nombre_completo, telefono, categoria, escuderia_favorita")
+      .select("nombre, apellido, nombre_completo, telefono, categoria, escuderia_favorita, inscripcion_id")
       .or(`nombre_completo.ilike.%${q}%,telefono.ilike.%${q}%`)
       .neq("estado", "anulado")
       .limit(10),
   ]);
 
-  const combined = [...(insRes.data ?? []), ...(regRes.data ?? [])];
+  // Las inscripciones aportan el inscripcion_id estable (su propio id) → identidad híbrida.
+  const insMapped = (insRes.data ?? []).map((p: Record<string, unknown>) => ({
+    nombre: p.nombre,
+    apellido: p.apellido,
+    nombre_completo: p.nombre_completo,
+    telefono: p.telefono,
+    categoria: p.categoria,
+    escuderia_favorita: p.escuderia_favorita,
+    inscripcion_id: p.id,
+  }));
+  const combined = [...insMapped, ...(regRes.data ?? [])];
 
   // Deduplicar por teléfono (o nombre_completo si no hay teléfono)
   const seen = new Set<string>();
