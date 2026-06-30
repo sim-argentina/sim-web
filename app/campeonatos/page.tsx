@@ -69,9 +69,19 @@ type FechaPublica = {
   estado: string;
 };
 
+type ClasificacionPrevia = {
+  piloto: string;
+  campeonato_id: string | null;
+  categoria: string;
+  tiempo: string | null;
+  tiempo_oficial_ms: number | null;
+  pendiente: boolean;
+};
+
 type PublicData = {
   campeonatos: Campeonato[];
   fechas: FechaPublica[];
+  clasificacion: ClasificacionPrevia[];
   sorteos: Sorteo[];
   rankings: Record<string, unknown[]>;
   puntos: Record<string, unknown[]>;
@@ -609,7 +619,7 @@ function PilotoModal({ piloto, onClose }: { piloto: PilotoStat; onClose: () => v
 
 // ─── Section: Clasificación ───────────────────────────────────────────────────
 
-function SecClasificacion({ resultados, campeonatos, fechas }: { resultados: Resultado[]; campeonatos: Campeonato[]; fechas: FechaPublica[] }) {
+function SecClasificacion({ resultados, campeonatos, fechas, clasificacion }: { resultados: Resultado[]; campeonatos: Campeonato[]; fechas: FechaPublica[]; clasificacion: ClasificacionPrevia[] }) {
   const [filtros, setFiltros] = useState({ campeonato_id: "", categoria: "", piloto: "", circuito: "" });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [pilotoSeleccionado, setPilotoSeleccionado] = useState<PilotoStat | null>(null);
@@ -756,6 +766,35 @@ function SecClasificacion({ resultados, campeonatos, fechas }: { resultados: Res
             </div>
           </StatCard>
         </div>
+
+        {/* ── Clasificación previa (Fecha 0) ── */}
+        {(() => {
+          const clasFiltrada = clasificacion.filter((c) => !filtros.campeonato_id || c.campeonato_id === filtros.campeonato_id);
+          if (clasFiltrada.length === 0) return null;
+          const orden: Record<string, number> = { oro: 0, plata: 1, bronce: 2, sin_clasificar: 3 };
+          const sorted = [...clasFiltrada].sort(
+            (a, b) => (orden[a.categoria] ?? 3) - (orden[b.categoria] ?? 3) || (a.tiempo_oficial_ms ?? Infinity) - (b.tiempo_oficial_ms ?? Infinity)
+          );
+          return (
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+              <p className="mb-3 text-xs font-black uppercase tracking-[0.3em] text-zinc-500">Clasificación previa (Fecha 0)</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-zinc-500"><tr>{["Piloto", "Categoría", "Tiempo Fecha 0"].map((h) => <th key={h} className="px-3 py-2 text-left text-xs font-black uppercase">{h}</th>)}</tr></thead>
+                  <tbody className="divide-y divide-zinc-800/40">
+                    {sorted.map((c, i) => (
+                      <tr key={i}>
+                        <td className="px-3 py-2 font-bold text-white">{c.piloto}</td>
+                        <td className="px-3 py-2">{c.pendiente ? <span className="text-xs italic text-zinc-500">Pendiente de clasificación</span> : catBadge(c.categoria)}</td>
+                        <td className="px-3 py-2 font-mono text-green-400">{c.tiempo || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Filter bar: desktop ── */}
         <div className="hidden md:flex flex-wrap gap-2 items-center bg-zinc-900/40 rounded-xl border border-zinc-800 p-3">
@@ -1006,7 +1045,7 @@ export default function CampeonatosPage() {
         {data && (
           <>
             {tab === "campeonatos"   && <SecCampeonatos campeonatos={data.campeonatos} onInscribir={setInscripcionCamp} />}
-            {tab === "clasificacion" && <SecClasificacion resultados={data.resultados_por_fecha} campeonatos={data.campeonatos} fechas={data.fechas ?? []} />}
+            {tab === "clasificacion" && <SecClasificacion resultados={data.resultados_por_fecha} campeonatos={data.campeonatos} fechas={data.fechas ?? []} clasificacion={data.clasificacion ?? []} />}
             {tab === "constructores" && <SecConstructores constructores={data.constructores} />}
             {tab === "sorteos"       && <SecSorteos sorteos={data.sorteos} />}
           </>

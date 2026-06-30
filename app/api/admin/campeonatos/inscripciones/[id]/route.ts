@@ -73,6 +73,13 @@ export async function PATCH(
     if (campo in body) updates[campo] = body[campo];
   }
 
+  // Editar la categoría a mano = override manual: SOLO el admin la marca como
+  // manual, así la auto-clasificación de Fecha 0 no la vuelve a pisar. (Staff puede
+  // editarla puntualmente pero el recálculo la puede revertir.)
+  if ("categoria" in updates) {
+    updates.categoria_manual = role === "admin";
+  }
+
   // Si se actualizan nombre/apellido, recalcular nombre_completo
   if ("nombre" in updates || "apellido" in updates) {
     // Obtener los datos actuales para combinar

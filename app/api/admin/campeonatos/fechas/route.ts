@@ -45,7 +45,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Campeonato inválido" }, { status: 400 });
     }
     const numero_fecha = Number(body?.numero_fecha);
-    if (!Number.isInteger(numero_fecha) || numero_fecha < 1) {
+    // numero_fecha 0 = Fecha 0 (clasificación previa); 1..N = fechas del campeonato.
+    if (!Number.isInteger(numero_fecha) || numero_fecha < 0) {
       return NextResponse.json({ error: "El número de fecha es obligatorio" }, { status: 400 });
     }
     const fecha_inicio = body?.fecha_inicio ? cleanString(body.fecha_inicio, 10) : null;

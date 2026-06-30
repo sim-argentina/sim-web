@@ -28,7 +28,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       updates.observaciones = body.observaciones ? cleanString(body.observaciones, 500) : null;
     if ("numero_fecha" in body) {
       const n = Number(body.numero_fecha);
-      if (!Number.isInteger(n) || n < 1)
+      if (!Number.isInteger(n) || n < 0)
         return NextResponse.json({ error: "Número de fecha inválido" }, { status: 400 });
       updates.numero_fecha = n;
     }

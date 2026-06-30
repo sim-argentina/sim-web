@@ -97,3 +97,17 @@ export function normalizeEscuderia(s: string | null | undefined): string {
   if (!v) return "";
   return ESCUDERIA_ALIAS[v.toLowerCase()] ?? v;
 }
+
+// Reparte N pilotos clasificados (con tiempo de Fecha 0) en Oro/Plata/Bronce:
+// base = floor(N/3); el resto va primero a Oro, luego a Plata.
+// 9→3/3/3 · 10→4/3/3 · 11→4/4/3 · 12→4/4/4 · 13→5/4/4.
+export function distribucionCategorias(n: number): { oro: number; plata: number; bronce: number } {
+  if (n <= 0) return { oro: 0, plata: 0, bronce: 0 };
+  const base = Math.floor(n / 3);
+  const rem = n % 3;
+  return {
+    oro: base + (rem >= 1 ? 1 : 0),
+    plata: base + (rem >= 2 ? 1 : 0),
+    bronce: base,
+  };
+}

@@ -84,8 +84,9 @@ export async function POST(_req: Request, { params }: RouteContext) {
       campeonato_id: string; categoria: string; fecha_origen_id: string; fecha_destino_id: string;
       inscripcion_id: string | null; piloto_key: string; piloto_nombre: string; posicion: number; penalizacion_ms: number;
     };
+    // Fecha 0 (clasificación) NO genera penalizaciones, aunque exista fecha siguiente.
     const aGenerar: PenalRow[] = [];
-    if (siguiente) {
+    if (siguiente && Number(fecha.numero_fecha) !== 0) {
       for (const cat of Object.keys(porCat)) {
         const top = porCat[cat].sort((a, b) => a.ms - b.ms).slice(0, 3);
         top.forEach((b, idx) => {

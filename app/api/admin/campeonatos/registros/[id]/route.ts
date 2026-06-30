@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { pickFields, isValidUuid } from "@/lib/security";
 import { tiempoToMs } from "@/lib/campeonatos";
+import { recalcularCategorias } from "@/lib/campeonatosCategorias";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -90,6 +91,15 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
     if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/registros/[id]", error });
     if (!data) return NextResponse.json({ error: "Registro no encontrado" }, { status: 404 });
+    // Si se editó/anuló el tiempo de un registro de Fecha 0, recalcular categorías.
+    if ((("tiempo" in updates) || ("estado" in updates)) && data.campeonato_fecha_id) {
+      const { data: f } = await supabaseAdmin
+        .from("campeonato_fechas")
+        .select("numero_fecha")
+        .eq("id", data.campeonato_fecha_id)
+        .maybeSingle();
+      if (Number(f?.numero_fecha) === 0) await recalcularCategorias(data.campeonato_id);
+    }
     return NextResponse.json(data);
   } catch {
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

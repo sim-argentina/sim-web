@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
-import { normalizeEscuderia } from "@/lib/campeonatos";
+import { normalizeEscuderia, pilotoKey } from "@/lib/campeonatos";
 
 const CATEGORIAS = ["oro", "plata", "bronce"] as const;
 
@@ -45,7 +45,7 @@ export async function GET(req: Request) {
           .order("tiempo_segundos", { ascending: true }),
         supabaseAdmin
           .from("campeonato_inscripciones")
-          .select("campeonato_id, estado_pago")
+          .select("id, campeonato_id, nombre_completo, categoria, estado_pago")
           .eq("estado_pago", "pagado")
           .is("eliminada_at", null),
         supabaseAdmin
@@ -56,9 +56,23 @@ export async function GET(req: Request) {
 
     const campeonatos = campeonatosRes.data ?? [];
     const sorteos = sorteosRes.data ?? [];
-    const registros = registrosRes.data ?? [];
     const inscripciones = inscripcionesRes.data ?? [];
     const fechas = fechasRes.data ?? [];
+
+    // La Fecha 0 (clasificación previa) NO entra en rankings/puntos oficiales: se
+    // separa de los registros que alimentan el ranking.
+    const fecha0Ids = new Set(
+      (fechas as { id: string; numero_fecha: number }[])
+        .filter((f) => Number(f.numero_fecha) === 0)
+        .map((f) => f.id)
+    );
+    const registrosRaw = registrosRes.data ?? [];
+    const registrosFecha0 = registrosRaw.filter(
+      (r: { campeonato_fecha_id?: string | null }) => r.campeonato_fecha_id != null && fecha0Ids.has(r.campeonato_fecha_id)
+    );
+    const registros = registrosRaw.filter(
+      (r: { campeonato_fecha_id?: string | null }) => !(r.campeonato_fecha_id != null && fecha0Ids.has(r.campeonato_fecha_id))
+    );
 
     const campeonatosConCupos = campeonatos.map((c) => ({ ...c }));
 
@@ -226,10 +240,36 @@ export async function GET(req: Request) {
       puntos_ganados: puntosXRegistro[r.id] ?? 0,
     }));
 
+    // Clasificación previa (Fecha 0): por piloto inscripto, mejor tiempo de Fecha 0
+    // + categoría asignada (o "pendiente"). Sin PII (solo nombre + categoría + tiempo).
+    const bestFecha0: Record<string, { tiempo: string | null; ms: number }> = {};
+    for (const r of registrosFecha0 as {
+      inscripcion_id?: string | null; nombre_completo?: string | null; tiempo?: string | null; tiempo_crudo_ms?: number | null;
+    }[]) {
+      const ms = Number(r.tiempo_crudo_ms);
+      if (!Number.isFinite(ms)) continue;
+      const k = pilotoKey(r.inscripcion_id, r.nombre_completo);
+      if (!bestFecha0[k] || ms < bestFecha0[k].ms) bestFecha0[k] = { tiempo: r.tiempo ?? null, ms };
+    }
+    const clasificacion = (inscripciones as {
+      id: string; nombre_completo?: string | null; categoria?: string | null; campeonato_id?: string | null;
+    }[]).map((ins) => {
+      const best = bestFecha0[`insc:${ins.id}`] ?? bestFecha0[pilotoKey(null, ins.nombre_completo)];
+      return {
+        piloto: ins.nombre_completo ?? "",
+        campeonato_id: ins.campeonato_id ?? null,
+        categoria: ins.categoria ?? "sin_clasificar",
+        tiempo: best?.tiempo ?? null,
+        tiempo_oficial_ms: best?.ms ?? null,
+        pendiente: !best,
+      };
+    });
+
     return NextResponse.json(
       {
         campeonatos: campeonatosConCupos,
         fechas,
+        clasificacion,
         sorteos,
         rankings,
         puntos,

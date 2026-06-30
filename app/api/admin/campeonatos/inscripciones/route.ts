@@ -3,6 +3,8 @@ import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { sanitizeSearchTerm } from "@/lib/security";
+import { tiempoToMs } from "@/lib/campeonatos";
+import { recalcularCategorias } from "@/lib/campeonatosCategorias";
 
 export async function POST(req: Request) {
   const auth = await requireStaffOrAdmin();
@@ -45,6 +47,41 @@ export async function POST(req: Request) {
       .single();
 
     if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/inscripciones", error });
+
+    // Tiempo de clasificación opcional (Fecha 0): si se carga, crea el registro
+    // vinculado a la inscripción en la Fecha 0 (sin penalización, sin puntos) y
+    // recalcula las categorías. Si no, la inscripción queda "Sin clasificar".
+    const tiempoClasif = typeof body.tiempo_clasificacion === "string" ? body.tiempo_clasificacion.trim() : "";
+    if (tiempoClasif) {
+      const crudoMs = tiempoToMs(tiempoClasif);
+      const { data: fecha0 } = await supabaseAdmin
+        .from("campeonato_fechas")
+        .select("id, circuito")
+        .eq("campeonato_id", campeonato_id)
+        .eq("numero_fecha", 0)
+        .maybeSingle();
+      if (fecha0 && crudoMs != null) {
+        await supabaseAdmin.from("campeonato_registros").insert([{
+          campeonato_id,
+          campeonato_fecha_id: fecha0.id,
+          inscripcion_id: data.id,
+          categoria: "sin_clasificar",
+          nombre: nombre.trim(),
+          apellido: apellido.trim(),
+          nombre_completo,
+          telefono: telefono.trim(),
+          escuderia_favorita,
+          circuito: fecha0.circuito || null,
+          tiempo: tiempoClasif,
+          tiempo_crudo_ms: crudoMs,
+          penalizacion_ms: 0,
+          estado: "valido",
+          fecha: new Date().toISOString().slice(0, 10),
+        }]);
+        await recalcularCategorias(campeonato_id);
+      }
+    }
+
     return NextResponse.json(data);
   } catch {
     return NextResponse.json({ error: "Error interno" }, { status: 500 });

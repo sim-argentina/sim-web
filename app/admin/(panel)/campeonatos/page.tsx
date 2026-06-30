@@ -1073,6 +1073,7 @@ function TabSorteos({ sorteos, onRefresh }: { sorteos: Sorteo[]; onRefresh: () =
 const blankInscripcion = {
   nombre: "", apellido: "", telefono: "", dni: "", instagram: "",
   escuderia_favorita: "", categoria: "oro", campeonato_id: "", monto: "", metodo_pago: "efectivo",
+  tiempo_clasificacion: "",
 };
 
 // Unifica los estados internos en 3 estados visuales: Pagado / Pendiente / Cancelado.
@@ -1252,6 +1253,9 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
               <select className={sel} value={form.metodo_pago} onChange={(e) => set("metodo_pago", e.target.value)}>
                 {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
+            </Field>
+            <Field label="Tiempo clasificación (Fecha 0, opcional)">
+              <input className={inp} value={form.tiempo_clasificacion} onChange={(e) => set("tiempo_clasificacion", e.target.value)} placeholder="1:23.456 — define la categoría" />
             </Field>
           </div>
           {msg && <p className="text-sm font-bold text-red-400">{msg}</p>}
