@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { formatPenalizacion } from "@/lib/campeonatos";
 import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1261,11 +1262,233 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   );
 }
 
+// ─── Tab Fechas / Calendario ────────────────────────────────────────────────
+
+type Fecha = {
+  id: string;
+  campeonato_id: string;
+  numero_fecha: number;
+  nombre: string | null;
+  circuito: string | null;
+  fecha_inicio: string | null;
+  fecha_fin: string | null;
+  estado: string;
+  cerrado_at: string | null;
+  cerrado_por: string | null;
+  observaciones: string | null;
+};
+
+type PenalizacionRow = {
+  id: string;
+  categoria: string;
+  fecha_origen_id: string;
+  fecha_destino_id: string;
+  piloto_nombre: string | null;
+  posicion: number;
+  penalizacion_ms: number;
+};
+
+const blankFecha = { numero_fecha: "", nombre: "", circuito: "", fecha_inicio: "", fecha_fin: "", observaciones: "" };
+
+function TabFechas({ campeonatos, role }: { campeonatos: Campeonato[]; role: string | null }) {
+  const esAdmin = role === "admin";
+  const [campId, setCampId] = useState("");
+  const [fechas, setFechas] = useState<Fecha[]>([]);
+  const [penal, setPenal] = useState<PenalizacionRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [form, setForm] = useState(blankFecha);
+  const [saving, setSaving] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState(blankFecha);
+  const [closingId, setClosingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!campId && campeonatos.length > 0) setCampId(campeonatos[0].id);
+  }, [campeonatos, campId]);
+
+  const cargar = useCallback(async (cid: string) => {
+    if (!cid) { setFechas([]); setPenal([]); return; }
+    setLoading(true);
+    try {
+      const [f, p] = await Promise.all([
+        fetch(`/api/admin/campeonatos/fechas?campeonato_id=${cid}`).then((r) => r.json()),
+        fetch(`/api/admin/campeonatos/penalizaciones?campeonato_id=${cid}`).then((r) => r.json()),
+      ]);
+      setFechas(Array.isArray(f) ? f : []);
+      setPenal(Array.isArray(p) ? p : []);
+    } catch { /* silent */ } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { cargar(campId); }, [campId, cargar]);
+
+  const nombreFecha = (id: string | null) => {
+    const f = fechas.find((x) => x.id === id);
+    return f ? `F${f.numero_fecha}${f.nombre ? " · " + f.nombre : ""}` : "—";
+  };
+
+  async function crear() {
+    setMsg("");
+    const n = Number(form.numero_fecha);
+    if (!Number.isInteger(n) || n < 1) { setMsg("El número de fecha es obligatorio"); return; }
+    setSaving(true);
+    try {
+      const res = await fetch("/api/admin/campeonatos/fechas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campeonato_id: campId, numero_fecha: n, nombre: form.nombre || null, circuito: form.circuito || null, fecha_inicio: form.fecha_inicio || null, fecha_fin: form.fecha_fin || null, observaciones: form.observaciones || null }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setMsg(d.error || "Error al crear"); return; }
+      setForm(blankFecha);
+      await cargar(campId);
+    } catch { setMsg("Error de red"); } finally { setSaving(false); }
+  }
+
+  function startEdit(f: Fecha) {
+    setEditId(f.id);
+    setEditForm({ numero_fecha: String(f.numero_fecha), nombre: f.nombre || "", circuito: f.circuito || "", fecha_inicio: f.fecha_inicio || "", fecha_fin: f.fecha_fin || "", observaciones: f.observaciones || "" });
+  }
+
+  async function guardarEdit() {
+    if (!editId) return;
+    setMsg("");
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/admin/campeonatos/fechas/${editId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ numero_fecha: Number(editForm.numero_fecha), nombre: editForm.nombre || null, circuito: editForm.circuito || null, fecha_inicio: editForm.fecha_inicio || null, fecha_fin: editForm.fecha_fin || null, observaciones: editForm.observaciones || null }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setMsg(d.error || "Error al guardar"); return; }
+      setEditId(null);
+      await cargar(campId);
+    } catch { setMsg("Error de red"); } finally { setSaving(false); }
+  }
+
+  async function cerrar(f: Fecha) {
+    if (!window.confirm("Esta acción cerrará la fecha y generará penalizaciones para la siguiente carrera. No se podrán cargar nuevos tiempos normales en esta fecha.\n\n¿Confirmás cerrar la fecha?")) return;
+    setClosingId(f.id);
+    setMsg("");
+    try {
+      const res = await fetch(`/api/admin/campeonatos/fechas/${f.id}/cerrar`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setMsg(d.error || "Error al cerrar"); return; }
+      setMsg(d.aviso ? `Fecha cerrada. ${d.aviso}` : `Fecha cerrada. Penalizaciones generadas: ${d.penalizaciones_generadas ?? 0}.`);
+      await cargar(campId);
+    } catch { setMsg("Error de red"); } finally { setClosingId(null); }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <Field label="Campeonato">
+          <select className={`${sel} min-w-[200px]`} value={campId} onChange={(e) => { setCampId(e.target.value); setEditId(null); setMsg(""); }}>
+            <option value="">Seleccionar...</option>
+            {campeonatos.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {msg && <p className="text-sm font-bold text-amber-300">{msg}</p>}
+
+      {campId && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
+          <h3 className="font-black text-white">Nueva fecha / semana</h3>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <Field label="N° de fecha *"><input type="number" className={inp} value={form.numero_fecha} onChange={(e) => setForm((f) => ({ ...f, numero_fecha: e.target.value }))} /></Field>
+            <Field label="Nombre visible"><input className={inp} value={form.nombre} onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))} placeholder="Fecha 1" /></Field>
+            <Field label="Circuito"><input className={inp} value={form.circuito} onChange={(e) => setForm((f) => ({ ...f, circuito: e.target.value }))} placeholder="Spa" /></Field>
+            <Field label="Desde"><input type="date" className={inp} value={form.fecha_inicio} onChange={(e) => setForm((f) => ({ ...f, fecha_inicio: e.target.value }))} /></Field>
+            <Field label="Hasta"><input type="date" className={inp} value={form.fecha_fin} onChange={(e) => setForm((f) => ({ ...f, fecha_fin: e.target.value }))} /></Field>
+            <Field label="Observaciones"><input className={inp} value={form.observaciones} onChange={(e) => setForm((f) => ({ ...f, observaciones: e.target.value }))} /></Field>
+          </div>
+          <button onClick={crear} disabled={saving} className="rounded-xl bg-red-600 px-6 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-50">{saving ? "Guardando..." : "Crear fecha"}</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-12 text-center text-zinc-500">Cargando...</div>
+      ) : (
+        <div className="space-y-3">
+          {fechas.length === 0 && campId && <p className="text-zinc-500 text-sm">Este campeonato todavía no tiene fechas.</p>}
+          {fechas.map((f) => (
+            <div key={f.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+              {editId === f.id ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <Field label="N° de fecha"><input type="number" className={inp} value={editForm.numero_fecha} onChange={(e) => setEditForm((x) => ({ ...x, numero_fecha: e.target.value }))} /></Field>
+                    <Field label="Nombre"><input className={inp} value={editForm.nombre} onChange={(e) => setEditForm((x) => ({ ...x, nombre: e.target.value }))} /></Field>
+                    <Field label="Circuito"><input className={inp} value={editForm.circuito} onChange={(e) => setEditForm((x) => ({ ...x, circuito: e.target.value }))} /></Field>
+                    <Field label="Desde"><input type="date" className={inp} value={editForm.fecha_inicio} onChange={(e) => setEditForm((x) => ({ ...x, fecha_inicio: e.target.value }))} /></Field>
+                    <Field label="Hasta"><input type="date" className={inp} value={editForm.fecha_fin} onChange={(e) => setEditForm((x) => ({ ...x, fecha_fin: e.target.value }))} /></Field>
+                    <Field label="Observaciones"><input className={inp} value={editForm.observaciones} onChange={(e) => setEditForm((x) => ({ ...x, observaciones: e.target.value }))} /></Field>
+                  </div>
+                  <div className="flex gap-3">
+                    <button onClick={guardarEdit} disabled={saving} className="rounded-xl bg-blue-600 px-5 py-2 font-bold text-white hover:bg-blue-500 disabled:opacity-50">{saving ? "..." : "Guardar"}</button>
+                    <button onClick={() => setEditId(null)} className="rounded-xl bg-zinc-800 px-5 py-2 font-bold text-white hover:bg-zinc-700">Cancelar</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-black text-white">Fecha {f.numero_fecha}{f.nombre ? ` · ${f.nombre}` : ""}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-black uppercase ${f.estado === "cerrada" ? "bg-red-500/20 text-red-300" : "bg-green-500/20 text-green-300"}`}>{f.estado}</span>
+                    </div>
+                    <p className="text-sm text-zinc-400 mt-1">
+                      {f.circuito ? `Circuito: ${f.circuito}` : "Sin circuito"}
+                      {(f.fecha_inicio || f.fecha_fin) ? ` · ${f.fecha_inicio || "?"} → ${f.fecha_fin || "?"}` : ""}
+                      {f.estado === "cerrada" && f.cerrado_at ? ` · cerrada ${f.cerrado_at.slice(0, 10)}${f.cerrado_por ? ` por ${f.cerrado_por}` : ""}` : ""}
+                    </p>
+                    {f.observaciones && <p className="text-xs text-zinc-500 mt-1">{f.observaciones}</p>}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    {f.estado === "abierta" && <button onClick={() => startEdit(f)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">Editar</button>}
+                    {esAdmin && f.estado === "abierta" && (
+                      <button onClick={() => cerrar(f)} disabled={closingId === f.id} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-50">{closingId === f.id ? "Cerrando..." : "Cerrar fecha"}</button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {penal.length > 0 && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+          <h3 className="font-black text-white mb-3">Penalizaciones generadas</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-zinc-400">
+                <tr>{["Categoría", "Puesto", "Piloto", "Penalización", "Origen", "Destino"].map((h) => <th key={h} className="px-3 py-2 text-left font-bold uppercase text-xs">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {penal.map((p) => (
+                  <tr key={p.id}>
+                    <td className="px-3 py-2"><Badge v={p.categoria} /></td>
+                    <td className="px-3 py-2 font-bold text-white">{p.posicion}°</td>
+                    <td className="px-3 py-2 text-zinc-300">{p.piloto_nombre || "—"}</td>
+                    <td className="px-3 py-2 font-bold text-amber-300">{formatPenalizacion(p.penalizacion_ms)}</td>
+                    <td className="px-3 py-2 text-zinc-400">{nombreFecha(p.fecha_origen_id)}</td>
+                    <td className="px-3 py-2 text-zinc-400">{nombreFecha(p.fecha_destino_id)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-type Tab = "resultados" | "campeonatos" | "sorteos" | "inscripciones";
+type Tab = "resultados" | "fechas" | "campeonatos" | "sorteos" | "inscripciones";
 const ALL_TABS: { id: Tab; label: string; adminOnly: boolean }[] = [
   { id: "resultados", label: "Resultados", adminOnly: false },
+  { id: "fechas", label: "Fechas", adminOnly: true },
   { id: "campeonatos", label: "Campeonatos", adminOnly: true },
   { id: "sorteos", label: "Sorteos", adminOnly: true },
   { id: "inscripciones", label: "Inscripciones", adminOnly: false },
@@ -1332,6 +1555,7 @@ export default function AdminCampeonatosPage() {
       ) : (
         <>
           {tab === "resultados" && <TabResultados campeonatos={campeonatos} registros={registros} rangoModo={rangoModo} setRangoModo={setRangoModo} rangoDesde={rangoDesde} setRangoDesde={setRangoDesde} rangoHasta={rangoHasta} setRangoHasta={setRangoHasta} onRefresh={fetchAll} />}
+          {tab === "fechas" && role === "admin" && <TabFechas campeonatos={campeonatos} role={role} />}
           {tab === "campeonatos" && role === "admin" && <TabCampeonatos campeonatos={campeonatos} onRefresh={fetchAll} />}
           {tab === "sorteos" && role === "admin" && <TabSorteos sorteos={sorteos} onRefresh={fetchAll} />}
           {tab === "inscripciones" && <TabInscripciones inscripciones={inscripciones} campeonatos={campeonatos} role={role} onRefresh={fetchAll} />}

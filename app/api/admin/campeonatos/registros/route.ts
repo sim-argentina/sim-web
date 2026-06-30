@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
-import { sanitizeSearchTerm } from "@/lib/security";
+import { sanitizeSearchTerm, isValidUuid } from "@/lib/security";
+import { tiempoToMs, pilotoKey } from "@/lib/campeonatos";
 
 function tiempoASegundos(tiempo: string): number {
   if (!tiempo?.trim()) return 999999;
@@ -75,8 +76,43 @@ export async function POST(req: Request) {
 
     const nombre_completo = `${body.nombre.trim()} ${body.apellido.trim()}`.trim();
     const tiempo_segundos = tiempoASegundos(body.tiempo || "");
+    const tiempo_crudo_ms = tiempoToMs(body.tiempo || "");
     // Semana calculada automáticamente desde la fecha (ISO week)
     const semana = getISOWeek(body.fecha);
+
+    // Identificador estable de piloto (opcional): link a la inscripción.
+    const inscripcion_id =
+      typeof body.inscripcion_id === "string" && isValidUuid(body.inscripcion_id)
+        ? body.inscripcion_id
+        : null;
+    const campeonato_fecha_id =
+      typeof body.campeonato_fecha_id === "string" && isValidUuid(body.campeonato_fecha_id)
+        ? body.campeonato_fecha_id
+        : null;
+
+    // Si la fecha está cerrada, no se cargan nuevos tiempos (regla de negocio).
+    let penalizacion_ms = 0;
+    if (campeonato_fecha_id) {
+      const { data: fechaRow } = await supabaseAdmin
+        .from("campeonato_fechas")
+        .select("estado")
+        .eq("id", campeonato_fecha_id)
+        .maybeSingle();
+      if (fechaRow?.estado === "cerrada") {
+        return NextResponse.json(
+          { error: "La fecha está cerrada; no se pueden cargar nuevos tiempos." },
+          { status: 409 }
+        );
+      }
+      // Penalización vigente del piloto para esta fecha (top 3 de la fecha previa).
+      const { data: pen } = await supabaseAdmin
+        .from("campeonato_penalizaciones")
+        .select("penalizacion_ms")
+        .eq("fecha_destino_id", campeonato_fecha_id)
+        .eq("piloto_key", pilotoKey(inscripcion_id, nombre_completo))
+        .maybeSingle();
+      penalizacion_ms = pen?.penalizacion_ms ?? 0;
+    }
 
     const { data, error } = await supabaseAdmin
       .from("campeonato_registros")
@@ -93,10 +129,13 @@ export async function POST(req: Request) {
           telefono: body.telefono.trim(),
           categoria: body.categoria,
           campeonato_id: body.campeonato_id || null,
-          campeonato_fecha_id: body.campeonato_fecha_id || null,
+          campeonato_fecha_id,
+          inscripcion_id,
           circuito: body.circuito || null,
           tiempo: body.tiempo || null,
           tiempo_segundos,
+          tiempo_crudo_ms,
+          penalizacion_ms,
           semana,
           escuderia_favorita: body.escuderia_favorita || null,
           observaciones: body.observaciones || null,

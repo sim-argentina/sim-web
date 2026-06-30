@@ -3,6 +3,7 @@ import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { pickFields, isValidUuid } from "@/lib/security";
+import { tiempoToMs } from "@/lib/campeonatos";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -28,6 +29,7 @@ const CAMPOS = [
   "categoria",
   "campeonato_id",
   "campeonato_fecha_id",
+  "inscripcion_id",
   "circuito",
   "tiempo",
   "escuderia_favorita",
@@ -60,6 +62,12 @@ export async function PATCH(req: Request, { params }: RouteContext) {
     }
     if ("tiempo" in updates) {
       updates.tiempo_segundos = tiempoASegundos(String(body.tiempo || ""));
+      updates.tiempo_crudo_ms = tiempoToMs(String(body.tiempo || ""));
+    }
+    // inscripcion_id: solo UUID válido, si no se anula (evita 500 por FK/uuid).
+    if ("inscripcion_id" in updates) {
+      const v = updates.inscripcion_id;
+      updates.inscripcion_id = typeof v === "string" && isValidUuid(v) ? v : null;
     }
     updates.updated_at = new Date().toISOString();
 
