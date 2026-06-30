@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { isValidUuid } from "@/lib/security";
 
 export async function PATCH(
   req: Request,
@@ -12,6 +13,10 @@ export async function PATCH(
   const role = auth.role;
 
   const { id } = await params;
+  // ID malformado (no UUID) → 404 genérico, sin consultar Postgres.
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ error: "Inscripción no encontrada" }, { status: 404 });
+  }
 
   let body: Record<string, unknown> = {};
   try {

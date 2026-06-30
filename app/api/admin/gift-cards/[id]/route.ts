@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { isValidUuid } from "@/lib/security";
 
 // Actualiza el estado de uso / observaciones de una Gift Card.
 // Disponible para admin y staff. No se elimina físicamente: se usan estados.
@@ -13,6 +14,10 @@ export async function PATCH(
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  // ID malformado (no UUID) → 404 genérico, sin consultar Postgres.
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
+  }
 
   let body: Record<string, unknown> = {};
   try {
