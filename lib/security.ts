@@ -36,6 +36,16 @@ export function isValidDateStr(v: unknown): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(new Date(v + "T00:00:00").getTime());
 }
 
+// Valida formato UUID canónico (8-4-4-4-12 hex). Sirve para no consultar Postgres
+// con IDs malformados de path params (que provocan un 500 "invalid input syntax
+// for type uuid"); el caller responde 404 genérico en su lugar.
+export function isValidUuid(v: unknown): boolean {
+  return (
+    typeof v === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+  );
+}
+
 // ── Validación de imágenes (por magic bytes, no por file.type) ──────────────
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB
 

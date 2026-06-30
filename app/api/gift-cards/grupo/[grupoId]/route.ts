@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { isValidUuid } from "@/lib/security";
 
 // GET público de todas las Gift Cards de una compra (grupo_compra_id).
 // Los códigos únicos solo se revelan si el pago está aprobado.
@@ -12,6 +13,10 @@ export async function GET(
     return tooManyResponse();
   }
   const { grupoId } = await params;
+  // grupo_compra_id malformado (no UUID) → 404 genérico, sin consultar Postgres.
+  if (!isValidUuid(grupoId)) {
+    return NextResponse.json({ error: "Compra no encontrada" }, { status: 404 });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("gift_cards")

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { isValidUuid } from "@/lib/security";
 
 // GET público de una Gift Card para la pantalla de éxito / descarga.
 // El código único solo se revela si el pago está aprobado.
@@ -12,6 +13,11 @@ export async function GET(
     return tooManyResponse();
   }
   const { id } = await params;
+  // ID malformado (no UUID) → 404 genérico, sin consultar Postgres (evita el 500
+  // por "invalid input syntax for type uuid"). Indistinguible de un no-encontrado.
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("gift_cards")
