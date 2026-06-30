@@ -90,14 +90,19 @@ export async function POST(req: Request) {
         ? body.campeonato_fecha_id
         : null;
 
+    // El circuito es autoridad de la fecha: si viene campeonato_fecha_id, se usa el
+    // circuito de esa fecha (no se confía en el del frontend si contradice).
+    let circuitoFinal: string | null =
+      typeof body.circuito === "string" && body.circuito.trim() ? body.circuito.trim() : null;
     // Si la fecha está cerrada, no se cargan nuevos tiempos (regla de negocio).
     let penalizacion_ms = 0;
     if (campeonato_fecha_id) {
       const { data: fechaRow } = await supabaseAdmin
         .from("campeonato_fechas")
-        .select("estado")
+        .select("estado, circuito")
         .eq("id", campeonato_fecha_id)
         .maybeSingle();
+      if (fechaRow?.circuito) circuitoFinal = fechaRow.circuito;
       if (fechaRow?.estado === "cerrada") {
         return NextResponse.json(
           { error: "La fecha está cerrada; no se pueden cargar nuevos tiempos." },
@@ -131,7 +136,7 @@ export async function POST(req: Request) {
           campeonato_id: body.campeonato_id || null,
           campeonato_fecha_id,
           inscripcion_id,
-          circuito: body.circuito || null,
+          circuito: circuitoFinal,
           tiempo: body.tiempo || null,
           tiempo_segundos,
           tiempo_crudo_ms,

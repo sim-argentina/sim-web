@@ -105,7 +105,19 @@ export async function POST(_req: Request, { params }: RouteContext) {
       }
     }
 
-    // 5) Insertar penalizaciones (idempotente vía índice único) + aplicarlas a los
+    // 5) Recompute idempotente: borrar las penalizaciones previas de ESTA fecha
+    //    origen y resetear la penalización de los registros de la fecha destino
+    //    antes de regenerar. Soporta re-cierre tras reabrir (el ranking pudo cambiar);
+    //    en un primer cierre es no-op.
+    await supabaseAdmin.from("campeonato_penalizaciones").delete().eq("fecha_origen_id", id);
+    if (siguiente) {
+      await supabaseAdmin
+        .from("campeonato_registros")
+        .update({ penalizacion_ms: 0 })
+        .eq("campeonato_fecha_id", siguiente.id);
+    }
+
+    // 6) Insertar penalizaciones (idempotente vía índice único) + aplicarlas a los
     //    registros ya cargados en la fecha destino (tiempo_oficial_ms se recalcula solo).
     if (aGenerar.length > 0) {
       const { error: pErr } = await supabaseAdmin

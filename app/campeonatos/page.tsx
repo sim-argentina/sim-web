@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, type ReactNode } from "react";
 import Link from "next/link";
-import { formatPenalizacion, msToTiempo } from "@/lib/campeonatos";
+import { formatPenalizacion, msToTiempo, ESCUDERIAS_2026 } from "@/lib/campeonatos";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,8 +60,18 @@ type Sorteo = {
   imagen_url: string | null;
 };
 
+type FechaPublica = {
+  id: string;
+  campeonato_id: string | null;
+  numero_fecha: number;
+  nombre: string | null;
+  circuito: string | null;
+  estado: string;
+};
+
 type PublicData = {
   campeonatos: Campeonato[];
+  fechas: FechaPublica[];
   sorteos: Sorteo[];
   rankings: Record<string, unknown[]>;
   puntos: Record<string, unknown[]>;
@@ -99,10 +109,7 @@ type PilotoStat = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const ESCUDERIAS = [
-  "Red Bull", "Mercedes", "Ferrari", "McLaren", "Aston Martin",
-  "Alpine", "Williams", "Racing Bulls", "Kick Sauber", "Haas",
-];
+const ESCUDERIAS = ESCUDERIAS_2026;
 
 const F1_POS_MAP: Record<number, string> = {
   25: "P1", 18: "P2", 15: "P3", 12: "P4", 10: "P5",
@@ -602,7 +609,7 @@ function PilotoModal({ piloto, onClose }: { piloto: PilotoStat; onClose: () => v
 
 // ─── Section: Clasificación ───────────────────────────────────────────────────
 
-function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]; campeonatos: Campeonato[] }) {
+function SecClasificacion({ resultados, campeonatos, fechas }: { resultados: Resultado[]; campeonatos: Campeonato[]; fechas: FechaPublica[] }) {
   const [filtros, setFiltros] = useState({ campeonato_id: "", categoria: "", piloto: "", circuito: "" });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [pilotoSeleccionado, setPilotoSeleccionado] = useState<PilotoStat | null>(null);
@@ -611,9 +618,18 @@ function SecClasificacion({ resultados, campeonatos }: { resultados: Resultado[]
   const limpiarFiltros = () => setFiltros({ campeonato_id: "", categoria: "", piloto: "", circuito: "" });
   const activeFilters = Object.values(filtros).filter(Boolean).length;
 
+  // Circuitos del filtro: alimentados por las fechas configuradas del campeonato
+  // (aparecen aunque no haya tiempos aún) + los de los resultados (compat históricos).
   const circuitos = useMemo(
-    () => Array.from(new Set(resultados.map((r) => r.circuito).filter((c): c is string => Boolean(c)))).sort(),
-    [resultados]
+    () =>
+      Array.from(
+        new Set(
+          [...fechas.map((f) => f.circuito), ...resultados.map((r) => r.circuito)].filter(
+            (c): c is string => Boolean(c)
+          )
+        )
+      ).sort(),
+    [fechas, resultados]
   );
   const filtrados = useMemo(
     () =>
@@ -990,7 +1006,7 @@ export default function CampeonatosPage() {
         {data && (
           <>
             {tab === "campeonatos"   && <SecCampeonatos campeonatos={data.campeonatos} onInscribir={setInscripcionCamp} />}
-            {tab === "clasificacion" && <SecClasificacion resultados={data.resultados_por_fecha} campeonatos={data.campeonatos} />}
+            {tab === "clasificacion" && <SecClasificacion resultados={data.resultados_por_fecha} campeonatos={data.campeonatos} fechas={data.fechas ?? []} />}
             {tab === "constructores" && <SecConstructores constructores={data.constructores} />}
             {tab === "sorteos"       && <SecSorteos sorteos={data.sorteos} />}
           </>

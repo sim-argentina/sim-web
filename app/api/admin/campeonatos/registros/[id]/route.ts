@@ -69,6 +69,16 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       const v = updates.inscripcion_id;
       updates.inscripcion_id = typeof v === "string" && isValidUuid(v) ? v : null;
     }
+    // Circuito autoridad de la fecha: si se setea campeonato_fecha_id, el circuito
+    // se resuelve desde esa fecha (no se confía en el del frontend).
+    if (typeof updates.campeonato_fecha_id === "string" && isValidUuid(updates.campeonato_fecha_id)) {
+      const { data: fechaRow } = await supabaseAdmin
+        .from("campeonato_fechas")
+        .select("circuito")
+        .eq("id", updates.campeonato_fecha_id)
+        .maybeSingle();
+      if (fechaRow?.circuito) updates.circuito = fechaRow.circuito;
+    }
     updates.updated_at = new Date().toISOString();
 
     const { data, error } = await supabaseAdmin

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { normalizeEscuderia } from "@/lib/campeonatos";
 
 const CATEGORIAS = ["oro", "plata", "bronce"] as const;
 
@@ -27,7 +28,7 @@ export async function GET(req: Request) {
     return tooManyResponse();
   }
   try {
-    const [campeonatosRes, sorteosRes, registrosRes, inscripcionesRes] =
+    const [campeonatosRes, sorteosRes, registrosRes, inscripcionesRes, fechasRes] =
       await Promise.all([
         supabaseAdmin
           .from("campeonatos")
@@ -45,13 +46,19 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("campeonato_inscripciones")
           .select("campeonato_id, estado_pago")
-          .eq("estado_pago", "pagado"),
+          .eq("estado_pago", "pagado")
+          .is("eliminada_at", null),
+        supabaseAdmin
+          .from("campeonato_fechas")
+          .select("id, campeonato_id, numero_fecha, nombre, circuito, estado")
+          .order("numero_fecha", { ascending: true }),
       ]);
 
     const campeonatos = campeonatosRes.data ?? [];
     const sorteos = sorteosRes.data ?? [];
     const registros = registrosRes.data ?? [];
     const inscripciones = inscripcionesRes.data ?? [];
+    const fechas = fechasRes.data ?? [];
 
     const campeonatosConCupos = campeonatos.map((c) => ({ ...c }));
 
@@ -158,7 +165,7 @@ export async function GET(req: Request) {
         const sorted = Object.entries(bestPerPilot).sort((a, b) => a[1].ts - b[1].ts);
         sorted.forEach(([piloto, { r }], idx) => {
           const pts = F1_PUNTOS[idx] ?? 0;
-          const esc = r.escuderia_favorita;
+          const esc = normalizeEscuderia(r.escuderia_favorita);
           if (!esc) return;
           if (!constMap[esc]) constMap[esc] = { escuderia: esc, puntos: 0, pilotos: new Set() };
           constMap[esc].puntos += pts;
@@ -222,6 +229,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         campeonatos: campeonatosConCupos,
+        fechas,
         sorteos,
         rankings,
         puntos,

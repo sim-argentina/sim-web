@@ -43,6 +43,24 @@ export async function PATCH(
     return NextResponse.json({ ok: true });
   }
 
+  // ── Eliminar (soft-delete): solo admin. Oculta la inscripción del panel sin
+  //    borrar datos (preserva contabilidad). NO toca los registros de tiempos.
+  if (body.accion === "eliminar") {
+    if (role !== "admin") {
+      return NextResponse.json(
+        { error: "Solo el admin puede eliminar inscripciones" },
+        { status: 403 }
+      );
+    }
+    const { error } = await supabaseAdmin
+      .from("campeonato_inscripciones")
+      .update({ eliminada_at: new Date().toISOString() })
+      .eq("id", id);
+
+    if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/inscripciones/[id] eliminar", error });
+    return NextResponse.json({ ok: true });
+  }
+
   // ── Editar: admin y staff ───────────────────────────────────────────────────
   const camposPermitidos = [
     "nombre", "apellido", "nombre_completo", "telefono", "dni",

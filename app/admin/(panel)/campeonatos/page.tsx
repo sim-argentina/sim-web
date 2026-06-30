@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { formatPenalizacion, pilotoKey, msToTiempo, tiempoToMs } from "@/lib/campeonatos";
+import { formatPenalizacion, pilotoKey, msToTiempo, tiempoToMs, ESCUDERIAS_2026 } from "@/lib/campeonatos";
 import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -100,19 +100,9 @@ type Sorteo = {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CIRCUITOS = [
-  "Interlagos", "Monza", "Spa", "Silverstone", "Suzuka",
-  "Imola", "Austria", "Monaco", "Abu Dhabi", "Bahrain",
-  "Australia", "Hungría", "Países Bajos", "Canadá", "COTA",
-  "México", "Singapur", "Qatar", "Miami", "Arabia Saudita",
-];
-
 const CATEGORIAS = ["oro", "plata", "bronce"];
 
-const ESCUDERIAS = [
-  "Red Bull", "Mercedes", "Ferrari", "McLaren", "Aston Martin",
-  "Alpine", "Williams", "Racing Bulls", "Kick Sauber", "Haas",
-];
+const ESCUDERIAS = ESCUDERIAS_2026;
 
 const METODOS_PAGO = [
   { value: "qr", label: "QR" },
@@ -464,6 +454,44 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
     onRefresh();
   };
 
+  // Navegación tipo planilla con flechas, SOLO dentro de este formulario.
+  // Texto: ←/→ mueven el cursor y saltan de campo en el borde; ↑/↓ saltan de campo.
+  // Selects: ←/→ saltan de campo; ↑/↓ cambian la opción (nativo). Date/time/checkbox: nativo.
+  function handleArrowNav(e: React.KeyboardEvent<HTMLDivElement>) {
+    const k = e.key;
+    if (k !== "ArrowRight" && k !== "ArrowLeft" && k !== "ArrowUp" && k !== "ArrowDown") return;
+    const el = e.target as HTMLElement;
+    const tag = el.tagName;
+    const isText = tag === "INPUT" && ["text", "number", "tel", "search", ""].includes((el as HTMLInputElement).type);
+    const isSelect = tag === "SELECT";
+    if (!isText && !isSelect) return;
+    let dir = 0;
+    if (isText) {
+      const input = el as HTMLInputElement;
+      const atStart = (input.selectionStart ?? 0) === 0 && (input.selectionEnd ?? 0) === 0;
+      const atEnd = (input.selectionStart ?? 0) === input.value.length && (input.selectionEnd ?? 0) === input.value.length;
+      if (k === "ArrowDown") dir = 1;
+      else if (k === "ArrowUp") dir = -1;
+      else if (k === "ArrowRight" && atEnd) dir = 1;
+      else if (k === "ArrowLeft" && atStart) dir = -1;
+    } else {
+      if (k === "ArrowRight") dir = 1;
+      else if (k === "ArrowLeft") dir = -1;
+    }
+    if (dir === 0) return;
+    const nodes = Array.from(
+      e.currentTarget.querySelectorAll<HTMLElement>("input:not([type=hidden]):not([readonly]), select")
+    ).filter((n) => !(n as HTMLInputElement).disabled && n.offsetParent !== null);
+    const idx = nodes.indexOf(el);
+    if (idx === -1) return;
+    const next = nodes[idx + dir];
+    if (next) {
+      e.preventDefault();
+      next.focus();
+      if (next.tagName === "INPUT") (next as HTMLInputElement).select?.();
+    }
+  }
+
   const filtered = registros.filter((r) => {
     if (filters.nombre && !r.nombre_completo?.toLowerCase().includes(filters.nombre.toLowerCase())) return false;
     if (filters.campeonato_id && r.campeonato_id !== filters.campeonato_id) return false;
@@ -474,7 +502,7 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
   return (
     <div className="space-y-8">
       {/* ── Formulario ─────────────────────────────────────────────────────── */}
-      <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+      <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" onKeyDown={handleArrowNav}>
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-xl font-black uppercase text-red-500">
             {editId ? "Editar turno" : "Nuevo turno"}
@@ -545,8 +573,8 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
           </div>
         )}
 
-        {/* Fila 3: campeonato/categoria/circuito/tiempo */}
-        <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+        {/* Fila 3: campeonato/categoria/tiempo (el circuito viene de la fecha) */}
+        <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
           <Field label="Campeonato">
             <select className={sel} value={form.campeonato_id} onChange={(e) => set("campeonato_id", e.target.value)}>
               <option value="">— sin campeonato —</option>
@@ -556,13 +584,6 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
           <Field label="Categoría *">
             <select className={sel} value={form.categoria} onChange={(e) => set("categoria", e.target.value)}>
               {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
-            </select>
-          </Field>
-          <Field label="Circuito">
-            <select className={sel} value={form.circuito} onChange={(e) => set("circuito", e.target.value)}>
-              <option value="">— seleccionar —</option>
-              {form.circuito && !CIRCUITOS.includes(form.circuito) && <option value={form.circuito}>{form.circuito}</option>}
-              {CIRCUITOS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>
           <Field label="Tiempo (ej: 1:23.456)">
@@ -1088,6 +1109,22 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Eliminar (soft-delete, solo admin): oculta la inscripción del panel sin borrar.
+  const eliminarInscripcion = async (id: string) => {
+    if (!confirm("Esta inscripción dejará de aparecer en el panel. ¿Confirmás?")) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/admin/campeonatos/inscripciones/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "eliminar" }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || "Error al eliminar"); return; }
+      onRefresh();
+    } finally { setDeletingId(null); }
+  };
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -1308,7 +1345,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
               {["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Campeonato", "Monto", "Estado", "Fecha", "Editar"].map((h) => (
                 <th key={h} className="px-4 py-3 text-left font-bold uppercase text-xs">{h}</th>
               ))}
-              {role === "admin" && <th className="px-4 py-3 text-left font-bold uppercase text-xs">Cancelar</th>}
+              {role === "admin" && <th className="px-4 py-3 text-left font-bold uppercase text-xs">Acciones</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
@@ -1347,6 +1384,13 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                         {cancellingId === i.id ? "..." : "Cancelar"}
                       </button>
                     )}
+                    <button
+                      onClick={() => eliminarInscripcion(i.id)}
+                      disabled={deletingId === i.id}
+                      className="ml-1 rounded-lg bg-red-900/40 px-3 py-1 text-xs font-bold text-red-300 hover:bg-red-900 disabled:opacity-50"
+                    >
+                      {deletingId === i.id ? "..." : "Eliminar"}
+                    </button>
                   </td>
                 )}
               </tr>
@@ -1476,6 +1520,37 @@ function TabFechas({ campeonatos, role }: { campeonatos: Campeonato[]; role: str
     } catch { setMsg("Error de red"); } finally { setClosingId(null); }
   }
 
+  async function reabrir(f: Fecha) {
+    if (!window.confirm("Reabrir esta fecha permitirá cargar nuevos tiempos nuevamente. Las penalizaciones generadas hacia la siguiente fecha se mantienen, salvo que el sistema indique lo contrario.\n\n¿Confirmás reabrir la fecha?")) return;
+    setClosingId(f.id);
+    setMsg("");
+    try {
+      const res = await fetch(`/api/admin/campeonatos/fechas/${f.id}/reabrir`, { method: "POST" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setMsg(d.error || "Error al reabrir"); return; }
+      setMsg(d.mensaje || "Fecha reabierta.");
+      await cargar(campId);
+    } catch { setMsg("Error de red"); } finally { setClosingId(null); }
+  }
+
+  async function precargar() {
+    if (!campId) return;
+    if (!window.confirm("Se crearán las fechas 1 a 10 que falten para este campeonato (no duplica las existentes). ¿Confirmás?")) return;
+    setSaving(true);
+    setMsg("");
+    try {
+      const res = await fetch("/api/admin/campeonatos/fechas/precargar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campeonato_id: campId, total: 10 }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setMsg(d.error || "Error al precargar"); return; }
+      setMsg(d.mensaje || "Calendario precargado.");
+      await cargar(campId);
+    } catch { setMsg("Error de red"); } finally { setSaving(false); }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -1500,7 +1575,10 @@ function TabFechas({ campeonatos, role }: { campeonatos: Campeonato[]; role: str
             <Field label="Hasta"><input type="date" className={inp} value={form.fecha_fin} onChange={(e) => setForm((f) => ({ ...f, fecha_fin: e.target.value }))} /></Field>
             <Field label="Observaciones"><input className={inp} value={form.observaciones} onChange={(e) => setForm((f) => ({ ...f, observaciones: e.target.value }))} /></Field>
           </div>
-          <button onClick={crear} disabled={saving} className="rounded-xl bg-red-600 px-6 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-50">{saving ? "Guardando..." : "Crear fecha"}</button>
+          <div className="flex flex-wrap gap-3">
+            <button onClick={crear} disabled={saving} className="rounded-xl bg-red-600 px-6 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-50">{saving ? "Guardando..." : "Crear fecha"}</button>
+            {esAdmin && <button onClick={precargar} disabled={saving} className="rounded-xl bg-zinc-700 px-6 py-2 font-bold text-white hover:bg-zinc-600 disabled:opacity-50">Precargar 10 fechas</button>}
+          </div>
         </div>
       )}
 
@@ -1544,6 +1622,9 @@ function TabFechas({ campeonatos, role }: { campeonatos: Campeonato[]; role: str
                     {f.estado === "abierta" && <button onClick={() => startEdit(f)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">Editar</button>}
                     {esAdmin && f.estado === "abierta" && (
                       <button onClick={() => cerrar(f)} disabled={closingId === f.id} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-50">{closingId === f.id ? "Cerrando..." : "Cerrar fecha"}</button>
+                    )}
+                    {esAdmin && f.estado === "cerrada" && (
+                      <button onClick={() => reabrir(f)} disabled={closingId === f.id} className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-500 disabled:opacity-50">{closingId === f.id ? "..." : "Reabrir fecha"}</button>
                     )}
                   </div>
                 </div>

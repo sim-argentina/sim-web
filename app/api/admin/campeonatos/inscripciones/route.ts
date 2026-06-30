@@ -64,6 +64,7 @@ export async function GET(req: Request) {
     let query = supabaseAdmin
       .from("campeonato_inscripciones")
       .select("*, campeonatos(nombre)")
+      .is("eliminada_at", null)
       .order("created_at", { ascending: false });
 
     if (campeonato_id) query = query.eq("campeonato_id", campeonato_id);

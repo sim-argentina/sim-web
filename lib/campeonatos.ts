@@ -64,3 +64,36 @@ export function pilotoKey(
     .replace(/\s+/g, " ");
   return `nom:${n}`;
 }
+
+// Escuderías F1 2026 (11 equipos). Lista ÚNICA compartida para inscripción
+// pública, admin, turnero y filtros de campeonatos (evita listas duplicadas).
+export const ESCUDERIAS_2026: string[] = [
+  "Mercedes",
+  "Ferrari",
+  "McLaren",
+  "Red Bull Racing",
+  "Alpine",
+  "Racing Bulls",
+  "Haas F1 Team",
+  "Williams",
+  "Audi",
+  "Aston Martin",
+  "Cadillac",
+];
+
+// Mapea nombres viejos de escudería a los 2026 para no fragmentar el ranking de
+// constructores si quedaran registros con nombres anteriores. Sin match → tal cual.
+const ESCUDERIA_ALIAS: Record<string, string> = {
+  "red bull": "Red Bull Racing",
+  "kick sauber": "Audi",
+  "alfa romeo": "Audi",
+  "haas": "Haas F1 Team",
+  "rb": "Racing Bulls",
+  "alphatauri": "Racing Bulls",
+  "racing bulls": "Racing Bulls",
+};
+export function normalizeEscuderia(s: string | null | undefined): string {
+  const v = String(s ?? "").trim();
+  if (!v) return "";
+  return ESCUDERIA_ALIAS[v.toLowerCase()] ?? v;
+}

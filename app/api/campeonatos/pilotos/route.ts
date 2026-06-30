@@ -23,6 +23,7 @@ export async function GET(req: Request) {
       .select("id, nombre, apellido, nombre_completo, telefono, categoria, escuderia_favorita")
       .or(`nombre_completo.ilike.%${q}%,telefono.ilike.%${q}%`)
       .eq("estado_pago", "pagado")
+      .is("eliminada_at", null)
       .limit(10),
     supabaseAdmin
       .from("campeonato_registros")
