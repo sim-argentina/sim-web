@@ -154,6 +154,10 @@ function formatoDinero(valor: number) {
   return `$${valor.toLocaleString("es-AR")}`;
 }
 
+function turnosDeRegistro(turno: TurnoStand) {
+  return Number(turno.cantidad_turnos) || 1;
+}
+
 function formatearPagosDetalle(turno: TurnoStand) {
   const pagos = normalizarPagos(turno).filter((pago) => Number(pago.monto) > 0);
 
@@ -297,8 +301,9 @@ export default function TurneroAdminPage() {
       const pagosTurno = normalizarPagos(turno).filter(
         (pago) => Number(pago.monto) > 0,
       );
+      const turnos = turnosDeRegistro(turno);
 
-      cantidadTurnos += 1;
+      cantidadTurnos += turnos;
       totalFacturado += totalTurno;
 
       if (pagosTurno.length > 0) {
