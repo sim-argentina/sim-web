@@ -37,51 +37,6 @@ function FadeIn({ children, className = "", delay = 0 }: { children: React.React
   );
 }
 
-function PlaceholderHero() {
-  return (
-    <div className="relative flex h-full min-h-[420px] w-full items-center justify-center overflow-hidden bg-[#0a0a0a]">
-      <div className="absolute inset-0"
-        style={{
-          background: "radial-gradient(ellipse 80% 60% at 50% 100%, rgba(220,38,38,0.18) 0%, transparent 70%)",
-        }}
-      />
-      <div className="absolute inset-0"
-        style={{
-          backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 50px), repeating-linear-gradient(-45deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 50px)",
-        }}
-      />
-      <div className="relative text-center select-none">
-        <p className="text-[7rem] font-black uppercase leading-none tracking-tighter text-white/[0.04]">SIM</p>
-        <p className="mt-2 text-[10px] font-black uppercase tracking-[0.5em] text-white/15">Simulador · Foto próximamente</p>
-      </div>
-      {[["top-4 left-4 border-t border-l"],["top-4 right-4 border-t border-r"],["bottom-4 left-4 border-b border-l"],["bottom-4 right-4 border-b border-r"]].map(([cls], i) => (
-        <div key={i} className={`absolute h-6 w-6 border-white/10 ${cls}`} />
-      ))}
-    </div>
-  );
-}
-
-function PlaceholderCard({ label }: { label: string }) {
-  return (
-    <div className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-[#0d0d0d]"
-      style={{ background: "radial-gradient(ellipse 80% 70% at 50% 110%, rgba(220,38,38,0.12) 0%, #0d0d0d 65%)" }}
-    >
-      <div className="absolute inset-0"
-        style={{
-          backgroundImage: "repeating-linear-gradient(90deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 1px, transparent 1px, transparent 60px)",
-        }}
-      />
-      <div className="relative text-center select-none">
-        <p className="text-6xl font-black uppercase tracking-tighter text-white/[0.05]">SIM</p>
-        <p className="mt-2 text-[9px] font-black uppercase tracking-[0.4em] text-white/10">{label}</p>
-      </div>
-      {[["top-3 left-3 border-t border-l"],["top-3 right-3 border-t border-r"],["bottom-3 left-3 border-b border-l"],["bottom-3 right-3 border-b border-r"]].map(([cls], i) => (
-        <div key={i} className={`absolute h-5 w-5 border-red-600/15 ${cls}`} />
-      ))}
-    </div>
-  );
-}
-
 const TABLA = [
   { campo: "Tipo de butaca",      f1: "F1",                   gt: "Deportiva GT" },
   { campo: "Posición de manejo",  f1: "Extrema / recostada",  gt: "Tradicional / erguida" },
@@ -145,9 +100,18 @@ export default function TiendaPage() {
             </div>
           </div>
 
-          {/* imagen hero */}
+          {/* video hero */}
           <div className="hidden md:block">
-            <PlaceholderHero />
+            <div className="relative h-full min-h-[420px] w-full overflow-hidden bg-[#0a0a0a]">
+              <video
+                className="absolute inset-0 h-full w-full object-cover"
+                src="/sim-store-hero.mp4"
+                autoPlay
+                loop
+                muted
+                playsInline
+              />
+            </div>
           </div>
         </div>
       </section>
@@ -218,7 +182,19 @@ export default function TiendaPage() {
           {/* GT */}
           <FadeIn delay={100} className="group flex flex-col bg-[#080808] transition-all duration-500 hover:bg-[#0f0f0f]">
             <div className="relative overflow-hidden">
-              <PlaceholderCard label="Simulador GT" />
+              <div
+                className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-[#0d0d0d]"
+                style={{ background: "radial-gradient(ellipse 80% 70% at 50% 110%, rgba(220,38,38,0.12) 0%, #0d0d0d 65%)" }}
+              >
+                <Image
+                  src="/sim-gt.png"
+                  alt="Simulador GT SIM Argentina"
+                  fill
+                  quality={90}
+                  sizes="(max-width: 768px) 100vw, 45vw"
+                  className="object-cover"
+                />
+              </div>
               <div className="absolute inset-0 bg-red-600/0 transition-all duration-500 group-hover:bg-red-600/5" />
               <div className="absolute top-4 left-4">
                 <span className="border border-red-600/60 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-red-500">
