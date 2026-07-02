@@ -49,6 +49,11 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin", "staff"],
     },
     {
+      label: "Finanzas",
+      href: "/admin/finanzas",
+      roles: ["admin"],
+    },
+    {
       label: "Reservas / Gestión",
       href: "/admin",
       roles: ["admin"],

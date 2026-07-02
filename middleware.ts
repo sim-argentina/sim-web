@@ -31,7 +31,7 @@ export async function middleware(request: NextRequest) {
 
   // Páginas solo-admin: el staff no debe verlas (datos protegidos igual por las
   // APIs con requireAdmin, esto evita mostrar la cáscara y aplica mínimo privilegio).
-  const ADMIN_ONLY = ["/admin/codigos", "/admin/bloqueos"];
+  const ADMIN_ONLY = ["/admin/codigos", "/admin/bloqueos", "/admin/finanzas"];
   if (
     role !== "admin" &&
     ADMIN_ONLY.some((p) => pathname === p || pathname.startsWith(p + "/"))
