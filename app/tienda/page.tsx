@@ -53,20 +53,27 @@ export default function TiendaPage() {
       <section className="relative h-[100svh] min-h-[560px] w-full overflow-hidden bg-black">
         {/* fondo: video full-bleed integrado con el negro (desktop / tablet) */}
         <div className="pointer-events-none absolute inset-0 hidden md:block">
-          <video
-            className="absolute inset-0 h-full w-full object-cover object-right"
-            src="/sim-store-hero-v2.mp4"
-            autoPlay
-            loop
-            muted
-            playsInline
+          {/* La máscara (fundido a la izquierda) vive en este contenedor fijo;
+              el video se desplaza a la derecha con translateX sin mover el fundido. */}
+          <div
+            className="absolute inset-0 overflow-hidden"
             style={{
               WebkitMaskImage:
                 "linear-gradient(to right, transparent 0%, transparent 34%, #000 60%, #000 100%)",
               maskImage:
                 "linear-gradient(to right, transparent 0%, transparent 34%, #000 60%, #000 100%)",
             }}
-          />
+          >
+            <video
+              className="absolute inset-0 h-full w-full object-cover"
+              src="/sim-store-hero-v2.mp4"
+              autoPlay
+              loop
+              muted
+              playsInline
+              style={{ transform: "translateX(20%)" }}
+            />
+          </div>
           {/* fundido lateral hacia el negro + overlay sutil para contraste */}
           <div
             className="absolute inset-0"
