@@ -50,7 +50,53 @@ export default function TiendaPage() {
     <main className="min-h-screen bg-[#080808] text-white overflow-x-hidden">
 
       {/* ─── HERO ─────────────────────────────────────────────── */}
-      <section className="relative min-h-[100svh] overflow-hidden">
+      <section className="relative h-[100svh] min-h-[560px] w-full overflow-hidden bg-black">
+        {/* fondo: video full-bleed integrado con el negro (desktop / tablet) */}
+        <div className="pointer-events-none absolute inset-0 hidden md:block">
+          <video
+            className="absolute inset-0 h-full w-full object-cover object-right"
+            src="/sim-store-hero.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+            style={{
+              WebkitMaskImage:
+                "linear-gradient(to right, transparent 0%, transparent 34%, #000 60%, #000 100%)",
+              maskImage:
+                "linear-gradient(to right, transparent 0%, transparent 34%, #000 60%, #000 100%)",
+            }}
+          />
+          {/* fundido lateral hacia el negro + overlay sutil para contraste */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(to right, #000 0%, rgba(0,0,0,0.88) 28%, rgba(0,0,0,0.20) 58%, rgba(0,0,0,0.42) 100%)",
+            }}
+          />
+          <div className="absolute inset-0 bg-black/10" />
+        </div>
+
+        {/* fondo mobile: video completo con overlay oscuro y texto encima */}
+        <div className="pointer-events-none absolute inset-0 md:hidden">
+          <video
+            className="absolute inset-0 h-full w-full object-cover object-[65%_50%]"
+            src="/sim-store-hero.mp4"
+            autoPlay
+            loop
+            muted
+            playsInline
+          />
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.55) 45%, rgba(0,0,0,0.62) 100%)",
+            }}
+          />
+        </div>
+
         {/* speed lines */}
         <div className="pointer-events-none absolute inset-0">
           {[12,24,36,48,60,72,84].map((l, i) => (
@@ -61,9 +107,9 @@ export default function TiendaPage() {
           <div className="absolute bottom-0 left-0 right-0 h-px bg-white/5" />
         </div>
 
-        <div className="relative grid min-h-[100svh] md:grid-cols-[1.25fr_0.75fr]">
-          {/* texto */}
-          <div className="relative z-10 flex flex-col justify-start px-8 pt-28 pb-16 md:px-16 md:pt-36 md:pb-16">
+        {/* contenido */}
+        <div className="relative z-10 flex h-full w-full flex-col justify-start px-8 pt-28 pb-16 md:px-16 md:pt-36 md:pb-16">
+          <div className="max-w-2xl">
             <div className="mb-8 flex items-center gap-4">
               <div className="h-px w-8 bg-red-600" />
               <p className="text-[10px] font-black uppercase tracking-[0.5em] text-red-500">
@@ -97,20 +143,6 @@ export default function TiendaPage() {
                   <p className="text-xs font-black uppercase text-white/30">{b}</p>
                 </div>
               ))}
-            </div>
-          </div>
-
-          {/* video hero */}
-          <div className="hidden md:block">
-            <div className="relative h-full min-h-[420px] w-full overflow-hidden bg-[#0a0a0a]">
-              <video
-                className="absolute inset-0 h-full w-full object-cover"
-                src="/sim-store-hero.mp4"
-                autoPlay
-                loop
-                muted
-                playsInline
-              />
             </div>
           </div>
         </div>
