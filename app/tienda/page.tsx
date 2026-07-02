@@ -55,7 +55,7 @@ export default function TiendaPage() {
         <div className="pointer-events-none absolute inset-0 hidden md:block">
           <video
             className="absolute inset-0 h-full w-full object-cover object-right"
-            src="/sim-store-hero.mp4"
+            src="/sim-store-hero-v2.mp4"
             autoPlay
             loop
             muted
@@ -82,7 +82,7 @@ export default function TiendaPage() {
         <div className="pointer-events-none absolute inset-0 md:hidden">
           <video
             className="absolute inset-0 h-full w-full object-cover object-[65%_50%]"
-            src="/sim-store-hero.mp4"
+            src="/sim-store-hero-v2.mp4"
             autoPlay
             loop
             muted
@@ -164,7 +164,7 @@ export default function TiendaPage() {
           <FadeIn delay={0} className="group flex flex-col bg-[#080808] transition-all duration-500 hover:bg-[#0f0f0f]">
             <div className="relative overflow-hidden">
               <div
-                className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-[#0d0d0d]"
+                className="relative flex aspect-[3/4] w-full items-center justify-center overflow-hidden bg-[#0d0d0d]"
                 style={{ background: "radial-gradient(ellipse 80% 70% at 50% 110%, rgba(220,38,38,0.12) 0%, #0d0d0d 65%)" }}
               >
                 <Image
@@ -173,7 +173,7 @@ export default function TiendaPage() {
                   fill
                   quality={90}
                   sizes="(max-width: 768px) 100vw, 45vw"
-                  className="object-cover"
+                  className="object-cover object-center"
                 />
               </div>
               <div className="absolute inset-0 bg-red-600/0 transition-all duration-500 group-hover:bg-red-600/5" />
@@ -215,7 +215,7 @@ export default function TiendaPage() {
           <FadeIn delay={100} className="group flex flex-col bg-[#080808] transition-all duration-500 hover:bg-[#0f0f0f]">
             <div className="relative overflow-hidden">
               <div
-                className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-[#0d0d0d]"
+                className="relative flex aspect-[3/4] w-full items-center justify-center overflow-hidden bg-[#0d0d0d]"
                 style={{ background: "radial-gradient(ellipse 80% 70% at 50% 110%, rgba(220,38,38,0.12) 0%, #0d0d0d 65%)" }}
               >
                 <Image
@@ -224,7 +224,7 @@ export default function TiendaPage() {
                   fill
                   quality={90}
                   sizes="(max-width: 768px) 100vw, 45vw"
-                  className="object-cover"
+                  className="object-cover object-center"
                 />
               </div>
               <div className="absolute inset-0 bg-red-600/0 transition-all duration-500 group-hover:bg-red-600/5" />
