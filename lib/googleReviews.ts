@@ -17,6 +17,9 @@ export type GoogleReview = {
 const REVALIDATE_SECONDS = 6 * 60 * 60; // 6h
 const FETCH_TIMEOUT_MS = 6000;
 const MAX_TEXT = 600;
+// Máximo de reseñas a mostrar. Google Places suele devolver pocas por request;
+// dejamos el tope en 20 para mostrar automáticamente todas las disponibles.
+const MAX_REVIEWS = 20;
 
 function cleanText(s: string): string {
   const t = s.replace(/\s+/g, " ").trim();
@@ -100,7 +103,7 @@ function normalizeLegacy(data: LegacyResponse): GoogleReview[] {
 }
 
 /**
- * Devuelve hasta 5 reseñas de 5★ del lugar configurado. [] si no hay envs,
+ * Devuelve hasta 20 reseñas de 5★ del lugar configurado. [] si no hay envs,
  * si Google falla o si no hay reseñas de 5★. Nunca lanza.
  */
 export async function getGoogleReviews(): Promise<GoogleReview[]> {
@@ -119,7 +122,7 @@ export async function getGoogleReviews(): Promise<GoogleReview[]> {
       },
     }
   );
-  if (newApi) return normalizeNew(newApi as NewApiResponse);
+  if (newApi) return normalizeNew(newApi as NewApiResponse).slice(0, MAX_REVIEWS);
 
   // 2) Fallback: Places Details (legacy), por si la key tiene habilitada la API vieja.
   const legacy = await fetchJson(
@@ -128,7 +131,7 @@ export async function getGoogleReviews(): Promise<GoogleReview[]> {
     )}&fields=reviews&language=es&reviews_no_translations=true&key=${encodeURIComponent(apiKey)}`,
     {}
   );
-  if (legacy) return normalizeLegacy(legacy as LegacyResponse);
+  if (legacy) return normalizeLegacy(legacy as LegacyResponse).slice(0, MAX_REVIEWS);
 
   // Ambas APIs fallaron: log server-side genérico (sin exponer nada al cliente).
   console.warn(

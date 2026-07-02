@@ -57,7 +57,7 @@ export default function Navbar() {
           </Link>
 
           {/* Desktop nav (xl+: hay espacio para todos los ítems sin apretar) */}
-          <nav className="hidden items-center gap-7 xl:flex 2xl:gap-10">
+          <nav className="hidden items-center gap-7 xl:mx-6 xl:flex 2xl:mx-10 2xl:gap-10">
             {LINKS.map((link) => (
               <Link
                 key={link.href}
