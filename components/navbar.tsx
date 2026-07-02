@@ -36,7 +36,7 @@ export default function Navbar() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3.5 md:px-6 lg:px-8">
 
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-3">
+          <Link href="/" className="flex shrink-0 items-center gap-3">
             <Image
               src="/sim-logo.jpg"
               alt="Logo SIM"
@@ -57,7 +57,7 @@ export default function Navbar() {
           </Link>
 
           {/* Desktop nav (xl+: hay espacio para todos los ítems sin apretar) */}
-          <nav className="hidden items-center gap-7 xl:mx-6 xl:flex 2xl:mx-10 2xl:gap-10">
+          <nav className="hidden items-center gap-6 xl:mx-8 xl:flex 2xl:mx-12 2xl:gap-7">
             {LINKS.map((link) => (
               <Link
                 key={link.href}
