@@ -64,6 +64,8 @@ type IngresoAuto = {
 
 type ResumenApi = {
   mes: string;
+  antes_de_inicio?: boolean;
+  mes_inicio?: string;
   resumen: {
     ingresosAutomaticos: number;
     ingresosManualesSim: number;
@@ -140,7 +142,7 @@ type MetricasApi = {
   };
 };
 
-type Configuracion = Record<string, number>;
+type Configuracion = Record<string, number | string>;
 
 type Sugerencia = {
   ambito: "sim" | "personal";
@@ -183,6 +185,15 @@ function pct(v: number | null | undefined): string {
 function labelMes(mes: string): string {
   const [y, m] = mes.split("-").map(Number);
   const nombres = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  return `${nombres[m - 1]} ${y}`;
+}
+
+function labelMesLargo(mes: string): string {
+  const [y, m] = mes.split("-").map(Number);
+  const nombres = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+  ];
   return `${nombres[m - 1]} ${y}`;
 }
 
@@ -343,7 +354,7 @@ export default function FinanzasClient() {
   const cargarCierre = useCallback(async (m: string) => {
     const r = await fetch(`/api/admin/finanzas/cierre?mes=${m}`, { cache: "no-store" });
     const d = await r.json();
-    if (r.ok) setCierre(d);
+    if (r.ok && Array.isArray(d.cuentas)) setCierre(d);
   }, []);
 
   const cargarReglas = useCallback(async () => {
@@ -355,7 +366,7 @@ export default function FinanzasClient() {
   const cargarMetricas = useCallback(async (m: string) => {
     const r = await fetch(`/api/admin/finanzas/metricas?mes=${m}`, { cache: "no-store" });
     const d = await r.json();
-    if (r.ok) setMetricas(d);
+    if (r.ok && d.metricas) setMetricas(d);
   }, []);
 
   const cargarConfig = useCallback(async () => {
@@ -390,6 +401,8 @@ export default function FinanzasClient() {
   }, [mes, tab, cargarMes, cargarCierre, cargarMetricas]);
 
   const mesCerrado = resumen?.cierre?.estado && resumen.cierre.estado !== "abierto";
+  const antesDeInicio = Boolean(resumen?.antes_de_inicio) && resumen?.mes === mes;
+  const TABS_DATOS: TabId[] = ["resumen", "movimientos", "cierre", "personal", "metricas"];
 
   // ── Acciones ──
   async function guardarMovimiento() {
@@ -648,9 +661,18 @@ export default function FinanzasClient() {
 
         {cargando && !resumen ? (
           <p className="text-white/60">Cargando finanzas...</p>
+        ) : antesDeInicio && TABS_DATOS.includes(tab) ? (
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
+            <p className="text-lg font-black uppercase text-white/80">
+              Finanzas comienza en {labelMesLargo(resumen?.mes_inicio || "2026-07")}.
+            </p>
+            <p className="mt-2 text-sm text-white/45">
+              No se incluyen datos históricos anteriores. Elegí {labelMesLargo(resumen?.mes_inicio || "2026-07")} o un mes posterior.
+            </p>
+          </div>
         ) : (
           <>
-            {tab === "resumen" && resumen && <TabResumen resumen={resumen} />}
+            {tab === "resumen" && resumen && !resumen.antes_de_inicio && <TabResumen resumen={resumen} />}
             {tab === "movimientos" && (
               <TabMovimientos
                 movimientos={movimientos}
@@ -2132,7 +2154,7 @@ function TabMetricas({ metricas }: { metricas: MetricasApi | null }) {
       <div>
         <h3 className="mb-3 text-sm font-black uppercase text-white/60">Operación del stand</h3>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <CardMetrica titulo="Turnos del mes" valor={String(ctx.turnos)} formula="Turnos vendidos (turnero + histórico)" />
+          <CardMetrica titulo="Turnos del mes" valor={String(ctx.turnos)} formula="Turnos vendidos (turnero del stand)" />
           <CardMetrica titulo="Revenue / Turno" valor={dinero(m.revenue_per_turn)} formula="Ingresos / turnos del mes" />
           <CardMetrica titulo="Costo / Turno" valor={dinero(m.cost_per_turn)} formula="Costos directos / turnos" />
           <CardMetrica titulo="Ganancia / Turno" valor={dinero(m.profit_per_turn)} formula="Resultado operativo / turnos"
@@ -2354,6 +2376,7 @@ function TabConfig({
   onGuardado: (c: Configuracion) => void;
 }) {
   const [valores, setValores] = useState<Record<string, string>>({});
+  const [mesInicio, setMesInicio] = useState("2026-07");
   const [guardando, setGuardando] = useState(false);
 
   useEffect(() => {
@@ -2361,6 +2384,7 @@ function TabConfig({
     const v: Record<string, string> = {};
     for (const { campo } of CONFIG_CAMPOS) v[campo] = String(config[campo] ?? 0);
     setValores(v);
+    if (config.mes_inicio) setMesInicio(String(config.mes_inicio));
   }, [config]);
 
   if (!config) return <p className="text-white/60">Cargando configuración...</p>;
@@ -2368,7 +2392,7 @@ function TabConfig({
   async function guardar() {
     setGuardando(true);
     try {
-      const payload: Record<string, number> = {};
+      const payload: Record<string, number | string> = { mes_inicio: mesInicio };
       for (const { campo } of CONFIG_CAMPOS) payload[campo] = Number(valores[campo]) || 0;
       const r = await fetch("/api/admin/finanzas/configuracion", {
         method: "PUT",
@@ -2392,6 +2416,20 @@ function TabConfig({
       <p className="mb-4 text-xs text-white/35">
         Variables usadas por las métricas (ocupación, ROI, ROA, payback, break-even).
       </p>
+      <div className="mb-4 max-w-xs">
+        <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.15em] text-white/40">
+          Mes inicial de Finanzas
+        </label>
+        <input
+          type="month"
+          value={mesInicio}
+          onChange={(e) => e.target.value && setMesInicio(e.target.value)}
+          className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+        />
+        <p className="mt-1 text-[10px] text-white/30">
+          Mes cero operativo. Los meses anteriores no muestran datos ni permiten cargar movimientos.
+        </p>
+      </div>
       <div className="grid gap-3 md:grid-cols-3">
         {CONFIG_CAMPOS.map(({ campo, label, ayuda }) => (
           <div key={campo}>

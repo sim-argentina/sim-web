@@ -5,6 +5,7 @@ import { failResponse } from "@/lib/apiError";
 import {
   calcularSaldosMes,
   getCierreMes,
+  getMesInicio,
   mesActual,
   mesValido,
   registrarFinLog,
@@ -21,6 +22,11 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    const mesInicio = await getMesInicio();
+    if (mes < mesInicio) {
+      return NextResponse.json({ mes, antes_de_inicio: true, mes_inicio: mesInicio });
+    }
+
     const [{ saldos }, cierre] = await Promise.all([calcularSaldosMes(mes), getCierreMes(mes)]);
 
     const cierreCtas = ((cierre?.cuentas || []) as Array<{
@@ -80,6 +86,14 @@ export async function POST(req: Request) {
   }
 
   try {
+    const mesInicio = await getMesInicio();
+    if (mes < mesInicio) {
+      return NextResponse.json(
+        { error: `Finanzas comienza en ${mesInicio}. No se cierran meses anteriores.` },
+        { status: 400 }
+      );
+    }
+
     const existente = await getCierreMes(mes);
     if (existente && existente.estado !== "abierto") {
       return NextResponse.json({ error: `El mes ${mes} ya está cerrado` }, { status: 400 });

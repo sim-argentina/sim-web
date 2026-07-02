@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { getCuentas, mesEstaCerrado, mesValido, registrarFinLog } from "@/lib/finanzas";
+import { getCuentas, getMesInicio, mesEstaCerrado, mesValido, registrarFinLog } from "@/lib/finanzas";
 
 // Inicialización de saldos: crea un movimiento tipo 'ajuste' con
 // origen='ajuste_inicial' por cuenta. Solo afecta saldos de caja; queda
@@ -63,6 +63,14 @@ export async function POST(req: Request) {
   const saldos = saldosRaw as Record<string, unknown>;
 
   try {
+    const mesInicio = await getMesInicio();
+    if (mes < mesInicio) {
+      return NextResponse.json(
+        { error: `Finanzas comienza en ${mesInicio}. Inicializá desde ese mes.` },
+        { status: 400 }
+      );
+    }
+
     if (await mesEstaCerrado(mes)) {
       return NextResponse.json(
         { error: `El mes ${mes} está cerrado. Reabrilo para inicializar.` },

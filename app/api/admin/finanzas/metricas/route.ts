@@ -31,15 +31,25 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const desde = restarMeses(mes, MESES_SERIE - 1);
-    const meses: string[] = [];
-    for (let i = MESES_SERIE - 1; i >= 0; i--) meses.push(restarMeses(mes, i));
+    // Config primero: define el mes inicial del módulo.
+    const config = await getConfiguracion();
+    if (mes < config.mes_inicio) {
+      return NextResponse.json({ mes, antes_de_inicio: true, mes_inicio: config.mes_inicio });
+    }
 
-    const [{ saldos, ingresosAuto, movimientos }, categorias, config, serieIngresos, movsSerieRes, invAcumRes] =
+    // Serie y comparación MoM recortadas al mes inicial: los meses anteriores
+    // no cuentan como operación válida.
+    const meses: string[] = [];
+    for (let i = MESES_SERIE - 1; i >= 0; i--) {
+      const m = restarMeses(mes, i);
+      if (m >= config.mes_inicio) meses.push(m);
+    }
+    const desde = meses[0];
+
+    const [{ saldos, ingresosAuto, movimientos }, categorias, serieIngresos, movsSerieRes, invAcumRes] =
       await Promise.all([
         calcularSaldosMes(mes),
         getCategorias(),
-        getConfiguracion(),
         getSerieIngresos(desde, mes),
         // movimientos SIM de los últimos meses para serie de egresos
         supabaseAdmin
@@ -68,7 +78,7 @@ export async function GET(req: NextRequest) {
     const turnosPorMes: Record<string, number> = {};
     for (const r of serieIngresos) {
       ingresosAutoPorMes[r.mes] = (ingresosAutoPorMes[r.mes] || 0) + r.total;
-      if (r.fuente === "turnero" || r.fuente === "turnos_historicos") {
+      if (r.fuente === "turnero") {
         turnosPorMes[r.mes] = (turnosPorMes[r.mes] || 0) + r.turnos;
       }
     }

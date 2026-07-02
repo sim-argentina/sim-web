@@ -7,6 +7,7 @@ import {
   CLASIFICACIONES,
   FECHA_RE,
   TIPOS_MOVIMIENTO,
+  getMesInicio,
   mesEstaCerrado,
   mesValido,
 } from "@/lib/finanzas";
@@ -21,6 +22,11 @@ export async function validarMovimiento(body: Record<string, unknown>): Promise<
 
   const mes = String(body.mes_contable || fecha.slice(0, 7)).trim();
   if (!mesValido(mes)) return { ok: false, error: "Mes contable inválido" };
+
+  const mesInicio = await getMesInicio();
+  if (mes < mesInicio) {
+    return { ok: false, error: `Finanzas comienza en ${mesInicio}. No se cargan movimientos anteriores.` };
+  }
 
   const ambito = String(body.ambito || "").trim();
   if (!(AMBITOS_MOVIMIENTO as readonly string[]).includes(ambito)) {

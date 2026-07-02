@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { getConfiguracion, registrarFinLog } from "@/lib/finanzas";
+import { MES_RE, getConfiguracion, registrarFinLog } from "@/lib/finanzas";
 
 const CAMPOS_NUM = [
   "cantidad_simuladores",
@@ -36,7 +36,7 @@ export async function PUT(req: Request) {
   if (!auth.ok) return auth.response;
 
   const body = await req.json().catch(() => ({}) as Record<string, unknown>);
-  const patch: Record<string, number> = {};
+  const patch: Record<string, number | string> = {};
 
   for (const campo of CAMPOS_NUM) {
     if (body[campo] === undefined) continue;
@@ -45,6 +45,14 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: `Valor inválido en ${campo}` }, { status: 400 });
     }
     patch[campo] = n;
+  }
+
+  if (body.mes_inicio !== undefined) {
+    const mesInicio = String(body.mes_inicio).trim();
+    if (!MES_RE.test(mesInicio)) {
+      return NextResponse.json({ error: "Mes inicial inválido (YYYY-MM)" }, { status: 400 });
+    }
+    patch.mes_inicio = mesInicio;
   }
 
   if (Object.keys(patch).length === 0) {

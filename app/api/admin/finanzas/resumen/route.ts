@@ -5,6 +5,7 @@ import {
   calcularSaldosMes,
   getCategorias,
   getCierreMes,
+  getMesInicio,
   mesActual,
   mesValido,
   resumirMovimientos,
@@ -20,6 +21,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // Antes del mes inicial no hay operación válida de Finanzas: estado informativo.
+    const mesInicio = await getMesInicio();
+    if (mes < mesInicio) {
+      return NextResponse.json({ mes, antes_de_inicio: true, mes_inicio: mesInicio });
+    }
+
     const [{ saldos, ingresosAuto, movimientos }, categorias, cierre] = await Promise.all([
       calcularSaldosMes(mes),
       getCategorias(),

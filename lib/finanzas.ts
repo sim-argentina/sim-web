@@ -1,9 +1,11 @@
 // Módulo Finanzas — helpers server-side.
 //
 // IMPORTANTE: este módulo es satélite. Sobre las tablas operativas existentes
-// (turnos_stand, turnos_historicos, reservas, gift_cards, campeonato_inscripciones)
-// solo se hacen LECTURAS (vía funciones SQL read-only fin_ingresos_por_mes /
-// fin_serie_ingresos). Toda la escritura ocurre exclusivamente en tablas fin_*.
+// (turnos_stand, reservas, gift_cards, campeonato_inscripciones) solo se hacen
+// LECTURAS (vía funciones SQL read-only fin_ingresos_por_mes / fin_serie_ingresos).
+// turnos_historicos NO es fuente de Finanzas: el módulo arranca en mes_inicio
+// (2026-07) y no reconstruye plata histórica. Toda la escritura ocurre
+// exclusivamente en tablas fin_*.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -59,7 +61,11 @@ export type FinConfiguracion = {
   meta_facturacion: number;
   meta_margen_operativo: number;
   meta_ocupacion: number;
+  mes_inicio: string;
 };
+
+// Mes cero operativo de Finanzas si la config no puede leerse.
+export const MES_INICIO_DEFAULT = "2026-07";
 
 export type IngresoAutomatico = {
   fuente: string;
@@ -92,7 +98,6 @@ export const AMBITOS_MOVIMIENTO = ["sim", "personal"] as const;
 
 export const FUENTES_LABEL: Record<string, string> = {
   turnero: "Turnero del stand",
-  turnos_historicos: "Turnero (histórico)",
   reservas_online: "Reservas online",
   gift_cards: "Gift cards",
   campeonatos: "Campeonatos",
@@ -178,7 +183,14 @@ export async function getConfiguracion(): Promise<FinConfiguracion> {
     meta_facturacion: Number(data?.meta_facturacion ?? 0),
     meta_margen_operativo: Number(data?.meta_margen_operativo ?? 0),
     meta_ocupacion: Number(data?.meta_ocupacion ?? 0),
+    mes_inicio: MES_RE.test(String(data?.mes_inicio || "")) ? String(data?.mes_inicio) : MES_INICIO_DEFAULT,
   };
+}
+
+// Mes inicial del módulo: los meses anteriores no son operación válida de Finanzas.
+export async function getMesInicio(): Promise<string> {
+  const config = await getConfiguracion();
+  return config.mes_inicio;
 }
 
 // ── Ingresos automáticos (read-only sobre tablas operativas) ────────────────
@@ -228,10 +240,10 @@ export async function getIngresosAutomaticos(mes: string): Promise<{
     totalPorFuente[fuente] = (totalPorFuente[fuente] || 0) + monto;
     total += monto;
 
-    // cantidad de turnos: solo fuentes de turnero (el resto son ventas, no turnos)
-    if (fuente === "turnero" || fuente === "turnos_historicos") {
+    // cantidad de turnos: solo el turnero (el resto son ventas, no turnos)
+    if (fuente === "turnero") {
       // la función devuelve el total de turnos del mes repetido por fila de método:
-      // tomamos el máximo por fuente para no duplicar
+      // tomamos el máximo para no duplicar
       turnosPorFuente[fuente] = Math.max(turnosPorFuente[fuente] || 0, Number(row.cantidad) || 0);
     }
   }
