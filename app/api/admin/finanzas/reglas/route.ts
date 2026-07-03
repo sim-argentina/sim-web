@@ -15,10 +15,7 @@ export async function GET() {
     .order("prioridad", { ascending: true });
 
   if (error) {
-    return failResponse(500, "Error cargando reglas", {
-      logContext: "finanzas reglas GET",
-      error,
-    });
+    return failResponse(500, "Error cargando reglas", { logContext: "finanzas reglas GET", error });
   }
   return NextResponse.json({ reglas: data || [] });
 }
@@ -32,11 +29,6 @@ export async function POST(req: Request) {
   const keyword = String(body.keyword || "").trim().toLowerCase().slice(0, 60);
   if (keyword.length < 2) {
     return NextResponse.json({ error: "Keyword requerida (mínimo 2 caracteres)" }, { status: 400 });
-  }
-
-  const ambito = body.ambito ? String(body.ambito).trim() : null;
-  if (ambito && !["sim", "personal"].includes(ambito)) {
-    return NextResponse.json({ error: "Ámbito inválido" }, { status: 400 });
   }
 
   const tipo = body.tipo_sugerido ? String(body.tipo_sugerido).trim() : null;
@@ -62,7 +54,7 @@ export async function POST(req: Request) {
     .from("fin_reglas_clasificacion")
     .insert([
       {
-        ambito,
+        ambito: null, // sin ámbito
         keyword,
         tipo_sugerido: tipo,
         clasificacion_sugerida: clasif,
@@ -76,10 +68,7 @@ export async function POST(req: Request) {
     .single();
 
   if (error) {
-    return failResponse(500, "Error creando regla", {
-      logContext: "finanzas reglas POST",
-      error,
-    });
+    return failResponse(500, "Error creando regla", { logContext: "finanzas reglas POST", error });
   }
 
   await registrarFinLog("crear", "fin_reglas_clasificacion", data.id, { keyword }, auth.role);

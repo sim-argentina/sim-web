@@ -2,10 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { getCategorias, registrarFinLog } from "@/lib/finanzas";
-
-const AMBITOS = ["sim", "personal", "ambos"];
-const TIPOS = ["ingreso", "costo", "gasto", "inversion", "retiro", "ajuste"];
+import { TIPOS_CATEGORIA, getCategorias, registrarFinLog } from "@/lib/finanzas";
 
 export async function GET() {
   const auth = await requireAdmin();
@@ -15,10 +12,7 @@ export async function GET() {
     const categorias = await getCategorias();
     return NextResponse.json({ categorias });
   } catch (error) {
-    return failResponse(500, "Error cargando categorías", {
-      logContext: "finanzas categorias GET",
-      error,
-    });
+    return failResponse(500, "Error cargando categorías", { logContext: "finanzas categorias GET", error });
   }
 }
 
@@ -31,18 +25,17 @@ export async function POST(req: Request) {
   const nombre = String(body.nombre || "").trim().slice(0, 80);
   if (!nombre) return NextResponse.json({ error: "Nombre requerido" }, { status: 400 });
 
-  const ambito = String(body.ambito || "").trim();
-  if (!AMBITOS.includes(ambito)) return NextResponse.json({ error: "Ámbito inválido" }, { status: 400 });
-
   const tipo = String(body.tipo || "").trim();
-  if (!TIPOS.includes(tipo)) return NextResponse.json({ error: "Tipo inválido" }, { status: 400 });
+  if (!(TIPOS_CATEGORIA as readonly string[]).includes(tipo)) {
+    return NextResponse.json({ error: "Tipo inválido" }, { status: 400 });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("fin_categorias")
     .insert([
       {
         nombre,
-        ambito,
+        ambito: "sim",
         tipo,
         activa: body.activa !== false,
         orden: Number(body.orden) || 50,
@@ -60,6 +53,6 @@ export async function POST(req: Request) {
       : failResponse(500, "Error creando categoría", { logContext: "finanzas categorias POST", error });
   }
 
-  await registrarFinLog("crear", "fin_categorias", data.id, { nombre, tipo, ambito }, auth.role);
+  await registrarFinLog("crear", "fin_categorias", data.id, { nombre, tipo }, auth.role);
   return NextResponse.json({ categoria: data }, { status: 201 });
 }

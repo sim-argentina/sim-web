@@ -1,9 +1,8 @@
 // Validación server-side de movimientos del módulo Finanzas.
-// Separada del route handler para poder reutilizarla en POST y PUT.
+// Modelo simplificado: sin ámbito (siempre SIM), cuentas solo Efectivo / MP activas.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  AMBITOS_MOVIMIENTO,
   CLASIFICACIONES,
   FECHA_RE,
   TIPOS_MOVIMIENTO,
@@ -26,11 +25,6 @@ export async function validarMovimiento(body: Record<string, unknown>): Promise<
   const mesInicio = await getMesInicio();
   if (mes < mesInicio) {
     return { ok: false, error: `Finanzas comienza en ${mesInicio}. No se cargan movimientos anteriores.` };
-  }
-
-  const ambito = String(body.ambito || "").trim();
-  if (!(AMBITOS_MOVIMIENTO as readonly string[]).includes(ambito)) {
-    return { ok: false, error: "Ámbito inválido" };
   }
 
   const tipo = String(body.tipo || "").trim();
@@ -65,14 +59,16 @@ export async function validarMovimiento(body: Record<string, unknown>): Promise<
     }
   }
 
+  // Las cuentas deben existir y estar ACTIVAS (solo Efectivo / Mercado Pago).
   const idsCuentas = [cuentaOrigen, cuentaDestino].filter(Boolean) as string[];
   if (idsCuentas.length > 0) {
     const { data, error } = await supabaseAdmin
       .from("fin_cuentas")
       .select("id")
+      .eq("activa", true)
       .in("id", idsCuentas);
     if (error || (data || []).length !== new Set(idsCuentas).size) {
-      return { ok: false, error: "Cuenta inexistente" };
+      return { ok: false, error: "Cuenta inválida o inactiva (usá Efectivo o Mercado Pago)" };
     }
   }
   if (categoriaId) {
@@ -94,7 +90,7 @@ export async function validarMovimiento(body: Record<string, unknown>): Promise<
     row: {
       fecha,
       mes_contable: mes,
-      ambito,
+      ambito: "sim", // compatibilidad: siempre SIM
       tipo,
       clasificacion,
       cuenta_origen_id: cuentaOrigen,

@@ -4,11 +4,10 @@ import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
 import { MES_RE, getConfiguracion, registrarFinLog } from "@/lib/finanzas";
 
+// Editables manualmente. Días operativos y duración de turno se calculan solos.
 const CAMPOS_NUM = [
-  "cantidad_simuladores",
-  "horas_operativas_dia",
-  "duracion_turno_min",
-  "dias_operativos_mes",
+  "cantidad_simuladores", // default por día
+  "horas_operativas_dia", // default por día
   "valor_activos",
   "inversion_inicial",
   "meta_facturacion",
@@ -24,10 +23,7 @@ export async function GET() {
     const configuracion = await getConfiguracion();
     return NextResponse.json({ configuracion });
   } catch (error) {
-    return failResponse(500, "Error cargando configuración", {
-      logContext: "finanzas configuracion GET",
-      error,
-    });
+    return failResponse(500, "Error cargando configuración", { logContext: "finanzas configuracion GET", error });
   }
 }
 
@@ -59,15 +55,9 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "Nada para actualizar" }, { status: 400 });
   }
 
-  const { error } = await supabaseAdmin
-    .from("fin_configuracion")
-    .upsert([{ id: 1, ...patch }], { onConflict: "id" });
-
+  const { error } = await supabaseAdmin.from("fin_configuracion").upsert([{ id: 1, ...patch }], { onConflict: "id" });
   if (error) {
-    return failResponse(500, "Error guardando configuración", {
-      logContext: "finanzas configuracion PUT",
-      error,
-    });
+    return failResponse(500, "Error guardando configuración", { logContext: "finanzas configuracion PUT", error });
   }
 
   await registrarFinLog("editar", "fin_configuracion", "1", patch, auth.role);

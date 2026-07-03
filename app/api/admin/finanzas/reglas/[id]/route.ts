@@ -24,13 +24,6 @@ export async function PUT(req: Request, { params }: Params) {
     if (keyword.length < 2) return NextResponse.json({ error: "Keyword inválida" }, { status: 400 });
     patch.keyword = keyword;
   }
-  if (body.ambito !== undefined) {
-    const ambito = body.ambito ? String(body.ambito).trim() : null;
-    if (ambito && !["sim", "personal"].includes(ambito)) {
-      return NextResponse.json({ error: "Ámbito inválido" }, { status: 400 });
-    }
-    patch.ambito = ambito;
-  }
   if (body.tipo_sugerido !== undefined) {
     const tipo = body.tipo_sugerido ? String(body.tipo_sugerido).trim() : null;
     if (tipo && !(TIPOS_MOVIMIENTO as readonly string[]).includes(tipo)) {

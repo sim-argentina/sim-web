@@ -14,22 +14,9 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}) as Record<string, unknown>);
 
-  // Deducción de ámbito: si origen y destino son de distinto ámbito, se registra
-  // con el ámbito de la cuenta origen (la trazabilidad queda en la misma fila).
-  const cuentaOrigen = body.cuenta_origen_id ? String(body.cuenta_origen_id) : null;
-  let ambito = String(body.ambito || "").trim();
-  if (!ambito && cuentaOrigen) {
-    const { data } = await supabaseAdmin
-      .from("fin_cuentas")
-      .select("ambito")
-      .eq("id", cuentaOrigen)
-      .maybeSingle();
-    ambito = data?.ambito === "personal" ? "personal" : "sim";
-  }
-
+  // Transferencia entre cuentas SIM (Efectivo ↔ Mercado Pago). Sin ámbitos.
   const val = await validarMovimiento({
     ...body,
-    ambito: ambito || "sim",
     tipo: "transferencia",
     clasificacion: "otro",
   });

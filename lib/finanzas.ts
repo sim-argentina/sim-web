@@ -1,15 +1,21 @@
 // Módulo Finanzas — helpers server-side.
 //
+// Modelo de caja de SIM (simplificado):
+// - Todo es SIM (sin ámbitos). Cuentas/fuentes: solo Efectivo y Mercado Pago.
+// - Saldo inicial GENERAL por mes (no por cuenta).
+// - "Mi sueldo": monto mensual asignado; los gastos personales son egresos
+//   clasificados como sueldo_personal que salen de la caja del stand.
+// - Sin "retiros" como concepto.
+//
 // IMPORTANTE: este módulo es satélite. Sobre las tablas operativas existentes
 // (turnos_stand, reservas, gift_cards, campeonato_inscripciones) solo se hacen
-// LECTURAS (vía funciones SQL read-only fin_ingresos_por_mes / fin_serie_ingresos).
-// turnos_historicos NO es fuente de Finanzas: el módulo arranca en mes_inicio
-// (2026-07) y no reconstruye plata histórica. Toda la escritura ocurre
-// exclusivamente en tablas fin_*.
+// LECTURAS. turnos_historicos NO es fuente. Escritura solo en tablas fin_*.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
+
+export type CuentaTipo = "efectivo" | "mercado_pago";
 
 export type FinCuenta = {
   id: string;
@@ -24,11 +30,12 @@ export type FinCategoria = {
   id: string;
   nombre: string;
   ambito: "sim" | "personal" | "ambos";
-  tipo: "ingreso" | "costo" | "gasto" | "inversion" | "retiro" | "ajuste";
+  tipo: "ingreso" | "costo" | "gasto" | "inversion" | "sueldo_personal" | "ajuste" | "retiro";
   activa: boolean;
   orden: number;
   color: string | null;
   descripcion: string | null;
+  protegida: boolean;
 };
 
 export type FinMovimiento = {
@@ -52,10 +59,8 @@ export type FinMovimiento = {
 };
 
 export type FinConfiguracion = {
-  cantidad_simuladores: number;
-  horas_operativas_dia: number;
-  duracion_turno_min: number;
-  dias_operativos_mes: number;
+  cantidad_simuladores: number; // default por día
+  horas_operativas_dia: number; // default por día
   valor_activos: number;
   inversion_inicial: number;
   meta_facturacion: number;
@@ -64,27 +69,27 @@ export type FinConfiguracion = {
   mes_inicio: string;
 };
 
+export type FinExcepcion = {
+  id: string;
+  fecha: string;
+  cerrado: boolean;
+  horas: number | null;
+  simuladores: number | null;
+  motivo: string | null;
+};
+
 // Mes cero operativo de Finanzas si la config no puede leerse.
 export const MES_INICIO_DEFAULT = "2026-07";
+export const DURACION_BASE_MIN = 15;
 
 export type IngresoAutomatico = {
   fuente: string;
   fuenteLabel: string;
   categoria: string;
   metodo: string;
-  cuentaTipo: "efectivo" | "mercado_pago" | "banco" | null;
+  cuentaTipo: CuentaTipo;
   total: number;
   cantidad: number;
-};
-
-export type SaldoCuenta = {
-  cuenta: FinCuenta;
-  saldoInicial: number;
-  ingresos: number;
-  egresos: number;
-  transferenciasEntrantes: number;
-  transferenciasSalientes: number;
-  saldoTeorico: number;
 };
 
 // ── Constantes ───────────────────────────────────────────────────────────────
@@ -93,8 +98,13 @@ export const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 export const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export const TIPOS_MOVIMIENTO = ["ingreso", "egreso", "transferencia", "ajuste"] as const;
-export const CLASIFICACIONES = ["ingreso", "costo", "gasto", "inversion", "retiro", "ajuste", "otro"] as const;
-export const AMBITOS_MOVIMIENTO = ["sim", "personal"] as const;
+// "retiro" queda por compatibilidad de datos viejos, pero no se usa en el flujo.
+export const CLASIFICACIONES = [
+  "ingreso", "costo", "gasto", "inversion", "sueldo_personal", "ajuste", "otro", "retiro",
+] as const;
+export const TIPOS_CATEGORIA = [
+  "ingreso", "costo", "gasto", "inversion", "sueldo_personal", "ajuste",
+] as const;
 
 export const FUENTES_LABEL: Record<string, string> = {
   turnero: "Turnero del stand",
@@ -103,19 +113,18 @@ export const FUENTES_LABEL: Record<string, string> = {
   campeonatos: "Campeonatos",
 };
 
-// ── Utilidades de mes ────────────────────────────────────────────────────────
+// ── Utilidades de mes/fecha ──────────────────────────────────────────────────
 
 export function mesValido(mes: string): boolean {
   return MES_RE.test(mes);
 }
 
 export function mesActual(): string {
-  const d = new Date();
   const ar = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Argentina/Buenos_Aires",
     year: "numeric",
     month: "2-digit",
-  }).format(d); // "YYYY-MM"
+  }).format(new Date());
   return ar.slice(0, 7);
 }
 
@@ -131,18 +140,18 @@ export function restarMeses(mes: string, n: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-// ── Mapeo método de pago → tipo de cuenta ────────────────────────────────────
+export function diasEnMes(mes: string): number {
+  const [y, m] = mes.split("-").map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
 
-export function metodoACuentaTipo(
-  metodo: string
-): "efectivo" | "mercado_pago" | "banco" | null {
+// ── Mapeo método de pago → tipo de cuenta (solo efectivo / mercado_pago) ─────
+
+export function metodoACuentaTipo(metodo: string): CuentaTipo {
   const m = metodo.toLowerCase().trim();
   if (m === "efectivo" || m === "cash") return "efectivo";
-  if (m === "transferencia") return "banco";
-  if (["qr", "debito", "crédito", "credito", "tarjeta", "mp", "mercadopago", "mercado_pago", "mercado pago"].includes(m)) {
-    return "mercado_pago";
-  }
-  return null; // desconocido / mixto sin detalle / gratis
+  // Todo lo no-efectivo (transferencia/banco/débito/crédito/qr/mp/…) va a Mercado Pago.
+  return "mercado_pago";
 }
 
 // ── Datos base ───────────────────────────────────────────────────────────────
@@ -151,6 +160,7 @@ export async function getCuentas(): Promise<FinCuenta[]> {
   const { data, error } = await supabaseAdmin
     .from("fin_cuentas")
     .select("*")
+    .eq("activa", true)
     .order("orden", { ascending: true });
   if (error) throw error;
   return (data || []) as FinCuenta[];
@@ -163,7 +173,7 @@ export async function getCategorias(): Promise<FinCategoria[]> {
     .order("tipo", { ascending: true })
     .order("orden", { ascending: true });
   if (error) throw error;
-  return (data || []) as FinCategoria[];
+  return (data || []).map((c) => ({ ...c, protegida: Boolean(c.protegida) })) as FinCategoria[];
 }
 
 export async function getConfiguracion(): Promise<FinConfiguracion> {
@@ -174,10 +184,8 @@ export async function getConfiguracion(): Promise<FinConfiguracion> {
     .maybeSingle();
   if (error) throw error;
   return {
-    cantidad_simuladores: Number(data?.cantidad_simuladores ?? 4),
-    horas_operativas_dia: Number(data?.horas_operativas_dia ?? 12),
-    duracion_turno_min: Number(data?.duracion_turno_min ?? 15),
-    dias_operativos_mes: Number(data?.dias_operativos_mes ?? 30),
+    cantidad_simuladores: Number(data?.cantidad_simuladores ?? 4) || 4,
+    horas_operativas_dia: Number(data?.horas_operativas_dia ?? 12) || 12,
     valor_activos: Number(data?.valor_activos ?? 0),
     inversion_inicial: Number(data?.inversion_inicial ?? 0),
     meta_facturacion: Number(data?.meta_facturacion ?? 0),
@@ -187,10 +195,99 @@ export async function getConfiguracion(): Promise<FinConfiguracion> {
   };
 }
 
-// Mes inicial del módulo: los meses anteriores no son operación válida de Finanzas.
 export async function getMesInicio(): Promise<string> {
-  const config = await getConfiguracion();
-  return config.mes_inicio;
+  return (await getConfiguracion()).mes_inicio;
+}
+
+export async function getSueldoMes(mes: string): Promise<number> {
+  const { data, error } = await supabaseAdmin
+    .from("fin_sueldos")
+    .select("monto")
+    .eq("mes", mes)
+    .maybeSingle();
+  if (error) throw error;
+  return Number(data?.monto ?? 0) || 0;
+}
+
+export async function getExcepcionesMes(mes: string): Promise<FinExcepcion[]> {
+  const { data, error } = await supabaseAdmin
+    .from("fin_excepciones_operativas")
+    .select("*")
+    .gte("fecha", `${mes}-01`)
+    .lte("fecha", `${mes}-31`)
+    .order("fecha", { ascending: true });
+  if (error) throw error;
+  return (data || []).map((e) => ({
+    id: e.id,
+    fecha: e.fecha,
+    cerrado: Boolean(e.cerrado),
+    horas: e.horas === null ? null : Number(e.horas),
+    simuladores: e.simuladores === null ? null : Number(e.simuladores),
+    motivo: e.motivo ?? null,
+  })) as FinExcepcion[];
+}
+
+// ── Duración promedio de turno (auto: 15 + demora promedio de subida) ────────
+
+export async function getDuracionPromedioTurno(mes: string): Promise<number> {
+  const { data, error } = await supabaseAdmin
+    .from("turnos_stand")
+    .select("hora_estimada_subida, hora_subida, fecha, estado")
+    .gte("fecha", `${mes}-01`)
+    .lte("fecha", `${mes}-31`);
+  if (error) throw error;
+
+  const toMin = (h: unknown): number | null => {
+    if (!h || typeof h !== "string") return null;
+    const [hh, mm] = h.split(":").map(Number);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+    return hh * 60 + mm;
+  };
+
+  const demoras: number[] = [];
+  for (const t of (data || []) as Array<Record<string, unknown>>) {
+    if (t.estado === "cancelado") continue;
+    const est = toMin(t.hora_estimada_subida);
+    const sub = toMin(t.hora_subida);
+    if (est === null || sub === null) continue;
+    const d = sub - est;
+    // Solo demoras "normales": descarta negativas y extraordinarias (>30 min).
+    if (d >= 0 && d <= 30) demoras.push(d);
+  }
+  if (demoras.length === 0) return DURACION_BASE_MIN;
+  const avg = demoras.reduce((a, b) => a + b, 0) / demoras.length;
+  return Math.max(DURACION_BASE_MIN, Math.round(DURACION_BASE_MIN + avg));
+}
+
+// Capacidad teórica del mes (por día, respetando excepciones).
+export function capacidadYDiasOperativos(
+  mes: string,
+  config: FinConfiguracion,
+  excepciones: FinExcepcion[],
+  duracionTurnoMin: number
+): { capacidad: number; diasOperativos: number; diasDelMes: number; diasCerrados: number } {
+  const total = diasEnMes(mes);
+  const excPorFecha: Record<string, FinExcepcion> = {};
+  for (const e of excepciones) excPorFecha[e.fecha] = e;
+
+  const dur = duracionTurnoMin > 0 ? duracionTurnoMin : DURACION_BASE_MIN;
+  let capacidad = 0;
+  let diasCerrados = 0;
+
+  for (let d = 1; d <= total; d++) {
+    const fecha = `${mes}-${String(d).padStart(2, "0")}`;
+    const exc = excPorFecha[fecha];
+    if (exc?.cerrado) {
+      diasCerrados++;
+      continue;
+    }
+    const horas = exc?.horas ?? config.horas_operativas_dia;
+    const sims = exc?.simuladores ?? config.cantidad_simuladores;
+    const slots = Math.floor((horas * 60) / dur);
+    capacidad += sims * slots;
+  }
+
+  return { capacidad, diasOperativos: total - diasCerrados, diasDelMes: total, diasCerrados };
 }
 
 // ── Ingresos automáticos (read-only sobre tablas operativas) ────────────────
@@ -219,7 +316,6 @@ export async function getIngresosAutomaticos(mes: string): Promise<{
   const items: IngresoAutomatico[] = [];
   const totalPorFuente: Record<string, number> = {};
   let total = 0;
-  let turnosDelMes = 0;
   const turnosPorFuente: Record<string, number> = {};
 
   for (const row of (data || []) as Array<{ fuente: string; metodo: string; total: unknown; cantidad: unknown }>) {
@@ -240,14 +336,11 @@ export async function getIngresosAutomaticos(mes: string): Promise<{
     totalPorFuente[fuente] = (totalPorFuente[fuente] || 0) + monto;
     total += monto;
 
-    // cantidad de turnos: solo el turnero (el resto son ventas, no turnos)
     if (fuente === "turnero") {
-      // la función devuelve el total de turnos del mes repetido por fila de método:
-      // tomamos el máximo para no duplicar
       turnosPorFuente[fuente] = Math.max(turnosPorFuente[fuente] || 0, Number(row.cantidad) || 0);
     }
   }
-  turnosDelMes = Object.values(turnosPorFuente).reduce((a, b) => a + b, 0);
+  const turnosDelMes = Object.values(turnosPorFuente).reduce((a, b) => a + b, 0);
 
   return { items, totalPorFuente, total, turnosDelMes };
 }
@@ -255,10 +348,7 @@ export async function getIngresosAutomaticos(mes: string): Promise<{
 export async function getSerieIngresos(desde: string, hasta: string): Promise<
   Array<{ mes: string; fuente: string; total: number; turnos: number }>
 > {
-  const { data, error } = await supabaseAdmin.rpc("fin_serie_ingresos", {
-    p_desde: desde,
-    p_hasta: hasta,
-  });
+  const { data, error } = await supabaseAdmin.rpc("fin_serie_ingresos", { p_desde: desde, p_hasta: hasta });
   if (error) throw error;
   return ((data || []) as Array<{ mes: string; fuente: string; total: unknown; turnos: unknown }>).map((r) => ({
     mes: r.mes,
@@ -289,184 +379,217 @@ export async function getMovimientosMes(mes: string): Promise<FinMovimiento[]> {
   return out;
 }
 
-// ── Saldos por cuenta ────────────────────────────────────────────────────────
+// ── Saldo inicial GENERAL ─────────────────────────────────────────────────────
 
-async function getSaldosInicialesMes(mes: string, cuentas: FinCuenta[]): Promise<Record<string, number>> {
-  // Saldo inicial = saldo real del cierre del mes anterior (si existe y está cerrado).
+export async function getSaldoInicialGeneral(mes: string): Promise<number> {
+  // 1) Si el mes anterior está cerrado, arrastra su saldo real general.
   const prev = mesAnterior(mes);
-  const iniciales: Record<string, number> = {};
-  for (const c of cuentas) iniciales[c.id] = 0;
-
-  const { data: cierrePrev, error } = await supabaseAdmin
+  const { data: cierrePrev, error: e1 } = await supabaseAdmin
     .from("fin_cierres_mensuales")
-    .select("id, estado, cuentas:fin_cierres_cuentas(cuenta_id, saldo_real)")
+    .select("estado, saldo_real_general")
     .eq("mes", prev)
     .maybeSingle();
-  if (error) throw error;
-
+  if (e1) throw e1;
   if (cierrePrev && cierrePrev.estado !== "abierto") {
-    for (const cc of (cierrePrev.cuentas || []) as Array<{ cuenta_id: string; saldo_real: unknown }>) {
-      iniciales[cc.cuenta_id] = Number(cc.saldo_real) || 0;
-    }
+    return Number(cierrePrev.saldo_real_general) || 0;
   }
-  return iniciales;
+  // 2) Si no, usa el saldo inicial general cargado manualmente para este mes.
+  const { data: ini, error: e2 } = await supabaseAdmin
+    .from("fin_saldos_iniciales")
+    .select("monto")
+    .eq("mes", mes)
+    .maybeSingle();
+  if (e2) throw e2;
+  return Number(ini?.monto ?? 0) || 0;
 }
 
-export async function calcularSaldosMes(mes: string): Promise<{
-  saldos: SaldoCuenta[];
-  ingresosAuto: Awaited<ReturnType<typeof getIngresosAutomaticos>>;
-  movimientos: FinMovimiento[];
-}> {
-  const cuentas = await getCuentas();
-  const [iniciales, movimientos, ingresosAuto] = await Promise.all([
-    getSaldosInicialesMes(mes, cuentas),
-    getMovimientosMes(mes),
-    getIngresosAutomaticos(mes),
-  ]);
+// ── Resumen mensual (general + por fuente) ───────────────────────────────────
 
-  const porCuenta: Record<string, SaldoCuenta> = {};
-  for (const c of cuentas) {
-    porCuenta[c.id] = {
-      cuenta: c,
-      saldoInicial: iniciales[c.id] || 0,
-      ingresos: 0,
-      egresos: 0,
-      transferenciasEntrantes: 0,
-      transferenciasSalientes: 0,
-      saldoTeorico: 0,
-    };
-  }
-
-  // Movimientos manuales
-  for (const m of movimientos) {
-    if (m.tipo === "ingreso" && m.cuenta_origen_id && porCuenta[m.cuenta_origen_id]) {
-      porCuenta[m.cuenta_origen_id].ingresos += m.monto;
-    } else if (m.tipo === "egreso" && m.cuenta_origen_id && porCuenta[m.cuenta_origen_id]) {
-      porCuenta[m.cuenta_origen_id].egresos += m.monto;
-    } else if (m.tipo === "transferencia") {
-      if (m.cuenta_origen_id && porCuenta[m.cuenta_origen_id]) {
-        porCuenta[m.cuenta_origen_id].transferenciasSalientes += m.monto;
-      }
-      if (m.cuenta_destino_id && porCuenta[m.cuenta_destino_id]) {
-        porCuenta[m.cuenta_destino_id].transferenciasEntrantes += m.monto;
-      }
-    } else if (m.tipo === "ajuste") {
-      if (m.cuenta_destino_id && porCuenta[m.cuenta_destino_id]) {
-        porCuenta[m.cuenta_destino_id].ingresos += m.monto;
-      } else if (m.cuenta_origen_id && porCuenta[m.cuenta_origen_id]) {
-        porCuenta[m.cuenta_origen_id].egresos += m.monto;
-      }
-    }
-  }
-
-  // Ingresos automáticos: se asignan a la cuenta SIM que corresponde al método.
-  const cuentaSimPorTipo: Record<string, string> = {};
-  for (const c of cuentas) {
-    if (c.ambito === "sim" && c.activa) cuentaSimPorTipo[c.tipo] = c.id;
-  }
-  for (const item of ingresosAuto.items) {
-    if (!item.cuentaTipo) continue;
-    const cid = cuentaSimPorTipo[item.cuentaTipo];
-    if (cid && porCuenta[cid]) porCuenta[cid].ingresos += item.total;
-  }
-
-  const saldos = cuentas.map((c) => {
-    const s = porCuenta[c.id];
-    s.saldoTeorico =
-      s.saldoInicial + s.ingresos - s.egresos + s.transferenciasEntrantes - s.transferenciasSalientes;
-    return s;
-  });
-
-  return { saldos, ingresosAuto, movimientos };
-}
-
-// ── Resumen mensual ──────────────────────────────────────────────────────────
+export type ResumenPorFuente = {
+  tipo: CuentaTipo;
+  nombre: string;
+  ingresos: number;
+  egresos: number;
+  transferenciasEntrantes: number;
+  transferenciasSalientes: number;
+  neto: number;
+};
 
 export type ResumenMes = {
   mes: string;
   ingresosAutomaticos: number;
-  ingresosManualesSim: number;
-  ingresosSim: number;
+  ingresosManuales: number;
+  ingresos: number;
   costos: number;
   gastos: number;
   inversiones: number;
-  retiros: number;
-  ajustesSim: number;
+  gastosSueldo: number;
+  otros: number;
+  ajustesNet: number;
+  sueldoAsignado: number;
+  sueldoDisponible: number;
   resultadoOperativo: number;
-  personal: {
-    ingresos: number;
-    gastos: number;
-    porCategoria: Record<string, number>;
-  };
+  saldoInicialGeneral: number;
+  saldoFinalTeoricoGeneral: number;
   turnosDelMes: number;
+  porFuente: ResumenPorFuente[];
+  sueldoPorCategoria: Record<string, number>;
+  sueldoPorFuente: Record<string, number>;
 };
 
-export function resumirMovimientos(
-  mes: string,
-  movimientos: FinMovimiento[],
-  ingresosAuto: { total: number; turnosDelMes: number },
-  categorias: FinCategoria[]
-): ResumenMes {
+export function resumirMes(params: {
+  mes: string;
+  movimientos: FinMovimiento[];
+  ingresosAuto: IngresoAutomatico[];
+  ingresosAutoTotal: number;
+  turnosDelMes: number;
+  saldoInicialGeneral: number;
+  sueldoAsignado: number;
+  cuentas: FinCuenta[];
+  categorias: FinCategoria[];
+}): ResumenMes {
+  const { mes, movimientos, ingresosAuto, ingresosAutoTotal, turnosDelMes, saldoInicialGeneral, sueldoAsignado, cuentas, categorias } = params;
+
   const catById: Record<string, FinCategoria> = {};
   for (const c of categorias) catById[c.id] = c;
 
-  let ingresosManualesSim = 0;
+  // Por fuente (solo cuentas activas: efectivo / mercado_pago)
+  const porFuenteMap: Record<string, ResumenPorFuente> = {};
+  const cuentaTipoById: Record<string, CuentaTipo> = {};
+  for (const c of cuentas) {
+    const tipo = (c.tipo === "efectivo" ? "efectivo" : "mercado_pago") as CuentaTipo;
+    cuentaTipoById[c.id] = tipo;
+    porFuenteMap[tipo] = porFuenteMap[tipo] || {
+      tipo,
+      nombre: c.nombre,
+      ingresos: 0,
+      egresos: 0,
+      transferenciasEntrantes: 0,
+      transferenciasSalientes: 0,
+      neto: 0,
+    };
+  }
+  const tipoCuentaSim: Record<CuentaTipo, string | null> = { efectivo: null, mercado_pago: null };
+  for (const c of cuentas) tipoCuentaSim[cuentaTipoById[c.id]] = c.id;
+
+  let ingresosManuales = 0;
   let costos = 0;
   let gastos = 0;
   let inversiones = 0;
-  let retiros = 0;
-  let ajustesSim = 0;
-  let ingresosPersonal = 0;
-  let gastosPersonal = 0;
-  const personalPorCategoria: Record<string, number> = {};
+  let gastosSueldo = 0;
+  let otros = 0;
+  let ajustesNet = 0;
+  const sueldoPorCategoria: Record<string, number> = {};
+  const sueldoPorFuente: Record<string, number> = {};
 
   for (const m of movimientos) {
-    if (m.tipo === "transferencia") continue; // no afecta resultado, solo saldos
-    if (m.origen === "ajuste_inicial") continue; // inicialización de saldos: solo caja, nunca resultado
+    if (m.origen === "ajuste_inicial") continue; // saldo inicial general, no es movimiento operativo
 
-    if (m.ambito === "sim") {
-      if (m.tipo === "ingreso") ingresosManualesSim += m.monto;
-      else if (m.tipo === "egreso") {
-        if (m.clasificacion === "costo") costos += m.monto;
-        else if (m.clasificacion === "gasto") gastos += m.monto;
-        else if (m.clasificacion === "inversion") inversiones += m.monto;
-        else if (m.clasificacion === "retiro") retiros += m.monto;
-        else gastos += m.monto; // otro/ajuste como gasto operativo por defecto
-      } else if (m.tipo === "ajuste") {
-        ajustesSim += m.cuenta_destino_id ? m.monto : -m.monto;
-      }
-    } else {
-      if (m.tipo === "ingreso") ingresosPersonal += m.monto;
-      else if (m.tipo === "egreso" || m.tipo === "ajuste") {
-        const monto = m.tipo === "ajuste" && m.cuenta_destino_id ? -m.monto : m.monto;
-        gastosPersonal += monto;
+    // Resultado / clasificación
+    if (m.tipo === "ingreso") {
+      ingresosManuales += m.monto;
+    } else if (m.tipo === "egreso") {
+      if (m.clasificacion === "costo") costos += m.monto;
+      else if (m.clasificacion === "gasto") gastos += m.monto;
+      else if (m.clasificacion === "inversion") inversiones += m.monto;
+      else if (m.clasificacion === "sueldo_personal" || m.clasificacion === "retiro") {
+        gastosSueldo += m.monto;
         const cat = m.categoria_id ? catById[m.categoria_id]?.nombre : null;
-        const key = cat || "Sin categoría";
-        personalPorCategoria[key] = (personalPorCategoria[key] || 0) + monto;
+        sueldoPorCategoria[cat || "Sin categoría"] = (sueldoPorCategoria[cat || "Sin categoría"] || 0) + m.monto;
+        const ft = m.cuenta_origen_id ? cuentaTipoById[m.cuenta_origen_id] : null;
+        if (ft) sueldoPorFuente[ft] = (sueldoPorFuente[ft] || 0) + m.monto;
+      } else otros += m.monto;
+    } else if (m.tipo === "ajuste") {
+      ajustesNet += m.cuenta_destino_id ? m.monto : -m.monto;
+    }
+
+    // Por fuente (caja)
+    if (m.tipo === "ingreso" && m.cuenta_origen_id && porFuenteMap[cuentaTipoById[m.cuenta_origen_id]]) {
+      porFuenteMap[cuentaTipoById[m.cuenta_origen_id]].ingresos += m.monto;
+    } else if (m.tipo === "egreso" && m.cuenta_origen_id && porFuenteMap[cuentaTipoById[m.cuenta_origen_id]]) {
+      porFuenteMap[cuentaTipoById[m.cuenta_origen_id]].egresos += m.monto;
+    } else if (m.tipo === "transferencia") {
+      if (m.cuenta_origen_id && porFuenteMap[cuentaTipoById[m.cuenta_origen_id]]) {
+        porFuenteMap[cuentaTipoById[m.cuenta_origen_id]].transferenciasSalientes += m.monto;
+      }
+      if (m.cuenta_destino_id && porFuenteMap[cuentaTipoById[m.cuenta_destino_id]]) {
+        porFuenteMap[cuentaTipoById[m.cuenta_destino_id]].transferenciasEntrantes += m.monto;
+      }
+    } else if (m.tipo === "ajuste") {
+      if (m.cuenta_destino_id && porFuenteMap[cuentaTipoById[m.cuenta_destino_id]]) {
+        porFuenteMap[cuentaTipoById[m.cuenta_destino_id]].ingresos += m.monto;
+      } else if (m.cuenta_origen_id && porFuenteMap[cuentaTipoById[m.cuenta_origen_id]]) {
+        porFuenteMap[cuentaTipoById[m.cuenta_origen_id]].egresos += m.monto;
       }
     }
   }
 
-  const ingresosSim = ingresosAuto.total + ingresosManualesSim;
+  // Ingresos automáticos → suman a la fuente (efectivo / mercado_pago) según método
+  for (const item of ingresosAuto) {
+    const f = porFuenteMap[item.cuentaTipo];
+    if (f) f.ingresos += item.total;
+  }
+
+  const porFuente = Object.values(porFuenteMap).map((f) => ({
+    ...f,
+    neto: f.ingresos - f.egresos + f.transferenciasEntrantes - f.transferenciasSalientes,
+  }));
+
+  const ingresos = ingresosAutoTotal + ingresosManuales;
+  const egresosTotales = costos + gastos + inversiones + gastosSueldo + otros;
+  const saldoFinalTeoricoGeneral = saldoInicialGeneral + ingresos - egresosTotales + ajustesNet;
 
   return {
     mes,
-    ingresosAutomaticos: ingresosAuto.total,
-    ingresosManualesSim,
-    ingresosSim,
+    ingresosAutomaticos: ingresosAutoTotal,
+    ingresosManuales,
+    ingresos,
     costos,
     gastos,
     inversiones,
-    retiros,
-    ajustesSim,
-    resultadoOperativo: ingresosSim - costos - gastos,
-    personal: {
-      ingresos: ingresosPersonal,
-      gastos: gastosPersonal,
-      porCategoria: personalPorCategoria,
-    },
-    turnosDelMes: ingresosAuto.turnosDelMes,
+    gastosSueldo,
+    otros,
+    ajustesNet,
+    sueldoAsignado,
+    sueldoDisponible: sueldoAsignado - gastosSueldo,
+    resultadoOperativo: ingresos - costos - gastos,
+    saldoInicialGeneral,
+    saldoFinalTeoricoGeneral,
+    turnosDelMes,
+    porFuente,
+    sueldoPorCategoria,
+    sueldoPorFuente,
   };
+}
+
+// Calcula todo lo necesario para resumen/cierre de un mes.
+export async function calcularMes(mes: string): Promise<{
+  resumen: ResumenMes;
+  ingresosAuto: IngresoAutomatico[];
+  movimientos: FinMovimiento[];
+}> {
+  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicial, sueldo] = await Promise.all([
+    getCuentas(),
+    getCategorias(),
+    getIngresosAutomaticos(mes),
+    getMovimientosMes(mes),
+    getSaldoInicialGeneral(mes),
+    getSueldoMes(mes),
+  ]);
+
+  const resumen = resumirMes({
+    mes,
+    movimientos,
+    ingresosAuto: ingresosAutoData.items,
+    ingresosAutoTotal: ingresosAutoData.total,
+    turnosDelMes: ingresosAutoData.turnosDelMes,
+    saldoInicialGeneral: saldoInicial,
+    sueldoAsignado: sueldo,
+    cuentas,
+    categorias,
+  });
+
+  return { resumen, ingresosAuto: ingresosAutoData.items, movimientos };
 }
 
 // ── Log básico de auditoría ──────────────────────────────────────────────────
@@ -479,18 +602,15 @@ export async function registrarFinLog(
   rol?: string
 ): Promise<void> {
   try {
-    await supabaseAdmin.from("fin_logs").insert([
-      { accion, entidad, entidad_id: entidadId, detalle, rol: rol || null },
-    ]);
+    await supabaseAdmin.from("fin_logs").insert([{ accion, entidad, entidad_id: entidadId, detalle, rol: rol || null }]);
   } catch {
     // el log nunca debe romper la operación principal
   }
 }
 
-// ── Clasificador de texto libre (reglas simples, sin IA externa) ─────────────
+// ── Clasificador de texto libre (reglas simples, sin ámbito, sin IA) ─────────
 
 export type ClasificacionSugerida = {
-  ambito: "sim" | "personal";
   tipo: "ingreso" | "egreso" | "transferencia" | "ajuste";
   clasificacion: string;
   cuenta_origen_id: string | null;
@@ -504,41 +624,29 @@ export type ClasificacionSugerida = {
 };
 
 function normalizar(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
+  return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
 function detectarMonto(texto: string): number | null {
-  // "8500", "8.500", "8,500", "1500000", "$8500", "8500.50"
   const matches = texto.match(/\$?\s*\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|\$?\s*\d+(?:[.,]\d{1,2})?/g);
   if (!matches) return null;
-  // tomar el número más grande (el monto suele ser el mayor del texto)
   let best: number | null = null;
   for (const raw of matches) {
     const limpio = raw.replace(/[$\s]/g, "");
     let n: number;
-    if (/^\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?$/.test(limpio)) {
-      n = Number(limpio.replace(/\./g, "").replace(",", "."));
-    } else if (/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/.test(limpio)) {
-      n = Number(limpio.replace(/,/g, ""));
-    } else {
-      n = Number(limpio.replace(",", "."));
-    }
+    if (/^\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?$/.test(limpio)) n = Number(limpio.replace(/\./g, "").replace(",", "."));
+    else if (/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/.test(limpio)) n = Number(limpio.replace(/,/g, ""));
+    else n = Number(limpio.replace(",", "."));
     if (Number.isFinite(n) && n > 0 && (best === null || n > best)) best = n;
   }
   return best;
 }
 
-function detectarCuenta(texto: string, cuentas: FinCuenta[], ambito: "sim" | "personal"): FinCuenta | null {
+function detectarCuenta(texto: string, cuentas: FinCuenta[]): FinCuenta | null {
   const t = normalizar(texto);
-  const candidatas = cuentas.filter((c) => c.activa && (c.ambito === ambito || c.ambito === "compartida"));
-  const porTipo = (tipo: FinCuenta["tipo"]) => candidatas.find((c) => c.tipo === tipo) || null;
-
-  if (/\bmp\b|mercado\s*pago|mercadopago/.test(t)) return porTipo("mercado_pago");
-  if (/efectivo|cash/.test(t)) return porTipo("efectivo");
-  if (/banco|transferencia bancaria|cbu|alias/.test(t)) return porTipo("banco");
+  const porTipo = (tipo: string) => cuentas.find((c) => c.tipo === tipo) || null;
+  if (/\bmp\b|mercado\s*pago|mercadopago|transferenci|banco|debito|credito|tarjeta|qr/.test(t)) return porTipo("mercado_pago");
+  if (/efectivo|cash|\bcont[ao]do\b/.test(t)) return porTipo("efectivo");
   return null;
 }
 
@@ -554,7 +662,6 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
   ]);
   if (reglasRes.error) throw reglasRes.error;
   const reglas = (reglasRes.data || []) as Array<{
-    ambito: string | null;
     keyword: string;
     tipo_sugerido: string | null;
     clasificacion_sugerida: string | null;
@@ -566,21 +673,9 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
   const t = normalizar(texto);
   let confianza = 0.2;
 
-  // ámbito
-  let ambito: "sim" | "personal" = "sim";
-  if (/\bpersonal\b|\bmio\b|\bmío\b/.test(t)) {
-    ambito = "personal";
-    confianza += 0.15;
-  } else if (/\bsim\b|\bstand\b/.test(t)) {
-    ambito = "sim";
-    confianza += 0.15;
-  }
-
-  // monto
   const monto = detectarMonto(texto);
-  if (monto !== null) confianza += 0.25;
+  if (monto !== null) confianza += 0.3;
 
-  // tipo base
   let tipo: ClasificacionSugerida["tipo"] = "egreso";
   let tipoExplicito = false;
   if (/transferi|transfer[íi]|pas[eé]\s|\bmov[íi]\b/.test(t) && /\ba\b|→|->/.test(t)) {
@@ -593,7 +688,6 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
     confianza += 0.1;
   }
 
-  // regla por keyword (mayor prioridad = número menor)
   let categoriaId: string | null = null;
   let categoriaNombre: string | null = null;
   let clasificacion: string = tipo === "ingreso" ? "ingreso" : "gasto";
@@ -601,17 +695,7 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
 
   for (const r of reglas) {
     if (!t.includes(normalizar(r.keyword))) continue;
-    // Una regla no puede contradecir un tipo explícito en el texto
-    // (ej: "ingreso ... venta simulador" no debe volverse egreso por la keyword "simulador").
     if (tipoExplicito && r.tipo_sugerido && r.tipo_sugerido !== tipo) continue;
-    if (r.ambito && r.ambito !== ambito) {
-      // si la regla trae ámbito explícito distinto y el texto no fijó ámbito, adoptarlo
-      if (!/\bpersonal\b|\bsim\b|\bstand\b|\bmio\b|\bmío\b/.test(t)) {
-        ambito = r.ambito as "sim" | "personal";
-      } else {
-        continue;
-      }
-    }
     if (r.tipo_sugerido && tipo !== "transferencia") tipo = r.tipo_sugerido as ClasificacionSugerida["tipo"];
     if (r.clasificacion_sugerida) clasificacion = r.clasificacion_sugerida;
     if (r.categoria_id) {
@@ -619,49 +703,26 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
       categoriaNombre = categorias.find((c) => c.id === r.categoria_id)?.nombre || null;
     }
     if (r.cuenta_id) cuentaRegla = r.cuenta_id;
-    confianza += 0.25;
+    confianza += 0.3;
     break;
   }
 
-  // cuentas
   let cuentaOrigen: string | null = null;
   let cuentaDestino: string | null = null;
-
   if (tipo === "transferencia") {
-    // "transferi 450000 efectivo a mp" → origen antes de "a", destino después
     const partes = t.split(/\ba\b|→|->/);
-    const origenDetectada = detectarCuenta(partes[0] || "", cuentas, ambito);
-    const destinoDetectada = detectarCuenta(partes.slice(1).join(" ") || "", cuentas, ambito);
-    cuentaOrigen = origenDetectada?.id || null;
-    cuentaDestino = destinoDetectada?.id || null;
+    cuentaOrigen = detectarCuenta(partes[0] || "", cuentas)?.id || null;
+    cuentaDestino = detectarCuenta(partes.slice(1).join(" ") || "", cuentas)?.id || null;
     if (cuentaOrigen && cuentaDestino) confianza += 0.2;
     clasificacion = "otro";
   } else {
-    const detectada = detectarCuenta(texto, cuentas, ambito);
-    cuentaOrigen = detectada?.id || cuentaRegla;
+    cuentaOrigen = detectarCuenta(texto, cuentas)?.id || cuentaRegla;
     if (cuentaOrigen) confianza += 0.15;
-  }
-
-  // fallback de categoría "sin clasificar" para ingresos / otros
-  if (!categoriaId) {
-    const fallbackTipo = clasificacion === "ingreso" ? "ingreso" : clasificacion;
-    const cat = categorias.find(
-      (c) =>
-        c.activa &&
-        c.tipo === (fallbackTipo as FinCategoria["tipo"]) &&
-        (c.ambito === ambito || c.ambito === "ambos") &&
-        /otros|sin clasificar/i.test(c.nombre)
-    );
-    if (cat) {
-      categoriaId = cat.id;
-      categoriaNombre = cat.nombre;
-    }
   }
 
   confianza = Math.min(1, Math.round(confianza * 100) / 100);
 
   return {
-    ambito,
     tipo,
     clasificacion,
     cuenta_origen_id: cuentaOrigen,
@@ -680,7 +741,7 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
 export async function getCierreMes(mes: string) {
   const { data, error } = await supabaseAdmin
     .from("fin_cierres_mensuales")
-    .select("*, cuentas:fin_cierres_cuentas(*)")
+    .select("*")
     .eq("mes", mes)
     .maybeSingle();
   if (error) throw error;

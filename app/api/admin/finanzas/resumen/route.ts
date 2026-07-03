@@ -1,15 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import {
-  calcularSaldosMes,
-  getCategorias,
-  getCierreMes,
-  getMesInicio,
-  mesActual,
-  mesValido,
-  resumirMovimientos,
-} from "@/lib/finanzas";
+import { calcularMes, getCierreMes, getMesInicio, mesActual, mesValido } from "@/lib/finanzas";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAdmin();
@@ -21,61 +13,30 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Antes del mes inicial no hay operación válida de Finanzas: estado informativo.
     const mesInicio = await getMesInicio();
     if (mes < mesInicio) {
       return NextResponse.json({ mes, antes_de_inicio: true, mes_inicio: mesInicio });
     }
 
-    const [{ saldos, ingresosAuto, movimientos }, categorias, cierre] = await Promise.all([
-      calcularSaldosMes(mes),
-      getCategorias(),
-      getCierreMes(mes),
-    ]);
+    const [{ resumen, ingresosAuto }, cierre] = await Promise.all([calcularMes(mes), getCierreMes(mes)]);
 
-    const resumen = resumirMovimientos(mes, movimientos, ingresosAuto, categorias);
-
-    // Saldos globales (solo cuentas activas)
-    const activos = saldos.filter((s) => s.cuenta.activa);
-    const saldoInicialTotal = activos.reduce((a, s) => a + s.saldoInicial, 0);
-    const saldoTeoricoTotal = activos.reduce((a, s) => a + s.saldoTeorico, 0);
-
-    // Saldo real y diferencia si hay cierre
-    let saldoRealTotal: number | null = null;
-    let diferenciaCierre: number | null = null;
-    if (cierre && cierre.estado !== "abierto") {
-      const cierreCtas = (cierre.cuentas || []) as Array<{ saldo_real: unknown; diferencia: unknown }>;
-      saldoRealTotal = cierreCtas.reduce((a, c) => a + (Number(c.saldo_real) || 0), 0);
-      diferenciaCierre = cierreCtas.reduce((a, c) => a + (Number(c.diferencia) || 0), 0);
-    }
+    const cerrado = Boolean(cierre && cierre.estado !== "abierto");
 
     return NextResponse.json({
       mes,
       resumen,
-      ingresosAutomaticos: ingresosAuto.items,
-      saldos: activos.map((s) => ({
-        cuenta: s.cuenta,
-        saldo_inicial: s.saldoInicial,
-        ingresos: s.ingresos,
-        egresos: s.egresos,
-        transferencias_entrantes: s.transferenciasEntrantes,
-        transferencias_salientes: s.transferenciasSalientes,
-        saldo_teorico: s.saldoTeorico,
-      })),
-      totales: {
-        saldo_inicial: saldoInicialTotal,
-        saldo_teorico: saldoTeoricoTotal,
-        saldo_real: saldoRealTotal,
-        diferencia_cierre: diferenciaCierre,
-      },
+      ingresosAutomaticos: ingresosAuto,
       cierre: cierre
-        ? { estado: cierre.estado, observaciones: cierre.observaciones, cerrado_at: cierre.cerrado_at }
-        : { estado: "abierto" },
+        ? {
+            estado: cierre.estado,
+            observaciones: cierre.observaciones,
+            cerrado_at: cierre.cerrado_at,
+            saldo_real_general: cerrado ? Number(cierre.saldo_real_general) || 0 : null,
+            diferencia_general: cerrado ? Number(cierre.diferencia_general) || 0 : null,
+          }
+        : { estado: "abierto", saldo_real_general: null, diferencia_general: null },
     });
   } catch (error) {
-    return failResponse(500, "Error calculando el resumen", {
-      logContext: "finanzas resumen GET",
-      error,
-    });
+    return failResponse(500, "Error calculando el resumen", { logContext: "finanzas resumen GET", error });
   }
 }
