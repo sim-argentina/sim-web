@@ -66,11 +66,13 @@ export default function TiendaPage() {
           >
             <video
               className="absolute inset-0 h-full w-full object-cover"
-              src="/sim-store-hero-v2.mp4"
+              src="/sim-store-hero-v3.mp4"
+              poster="/sim-store-hero-v3.jpg"
               autoPlay
               loop
               muted
               playsInline
+              preload="auto"
               style={{ transform: "translateX(20%)" }}
             />
           </div>
@@ -89,11 +91,13 @@ export default function TiendaPage() {
         <div className="pointer-events-none absolute inset-0 md:hidden">
           <video
             className="absolute inset-0 h-full w-full object-cover object-[65%_50%]"
-            src="/sim-store-hero-v2.mp4"
+            src="/sim-store-hero-v3.mp4"
+            poster="/sim-store-hero-v3.jpg"
             autoPlay
             loop
             muted
             playsInline
+            preload="auto"
           />
           <div
             className="absolute inset-0"

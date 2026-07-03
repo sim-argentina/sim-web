@@ -502,7 +502,7 @@ export default function FinanzasClient() {
         <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
           <div className="flex flex-col gap-2 md:flex-row">
             <input type="text" value={textoRapido} onChange={(e) => setTextoRapido(e.target.value)} onKeyDown={(e) => e.key === "Enter" && clasificarRapido()}
-              placeholder='Carga rápida: "8500 nafta efectivo" · "100000 contador mp" · "transferi 50000 efectivo a mp"'
+              placeholder='Carga rápida: "ingreso 50000 efectivo" · "venta 30000 mercado pago" · "ingreso 120000 mp" · "8500 nafta efectivo"'
               className={`${inputCls} placeholder:text-white/25`} />
             <button onClick={clasificarRapido} disabled={clasificando || textoRapido.trim().length < 3} className="rounded-xl bg-red-600 px-5 py-2 text-sm font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30">
               {clasificando ? "..." : "Interpretar"}
@@ -612,9 +612,9 @@ export default function FinanzasClient() {
                 </Campo>
               </>
             ) : (
-              <Campo label="Cuenta / fuente">
-                <select value={movForm.cuenta_origen_id} onChange={(e) => setMovForm({ ...movForm, cuenta_origen_id: e.target.value })} className={inputCls}>
-                  <option value="">Elegir...</option>{cuentasActivas.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              <Campo label={movForm.tipo === "ingreso" ? "Fuente del ingreso *" : "Cuenta / fuente *"}>
+                <select value={movForm.cuenta_origen_id} onChange={(e) => setMovForm({ ...movForm, cuenta_origen_id: e.target.value })} className={`${inputCls} ${!movForm.cuenta_origen_id ? "border-amber-500/60" : ""}`}>
+                  <option value="">{movForm.tipo === "ingreso" ? "¿Entró por Efectivo o Mercado Pago?" : "Elegir Efectivo / Mercado Pago..."}</option>{cuentasActivas.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                 </select>
               </Campo>
             )}
@@ -632,7 +632,7 @@ export default function FinanzasClient() {
           {movForm.esSueldo && <p className="mt-3 text-xs text-white/40">Gasto personal: sale de la caja del stand (Efectivo o MP) y se descuenta de tu sueldo del mes.</p>}
           <div className="mt-5 flex justify-end gap-2">
             <button onClick={() => setMovForm(null)} className="rounded-xl border border-white/15 px-5 py-2.5 text-xs font-black uppercase text-white/60 hover:border-white hover:text-white">Cancelar</button>
-            <button onClick={guardarMovimiento} disabled={guardando || !movForm.monto || Number(movForm.monto) <= 0} className="rounded-xl bg-red-600 px-6 py-2.5 text-xs font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30">
+            <button onClick={guardarMovimiento} disabled={guardando || !movForm.monto || Number(movForm.monto) <= 0 || (movForm.tipo !== "ajuste" && !movForm.cuenta_origen_id) || (movForm.tipo === "ajuste" && !movForm.cuenta_origen_id && !movForm.cuenta_destino_id)} className="rounded-xl bg-red-600 px-6 py-2.5 text-xs font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30">
               {guardando ? "Guardando..." : movForm.id ? "Actualizar" : "Guardar"}
             </button>
           </div>
@@ -734,6 +734,17 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
           color={resumen.cierre.diferencia_general === null ? "neutro" : Math.abs(resumen.cierre.diferencia_general) < 1 ? "verde" : "ambar"} />
       </div>
 
+      {/* Ingresos por fuente (Efectivo / Mercado Pago) */}
+      <div>
+        <h2 className="mb-3 text-lg font-black uppercase text-red-500">Ingresos por fuente</h2>
+        <div className="grid grid-cols-2 gap-3">
+          {r.porFuente.map((f) => (
+            <CardKpi key={f.tipo} titulo={`Ingresos por ${f.nombre}`} valor={dinero(f.ingresos)} color="verde" detalle="Automáticos + manuales de esta fuente" />
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] text-white/30">Suma lo cobrado por cada fuente (turnero/reservas/gift cards/campeonatos + ingresos manuales). Total operativo: {dinero(r.ingresos)}.</p>
+      </div>
+
       {/* Movimientos por fuente */}
       <div>
         <h2 className="mb-3 text-lg font-black uppercase text-red-500">Movimientos por fuente</h2>
@@ -743,7 +754,7 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
               <p className="text-sm font-black uppercase">{f.nombre}</p>
               <p className={`mt-2 text-2xl font-black ${f.neto >= 0 ? "text-green-400" : "text-red-500"}`}>{dinero(f.neto)} <span className="text-xs font-bold text-white/40">neto del mes</span></p>
               <div className="mt-3 space-y-1 text-xs text-white/50">
-                <p>Cobrado (operativo): <span className="font-bold text-green-400">{dinero(f.ingresos)}</span></p>
+                <p>Ingresos: <span className="font-bold text-green-400">{dinero(f.ingresos)}</span></p>
                 {f.financiamiento > 0 && <p>Financiamiento: <span className="font-bold text-amber-400">{dinero(f.financiamiento)}</span></p>}
                 <p>Pagado: <span className="font-bold text-red-400">{dinero(f.egresos)}</span></p>
                 <p>Transf. entrantes: <span className="font-bold text-white/80">{dinero(f.transferenciasEntrantes)}</span></p>
