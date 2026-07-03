@@ -1591,26 +1591,40 @@ function TabMetricas({ metricas }: { metricas: MetricasApi | null }) {
 
 function SeccionInicializar({ onHecho }: { onHecho: () => void }) {
   const [mes, setMes] = useState(mesActualLocal());
-  const [monto, setMonto] = useState("");
+  const [efectivo, setEfectivo] = useState("");
+  const [mp, setMp] = useState("");
   const [observacion, setObservacion] = useState("");
   const [inicializado, setInicializado] = useState(false);
   const [guardando, setGuardando] = useState(false);
+
+  const totalGeneral = (Number(efectivo) || 0) + (Number(mp) || 0);
 
   const cargar = useCallback(async (m: string) => {
     const r = await fetch(`/api/admin/finanzas/inicializar?mes=${m}`, { cache: "no-store" });
     const d = await r.json();
     if (!r.ok) return;
     setInicializado(Boolean(d.inicializado));
-    setMonto(d.monto !== null && d.monto !== undefined ? String(d.monto) : "");
+    const ef = Number(d.monto_efectivo) || 0;
+    const mercadopago = Number(d.monto_mercado_pago) || 0;
+    const general = Number(d.monto) || 0;
+    // Compat: saldo viejo cargado sólo como general → lo mostramos en Efectivo.
+    if (ef === 0 && mercadopago === 0 && general > 0) {
+      setEfectivo(String(general));
+      setMp("");
+    } else {
+      setEfectivo(ef ? String(ef) : "");
+      setMp(mercadopago ? String(mercadopago) : "");
+    }
     setObservacion(d.observacion || "");
   }, []);
   useEffect(() => { cargar(mes); }, [mes, cargar]);
 
   async function guardar() {
-    if (monto === "" || !Number.isFinite(Number(monto))) { alert("Cargá un saldo inicial."); return; }
+    if (efectivo === "" && mp === "") { alert("Cargá el saldo inicial (Efectivo y/o Mercado Pago)."); return; }
+    if ((efectivo !== "" && !Number.isFinite(Number(efectivo))) || (mp !== "" && !Number.isFinite(Number(mp)))) { alert("Saldo inválido."); return; }
     setGuardando(true);
     try {
-      const r = await fetch("/api/admin/finanzas/inicializar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mes, monto: Number(monto), observacion: observacion || null }) });
+      const r = await fetch("/api/admin/finanzas/inicializar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mes, monto_efectivo: Number(efectivo) || 0, monto_mercado_pago: Number(mp) || 0, observacion: observacion || null }) });
       const d = await r.json();
       if (!r.ok) { alert(d.error || "Error"); return; }
       setInicializado(true); onHecho();
@@ -1623,15 +1637,23 @@ function SeccionInicializar({ onHecho }: { onHecho: () => void }) {
         <h3 className="text-sm font-black uppercase text-red-500">Inicializar saldo</h3>
         {inicializado && <span className="rounded-full border border-green-500/40 px-3 py-0.5 text-[10px] font-black uppercase text-green-400">Mes inicializado</span>}
       </div>
-      <p className="mb-4 text-xs text-white/40">Con cuánta plata arranca el mes (saldo general, no por cuenta). Solo mueve la caja: no cuenta como ingreso, costo, gasto ni métrica. Los meses siguientes arrancan solos con el saldo real del cierre anterior.</p>
+      <p className="mb-4 text-xs text-white/40">Con cuánta plata arranca el mes. Cargalo por fuente (Efectivo y/o Mercado Pago); el saldo inicial del mes es el total general. Solo mueve la caja: no cuenta como ingreso, costo, gasto ni métrica. Los meses siguientes arrancan solos con el saldo real del cierre anterior.</p>
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Mes</label>
           <input type="month" value={mes} onChange={(e) => e.target.value && setMes(e.target.value)} className="rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500" />
         </div>
         <div>
+          <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Efectivo</label>
+          <input type="number" value={efectivo} onChange={(e) => setEfectivo(e.target.value)} placeholder="$ 0" className="w-36 rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/25 focus:border-red-500" />
+        </div>
+        <div>
+          <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Mercado Pago</label>
+          <input type="number" value={mp} onChange={(e) => setMp(e.target.value)} placeholder="$ 0" className="w-36 rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/25 focus:border-red-500" />
+        </div>
+        <div>
           <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Saldo inicial general</label>
-          <input type="number" value={monto} onChange={(e) => setMonto(e.target.value)} placeholder="$ 0" className="w-44 rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/25 focus:border-red-500" />
+          <div className="w-36 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-black text-green-400">{dinero(totalGeneral)}</div>
         </div>
         <div className="min-w-[180px] flex-1">
           <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Observación</label>
