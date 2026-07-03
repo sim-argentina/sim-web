@@ -730,16 +730,23 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
   }
 
   // Gasto de "Mi sueldo": si el texto menciona sueldo/personal, es un egreso
-  // clasificado como sueldo_personal. La categoría principal es "Mi sueldo",
-  // salvo que una categoría interna de sueldo (comida, nafta, salidas, tarjeta…)
-  // coincida con alguna palabra del texto.
+  // clasificado como sueldo_personal. Si además el texto nombra otra categoría
+  // (de cualquier tipo activo, ej. comida, nafta, tarjeta…), se usa esa; si no,
+  // cae en la categoría "Mi sueldo".
   if (/\bsueldo\b|mi\s*sueldo|\bpersonal\b|gasto\s*sueldo/.test(t)) {
     tipo = "egreso";
     clasificacion = "sueldo_personal";
     confianza += 0.2;
-    const sueldoCats = categorias.filter((c) => c.activa && c.tipo === "sueldo_personal");
-    const interna = sueldoCats.find((c) => !/mi\s*sueldo/.test(normalizar(c.nombre)) && t.includes(normalizar(c.nombre.split("/")[0].trim())));
-    const cat = interna || sueldoCats.find((c) => /mi\s*sueldo/.test(normalizar(c.nombre))) || sueldoCats[0] || null;
+    const activas = categorias.filter((c) => c.activa);
+    const esMiSueldo = (c: FinCategoria) => /mi\s*sueldo/.test(normalizar(c.nombre));
+    const miSueldo = activas.find((c) => c.tipo === "sueldo_personal" && esMiSueldo(c));
+    // Otra categoría mencionada en el texto (cualquier tipo), distinta de "Mi sueldo".
+    const otra = activas.find((c) => {
+      if (esMiSueldo(c)) return false;
+      const token = normalizar(c.nombre.split("/")[0].trim());
+      return token.length >= 3 && t.includes(token);
+    });
+    const cat = otra || miSueldo || activas.find((c) => c.tipo === "sueldo_personal") || null;
     if (cat) {
       categoriaId = cat.id;
       categoriaNombre = cat.nombre;
