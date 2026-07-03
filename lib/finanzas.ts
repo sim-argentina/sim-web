@@ -101,6 +101,7 @@ export const TIPOS_MOVIMIENTO = ["ingreso", "egreso", "transferencia", "ajuste"]
 // "retiro" queda por compatibilidad de datos viejos, pero no se usa en el flujo.
 export const CLASIFICACIONES = [
   "ingreso", "costo", "gasto", "inversion", "sueldo_personal", "ajuste", "otro", "retiro",
+  "financiamiento", "pago_deuda",
 ] as const;
 export const TIPOS_CATEGORIA = [
   "ingreso", "costo", "gasto", "inversion", "sueldo_personal", "ajuste",
@@ -408,10 +409,17 @@ export async function getSaldoInicialGeneral(mes: string): Promise<number> {
 export type ResumenPorFuente = {
   tipo: CuentaTipo;
   nombre: string;
-  ingresos: number;
-  egresos: number;
+  ingresos: number; // operativos
+  financiamiento: number;
+  costos: number;
+  gastos: number;
+  inversiones: number;
+  gastosSueldo: number;
+  otros: number;
+  pagosDeuda: number;
   transferenciasEntrantes: number;
   transferenciasSalientes: number;
+  egresos: number; // total egresos (costos+gastos+inversiones+sueldo+otros+pagosDeuda)
   neto: number;
 };
 
@@ -419,11 +427,13 @@ export type ResumenMes = {
   mes: string;
   ingresosAutomaticos: number;
   ingresosManuales: number;
-  ingresos: number;
+  ingresos: number; // operativos (auto + manuales), SIN financiamiento
+  financiamiento: number; // préstamos / entradas de financiamiento (no es revenue)
   costos: number;
   gastos: number;
   inversiones: number;
   gastosSueldo: number;
+  pagosDeuda: number;
   otros: number;
   ajustesNet: number;
   sueldoAsignado: number;
@@ -463,64 +473,70 @@ export function resumirMes(params: {
       tipo,
       nombre: c.nombre,
       ingresos: 0,
-      egresos: 0,
+      financiamiento: 0,
+      costos: 0,
+      gastos: 0,
+      inversiones: 0,
+      gastosSueldo: 0,
+      otros: 0,
+      pagosDeuda: 0,
       transferenciasEntrantes: 0,
       transferenciasSalientes: 0,
+      egresos: 0,
       neto: 0,
     };
   }
-  const tipoCuentaSim: Record<CuentaTipo, string | null> = { efectivo: null, mercado_pago: null };
-  for (const c of cuentas) tipoCuentaSim[cuentaTipoById[c.id]] = c.id;
 
   let ingresosManuales = 0;
+  let financiamiento = 0;
   let costos = 0;
   let gastos = 0;
   let inversiones = 0;
   let gastosSueldo = 0;
+  let pagosDeuda = 0;
   let otros = 0;
   let ajustesNet = 0;
   const sueldoPorCategoria: Record<string, number> = {};
   const sueldoPorFuente: Record<string, number> = {};
+  const fuenteDe = (id: string | null) => (id ? porFuenteMap[cuentaTipoById[id]] : undefined);
 
   for (const m of movimientos) {
     if (m.origen === "ajuste_inicial") continue; // saldo inicial general, no es movimiento operativo
 
-    // Resultado / clasificación
+    const f = fuenteDe(m.tipo === "transferencia" ? null : m.cuenta_origen_id);
+
     if (m.tipo === "ingreso") {
-      ingresosManuales += m.monto;
+      if (m.clasificacion === "financiamiento") {
+        financiamiento += m.monto;
+        if (f) f.financiamiento += m.monto;
+      } else {
+        ingresosManuales += m.monto;
+        if (f) f.ingresos += m.monto;
+      }
     } else if (m.tipo === "egreso") {
-      if (m.clasificacion === "costo") costos += m.monto;
-      else if (m.clasificacion === "gasto") gastos += m.monto;
-      else if (m.clasificacion === "inversion") inversiones += m.monto;
+      if (m.clasificacion === "costo") { costos += m.monto; if (f) f.costos += m.monto; }
+      else if (m.clasificacion === "gasto") { gastos += m.monto; if (f) f.gastos += m.monto; }
+      else if (m.clasificacion === "inversion") { inversiones += m.monto; if (f) f.inversiones += m.monto; }
       else if (m.clasificacion === "sueldo_personal" || m.clasificacion === "retiro") {
         gastosSueldo += m.monto;
+        if (f) f.gastosSueldo += m.monto;
         const cat = m.categoria_id ? catById[m.categoria_id]?.nombre : null;
         sueldoPorCategoria[cat || "Sin categoría"] = (sueldoPorCategoria[cat || "Sin categoría"] || 0) + m.monto;
         const ft = m.cuenta_origen_id ? cuentaTipoById[m.cuenta_origen_id] : null;
         if (ft) sueldoPorFuente[ft] = (sueldoPorFuente[ft] || 0) + m.monto;
-      } else otros += m.monto;
+      } else if (m.clasificacion === "pago_deuda") { pagosDeuda += m.monto; if (f) f.pagosDeuda += m.monto; }
+      else { otros += m.monto; if (f) f.otros += m.monto; }
+    } else if (m.tipo === "transferencia") {
+      const fo = fuenteDe(m.cuenta_origen_id);
+      const fd = fuenteDe(m.cuenta_destino_id);
+      if (fo) fo.transferenciasSalientes += m.monto;
+      if (fd) fd.transferenciasEntrantes += m.monto;
     } else if (m.tipo === "ajuste") {
       ajustesNet += m.cuenta_destino_id ? m.monto : -m.monto;
-    }
-
-    // Por fuente (caja)
-    if (m.tipo === "ingreso" && m.cuenta_origen_id && porFuenteMap[cuentaTipoById[m.cuenta_origen_id]]) {
-      porFuenteMap[cuentaTipoById[m.cuenta_origen_id]].ingresos += m.monto;
-    } else if (m.tipo === "egreso" && m.cuenta_origen_id && porFuenteMap[cuentaTipoById[m.cuenta_origen_id]]) {
-      porFuenteMap[cuentaTipoById[m.cuenta_origen_id]].egresos += m.monto;
-    } else if (m.tipo === "transferencia") {
-      if (m.cuenta_origen_id && porFuenteMap[cuentaTipoById[m.cuenta_origen_id]]) {
-        porFuenteMap[cuentaTipoById[m.cuenta_origen_id]].transferenciasSalientes += m.monto;
-      }
-      if (m.cuenta_destino_id && porFuenteMap[cuentaTipoById[m.cuenta_destino_id]]) {
-        porFuenteMap[cuentaTipoById[m.cuenta_destino_id]].transferenciasEntrantes += m.monto;
-      }
-    } else if (m.tipo === "ajuste") {
-      if (m.cuenta_destino_id && porFuenteMap[cuentaTipoById[m.cuenta_destino_id]]) {
-        porFuenteMap[cuentaTipoById[m.cuenta_destino_id]].ingresos += m.monto;
-      } else if (m.cuenta_origen_id && porFuenteMap[cuentaTipoById[m.cuenta_origen_id]]) {
-        porFuenteMap[cuentaTipoById[m.cuenta_origen_id]].egresos += m.monto;
-      }
+      const fd = fuenteDe(m.cuenta_destino_id);
+      const fo = fuenteDe(m.cuenta_origen_id);
+      if (fd) fd.ingresos += m.monto;
+      else if (fo) fo.otros += m.monto;
     }
   }
 
@@ -530,24 +546,30 @@ export function resumirMes(params: {
     if (f) f.ingresos += item.total;
   }
 
-  const porFuente = Object.values(porFuenteMap).map((f) => ({
-    ...f,
-    neto: f.ingresos - f.egresos + f.transferenciasEntrantes - f.transferenciasSalientes,
-  }));
+  const porFuente = Object.values(porFuenteMap).map((f) => {
+    const egresos = f.costos + f.gastos + f.inversiones + f.gastosSueldo + f.otros + f.pagosDeuda;
+    return {
+      ...f,
+      egresos,
+      neto: f.ingresos + f.financiamiento - egresos + f.transferenciasEntrantes - f.transferenciasSalientes,
+    };
+  });
 
-  const ingresos = ingresosAutoTotal + ingresosManuales;
-  const egresosTotales = costos + gastos + inversiones + gastosSueldo + otros;
-  const saldoFinalTeoricoGeneral = saldoInicialGeneral + ingresos - egresosTotales + ajustesNet;
+  const ingresos = ingresosAutoTotal + ingresosManuales; // operativos, sin financiamiento
+  const egresosTotales = costos + gastos + inversiones + gastosSueldo + otros + pagosDeuda;
+  const saldoFinalTeoricoGeneral = saldoInicialGeneral + ingresos + financiamiento - egresosTotales + ajustesNet;
 
   return {
     mes,
     ingresosAutomaticos: ingresosAutoTotal,
     ingresosManuales,
     ingresos,
+    financiamiento,
     costos,
     gastos,
     inversiones,
     gastosSueldo,
+    pagosDeuda,
     otros,
     ajustesNet,
     sueldoAsignado,
@@ -705,6 +727,23 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
     if (r.cuenta_id) cuentaRegla = r.cuenta_id;
     confianza += 0.3;
     break;
+  }
+
+  // Gasto de "Mi sueldo": si el texto menciona sueldo/personal, es un egreso
+  // clasificado como sueldo_personal. La categoría principal es "Mi sueldo",
+  // salvo que una categoría interna de sueldo (comida, nafta, salidas, tarjeta…)
+  // coincida con alguna palabra del texto.
+  if (/\bsueldo\b|mi\s*sueldo|\bpersonal\b|gasto\s*sueldo/.test(t)) {
+    tipo = "egreso";
+    clasificacion = "sueldo_personal";
+    confianza += 0.2;
+    const sueldoCats = categorias.filter((c) => c.activa && c.tipo === "sueldo_personal");
+    const interna = sueldoCats.find((c) => !/mi\s*sueldo/.test(normalizar(c.nombre)) && t.includes(normalizar(c.nombre.split("/")[0].trim())));
+    const cat = interna || sueldoCats.find((c) => /mi\s*sueldo/.test(normalizar(c.nombre))) || sueldoCats[0] || null;
+    if (cat) {
+      categoriaId = cat.id;
+      categoriaNombre = cat.nombre;
+    }
   }
 
   let cuentaOrigen: string | null = null;

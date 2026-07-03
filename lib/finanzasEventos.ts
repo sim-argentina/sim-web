@@ -327,8 +327,12 @@ export async function marcarEvento(params: {
     if (!cuenta) return { ok: false, status: 400, error: "No hay cuenta activa para la fuente estimada" };
 
     // Clasificación del movimiento según la categoría del evento (respeta Mi sueldo).
+    // Los pagos de deuda/cuota NO son costo/gasto operativo: van como pago_deuda
+    // (bajan caja, no impactan resultado/margen operativo).
     let clasificacion = esCobro ? "ingreso" : "gasto";
-    if (!esCobro && evento.categoria_id) {
+    if (!esCobro && (evento.tipo === "deuda" || evento.tipo === "cuota_deuda")) {
+      clasificacion = "pago_deuda";
+    } else if (!esCobro && evento.categoria_id) {
       const cat = categorias.find((c) => c.id === evento.categoria_id);
       if (cat && ["costo", "gasto", "inversion", "sueldo_personal"].includes(cat.tipo)) {
         clasificacion = cat.tipo;

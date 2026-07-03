@@ -2,7 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { calcularMes, getCierreMes, getMesInicio, mesActual, mesValido, registrarFinLog } from "@/lib/finanzas";
+import {
+  calcularMes,
+  getCategorias,
+  getCierreMes,
+  getCuentas,
+  getMesInicio,
+  mesActual,
+  mesValido,
+  registrarFinLog,
+  type FinMovimiento,
+} from "@/lib/finanzas";
 
 // GET: estado del cierre + saldo teórico general del mes.
 export async function GET(req: NextRequest) {
@@ -20,8 +30,54 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ mes, antes_de_inicio: true, mes_inicio: mesInicio });
     }
 
-    const [{ resumen }, cierre] = await Promise.all([calcularMes(mes), getCierreMes(mes)]);
+    const [{ resumen, ingresosAuto, movimientos }, cierre, categorias, cuentas] = await Promise.all([
+      calcularMes(mes),
+      getCierreMes(mes),
+      getCategorias(),
+      getCuentas(),
+    ]);
     const r = resumen;
+
+    const catNombre: Record<string, string> = {};
+    for (const c of categorias) catNombre[c.id] = c.nombre;
+    const cuentaTipo: Record<string, "efectivo" | "mercado_pago"> = {};
+    for (const c of cuentas) cuentaTipo[c.id] = c.tipo === "efectivo" ? "efectivo" : "mercado_pago";
+
+    // Agrupa egresos manuales por categoría (con fuente y cantidad).
+    const agrupar = (pred: (m: FinMovimiento) => boolean) => {
+      const acc: Record<string, { categoria: string; total: number; cantidad: number; efectivo: number; mercado_pago: number }> = {};
+      for (const m of movimientos) {
+        if (m.origen === "ajuste_inicial" || !pred(m)) continue;
+        const nombre = m.categoria_id ? catNombre[m.categoria_id] || "Sin categoría" : "Sin categoría";
+        const g = (acc[nombre] = acc[nombre] || { categoria: nombre, total: 0, cantidad: 0, efectivo: 0, mercado_pago: 0 });
+        g.total += m.monto;
+        g.cantidad += 1;
+        const ft = m.cuenta_origen_id ? cuentaTipo[m.cuenta_origen_id] : null;
+        if (ft) g[ft] += m.monto;
+      }
+      return Object.values(acc).sort((a, b) => b.total - a.total);
+    };
+
+    const egreso = (clasif: string) => (m: FinMovimiento) => m.tipo === "egreso" && m.clasificacion === clasif;
+
+    // Ingresos automáticos por fuente (rubro)
+    const autoPorFuente: Record<string, { fuente: string; total: number; cantidad: number }> = {};
+    for (const i of ingresosAuto) {
+      const g = (autoPorFuente[i.fuenteLabel] = autoPorFuente[i.fuenteLabel] || { fuente: i.fuenteLabel, total: 0, cantidad: 0 });
+      g.total += i.total;
+      g.cantidad = Math.max(g.cantidad, i.cantidad);
+    }
+
+    // Financiamiento (préstamos recibidos) del mes
+    const financiamientoItems = movimientos
+      .filter((m) => m.tipo === "ingreso" && m.clasificacion === "financiamiento")
+      .map((m) => ({
+        id: m.id,
+        fecha: m.fecha,
+        descripcion: m.descripcion,
+        monto: m.monto,
+        fuente: m.cuenta_origen_id ? cuentaTipo[m.cuenta_origen_id] : null,
+      }));
 
     return NextResponse.json({
       mes,
@@ -34,11 +90,33 @@ export async function GET(req: NextRequest) {
       diferencia_guardada: cierre && cierre.estado !== "abierto" ? Number(cierre.diferencia_general) || 0 : null,
       desglose: {
         ingresos: r.ingresos,
+        financiamiento: r.financiamiento,
         costos: r.costos,
         gastos: r.gastos,
         inversiones: r.inversiones,
         gastos_sueldo: r.gastosSueldo,
+        pagos_deuda: r.pagosDeuda,
+        otros: r.otros,
         ajustes: r.ajustesNet,
+      },
+      por_fuente: r.porFuente,
+      detalle: {
+        ingresos: {
+          total: r.ingresos,
+          automaticos: Object.values(autoPorFuente).sort((a, b) => b.total - a.total),
+          automaticos_total: r.ingresosAutomaticos,
+          manuales_por_categoria: agrupar((m) => m.tipo === "ingreso" && m.clasificacion !== "financiamiento"),
+          manuales_total: r.ingresosManuales,
+        },
+        costos_por_categoria: agrupar(egreso("costo")),
+        gastos_por_categoria: agrupar(egreso("gasto")),
+        inversiones_por_categoria: agrupar(egreso("inversion")),
+        otros_por_categoria: agrupar(egreso("otro")),
+        sueldo_por_categoria: agrupar((m) => m.tipo === "egreso" && (m.clasificacion === "sueldo_personal" || m.clasificacion === "retiro")),
+        sueldo_total: r.gastosSueldo,
+        sueldo_asignado: r.sueldoAsignado,
+        financiamiento: { total: r.financiamiento, items: financiamientoItems },
+        pagos_deuda_por_categoria: agrupar(egreso("pago_deuda")),
       },
     });
   } catch (error) {

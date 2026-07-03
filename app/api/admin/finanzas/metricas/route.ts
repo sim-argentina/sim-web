@@ -115,7 +115,10 @@ export async function GET(req: NextRequest) {
     const inversiones = resumen.inversiones;
     const utilidadBruta = ingresos - costos;
     const resultadoOperativo = resumen.resultadoOperativo;
-    const flujoNeto = ingresos - (costos + gastos + inversiones + gastosSueldo + resumen.otros);
+    // Flujo neto de caja: incluye financiamiento recibido (entra caja) y pagos de
+    // deuda (sale caja), además de los egresos operativos.
+    const flujoNeto =
+      ingresos + resumen.financiamiento - (costos + gastos + inversiones + gastosSueldo + resumen.otros + resumen.pagosDeuda);
     const turnos = resumen.turnosDelMes;
 
     const inversionAcumulada =

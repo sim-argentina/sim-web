@@ -39,9 +39,16 @@ type PorFuente = {
   tipo: "efectivo" | "mercado_pago";
   nombre: string;
   ingresos: number;
-  egresos: number;
+  financiamiento: number;
+  costos: number;
+  gastos: number;
+  inversiones: number;
+  gastosSueldo: number;
+  otros: number;
+  pagosDeuda: number;
   transferenciasEntrantes: number;
   transferenciasSalientes: number;
+  egresos: number;
   neto: number;
 };
 
@@ -63,10 +70,12 @@ type ResumenApi = {
     ingresosAutomaticos: number;
     ingresosManuales: number;
     ingresos: number;
+    financiamiento: number;
     costos: number;
     gastos: number;
     inversiones: number;
     gastosSueldo: number;
+    pagosDeuda: number;
     otros: number;
     ajustesNet: number;
     sueldoAsignado: number;
@@ -96,6 +105,23 @@ type Regla = {
   cuenta?: { id: string; nombre: string } | null;
 };
 
+type RubroCat = { categoria: string; total: number; cantidad: number; efectivo: number; mercado_pago: number };
+type PorFuenteApi = {
+  tipo: "efectivo" | "mercado_pago";
+  nombre: string;
+  ingresos: number;
+  financiamiento: number;
+  costos: number;
+  gastos: number;
+  inversiones: number;
+  gastosSueldo: number;
+  otros: number;
+  pagosDeuda: number;
+  transferenciasEntrantes: number;
+  transferenciasSalientes: number;
+  egresos: number;
+  neto: number;
+};
 type CierreApi = {
   mes: string;
   estado: string;
@@ -105,7 +131,20 @@ type CierreApi = {
   saldo_teorico_general: number;
   saldo_real_guardado: number | null;
   diferencia_guardada: number | null;
-  desglose: { ingresos: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; ajustes: number };
+  desglose: { ingresos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
+  por_fuente: PorFuenteApi[];
+  detalle: {
+    ingresos: { total: number; automaticos: Array<{ fuente: string; total: number; cantidad: number }>; automaticos_total: number; manuales_por_categoria: RubroCat[]; manuales_total: number };
+    costos_por_categoria: RubroCat[];
+    gastos_por_categoria: RubroCat[];
+    inversiones_por_categoria: RubroCat[];
+    otros_por_categoria: RubroCat[];
+    sueldo_por_categoria: RubroCat[];
+    sueldo_total: number;
+    sueldo_asignado: number;
+    financiamiento: { total: number; items: Array<{ id: string; fecha: string; descripcion: string; monto: number; fuente: string | null }> };
+    pagos_deuda_por_categoria: RubroCat[];
+  };
 };
 
 type MetricasApi = {
@@ -389,33 +428,40 @@ export default function FinanzasClient() {
     } finally { setGuardando(false); }
   }
 
+  const interpretar = useCallback(async (texto: string, forzarSueldo = false) => {
+    const t = texto.trim();
+    if (t.length < 3) return;
+    // Fuerza la intención "Mi sueldo" cuando se carga desde la barra de sueldo.
+    const consulta = forzarSueldo && !/sueldo|personal/i.test(t) ? `sueldo ${t}` : t;
+    const r = await fetch("/api/admin/finanzas/clasificar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ texto: consulta }),
+    });
+    const d = await r.json();
+    if (!r.ok) { alert(d.error || "No se pudo interpretar"); return; }
+    const s: Sugerencia = d.sugerencia;
+    if (s.tipo === "transferencia") {
+      setTransfForm({ fecha: fechaHoy(), cuenta_origen_id: s.cuenta_origen_id || "", cuenta_destino_id: s.cuenta_destino_id || "", monto: s.monto ? String(s.monto) : "", descripcion: t });
+    } else {
+      const esSueldo = forzarSueldo || s.clasificacion === "sueldo_personal" || s.clasificacion === "retiro";
+      setMovForm(movFormVacio({
+        tipo: esSueldo ? "egreso" : s.tipo === "ajuste" ? "ajuste" : s.tipo,
+        clasificacion: esSueldo ? "sueldo_personal" : s.clasificacion,
+        esSueldo,
+        cuenta_origen_id: s.cuenta_origen_id || "",
+        categoria_id: s.categoria_id || "",
+        descripcion: t,
+        monto: s.monto ? String(s.monto) : "",
+      }));
+    }
+  }, []);
+
   async function clasificarRapido() {
-    const texto = textoRapido.trim();
-    if (texto.length < 3) return;
+    if (textoRapido.trim().length < 3) return;
     setClasificando(true);
     try {
-      const r = await fetch("/api/admin/finanzas/clasificar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ texto }),
-      });
-      const d = await r.json();
-      if (!r.ok) { alert(d.error || "No se pudo interpretar"); return; }
-      const s: Sugerencia = d.sugerencia;
-      if (s.tipo === "transferencia") {
-        setTransfForm({ fecha: fechaHoy(), cuenta_origen_id: s.cuenta_origen_id || "", cuenta_destino_id: s.cuenta_destino_id || "", monto: s.monto ? String(s.monto) : "", descripcion: s.descripcion });
-      } else {
-        const esSueldo = s.clasificacion === "sueldo_personal" || s.clasificacion === "retiro";
-        setMovForm(movFormVacio({
-          tipo: s.tipo === "ajuste" ? "ajuste" : s.tipo,
-          clasificacion: esSueldo ? "sueldo_personal" : s.clasificacion,
-          esSueldo,
-          cuenta_origen_id: s.cuenta_origen_id || "",
-          categoria_id: s.categoria_id || "",
-          descripcion: s.descripcion,
-          monto: s.monto ? String(s.monto) : "",
-        }));
-      }
+      await interpretar(textoRapido);
       setTextoRapido("");
     } finally { setClasificando(false); }
   }
@@ -503,7 +549,7 @@ export default function FinanzasClient() {
                 onEliminar={eliminarMovimiento} />
             )}
             {tab === "cierre" && <TabCierre mes={mes} cierre={cierre} onHecho={() => { refrescar(); cargarCierre(mes); }} />}
-            {tab === "sueldo" && resumen && <TabSueldo mes={mes} resumen={resumen} movimientos={movimientos} cuentasPorId={cuentasPorId} categoriasPorId={categoriasPorId} onAgregar={abrirSueldo} onHecho={() => mostrarAviso("Sueldo actualizado")} refrescar={refrescar} />}
+            {tab === "sueldo" && resumen && <TabSueldo mes={mes} resumen={resumen} movimientos={movimientos} cuentasPorId={cuentasPorId} categoriasPorId={categoriasPorId} onAgregar={abrirSueldo} onHecho={() => mostrarAviso("Sueldo actualizado")} refrescar={refrescar} onCargaRapida={(texto) => interpretar(texto, true)} />}
             {tab === "calendario" && (
               <CalendarioFinanciero mes={mes} categorias={categorias} mostrarAviso={mostrarAviso} refrescarFinanzas={refrescar} />
             )}
@@ -681,7 +727,8 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <CardKpi titulo="Saldo inicial general" valor={dinero(r.saldoInicialGeneral)} />
-        <CardKpi titulo="Saldo final teórico" valor={dinero(r.saldoFinalTeoricoGeneral)} detalle="Inicial + ingresos − egresos" />
+        {r.financiamiento > 0 && <CardKpi titulo="Financiamiento (préstamos)" valor={dinero(r.financiamiento)} color="ambar" detalle="Entra caja, no es facturación" />}
+        <CardKpi titulo="Saldo final teórico" valor={dinero(r.saldoFinalTeoricoGeneral)} detalle="Inicial + ingresos + financiamiento − egresos" />
         <CardKpi titulo="Saldo real (cierre)" valor={resumen.cierre.saldo_real_general !== null ? dinero(resumen.cierre.saldo_real_general) : "Sin cierre"} />
         <CardKpi titulo="Diferencia de cierre" valor={resumen.cierre.diferencia_general !== null ? dinero(resumen.cierre.diferencia_general) : "—"}
           color={resumen.cierre.diferencia_general === null ? "neutro" : Math.abs(resumen.cierre.diferencia_general) < 1 ? "verde" : "ambar"} />
@@ -696,7 +743,8 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
               <p className="text-sm font-black uppercase">{f.nombre}</p>
               <p className={`mt-2 text-2xl font-black ${f.neto >= 0 ? "text-green-400" : "text-red-500"}`}>{dinero(f.neto)} <span className="text-xs font-bold text-white/40">neto del mes</span></p>
               <div className="mt-3 space-y-1 text-xs text-white/50">
-                <p>Cobrado: <span className="font-bold text-green-400">{dinero(f.ingresos)}</span></p>
+                <p>Cobrado (operativo): <span className="font-bold text-green-400">{dinero(f.ingresos)}</span></p>
+                {f.financiamiento > 0 && <p>Financiamiento: <span className="font-bold text-amber-400">{dinero(f.financiamiento)}</span></p>}
                 <p>Pagado: <span className="font-bold text-red-400">{dinero(f.egresos)}</span></p>
                 <p>Transf. entrantes: <span className="font-bold text-white/80">{dinero(f.transferenciasEntrantes)}</span></p>
                 <p>Transf. salientes: <span className="font-bold text-white/80">{dinero(f.transferenciasSalientes)}</span></p>
@@ -850,6 +898,8 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
   }
 
   const dg = cierre.desglose;
+  const det = cierre.detalle;
+  const ingresosTotal = det.ingresos.total;
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4 md:flex-row md:items-center md:justify-between">
@@ -858,23 +908,29 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
           <p className="mt-1 text-xs text-white/50">Estado: <span className={`font-black uppercase ${cierre.estado === "abierto" ? "text-white/70" : cierre.estado === "cerrado" ? "text-green-400" : "text-amber-400"}`}>{cierre.estado === "cerrado_con_diferencia" ? "Cerrado con diferencia" : cierre.estado}</span>{cierre.cerrado_at && ` · ${new Date(cierre.cerrado_at).toLocaleString("es-AR")}`}</p>
         </div>
         {cerrado ? (
-          <button onClick={reabrir} disabled={guardando} className="rounded-xl border border-amber-500/50 px-5 py-2.5 text-xs font-black uppercase text-amber-400 transition hover:bg-amber-500/10 disabled:opacity-40">Reabrir mes</button>
+          <button onClick={reabrir} disabled={guardando} className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-6 py-2.5 text-xs font-black uppercase text-amber-400 transition hover:bg-amber-500/20 disabled:opacity-40">↻ Reabrir mes</button>
         ) : (
           <button onClick={cerrar} disabled={guardando} className="rounded-xl bg-red-600 px-6 py-2.5 text-xs font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30">{guardando ? "Cerrando..." : "Cerrar mes"}</button>
         )}
       </div>
 
+      {cerrado && <p className="rounded-xl border border-amber-500/25 bg-amber-950/10 px-4 py-2 text-xs font-bold text-amber-400">Mes cerrado: no se pueden cargar ni editar movimientos. Tocá “Reabrir mes” para volver a habilitar cambios.</p>}
+
+      {/* A) Cierre general */}
       <div className="rounded-2xl border border-white/10 bg-black p-4">
-        <h3 className="mb-3 text-sm font-black uppercase text-white/60">Cálculo del saldo teórico general</h3>
+        <h3 className="mb-3 text-sm font-black uppercase text-white/60">A) Cierre general del mes</h3>
         <div className="space-y-1.5 text-sm">
           <FilaCierre label="Saldo inicial general" valor={cierre.saldo_inicial_general} />
-          <FilaCierre label="+ Ingresos" valor={dg.ingresos} color="verde" />
+          <FilaCierre label="+ Ingresos operativos" valor={dg.ingresos} color="verde" />
+          {dg.financiamiento > 0 && <FilaCierre label="+ Financiamiento (préstamos)" valor={dg.financiamiento} color="verde" />}
           <FilaCierre label="− Costos" valor={-dg.costos} color="rojo" />
           <FilaCierre label="− Gastos" valor={-dg.gastos} color="rojo" />
           <FilaCierre label="− Inversiones" valor={-dg.inversiones} color="rojo" />
           <FilaCierre label="− Gastos de sueldo" valor={-dg.gastos_sueldo} color="rojo" />
+          {dg.pagos_deuda > 0 && <FilaCierre label="− Pagos de deuda" valor={-dg.pagos_deuda} color="rojo" />}
+          {dg.otros !== 0 && <FilaCierre label="− Otros" valor={-dg.otros} color="rojo" />}
           {dg.ajustes !== 0 && <FilaCierre label="± Ajustes" valor={dg.ajustes} />}
-          <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2 text-base font-black"><span className="uppercase">Saldo final teórico</span><span>{dinero(cierre.saldo_teorico_general)}</span></div>
+          <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2 text-base font-black"><span className="uppercase">Saldo final teórico general</span><span>{dinero(cierre.saldo_teorico_general)}</span></div>
         </div>
       </div>
 
@@ -882,14 +938,114 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
         <div className="rounded-2xl border border-white/10 bg-black p-4">
           <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Saldo real general (contado por vos)</label>
           <input type="number" value={real} disabled={cerrado} onChange={(e) => setReal(e.target.value)} placeholder="0" className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-lg font-black outline-none focus:border-red-500 disabled:opacity-50" />
-          {dif !== null && <p className={`mt-2 text-sm font-black ${Math.abs(dif) < 1 ? "text-green-400" : "text-amber-400"}`}>Diferencia: {dinero(dif)}</p>}
+          {dif !== null && <p className={`mt-2 text-sm font-black ${Math.abs(dif) < 1 ? "text-green-400" : "text-amber-400"}`}>Diferencia general: {dinero(dif)}</p>}
         </div>
         <div className="rounded-2xl border border-white/10 bg-black p-4">
           <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Observaciones</label>
           <textarea value={obs} onChange={(e) => setObs(e.target.value)} disabled={cerrado} rows={3} placeholder="Notas del cierre..." className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/25 focus:border-red-500 disabled:opacity-50" />
         </div>
       </div>
-      <p className="text-xs text-white/35">El saldo inicial del mes siguiente arranca automáticamente con este saldo real. Cerrar bloquea cargas hasta reabrir.</p>
+      <p className="text-xs text-white/35">El cierre oficial es general. El saldo inicial del mes siguiente arranca automáticamente con este saldo real.</p>
+
+      {/* B) Desglose por fuente */}
+      <div>
+        <h3 className="mb-3 text-sm font-black uppercase text-white/60">B) Desglose por fuente</h3>
+        <div className="grid gap-3 md:grid-cols-2">
+          {cierre.por_fuente.map((f) => (
+            <div key={f.tipo} className="rounded-2xl border border-white/10 bg-black p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-black uppercase">{f.nombre}</p>
+                <p className={`text-lg font-black ${f.neto >= 0 ? "text-green-400" : "text-red-500"}`}>{dinero(f.neto)}</p>
+              </div>
+              <div className="mt-2 space-y-1 text-xs text-white/55">
+                <FilaFuente label="Ingresos cobrados" valor={f.ingresos} color="verde" />
+                {f.financiamiento > 0 && <FilaFuente label="Financiamiento" valor={f.financiamiento} color="ambar" />}
+                <FilaFuente label="Costos" valor={f.costos} />
+                <FilaFuente label="Gastos" valor={f.gastos} />
+                <FilaFuente label="Inversiones" valor={f.inversiones} />
+                <FilaFuente label="Gastos de sueldo" valor={f.gastosSueldo} />
+                {f.pagosDeuda > 0 && <FilaFuente label="Pagos de deuda" valor={f.pagosDeuda} />}
+                <FilaFuente label="Transf. entrantes" valor={f.transferenciasEntrantes} />
+                <FilaFuente label="Transf. salientes" valor={f.transferenciasSalientes} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Detalle por rubro */}
+      <div>
+        <h3 className="mb-3 text-sm font-black uppercase text-white/60">En qué entró / salió</h3>
+        <div className="space-y-2">
+          {/* Ingresos */}
+          <details className="rounded-2xl border border-white/10 bg-black">
+            <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-black">
+              <span className="uppercase text-green-400">Ingresos por rubro</span>
+              <span>{dinero(ingresosTotal)}</span>
+            </summary>
+            <div className="border-t border-white/10 px-4 py-3">
+              {det.ingresos.automaticos.length > 0 && (
+                <>
+                  <p className="mb-1 text-[10px] font-black uppercase text-white/40">Automáticos (sistema)</p>
+                  {det.ingresos.automaticos.map((a) => (
+                    <RubroFila key={a.fuente} nombre={a.fuente} total={a.total} base={ingresosTotal} cantidad={a.cantidad} />
+                  ))}
+                </>
+              )}
+              {det.ingresos.manuales_por_categoria.length > 0 && (
+                <>
+                  <p className="mb-1 mt-3 text-[10px] font-black uppercase text-white/40">Manuales</p>
+                  {det.ingresos.manuales_por_categoria.map((c) => (
+                    <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={ingresosTotal} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} />
+                  ))}
+                </>
+              )}
+              {ingresosTotal === 0 && <p className="text-sm text-white/40">Sin ingresos este mes.</p>}
+            </div>
+          </details>
+
+          <RubroDetalle titulo="Costos por rubro" items={det.costos_por_categoria} base={dg.costos} color="text-red-400" />
+          <RubroDetalle titulo="Gastos por rubro" items={det.gastos_por_categoria} base={dg.gastos} color="text-red-400" />
+          <RubroDetalle titulo="Inversiones por rubro" items={det.inversiones_por_categoria} base={dg.inversiones} color="text-red-400" />
+          {dg.otros > 0 && <RubroDetalle titulo="Otros egresos" items={det.otros_por_categoria} base={dg.otros} color="text-red-400" />}
+
+          {/* Mi sueldo */}
+          <details className="rounded-2xl border border-white/10 bg-black">
+            <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-black">
+              <span className="uppercase text-amber-400">Mi sueldo · gastos por categoría</span>
+              <span>{dinero(det.sueldo_total)}{det.sueldo_asignado > 0 ? ` / ${dinero(det.sueldo_asignado)}` : ""}</span>
+            </summary>
+            <div className="border-t border-white/10 px-4 py-3">
+              {det.sueldo_por_categoria.length === 0 ? <p className="text-sm text-white/40">Sin gastos de sueldo este mes.</p> : (
+                det.sueldo_por_categoria.map((c) => (
+                  <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={det.sueldo_total} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} />
+                ))
+              )}
+            </div>
+          </details>
+
+          {dg.pagos_deuda > 0 && <RubroDetalle titulo="Pagos de deuda" items={det.pagos_deuda_por_categoria} base={dg.pagos_deuda} color="text-red-400" />}
+
+          {/* Financiamiento */}
+          {det.financiamiento.total > 0 && (
+            <details className="rounded-2xl border border-amber-500/20 bg-black">
+              <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-black">
+                <span className="uppercase text-amber-400">Financiamiento recibido</span>
+                <span>{dinero(det.financiamiento.total)}</span>
+              </summary>
+              <div className="border-t border-white/10 px-4 py-3">
+                <p className="mb-2 text-[11px] text-white/40">Entra caja pero no es facturación (no cuenta como revenue ni resultado operativo).</p>
+                {det.financiamiento.items.map((i) => (
+                  <div key={i.id} className="flex items-center justify-between py-1 text-xs">
+                    <span className="text-white/60">{i.fecha.slice(8)}/{i.fecha.slice(5, 7)} · {i.descripcion} {i.fuente ? `(${i.fuente === "efectivo" ? "Efectivo" : "MP"})` : ""}</span>
+                    <span className="font-black text-amber-400">{dinero(i.monto)}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -897,15 +1053,47 @@ function FilaCierre({ label, valor, color }: { label: string; valor: number; col
   const cls = color === "verde" ? "text-green-400" : color === "rojo" ? "text-red-400" : "text-white/80";
   return (<div className="flex items-center justify-between"><span className="text-white/60">{label}</span><span className={`font-bold ${cls}`}>{dinero(valor)}</span></div>);
 }
+function FilaFuente({ label, valor, color }: { label: string; valor: number; color?: "verde" | "ambar" }) {
+  if (!valor) return null;
+  const cls = color === "verde" ? "text-green-400" : color === "ambar" ? "text-amber-400" : "text-white/80";
+  return (<div className="flex items-center justify-between"><span className="text-white/50">{label}</span><span className={`font-bold ${cls}`}>{dinero(valor)}</span></div>);
+}
+function RubroFila({ nombre, total, base, cantidad, ef, mp }: { nombre: string; total: number; base: number; cantidad?: number; ef?: number; mp?: number }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-white/5 py-1.5 text-xs first:border-t-0">
+      <div className="min-w-0">
+        <span className="font-bold text-white/70">{nombre}</span>
+        <span className="ml-2 text-white/30">{base > 0 ? `${Math.round((total / base) * 100)}%` : ""}{cantidad ? ` · ${cantidad} mov.` : ""}{(ef || mp) ? ` · Ef ${dinero(ef || 0)} / MP ${dinero(mp || 0)}` : ""}</span>
+      </div>
+      <span className="shrink-0 font-black">{dinero(total)}</span>
+    </div>
+  );
+}
+function RubroDetalle({ titulo, items, base, color }: { titulo: string; items: RubroCat[]; base: number; color: string }) {
+  return (
+    <details className="rounded-2xl border border-white/10 bg-black">
+      <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-black">
+        <span className={`uppercase ${color}`}>{titulo}</span>
+        <span>{dinero(base)}</span>
+      </summary>
+      <div className="border-t border-white/10 px-4 py-3">
+        {items.length === 0 ? <p className="text-sm text-white/40">Sin movimientos en este rubro.</p> : (
+          items.map((c) => <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={base} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} />)
+        )}
+      </div>
+    </details>
+  );
+}
 
 // ═════════ TAB: Mi sueldo ═════════
 
-function TabSueldo({ mes, resumen, movimientos, cuentasPorId, categoriasPorId, onAgregar, onHecho, refrescar }: {
+function TabSueldo({ mes, resumen, movimientos, cuentasPorId, categoriasPorId, onAgregar, onHecho, refrescar, onCargaRapida }: {
   mes: string; resumen: ResumenApi; movimientos: Movimiento[]; cuentasPorId: Record<string, Cuenta>; categoriasPorId: Record<string, Categoria>;
-  onAgregar: () => void; onHecho: () => void; refrescar: () => void;
+  onAgregar: () => void; onHecho: () => void; refrescar: () => void; onCargaRapida: (texto: string) => void;
 }) {
   const r = resumen.resumen;
   const [sueldoInput, setSueldoInput] = useState(String(r.sueldoAsignado || ""));
+  const [rapido, setRapido] = useState("");
   const [guardando, setGuardando] = useState(false);
   useEffect(() => { setSueldoInput(String(r.sueldoAsignado || "")); }, [r.sueldoAsignado, mes]);
 
@@ -939,6 +1127,18 @@ function TabSueldo({ mes, resumen, movimientos, cuentasPorId, categoriasPorId, o
           </div>
         </div>
         <button onClick={onAgregar} className="rounded-full bg-red-600 px-4 py-2 text-xs font-black uppercase transition hover:bg-red-700">+ Gasto de sueldo</button>
+      </div>
+
+      {/* Carga rápida de gasto de sueldo */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Carga rápida de gasto de sueldo</label>
+        <div className="flex flex-col gap-2 md:flex-row">
+          <input type="text" value={rapido} onChange={(e) => setRapido(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && rapido.trim().length >= 3) { onCargaRapida(rapido); setRapido(""); } }}
+            placeholder='Ej: "8500 nafta efectivo" · "12000 comida mp" · "30000 tarjeta mp"'
+            className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/25 focus:border-red-500" />
+          <button onClick={() => { if (rapido.trim().length >= 3) { onCargaRapida(rapido); setRapido(""); } }} disabled={rapido.trim().length < 3} className="rounded-xl bg-red-600 px-5 py-2 text-sm font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30">Cargar</button>
+        </div>
+        <p className="mt-1 text-[10px] text-white/30">Ya entra como gasto de “Mi sueldo”. Elegís cuenta (efectivo/mp) y confirmás. La barra global también entiende “sueldo …”.</p>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

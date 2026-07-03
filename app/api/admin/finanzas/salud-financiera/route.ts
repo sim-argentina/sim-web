@@ -178,9 +178,11 @@ export async function GET(req: NextRequest) {
       contexto: {
         caja,
         ingresos_mes: resumen.ingresos,
+        financiamiento_mes: resumen.financiamiento,
         ingresos_promedio: Math.round(ingresosPromedio),
         egresos_operativos: egresosOperativos,
         resultado_operativo: resumen.resultadoOperativo,
+        hay_financiamiento: resumen.financiamiento > 0,
         cobros_mes: cobrosMes,
         cobros_mes_ponderados: Math.round(cobrosMesPond),
         pagos_mes: pagosMes,

@@ -62,6 +62,10 @@ type Deuda = {
   cuotas_pendientes: number;
   cuotas_vencidas: number;
   proxima_cuota: { fecha: string; monto: number } | null;
+  es_prestamo?: boolean;
+  acreedor?: string | null;
+  monto_recibido?: number | null;
+  cuenta_destino?: string | null;
 };
 
 type SaludApi = {
@@ -92,6 +96,12 @@ function pct(v: number | null | undefined): string {
 function hoyLocal(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function sumarUnMes(fecha: string): string {
+  const [y, m, d] = fecha.split("-").map(Number);
+  const base = new Date(y, m - 1, d);
+  base.setMonth(base.getMonth() + 1);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
 }
 function labelMes(mes: string): string {
   const [y, m] = mes.split("-").map(Number);
@@ -180,6 +190,7 @@ function eventoFormVacio(preset: Partial<EventoForm> = {}): EventoForm {
 
 type DeudaForm = { descripcion: string; proveedor: string; monto_total: string; cuotas: string; monto_cuota: string; fecha_primera_cuota: string; cuenta_estimada: string; categoria_id: string; observaciones: string };
 type RecForm = { id: string | null; tipo: string; frecuencia: string; fecha_inicio: string; fecha_fin: string; cantidad_repeticiones: string; monto: string; descripcion: string; categoria_id: string; cuenta_estimada: string; probabilidad: string; proveedor_cliente: string };
+type PrestForm = { fecha_recepcion: string; monto_recibido: string; cuenta_destino: string; acreedor: string; descripcion: string; con_interes: boolean; monto_total_a_devolver: string; cuotas: string; monto_cuota: string; fecha_primera_cuota: string; frecuencia: string; observaciones: string };
 
 // ═════════ CALENDARIO FINANCIERO (tab) ═════════
 
@@ -206,6 +217,7 @@ export function CalendarioFinanciero({
   const [evForm, setEvForm] = useState<EventoForm | null>(null);
   const [deudaForm, setDeudaForm] = useState<DeudaForm | null>(null);
   const [recForm, setRecForm] = useState<RecForm | null>(null);
+  const [prestForm, setPrestForm] = useState<PrestForm | null>(null);
   const [guardando, setGuardando] = useState(false);
 
   const hoy = hoyLocal();
@@ -367,6 +379,35 @@ export function CalendarioFinanciero({
       setDeudaForm(null); mostrarAviso(`Deuda creada (${d.cuotas_creadas} cuota/s)`); cargarTodo();
     } finally { setGuardando(false); }
   }
+  async function guardarPrestamo() {
+    if (!prestForm) return;
+    setGuardando(true);
+    try {
+      const r = await fetch("/api/admin/finanzas/prestamos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fecha_recepcion: prestForm.fecha_recepcion,
+          monto_recibido: Number(prestForm.monto_recibido),
+          cuenta_destino: prestForm.cuenta_destino,
+          acreedor: prestForm.acreedor,
+          descripcion: prestForm.descripcion || null,
+          monto_total_a_devolver: prestForm.con_interes && prestForm.monto_total_a_devolver ? Number(prestForm.monto_total_a_devolver) : Number(prestForm.monto_recibido),
+          cuotas: Number(prestForm.cuotas) || 1,
+          monto_cuota: prestForm.monto_cuota ? Number(prestForm.monto_cuota) : null,
+          fecha_primera_cuota: prestForm.fecha_primera_cuota,
+          frecuencia: prestForm.frecuencia,
+          observaciones: prestForm.observaciones || null,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) { alert(d.error || "Error creando préstamo"); return; }
+      setPrestForm(null);
+      mostrarAviso(`Préstamo cargado: entró plata + ${d.cuotas_creadas} cuota/s${d.interes_estimado > 0 ? ` (interés ${dinero(d.interes_estimado)})` : ""}`);
+      cargarTodo();
+      refrescarFinanzas();
+    } finally { setGuardando(false); }
+  }
   async function eliminarDeuda(d: Deuda) {
     if (!confirm(`¿Eliminar/cancelar la deuda "${d.descripcion}" y sus cuotas pendientes?`)) return;
     const r = await fetch(`/api/admin/finanzas/deudas/${d.id}`, { method: "DELETE" });
@@ -434,6 +475,7 @@ export function CalendarioFinanciero({
         <button onClick={() => setEvForm(eventoFormVacio({ tipo: "cobro_futuro", fecha: diaSel || hoy }))} className="rounded-full border border-green-500/50 px-4 py-2 text-xs font-black uppercase text-green-400 transition hover:bg-green-500/10">+ Cobro futuro</button>
         <button onClick={() => setEvForm(eventoFormVacio({ tipo: "pago_futuro", fecha: diaSel || hoy }))} className="rounded-full border border-red-500/50 px-4 py-2 text-xs font-black uppercase text-red-400 transition hover:bg-red-500/10">+ Pago futuro</button>
         <button onClick={() => setDeudaForm({ descripcion: "", proveedor: "", monto_total: "", cuotas: "1", monto_cuota: "", fecha_primera_cuota: diaSel || hoy, cuenta_estimada: "mercado_pago", categoria_id: "", observaciones: "" })} className="rounded-full border border-amber-500/50 px-4 py-2 text-xs font-black uppercase text-amber-400 transition hover:bg-amber-500/10">+ Deuda</button>
+        <button onClick={() => setPrestForm({ fecha_recepcion: diaSel || hoy, monto_recibido: "", cuenta_destino: "mercado_pago", acreedor: "", descripcion: "", con_interes: false, monto_total_a_devolver: "", cuotas: "1", monto_cuota: "", fecha_primera_cuota: sumarUnMes(diaSel || hoy), frecuencia: "mensual", observaciones: "" })} className="rounded-full border border-sky-500/50 px-4 py-2 text-xs font-black uppercase text-sky-400 transition hover:bg-sky-500/10">+ Préstamo / deuda tomada</button>
         <button onClick={() => setRecForm({ id: null, tipo: "gasto_fijo", frecuencia: "mensual", fecha_inicio: diaSel || hoy, fecha_fin: "", cantidad_repeticiones: "12", monto: "", descripcion: "", categoria_id: "", cuenta_estimada: "mercado_pago", probabilidad: "100", proveedor_cliente: "" })} className="rounded-full border border-white/20 px-4 py-2 text-xs font-black uppercase text-white/70 transition hover:border-red-500 hover:text-white">+ Recurrente</button>
         <div className="ml-auto flex flex-wrap gap-2">
           <select value={fTipo} onChange={(e) => setFTipo(e.target.value)} className={selCls}>
@@ -571,7 +613,10 @@ export function CalendarioFinanciero({
       <div className="rounded-2xl border border-white/10 bg-black p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-black uppercase text-white/60">Deudas</h3>
-          <button onClick={() => setDeudaForm({ descripcion: "", proveedor: "", monto_total: "", cuotas: "1", monto_cuota: "", fecha_primera_cuota: hoy, cuenta_estimada: "mercado_pago", categoria_id: "", observaciones: "" })} className="rounded-full border border-amber-500/50 px-3 py-1 text-[10px] font-black uppercase text-amber-400 hover:bg-amber-500/10">+ Deuda</button>
+          <div className="flex gap-2">
+            <button onClick={() => setPrestForm({ fecha_recepcion: hoy, monto_recibido: "", cuenta_destino: "mercado_pago", acreedor: "", descripcion: "", con_interes: false, monto_total_a_devolver: "", cuotas: "1", monto_cuota: "", fecha_primera_cuota: sumarUnMes(hoy), frecuencia: "mensual", observaciones: "" })} className="rounded-full border border-sky-500/50 px-3 py-1 text-[10px] font-black uppercase text-sky-400 hover:bg-sky-500/10">+ Préstamo</button>
+            <button onClick={() => setDeudaForm({ descripcion: "", proveedor: "", monto_total: "", cuotas: "1", monto_cuota: "", fecha_primera_cuota: hoy, cuenta_estimada: "mercado_pago", categoria_id: "", observaciones: "" })} className="rounded-full border border-amber-500/50 px-3 py-1 text-[10px] font-black uppercase text-amber-400 hover:bg-amber-500/10">+ Deuda</button>
+          </div>
         </div>
         {deudas.length === 0 ? <p className="text-sm text-white/40">Sin deudas cargadas.</p> : (
           <div className="grid gap-2 md:grid-cols-2">
@@ -579,7 +624,7 @@ export function CalendarioFinanciero({
               <div key={d.id} className={`rounded-xl border p-3 ${d.estado === "activa" ? "border-white/10 bg-white/[0.03]" : "border-white/5 opacity-60"}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-black">{d.descripcion}{d.proveedor && <span className="ml-1 text-xs font-bold text-white/40">· {d.proveedor}</span>}</p>
+                    <p className="truncate text-sm font-black">{d.es_prestamo && <span className="mr-1 rounded bg-sky-500/20 px-1.5 py-0.5 text-[9px] font-black uppercase text-sky-300">Préstamo</span>}{d.descripcion}{d.proveedor && <span className="ml-1 text-xs font-bold text-white/40">· {d.proveedor}</span>}</p>
                     <p className="text-[10px] uppercase text-white/35">{d.estado} · {d.cuotas_pagadas}/{d.cuotas_total} cuotas pagadas{d.cuotas_vencidas > 0 ? ` · ${d.cuotas_vencidas} vencidas` : ""}</p>
                   </div>
                   <button onClick={() => eliminarDeuda(d)} className="shrink-0 rounded-lg border border-white/15 px-2 py-1 text-[10px] font-black uppercase text-white/50 hover:border-red-500 hover:text-white">×</button>
@@ -589,6 +634,12 @@ export function CalendarioFinanciero({
                   <span className="text-white/50">Pendiente: <b className="text-red-400">{dinero(d.pendiente)}</b></span>
                   <span className="text-white/50">Pagado: <b className="text-green-400">{dinero(d.pagado)}</b></span>
                   {d.proxima_cuota && <span className="text-white/50">Próxima: <b className="text-white/80">{d.proxima_cuota.fecha.slice(8)}/{d.proxima_cuota.fecha.slice(5, 7)} {dinero(d.proxima_cuota.monto)}</b></span>}
+                  {d.es_prestamo && typeof d.monto_recibido === "number" && (
+                    <>
+                      <span className="text-white/50">Recibido: <b className="text-sky-300">{dinero(d.monto_recibido)}</b></span>
+                      {d.monto_total - d.monto_recibido > 0 && <span className="text-white/50">Interés: <b className="text-amber-400">{dinero(d.monto_total - d.monto_recibido)}</b></span>}
+                    </>
+                  )}
                 </div>
               </div>
             ))}
@@ -734,6 +785,72 @@ export function CalendarioFinanciero({
           </div>
         </Modal>
       )}
+
+      {/* ── Modal préstamo / deuda tomada ── */}
+      {prestForm && (() => {
+        const recibido = Number(prestForm.monto_recibido) || 0;
+        const nCuotas = Math.max(1, Number(prestForm.cuotas) || 1);
+        const totalDevolver = prestForm.con_interes && Number(prestForm.monto_total_a_devolver) > 0 ? Number(prestForm.monto_total_a_devolver) : recibido;
+        const interes = Math.max(0, totalDevolver - recibido);
+        const cuotaCalc = prestForm.monto_cuota && Number(prestForm.monto_cuota) > 0 ? Number(prestForm.monto_cuota) : (nCuotas > 0 ? Math.round((totalDevolver / nCuotas) * 100) / 100 : 0);
+        return (
+          <Modal titulo="Préstamo / deuda tomada" onCerrar={() => setPrestForm(null)}>
+            <p className="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-xs text-sky-200/80">
+              Entra plata a la caja como <b>financiamiento</b> (no es venta ni ingreso operativo) y se genera una <b>deuda</b> con sus cuotas futuras. Las cuotas, al pagarse, bajan la caja pero no cuentan como costo/gasto del negocio.
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Campo label="Acreedor / entidad"><input type="text" value={prestForm.acreedor} onChange={(e) => setPrestForm({ ...prestForm, acreedor: e.target.value })} placeholder="Ej: Banco, familiar, Mercado Crédito" className={`${inputCls} placeholder:text-white/30`} /></Campo>
+              <Campo label="Fecha de recepción"><input type="date" value={prestForm.fecha_recepcion} onChange={(e) => setPrestForm({ ...prestForm, fecha_recepcion: e.target.value })} className={inputCls} /></Campo>
+              <Campo label="Monto recibido"><input type="number" min={0} value={prestForm.monto_recibido} onChange={(e) => setPrestForm({ ...prestForm, monto_recibido: e.target.value })} placeholder="0" className={`${inputCls} placeholder:text-white/30`} /></Campo>
+              <Campo label="¿Dónde entra la plata?">
+                <select value={prestForm.cuenta_destino} onChange={(e) => setPrestForm({ ...prestForm, cuenta_destino: e.target.value })} className={inputCls}>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="mercado_pago">Mercado Pago</option>
+                </select>
+              </Campo>
+              <div className="md:col-span-2 flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-black uppercase text-white/70">
+                  <input type="checkbox" checked={prestForm.con_interes} onChange={(e) => setPrestForm({ ...prestForm, con_interes: e.target.checked, monto_total_a_devolver: e.target.checked ? prestForm.monto_total_a_devolver : "" })} className="h-4 w-4 accent-sky-500" />
+                  Devuelvo más de lo que recibí (con interés)
+                </label>
+              </div>
+              {prestForm.con_interes && (
+                <Campo label="Total a devolver"><input type="number" min={0} value={prestForm.monto_total_a_devolver} onChange={(e) => { const total = e.target.value; setPrestForm({ ...prestForm, monto_total_a_devolver: total, monto_cuota: nCuotas > 1 && Number(total) > 0 ? String(Math.round(Number(total) / nCuotas)) : prestForm.monto_cuota }); }} placeholder="0" className={`${inputCls} placeholder:text-white/30`} /></Campo>
+              )}
+              <Campo label="Frecuencia">
+                <select value={prestForm.frecuencia} onChange={(e) => setPrestForm({ ...prestForm, frecuencia: e.target.value, cuotas: e.target.value === "unica" ? "1" : prestForm.cuotas })} className={inputCls}>
+                  <option value="mensual">Mensual</option>
+                  <option value="semanal">Semanal</option>
+                  <option value="unica">Pago único</option>
+                </select>
+              </Campo>
+              {prestForm.frecuencia !== "unica" && (
+                <Campo label="Cantidad de cuotas"><input type="number" min={1} max={120} value={prestForm.cuotas} onChange={(e) => { const n = Number(e.target.value) || 1; setPrestForm({ ...prestForm, cuotas: e.target.value, monto_cuota: n > 1 && totalDevolver > 0 ? String(Math.round(totalDevolver / n)) : "" }); }} className={inputCls} /></Campo>
+              )}
+              {prestForm.frecuencia !== "unica" && Number(prestForm.cuotas) > 1 && (
+                <Campo label="Monto por cuota"><input type="number" min={0} value={prestForm.monto_cuota} onChange={(e) => setPrestForm({ ...prestForm, monto_cuota: e.target.value })} placeholder={String(cuotaCalc)} className={`${inputCls} placeholder:text-white/30`} /></Campo>
+              )}
+              <Campo label={prestForm.frecuencia === "unica" ? "Fecha de devolución" : "Fecha primera cuota"}><input type="date" value={prestForm.fecha_primera_cuota} onChange={(e) => setPrestForm({ ...prestForm, fecha_primera_cuota: e.target.value })} className={inputCls} /></Campo>
+              <div className="md:col-span-2"><Campo label="Descripción"><input type="text" value={prestForm.descripcion} onChange={(e) => setPrestForm({ ...prestForm, descripcion: e.target.value })} placeholder="Opcional" className={`${inputCls} placeholder:text-white/30`} /></Campo></div>
+              <div className="md:col-span-2"><Campo label="Observaciones"><input type="text" value={prestForm.observaciones} onChange={(e) => setPrestForm({ ...prestForm, observaciones: e.target.value })} placeholder="Notas" className={`${inputCls} placeholder:text-white/30`} /></Campo></div>
+            </div>
+            {recibido > 0 && (
+              <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl border border-white/10 bg-black p-3 text-center">
+                <div><p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Entra ahora</p><p className="mt-1 text-sm font-black text-green-400">{dinero(recibido)}</p></div>
+                <div><p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Total a devolver</p><p className="mt-1 text-sm font-black text-red-400">{dinero(totalDevolver)}</p></div>
+                <div><p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Interés</p><p className={`mt-1 text-sm font-black ${interes > 0 ? "text-amber-400" : "text-white/50"}`}>{dinero(interes)}</p></div>
+              </div>
+            )}
+            {recibido > 0 && (
+              <p className="mt-3 text-xs text-white/40">Se generan {prestForm.frecuencia === "unica" ? 1 : nCuotas} {prestForm.frecuencia === "unica" ? "pago" : (prestForm.frecuencia === "semanal" ? "cuotas semanales" : "cuotas mensuales")} de {dinero(cuotaCalc)} desde el {prestForm.fecha_primera_cuota}.</p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setPrestForm(null)} className="rounded-xl border border-white/15 px-5 py-2.5 text-xs font-black uppercase text-white/60 hover:text-white">Cancelar</button>
+              <button onClick={guardarPrestamo} disabled={guardando || !prestForm.acreedor.trim() || recibido <= 0 || !prestForm.fecha_recepcion || !prestForm.fecha_primera_cuota || (prestForm.con_interes && totalDevolver < recibido)} className="rounded-xl bg-sky-600 px-6 py-2.5 text-xs font-black uppercase transition hover:bg-sky-700 disabled:bg-white/10 disabled:text-white/30">{guardando ? "..." : "Cargar préstamo"}</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* ── Modal recurrencia ── */}
       {recForm && (
