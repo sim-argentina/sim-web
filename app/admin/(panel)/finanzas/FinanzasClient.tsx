@@ -468,7 +468,7 @@ export default function FinanzasClient() {
 
   const categoriasForm = useMemo(() => {
     if (!movForm) return [];
-    if (movForm.esSueldo) return categorias.filter((c) => c.activa && c.tipo === "sueldo_personal");
+    if (movForm.esSueldo) return categorias.filter((c) => c.activa);
     const tipoCat = movForm.tipo === "ingreso" ? "ingreso" : movForm.tipo === "ajuste" ? "ajuste" : movForm.clasificacion;
     return categorias.filter((c) => c.activa && c.tipo === tipoCat);
   }, [categorias, movForm]);
