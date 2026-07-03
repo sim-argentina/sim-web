@@ -5,6 +5,7 @@
 // Saldo inicial general, "Mi sueldo", métricas con detalle y diagnóstico.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarioFinanciero, SaludFinanciera } from "./CalendarioFinanciero";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -178,6 +179,7 @@ const TABS = [
   { id: "movimientos", label: "Movimientos" },
   { id: "cierre", label: "Cierre mensual" },
   { id: "sueldo", label: "Mi sueldo" },
+  { id: "calendario", label: "Calendario financiero" },
   { id: "categorias", label: "Categorías" },
   { id: "reglas", label: "Reglas" },
   { id: "metricas", label: "Métricas" },
@@ -324,7 +326,7 @@ export default function FinanzasClient() {
 
   const mesCerrado = resumen?.cierre?.estado && resumen.cierre.estado !== "abierto";
   const antesDeInicio = Boolean(resumen?.antes_de_inicio) && resumen?.mes === mes;
-  const TABS_DATOS: TabId[] = ["resumen", "movimientos", "cierre", "sueldo", "metricas"];
+  const TABS_DATOS: TabId[] = ["resumen", "movimientos", "cierre", "sueldo", "calendario", "metricas"];
 
   async function guardarMovimiento() {
     if (!movForm) return;
@@ -502,9 +504,17 @@ export default function FinanzasClient() {
             )}
             {tab === "cierre" && <TabCierre mes={mes} cierre={cierre} onHecho={() => { refrescar(); cargarCierre(mes); }} />}
             {tab === "sueldo" && resumen && <TabSueldo mes={mes} resumen={resumen} movimientos={movimientos} cuentasPorId={cuentasPorId} categoriasPorId={categoriasPorId} onAgregar={abrirSueldo} onHecho={() => mostrarAviso("Sueldo actualizado")} refrescar={refrescar} />}
+            {tab === "calendario" && (
+              <CalendarioFinanciero mes={mes} categorias={categorias} mostrarAviso={mostrarAviso} refrescarFinanzas={refrescar} />
+            )}
             {tab === "categorias" && <TabCategorias categorias={categorias} onCambio={cargarBase} mostrarAviso={mostrarAviso} />}
             {tab === "reglas" && <TabReglas reglas={reglas} categorias={categorias} cuentas={cuentasActivas} onCambio={cargarReglas} mostrarAviso={mostrarAviso} />}
-            {tab === "metricas" && <TabMetricas metricas={metricas} />}
+            {tab === "metricas" && (
+              <div className="space-y-8">
+                <TabMetricas metricas={metricas} />
+                <SaludFinanciera mes={mes} />
+              </div>
+            )}
             {tab === "config" && (
               <div className="space-y-6">
                 <SeccionInicializar onHecho={() => { mostrarAviso("Saldo inicial guardado"); refrescar(); }} />
