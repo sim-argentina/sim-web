@@ -15,15 +15,34 @@ function limpiarPagosDetalle(pagos: any[]) {
     .filter((pago) => pago.monto > 0);
 }
 
-export async function GET() {
+const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function GET(req: Request) {
   const auth = await requireStaffOrAdmin();
   if (!auth.ok) return auth.response;
   try {
-    const { data, error } = await supabaseAdmin
+    // Filtro opcional por fecha/rango: evita traer toda la tabla cuando solo se
+    // necesita el día/semana/mes visible. Sin parámetros mantiene el
+    // comportamiento anterior (todos los turnos), que usan las métricas.
+    const { searchParams } = new URL(req.url);
+    const fecha = searchParams.get("fecha");
+    const desde = searchParams.get("desde");
+    const hasta = searchParams.get("hasta");
+
+    let query = supabaseAdmin
       .from("turnos_stand")
       .select("*")
       .order("fecha", { ascending: true })
       .order("hora", { ascending: true });
+
+    if (fecha && FECHA_RE.test(fecha)) {
+      query = query.eq("fecha", fecha);
+    } else {
+      if (desde && FECHA_RE.test(desde)) query = query.gte("fecha", desde);
+      if (hasta && FECHA_RE.test(hasta)) query = query.lte("fecha", hasta);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-stand", error });

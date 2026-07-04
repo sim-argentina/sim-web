@@ -248,9 +248,13 @@ export default function TurneroAdminPage() {
     setMostrarSugerenciasClientes(false);
   }
 
-  async function cargarTurnos() {
+  async function cargarTurnos(dia: string = fecha) {
     try {
-      const res = await fetch("/api/turnos-stand", { cache: "no-store" });
+      // El turnero solo muestra el día seleccionado: pedimos únicamente esa
+      // fecha en vez de toda la tabla turnos_stand.
+      const res = await fetch(`/api/turnos-stand?fecha=${encodeURIComponent(dia)}`, {
+        cache: "no-store",
+      });
       const data = await res.json();
 
       if (!res.ok) {
@@ -267,8 +271,9 @@ export default function TurneroAdminPage() {
   }
 
   useEffect(() => {
-    cargarTurnos();
-  }, []);
+    cargarTurnos(fecha);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fecha]);
 
   const turnosDelDia = useMemo(() => {
     return turnos
