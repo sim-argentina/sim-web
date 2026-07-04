@@ -64,7 +64,7 @@ export default function ViajaConSimPage() {
       {/* HERO */}
       <section className="relative min-h-screen px-6 pt-28 pb-20 flex items-center">
         <Image
-          src="/interlagos-race.png"
+          src="/interlagos-race.webp"
           alt="GP Brasil Interlagos"
           fill
           priority

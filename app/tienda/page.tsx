@@ -179,7 +179,7 @@ export default function TiendaPage() {
                 style={{ background: "radial-gradient(ellipse 80% 70% at 50% 110%, rgba(220,38,38,0.12) 0%, #0d0d0d 65%)" }}
               >
                 <Image
-                  src="/Sim-f1.png"
+                  src="/Sim-f1.webp"
                   alt="Simulador F1 SIM Argentina"
                   fill
                   quality={90}
