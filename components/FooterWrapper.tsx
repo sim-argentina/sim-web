@@ -2,9 +2,11 @@
 
 import { usePathname } from "next/navigation";
 import Footer from "@/components/footer";
+import FooterMinimal from "@/components/FooterMinimal";
 
-// El footer (con los enlaces legales) se muestra en todo el sitio público,
-// pero no dentro del panel de administración.
+// El footer completo (Navegación / Legales / Contacto) se muestra únicamente en
+// la Home. El resto del sitio público lleva un footer mínimo (copyright + enlaces
+// legales básicos). En el panel de administración no se muestra footer.
 export default function FooterWrapper() {
   const pathname = usePathname();
 
@@ -12,5 +14,9 @@ export default function FooterWrapper() {
     return null;
   }
 
-  return <Footer />;
+  if (pathname === "/") {
+    return <Footer />;
+  }
+
+  return <FooterMinimal />;
 }
