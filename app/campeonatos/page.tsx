@@ -401,9 +401,17 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
                   Antes de inscribirte, confirmá que leíste y aceptás las condiciones de uso.
                   Para utilizar los simuladores, la <strong className="text-zinc-300">altura mínima es de 1,40 m</strong> y
                   el <strong className="text-zinc-300">peso máximo permitido es de 110 kg</strong>.
-                  Confirmo que los datos ingresados son correctos.
+                  Confirmo que los datos ingresados son correctos y acepto los{" "}
+                  <a href="/legales/terminos" target="_blank" rel="noopener noreferrer" className="font-semibold text-red-400 underline underline-offset-2 hover:text-red-300">Términos y Condiciones</a>{" "}
+                  y la{" "}
+                  <a href="/legales/privacidad" target="_blank" rel="noopener noreferrer" className="font-semibold text-red-400 underline underline-offset-2 hover:text-red-300">Política de Privacidad</a>.
                 </span>
               </label>
+              <p className="text-[11px] leading-5 text-zinc-500">
+                Tus datos (incluido el DNI) se usan únicamente para gestionar tu inscripción y participación en el
+                campeonato, conforme a la Ley 25.326. Podés ejercer tus derechos de acceso, rectificación y supresión
+                escribiéndonos por WhatsApp.
+              </p>
 
               {error && <p className="rounded-xl bg-red-900/30 border border-red-500/30 px-4 py-3 text-sm text-red-400">{error}</p>}
 

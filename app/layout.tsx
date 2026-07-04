@@ -1,5 +1,6 @@
 import "./globals.css";
 import NavbarWrapper from "@/components/NavbarWrapper";
+import FooterWrapper from "@/components/FooterWrapper";
 
 export const metadata = {
   title: "SIM Argentina",
@@ -16,6 +17,7 @@ export default function RootLayout({
       <body>
         <NavbarWrapper />
         {children}
+        <FooterWrapper />
       </body>
     </html>
   );

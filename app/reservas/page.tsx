@@ -1370,7 +1370,25 @@ export default function ReservasPage() {
 
                     <span>
                       Confirmo que leí, entiendo y respeto las condiciones de uso de
-                      SIM.
+                      SIM, y que acepto los{" "}
+                      <a
+                        href="/legales/terminos"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-red-400 underline underline-offset-2 hover:text-red-300"
+                      >
+                        Términos y Condiciones
+                      </a>{" "}
+                      y la{" "}
+                      <a
+                        href="/legales/privacidad"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-red-400 underline underline-offset-2 hover:text-red-300"
+                      >
+                        Política de Privacidad
+                      </a>
+                      .
                     </span>
                   </label>
                 </div>

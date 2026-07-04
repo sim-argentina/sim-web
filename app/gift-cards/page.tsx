@@ -431,8 +431,18 @@ export default function GiftCardsPage() {
                 />
                 <span className="flex items-start gap-2">
                   <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
-                  Confirmo que leí y acepto las condiciones de uso de la Gift Card
-                  (altura mínima 1,40 m, peso máximo 110 kg).
+                  <span>
+                    Confirmo que leí y acepto las condiciones de uso de la Gift Card
+                    (altura mínima 1,40 m, peso máximo 110 kg), los{" "}
+                    <a href="/legales/terminos" target="_blank" rel="noopener noreferrer" className="font-semibold text-red-400 underline underline-offset-2 hover:text-red-300">
+                      Términos y Condiciones
+                    </a>{" "}
+                    y la{" "}
+                    <a href="/legales/privacidad" target="_blank" rel="noopener noreferrer" className="font-semibold text-red-400 underline underline-offset-2 hover:text-red-300">
+                      Política de Privacidad
+                    </a>
+                    .
+                  </span>
                 </span>
               </label>
 
