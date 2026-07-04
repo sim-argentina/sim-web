@@ -11,6 +11,7 @@ import {
   CircleAlert,
 } from "lucide-react";
 import TeamCard from "@/components/TeamCard";
+import { gaEvent, setPendingPurchase } from "@/lib/analytics";
 import {
   getOccupiedSlots,
   getNextSlot,
@@ -350,6 +351,11 @@ export default function ReservasPage() {
   const phoneDigits = getPhoneDigits(phone);
   const isPhoneValid = phoneDigits.length >= 10;
 
+  // Analytics: vista del "producto" reserva (una vez al montar la página).
+  useEffect(() => {
+    gaEvent("view_item", { currency: "ARS", items: [{ item_name: "Turno simulador" }] });
+  }, []);
+
   useEffect(() => {
     setCodigoAplicado(null);
   }, [selectedTeams, selectedDate, selectedTime, duracion]);
@@ -395,11 +401,15 @@ export default function ReservasPage() {
     if (reservedForCurrentSelection.includes(teamKey)) return;
     if (isSubmitting || isLoadingReservations) return;
 
-    setSelectedTeams((prev) =>
-      prev.includes(teamKey)
+    setSelectedTeams((prev) => {
+      const next = prev.includes(teamKey)
         ? prev.filter((item) => item !== teamKey)
-        : [...prev, teamKey]
-    );
+        : [...prev, teamKey];
+      if (!prev.includes(teamKey)) {
+        gaEvent("select_item", { item_list_name: "Simuladores", items: [{ item_id: teamKey, item_name: "Turno simulador" }] });
+      }
+      return next;
+    });
   }
 
   function handleChangeDate(nextDate: string) {
@@ -834,6 +844,13 @@ export default function ReservasPage() {
         );
         return;
       }
+
+      gaEvent("begin_checkout", {
+        currency: "ARS",
+        value: totalFinal,
+        items: [{ item_name: "Turno simulador", quantity: selectedTeams.length }],
+      });
+      setPendingPurchase({ value: totalFinal, currency: "ARS", type: "reserva" });
 
       window.location.href = paymentUrl;
     } catch (error) {

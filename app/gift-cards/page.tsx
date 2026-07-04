@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Gift, ArrowLeft, ShieldCheck, CircleAlert } from "lucide-react";
 import { GIFT_CARD_PRODUCTOS, GIFT_CARD_CONDICIONES, GIFT_CARD_MAX_CANTIDAD } from "@/lib/giftCards";
+import { gaEvent, setPendingPurchase } from "@/lib/analytics";
 
 function formatPrice(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -135,6 +136,7 @@ export default function GiftCardsPage() {
       }
       // Gift Card 100% bonificada: salta Mercado Pago
       if (data.free && data.grupo_compra_id) {
+        setPendingPurchase({ value: 0, currency: "ARS", type: "gift_card" });
         window.location.href = `/gift-cards/exito?external_reference=gift_card_${data.grupo_compra_id}`;
         return;
       }
@@ -143,6 +145,12 @@ export default function GiftCardsPage() {
         setError("Mercado Pago no devolvió un enlace de pago.");
         return;
       }
+      gaEvent("begin_checkout", {
+        currency: "ARS",
+        value: totalFinal,
+        items: [{ item_name: "Gift Card", quantity: cantidad }],
+      });
+      setPendingPurchase({ value: totalFinal, currency: "ARS", type: "gift_card" });
       window.location.href = url;
     } catch {
       setError("Error de conexión. Intentá de nuevo.");

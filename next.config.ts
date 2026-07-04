@@ -17,13 +17,17 @@ const cspDirectives = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   // Next inyecta estilos inline; los previews de imágenes usan data:/blob:.
-  `img-src 'self' data: blob: https://*.supabase.co https://*.mlstatic.com${live("https://vercel.live https://vercel.com")}`,
+  // Google Analytics/Tag Manager: solo los dominios necesarios para pixels de GA4.
+  `img-src 'self' data: blob: https://*.supabase.co https://*.mlstatic.com https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com${live("https://vercel.live https://vercel.com")}`,
   "media-src 'self' blob: https://*.supabase.co",
   `style-src 'self' 'unsafe-inline'${live("https://vercel.live")}`,
   // 'unsafe-eval' lo requiere el runtime de Next en algunos navegadores.
-  `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.mercadopago.com${live("https://vercel.live")}`,
-  `connect-src 'self' https://*.supabase.co https://api.mercadopago.com https://*.mercadopago.com${live("https://vercel.live wss://ws-us3.pusher.com")}`,
-  `frame-src https://*.mercadopago.com https://*.mercadolibre.com${live("https://vercel.live")}`,
+  // Google Tag Manager carga gtm.js desde www.googletagmanager.com.
+  `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://sdk.mercadopago.com https://www.googletagmanager.com${live("https://vercel.live")}`,
+  // GA4 envía datos (Consent Mode/collect) a estos endpoints de Google.
+  `connect-src 'self' https://*.supabase.co https://api.mercadopago.com https://*.mercadopago.com https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com${live("https://vercel.live wss://ws-us3.pusher.com")}`,
+  // El <noscript> de GTM incrusta un iframe de googletagmanager.com.
+  `frame-src https://*.mercadopago.com https://*.mercadolibre.com https://www.googletagmanager.com${live("https://vercel.live")}`,
   "form-action 'self' https://*.mercadopago.com https://*.mercadolibre.com",
   // font-src solo en preview (fuentes del toolbar de Vercel); prod usa system fonts.
   ...(isPreview

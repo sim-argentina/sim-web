@@ -8,6 +8,7 @@ import GiftCardDownloadable, {
   downloadGiftCardPng,
   type GiftCardData,
 } from "@/components/GiftCardDownloadable";
+import PurchaseTracker from "@/components/analytics/PurchaseTracker";
 
 type ApiCard = {
   id: string;
@@ -106,6 +107,7 @@ function ExitoContent() {
 
   return (
     <main className="min-h-screen bg-black px-4 py-20 text-white">
+      <PurchaseTracker kind="gift_card" />
       <section className="mx-auto flex max-w-2xl flex-col items-center text-center">
         <div className="mb-6 rounded-full border border-green-500/30 bg-green-500/10 p-5 text-green-400">
           <CheckCircle2 className="h-12 w-12" />

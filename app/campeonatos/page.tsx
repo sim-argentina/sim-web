@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { formatPenalizacion, msToTiempo, ESCUDERIAS_2026 } from "@/lib/campeonatos";
+import { gaEvent, setPendingPurchase } from "@/lib/analytics";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -305,6 +306,17 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Error al procesar la inscripción."); return; }
+      if (form.metodo_pago_inscripcion === "mercadopago") {
+        gaEvent("begin_checkout", {
+          currency: "ARS",
+          value: campeonato.precio_inscripcion,
+          items: [{ item_id: campeonato.id, item_name: "Inscripción campeonato" }],
+        });
+        setPendingPurchase({ value: campeonato.precio_inscripcion, currency: "ARS", type: "campeonato" });
+      } else {
+        // Pago en el stand: la inscripción queda registrada sin pasar por MP.
+        gaEvent("sign_up", { method: "stand" });
+      }
       setConfirmacion({
         nombre: form.nombre, apellido: form.apellido,
         telefono: form.telefono, dni: form.dni,

@@ -68,7 +68,15 @@ export default function PrivacidadPage() {
       <ul>
         <li><strong>Mercado Pago:</strong> procesamiento de pagos.</li>
         <li><strong>Proveedores de infraestructura tecnológica y hosting</strong> utilizados para operar el sitio y almacenar la información de forma segura.</li>
+        <li><strong>Google (Google Analytics / Google Tag Manager):</strong> medición estadística del uso del sitio, únicamente si prestás tu consentimiento para cookies analíticas.</li>
       </ul>
+      <p>
+        <strong>Analítica web:</strong> con tu consentimiento utilizamos Google Analytics 4 para obtener estadísticas
+        de uso del sitio (páginas vistas, origen del tráfico e interacciones). Aplicamos Google Consent Mode v2: sin tu
+        aceptación no se activan las cookies analíticas. Podés gestionar o revocar esta elección según se indica en la{" "}
+        <Link href={RUTAS_LEGALES.cookies}>Política de Cookies</Link>. La base del tratamiento analítico es tu
+        consentimiento.
+      </p>
 
       <h2>6. Conservación</h2>
       <p>
