@@ -50,17 +50,44 @@ export default function TerminosPage() {
         datos de contacto correctos.
       </p>
 
-      <h2>5. Cancelaciones, reprogramaciones y reembolsos</h2>
+      <h2>5. Cancelaciones, reprogramaciones y llegadas tarde</h2>
       <ul>
-        <li>Podés solicitar la reprogramación o cancelación de un turno contactándonos por WhatsApp con la mayor antelación posible.</li>
-        <li>Las gift cards tienen la vigencia y condiciones indicadas al momento de la compra.</li>
-        <li>
-          Los reembolsos, cuando correspondan, se realizan por el mismo medio de pago utilizado, a través de
-          Mercado Pago, dentro de los plazos que dicha plataforma disponga.
-        </li>
+        <li>Las reservas pueden cancelarse o reprogramarse hasta <strong>12 horas antes</strong> del horario reservado, contactándonos por WhatsApp.</li>
+        <li>Si el cliente no se presenta sin aviso previo, perderá el turno.</li>
+        <li>La tolerancia máxima es de <strong>30 minutos</strong> desde el horario reservado.</li>
+        <li>Si el cliente llega dentro del período de tolerancia, el servicio se prestará únicamente si existe disponibilidad y ello no afecta reservas posteriores.</li>
+        <li>Si no existe disponibilidad o el retraso afecta turnos posteriores, el turno se considerará perdido.</li>
       </ul>
 
-      <h2>6. Derecho de revocación (Botón de Arrepentimiento)</h2>
+      <h2>6. Fallas técnicas</h2>
+      <p>
+        Si por inconvenientes técnicos atribuibles a {legalConfig.nombreComercial} no fuera posible prestar el
+        servicio, primero se ofrecerá la <strong>reprogramación</strong> del turno. Si el cliente no acepta la
+        reprogramación, podrá solicitar el <strong>reembolso</strong> por el mismo medio de pago utilizado.
+      </p>
+
+      <h2>7. Fuerza mayor</h2>
+      <p>
+        {legalConfig.nombreComercial} podrá reprogramar reservas cuando existan causas ajenas a su voluntad, incluyendo
+        cortes de energía, fallas de Internet, inconvenientes técnicos, indisponibilidad del establecimiento, fuerza
+        mayor u otras circunstancias que impidan prestar el servicio con normalidad.
+      </p>
+
+      <h2>8. Reembolsos</h2>
+      <p>
+        Los reembolsos, cuando correspondan, se realizan por el mismo medio de pago utilizado, a través de Mercado
+        Pago, dentro de los plazos que dicha plataforma disponga.
+      </p>
+
+      <h2>9. Gift Cards</h2>
+      <ul>
+        <li>Las gift cards tienen una <strong>vigencia de 30 días</strong> desde la fecha de compra.</li>
+        <li>Podrán renovarse previo aviso y acuerdo con {legalConfig.nombreComercial}.</li>
+        <li>Son transferibles a otra persona, siempre que {legalConfig.nombreComercial} sea notificado previamente y se informen los datos necesarios.</li>
+        <li>No son reembolsables, salvo obligación legal.</li>
+      </ul>
+
+      <h2>10. Derecho de revocación (Botón de Arrepentimiento)</h2>
       <p>
         Conforme al art. 34 de la Ley 24.240 de Defensa del Consumidor y la Resolución 424/2020, el consumidor puede
         revocar la compra realizada a distancia dentro de los <strong>{legalConfig.diasArrepentimiento} (diez) días
@@ -70,14 +97,14 @@ export default function TerminosPage() {
         el consumidor cuando corresponde.
       </p>
 
-      <h2>7. Condiciones de uso de los simuladores</h2>
+      <h2>11. Condiciones de uso de los simuladores</h2>
       <ul>
         <li>Por razones de seguridad, la altura mínima para utilizar los simuladores es de 1,40 metros y el peso máximo permitido es de 110 kg.</li>
         <li>Los menores de edad deben contar con la autorización y supervisión de sus padres, madres o tutores.</li>
         <li>El usuario se compromete a seguir las indicaciones del personal y a hacer un uso responsable del equipamiento.</li>
       </ul>
 
-      <h2>8. Propiedad intelectual</h2>
+      <h2>12. Propiedad intelectual</h2>
       <p>
         Los contenidos del sitio (textos, imágenes, logotipos, videos y diseño) pertenecen a {legalConfig.nombreComercial}
         o se utilizan con autorización, y están protegidos por la normativa de propiedad intelectual. Las marcas de
@@ -85,21 +112,26 @@ export default function TerminosPage() {
         está permitida su reproducción sin autorización.
       </p>
 
-      <h2>9. Responsabilidad</h2>
+      <h2>13. Responsabilidad</h2>
       <p>
         {legalConfig.nombreComercial} adopta medidas razonables para que la información del sitio sea correcta y esté
         actualizada, pero no garantiza la ausencia de errores u omisiones. El sitio puede contener enlaces a terceros
         (como Mercado Pago), sobre cuyos contenidos no somos responsables.
       </p>
+      <p>
+        La responsabilidad de {legalConfig.nombreComercial}, cuando corresponda, se limita al valor efectivamente
+        abonado por el servicio contratado, sin perjuicio de los derechos irrenunciables reconocidos por la
+        legislación argentina de defensa del consumidor.
+      </p>
 
-      <h2>10. Protección de datos</h2>
+      <h2>14. Protección de datos</h2>
       <p>
         El tratamiento de los datos personales se rige por nuestra{" "}
         <Link href={RUTAS_LEGALES.privacidad}>Política de Privacidad</Link> y por la{" "}
         <Link href={RUTAS_LEGALES.cookies}>Política de Cookies</Link>.
       </p>
 
-      <h2>11. Ley aplicable y jurisdicción</h2>
+      <h2>15. Ley aplicable y jurisdicción</h2>
       <p>
         Estos Términos se rigen por las leyes de la República Argentina, en particular la Ley 24.240 de Defensa del
         Consumidor. Para cualquier controversia resultan competentes los tribunales que correspondan conforme a las
@@ -108,10 +140,11 @@ export default function TerminosPage() {
         consumidor.
       </p>
 
-      <h2>12. Modificaciones</h2>
+      <h2>16. Modificaciones</h2>
       <p>
         {legalConfig.nombreComercial} podrá actualizar estos Términos en cualquier momento. La versión vigente es la
-        publicada en esta página.
+        publicada en esta página. Las modificaciones no afectarán operaciones ya confirmadas, salvo disposición legal
+        aplicable en contrario.
       </p>
     </>
   );

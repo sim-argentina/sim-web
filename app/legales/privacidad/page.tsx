@@ -47,7 +47,20 @@ export default function PrivacidadPage() {
         El suministro de los datos es voluntario, pero su falta puede impedir la prestación del servicio solicitado.
       </p>
 
-      <h2>4. Cesión y encargados de tratamiento</h2>
+      <h2>4. Comunicaciones comerciales</h2>
+      <p>
+        {legalConfig.nombreComercial} podrá utilizar los datos de contacto proporcionados por el usuario para enviarle
+        comunicaciones relacionadas con sus servicios, incluyendo promociones, descuentos, beneficios, novedades,
+        campeonatos, eventos, recordatorios de reservas, avisos operativos y comunicaciones comerciales, por WhatsApp,
+        email, teléfono u otros canales informados por el usuario.
+      </p>
+      <p>
+        El usuario podrá solicitar en cualquier momento dejar de recibir comunicaciones promocionales o comerciales por
+        cualquiera de los medios de contacto habilitados, sin que ello afecte las comunicaciones operativas necesarias
+        para gestionar reservas, pagos, gift cards, campeonatos o servicios contratados.
+      </p>
+
+      <h2>5. Cesión y encargados de tratamiento</h2>
       <p>
         No vendemos ni cedemos tus datos con fines comerciales de terceros. Compartimos datos únicamente con
         proveedores que nos permiten operar, en calidad de encargados de tratamiento y en la medida necesaria:
@@ -57,13 +70,13 @@ export default function PrivacidadPage() {
         <li><strong>Proveedores de infraestructura tecnológica y hosting</strong> utilizados para operar el sitio y almacenar la información de forma segura.</li>
       </ul>
 
-      <h2>5. Conservación</h2>
+      <h2>6. Conservación</h2>
       <p>
         Conservamos los datos mientras dure la relación comercial y durante los plazos que exijan las obligaciones
         legales, contables e impositivas aplicables. Luego son eliminados o anonimizados.
       </p>
 
-      <h2>6. Derechos del titular de los datos</h2>
+      <h2>7. Derechos del titular de los datos</h2>
       <p>
         Podés ejercer en cualquier momento tus derechos de acceso, rectificación, actualización y supresión de tus
         datos personales. Para hacerlo, escribinos por{" "}
@@ -85,24 +98,24 @@ export default function PrivacidadPage() {
         </em>
       </p>
 
-      <h2>7. Menores de edad</h2>
+      <h2>8. Menores de edad</h2>
       <p>
         La contratación de servicios y el uso de los simuladores por parte de menores de edad requieren el
         consentimiento, autorización y supervisión de sus padres, madres o tutores.
       </p>
 
-      <h2>8. Seguridad</h2>
+      <h2>9. Seguridad</h2>
       <p>
         Adoptamos medidas técnicas y organizativas razonables para proteger los datos personales frente a accesos no
         autorizados, pérdida o alteración.
       </p>
 
-      <h2>9. Cookies</h2>
+      <h2>10. Cookies</h2>
       <p>
         El uso de cookies se detalla en nuestra <Link href={RUTAS_LEGALES.cookies}>Política de Cookies</Link>.
       </p>
 
-      <h2>10. Cambios en esta política</h2>
+      <h2>11. Cambios en esta política</h2>
       <p>
         Podemos actualizar esta Política de Privacidad. La versión vigente es la publicada en esta página, con la
         fecha de última actualización indicada al pie.
