@@ -90,7 +90,7 @@ export default function TiendaPage() {
         {/* fondo mobile: video completo con overlay oscuro y texto encima */}
         <div className="pointer-events-none absolute inset-0 md:hidden">
           <video
-            className="absolute inset-0 h-full w-full object-cover object-[65%_50%]"
+            className="absolute inset-0 h-full w-full object-cover object-center"
             src="/sim-store-hero-v3.mp4"
             poster="/sim-store-hero-v3.jpg"
             autoPlay
@@ -128,7 +128,7 @@ export default function TiendaPage() {
               </p>
             </div>
 
-            <h1 className="max-w-full break-words text-[2.6rem] font-black uppercase leading-[0.9] md:text-[3.4rem] lg:text-[4rem]">
+            <h1 className="max-w-full break-words text-[2rem] font-black uppercase leading-[0.9] sm:text-[2.6rem] md:text-[3.4rem] lg:text-[4rem]">
               Simuladores<br />
               <span className="text-red-600">Profesionales</span>
             </h1>

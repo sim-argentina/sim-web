@@ -1019,7 +1019,7 @@ export default function CampeonatosPage() {
         />
         <div className="relative mx-auto max-w-6xl px-5 text-center">
           <p className="mb-4 text-xs font-black uppercase tracking-[0.5em] text-red-500">SIM Argentina</p>
-          <h1 className="text-5xl font-black leading-none md:text-7xl lg:text-8xl">
+          <h1 className="text-[1.75rem] font-black leading-none sm:text-5xl md:text-7xl lg:text-8xl">
             <span className="text-white">CAMPEONATOS</span>
             <br />
             <span className="text-red-600">OFICIALES</span>

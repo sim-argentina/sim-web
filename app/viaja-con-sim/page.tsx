@@ -69,7 +69,7 @@ export default function ViajaConSimPage() {
           fill
           priority
           sizes="100vw"
-          className="object-cover opacity-65"
+          className="object-cover object-[72%_50%] opacity-65 md:object-center"
         />
 
         <div className="absolute inset-0 bg-gradient-to-r from-black via-black/85 to-black/25" />
