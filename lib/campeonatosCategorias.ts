@@ -1,6 +1,41 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { distribucionCategorias, pilotoKey } from "@/lib/campeonatos";
 
+// Devuelve la Fecha 0 (clasificación previa) del campeonato, creándola si no
+// existe. La clasificación previa se apoya en esta fecha; sin ella, cargar un
+// mejor tiempo no podía persistir el registro ni recalcular la categoría.
+// La Fecha 0 no aparece como carrera en el público (se excluye de rankings y no
+// genera pestaña ni circuito). Server-only (service role).
+export async function getOrCreateFecha0(
+  campeonatoId: string | null | undefined
+): Promise<{ id: string; circuito: string | null } | null> {
+  if (!campeonatoId) return null;
+
+  const { data: existente } = await supabaseAdmin
+    .from("campeonato_fechas")
+    .select("id, circuito")
+    .eq("campeonato_id", campeonatoId)
+    .eq("numero_fecha", 0)
+    .maybeSingle();
+  if (existente) return existente;
+
+  const { data: creada, error } = await supabaseAdmin
+    .from("campeonato_fechas")
+    .insert([{ campeonato_id: campeonatoId, numero_fecha: 0, nombre: "Clasificación", estado: "abierta" }])
+    .select("id, circuito")
+    .single();
+  if (!error && creada) return creada;
+
+  // Posible carrera / unicidad: reconsultar.
+  const { data: reintento } = await supabaseAdmin
+    .from("campeonato_fechas")
+    .select("id, circuito")
+    .eq("campeonato_id", campeonatoId)
+    .eq("numero_fecha", 0)
+    .maybeSingle();
+  return reintento ?? null;
+}
+
 // Recalcula las categorías (oro/plata/bronce/sin_clasificar) de un campeonato a
 // partir del MEJOR tiempo de cada piloto en la Fecha 0 (numero_fecha=0).
 // - Respeta inscripciones con categoria_manual=true (override admin).

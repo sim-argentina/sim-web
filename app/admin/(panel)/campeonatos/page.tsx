@@ -1327,11 +1327,16 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
     if (!editId) return;
     setEditSaving(true); setEditMsg("");
     try {
+      // Solo se envía la categoría si el admin la cambió a mano (override manual).
+      // Si la deja igual, no se envía: así, al cargar un mejor tiempo, la
+      // auto-clasificación por Fecha 0 puede recalcular y persistir la categoría.
+      const orig = inscripciones.find((x) => x.id === editId);
+      const categoriaCambio = (editForm.categoria || "") !== (orig?.categoria || "");
       const payload = {
         nombre: editForm.nombre, apellido: editForm.apellido, telefono: editForm.telefono, dni: editForm.dni,
         instagram: editForm.instagram || null,
         escuderia_favorita: editForm.escuderia_favorita || null,
-        categoria: editForm.categoria || null,
+        ...(categoriaCambio ? { categoria: editForm.categoria || null } : {}),
         estado_pago: editForm.estado_pago,
         hora_toma: editForm.hora_toma || null,
         hora_estimada_subida: editForm.hora_estimada_subida || null,

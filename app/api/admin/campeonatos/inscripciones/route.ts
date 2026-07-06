@@ -4,7 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { sanitizeSearchTerm } from "@/lib/security";
 import { tiempoToMs, msToTiempo } from "@/lib/campeonatos";
-import { recalcularCategorias } from "@/lib/campeonatosCategorias";
+import { recalcularCategorias, getOrCreateFecha0 } from "@/lib/campeonatosCategorias";
 
 // Métodos de pago aceptados en el stand (mismos que el Turnero). "online" y
 // "mercadopago" representan un pago online ya realizado (no requiere stand).
@@ -161,12 +161,7 @@ export async function POST(req: Request) {
     const tiempoClasif = txt(body.tiempo_clasificacion);
     if (tiempoClasif) {
       const crudoMs = tiempoToMs(tiempoClasif);
-      const { data: fecha0 } = await supabaseAdmin
-        .from("campeonato_fechas")
-        .select("id, circuito")
-        .eq("campeonato_id", campeonato_id)
-        .eq("numero_fecha", 0)
-        .maybeSingle();
+      const fecha0 = await getOrCreateFecha0(campeonato_id);
       if (fecha0 && crudoMs != null) {
         await supabaseAdmin.from("campeonato_registros").insert([{
           campeonato_id,

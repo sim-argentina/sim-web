@@ -4,7 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
 import { tiempoToMs } from "@/lib/campeonatos";
-import { recalcularCategorias } from "@/lib/campeonatosCategorias";
+import { recalcularCategorias, getOrCreateFecha0 } from "@/lib/campeonatosCategorias";
 
 type PagoLimpio = { metodo_pago: string; monto: number; posnet_pago: string | null };
 
@@ -61,12 +61,7 @@ async function cargarTiempoInscripcion(inscripcionId: string, tiempoRaw: string)
     .maybeSingle();
   if (!ins?.campeonato_id) return;
 
-  const { data: fecha0 } = await supabaseAdmin
-    .from("campeonato_fechas")
-    .select("id, circuito")
-    .eq("campeonato_id", ins.campeonato_id)
-    .eq("numero_fecha", 0)
-    .maybeSingle();
+  const fecha0 = await getOrCreateFecha0(ins.campeonato_id);
   if (!fecha0) return;
 
   await supabaseAdmin.from("campeonato_registros").insert([{
@@ -196,11 +191,14 @@ export async function PATCH(
     }
   }
 
-  // Editar la categoría a mano = override manual: SOLO el admin la marca como
-  // manual, así la auto-clasificación de Fecha 0 no la vuelve a pisar. (Staff puede
-  // editarla puntualmente pero el recálculo la puede revertir.)
+  // Editar la categoría a mano = override manual, pero SOLO cuando el admin fija
+  // una categoría concreta. Si la deja vacía (sin asignar), NO es override: se
+  // permite la auto-clasificación por tiempo (categoria_manual=false). Así, cargar
+  // un mejor tiempo con la categoría vacía sí recalcula y persiste la categoría.
   if ("categoria" in updates) {
-    updates.categoria_manual = role === "admin";
+    const cat = updates.categoria;
+    const catNoVacia = typeof cat === "string" && cat.trim().length > 0;
+    updates.categoria_manual = catNoVacia && role === "admin";
   }
 
   // Si se actualizan nombre/apellido, recalcular nombre_completo
@@ -219,6 +217,13 @@ export async function PATCH(
 
   // Tiempo (mejor tiempo / segundo turno): opcional. Se procesa aparte del update.
   const tiempoClasif = typeof body.tiempo_clasificacion === "string" ? body.tiempo_clasificacion.trim() : "";
+
+  // Si se carga un tiempo y el admin no fijó una categoría en esta misma edición,
+  // se habilita la auto-clasificación (destraba inscripciones con override manual
+  // previo) para que el recálculo por tiempo asigne y persista la categoría.
+  if (tiempoClasif && !("categoria" in updates)) {
+    updates.categoria_manual = false;
+  }
 
   if (Object.keys(updates).length === 0 && !tiempoClasif) {
     return NextResponse.json({ error: "Sin campos para actualizar" }, { status: 400 });
