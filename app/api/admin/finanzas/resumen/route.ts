@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { calcularMes, getCierreMes, getMesInicio, mesActual, mesValido } from "@/lib/finanzas";
+import { calcularMes, getCierreMes, getMesInicio, getSaldoInicialPorFuente, mesActual, mesValido } from "@/lib/finanzas";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAdmin();
@@ -22,9 +22,14 @@ export async function GET(req: NextRequest) {
 
     const cerrado = Boolean(cierre && cierre.estado !== "abierto");
 
+    // Reparte el saldo inicial general por fuente (solo para mostrar "Saldo actual
+    // disponible"). Reutiliza el saldo inicial ya calculado; no cambia ningún cálculo.
+    const saldoInicialPorFuente = await getSaldoInicialPorFuente(mes, resumen.saldoInicialGeneral);
+
     return NextResponse.json({
       mes,
       resumen,
+      saldoInicialPorFuente,
       ingresosAutomaticos: ingresosAuto,
       cierre: cierre
         ? {

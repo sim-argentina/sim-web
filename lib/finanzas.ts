@@ -404,6 +404,36 @@ export async function getSaldoInicialGeneral(mes: string): Promise<number> {
   return Number(ini?.monto ?? 0) || 0;
 }
 
+// Reparte el saldo inicial GENERAL del mes entre Efectivo y Mercado Pago usando
+// el desglose declarado en fin_saldos_iniciales (monto_efectivo / monto_mercado_pago).
+// No cambia el saldo inicial general (fuente de verdad, ya calculado por
+// getSaldoInicialGeneral y que respeta el arrastre de cierres): solo lo divide por
+// fuente. El resultado SIEMPRE suma exactamente el general. Si no hay desglose
+// cargado, el general no se puede repartir y queda todo en Efectivo (desglosado=false).
+export async function getSaldoInicialPorFuente(
+  mes: string,
+  saldoInicialGeneral: number
+): Promise<{ efectivo: number; mercado_pago: number; desglosado: boolean }> {
+  const { data, error } = await supabaseAdmin
+    .from("fin_saldos_iniciales")
+    .select("monto_efectivo, monto_mercado_pago")
+    .eq("mes", mes)
+    .maybeSingle();
+  if (error) throw error;
+
+  const ef = Number(data?.monto_efectivo ?? 0) || 0;
+  const mp = Number(data?.monto_mercado_pago ?? 0) || 0;
+  const suma = ef + mp;
+
+  if (suma === 0) {
+    return { efectivo: saldoInicialGeneral, mercado_pago: 0, desglosado: false };
+  }
+  // Aplica la proporción declarada al saldo inicial general (coincide exacto
+  // cuando el desglose ya suma el general; se reescala si hubo arrastre de cierre).
+  const efectivo = Math.round((saldoInicialGeneral * ef) / suma);
+  return { efectivo, mercado_pago: saldoInicialGeneral - efectivo, desglosado: true };
+}
+
 // ── Resumen mensual (general + por fuente) ───────────────────────────────────
 
 export type ResumenPorFuente = {

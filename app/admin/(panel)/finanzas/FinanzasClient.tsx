@@ -88,6 +88,7 @@ type ResumenApi = {
     sueldoPorCategoria: Record<string, number>;
     sueldoPorFuente: Record<string, number>;
   };
+  saldoInicialPorFuente?: { efectivo: number; mercado_pago: number; desglosado: boolean };
   ingresosAutomaticos: IngresoAuto[];
   cierre: { estado: string; saldo_real_general: number | null; diferencia_general: number | null };
 };
@@ -764,6 +765,36 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
           ))}
         </div>
         <p className="mt-2 text-[11px] text-white/30">El saldo inicial es general (no se divide por fuente). Acá ves solo el movimiento de caja por Efectivo / Mercado Pago.</p>
+      </div>
+
+      {/* Saldo actual disponible (saldo inicial de la fuente + neto del mes) */}
+      <div>
+        <h2 className="mb-3 text-lg font-black uppercase text-red-500">Saldo actual disponible</h2>
+        <div className="grid gap-3 md:grid-cols-2">
+          {r.porFuente.map((f) => {
+            const inicial = f.tipo === "efectivo"
+              ? (resumen.saldoInicialPorFuente?.efectivo ?? 0)
+              : (resumen.saldoInicialPorFuente?.mercado_pago ?? 0);
+            const saldoActual = inicial + f.neto;
+            return (
+              <div key={f.tipo} className="rounded-2xl border border-white/10 bg-black p-4">
+                <p className="text-sm font-black uppercase">{f.nombre} disponible</p>
+                <p className={`mt-2 text-2xl font-black ${saldoActual >= 0 ? "text-green-400" : "text-red-500"}`}>{dinero(saldoActual)} <span className="text-xs font-bold text-white/40">disponible actualmente</span></p>
+                <div className="mt-3 space-y-1 text-xs text-white/50">
+                  <p>Saldo inicial: <span className="font-bold text-white/80">{dinero(inicial)}</span></p>
+                  <p>Ingresos: <span className="font-bold text-green-400">+{dinero(f.ingresos)}</span></p>
+                  {f.financiamiento > 0 && <p>Financiamiento: <span className="font-bold text-amber-400">+{dinero(f.financiamiento)}</span></p>}
+                  <p>Pagado: <span className="font-bold text-red-400">-{dinero(f.egresos)}</span></p>
+                  <p>Transferencias: <span className="font-bold text-white/80">+{dinero(f.transferenciasEntrantes)} / -{dinero(f.transferenciasSalientes)}</span></p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-[11px] text-white/30">
+          Dinero que debería existir hoy por fuente = saldo inicial + ingresos + financiamiento + transferencias entrantes − pagos − transferencias salientes.
+          {resumen.saldoInicialPorFuente && !resumen.saldoInicialPorFuente.desglosado && r.saldoInicialGeneral !== 0 ? " El saldo inicial no está desglosado por fuente: se muestra en Efectivo." : ""}
+        </p>
       </div>
 
       {/* Ingresos automáticos */}
