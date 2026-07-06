@@ -82,10 +82,15 @@ type Inscripcion = {
   estado_pago: string;
   payment_id: string | null;
   metodo_pago: string | null;
+  pagos_detalle: PagoDetalle[] | null;
   hora_toma: string | null;
+  hora_estimada_subida: string | null;
   hora_subida: string | null;
   hora_bajada: string | null;
   cantidad_minutos: number | null;
+  mejor_tiempo: string | null;
+  mejor_tiempo_ms: number | null;
+  observaciones: string | null;
   created_at: string;
   campeonatos?: { nombre: string } | null;
 };
@@ -213,6 +218,45 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 const inp = "w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold text-white outline-none focus:border-red-500 placeholder:text-white/30";
 const sel = inp;
+
+// Navegación tipo planilla con flechas, dentro del contenedor de un formulario.
+// Texto: ←/→ mueven el cursor y saltan de campo en el borde; ↑/↓ saltan de campo.
+// Selects: ←/→ saltan de campo; ↑/↓ cambian la opción (nativo). Date/time/checkbox: nativo.
+// Compartida por el Turnero de resultados y por Inscripciones.
+function handleArrowNav(e: React.KeyboardEvent<HTMLDivElement>) {
+  const k = e.key;
+  if (k !== "ArrowRight" && k !== "ArrowLeft" && k !== "ArrowUp" && k !== "ArrowDown") return;
+  const el = e.target as HTMLElement;
+  const tag = el.tagName;
+  const isText = tag === "INPUT" && ["text", "number", "tel", "search", ""].includes((el as HTMLInputElement).type);
+  const isSelect = tag === "SELECT";
+  if (!isText && !isSelect) return;
+  let dir = 0;
+  if (isText) {
+    const input = el as HTMLInputElement;
+    const atStart = (input.selectionStart ?? 0) === 0 && (input.selectionEnd ?? 0) === 0;
+    const atEnd = (input.selectionStart ?? 0) === input.value.length && (input.selectionEnd ?? 0) === input.value.length;
+    if (k === "ArrowDown") dir = 1;
+    else if (k === "ArrowUp") dir = -1;
+    else if (k === "ArrowRight" && atEnd) dir = 1;
+    else if (k === "ArrowLeft" && atStart) dir = -1;
+  } else {
+    if (k === "ArrowRight") dir = 1;
+    else if (k === "ArrowLeft") dir = -1;
+  }
+  if (dir === 0) return;
+  const nodes = Array.from(
+    e.currentTarget.querySelectorAll<HTMLElement>("input:not([type=hidden]):not([readonly]), select")
+  ).filter((n) => !(n as HTMLInputElement).disabled && n.offsetParent !== null);
+  const idx = nodes.indexOf(el);
+  if (idx === -1) return;
+  const next = nodes[idx + dir];
+  if (next) {
+    e.preventDefault();
+    next.focus();
+    if (next.tagName === "INPUT") (next as HTMLInputElement).select?.();
+  }
+}
 
 // ─── Tab: Resultados ─────────────────────────────────────────────────────────
 
@@ -457,44 +501,6 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
     });
     onRefresh();
   };
-
-  // Navegación tipo planilla con flechas, SOLO dentro de este formulario.
-  // Texto: ←/→ mueven el cursor y saltan de campo en el borde; ↑/↓ saltan de campo.
-  // Selects: ←/→ saltan de campo; ↑/↓ cambian la opción (nativo). Date/time/checkbox: nativo.
-  function handleArrowNav(e: React.KeyboardEvent<HTMLDivElement>) {
-    const k = e.key;
-    if (k !== "ArrowRight" && k !== "ArrowLeft" && k !== "ArrowUp" && k !== "ArrowDown") return;
-    const el = e.target as HTMLElement;
-    const tag = el.tagName;
-    const isText = tag === "INPUT" && ["text", "number", "tel", "search", ""].includes((el as HTMLInputElement).type);
-    const isSelect = tag === "SELECT";
-    if (!isText && !isSelect) return;
-    let dir = 0;
-    if (isText) {
-      const input = el as HTMLInputElement;
-      const atStart = (input.selectionStart ?? 0) === 0 && (input.selectionEnd ?? 0) === 0;
-      const atEnd = (input.selectionStart ?? 0) === input.value.length && (input.selectionEnd ?? 0) === input.value.length;
-      if (k === "ArrowDown") dir = 1;
-      else if (k === "ArrowUp") dir = -1;
-      else if (k === "ArrowRight" && atEnd) dir = 1;
-      else if (k === "ArrowLeft" && atStart) dir = -1;
-    } else {
-      if (k === "ArrowRight") dir = 1;
-      else if (k === "ArrowLeft") dir = -1;
-    }
-    if (dir === 0) return;
-    const nodes = Array.from(
-      e.currentTarget.querySelectorAll<HTMLElement>("input:not([type=hidden]):not([readonly]), select")
-    ).filter((n) => !(n as HTMLInputElement).disabled && n.offsetParent !== null);
-    const idx = nodes.indexOf(el);
-    if (idx === -1) return;
-    const next = nodes[idx + dir];
-    if (next) {
-      e.preventDefault();
-      next.focus();
-      if (next.tagName === "INPUT") (next as HTMLInputElement).select?.();
-    }
-  }
 
   const filtered = registros.filter((r) => {
     if (filters.nombre && !r.nombre_completo?.toLowerCase().includes(filters.nombre.toLowerCase())) return false;
@@ -1076,9 +1082,9 @@ function TabSorteos({ sorteos, onRefresh }: { sorteos: Sorteo[]; onRefresh: () =
 
 const blankInscripcion = {
   nombre: "", apellido: "", telefono: "", dni: "", instagram: "",
-  escuderia_favorita: "", categoria: "oro", campeonato_id: "", monto: "", metodo_pago: "efectivo",
+  escuderia_favorita: "", categoria: "", campeonato_id: "", monto: "",
   tiempo_clasificacion: "",
-  hora_toma: "", hora_subida: "", hora_bajada: "", cantidad_minutos: "15",
+  hora_toma: "", hora_estimada_subida: "", hora_subida: "", hora_bajada: "", cantidad_minutos: "15",
 };
 
 // Unifica los estados internos en 3 estados visuales: Pagado / Pendiente / Cancelado.
@@ -1103,6 +1109,62 @@ function BadgeInscripcion({ estado }: { estado: string }) {
   );
 }
 
+// Editor de pagos parciales (mismo patrón que el Turnero): divide el cobro en
+// varios métodos. Se reutiliza en el alta y la edición de inscripciones.
+function PagosEditorInscripcion({ pagos, setPagos }: {
+  pagos: PagoDetalle[];
+  setPagos: (updater: (p: PagoDetalle[]) => PagoDetalle[]) => void;
+}) {
+  const total = pagos.reduce((s, p) => s + (Number(p.monto) || 0), 0);
+  return (
+    <div className="space-y-2">
+      {pagos.map((pago, idx) => {
+        const usaPosnet = metodoUsaPosnet(pago.metodo_pago);
+        return (
+          <div key={idx} className="flex flex-wrap items-center gap-2">
+            <select className={`${sel} min-w-[110px] flex-1`} value={pago.metodo_pago}
+              onChange={(e) => setPagos((prev) => prev.map((p, i) => i === idx ? { ...p, metodo_pago: e.target.value, posnet_pago: metodoUsaPosnet(e.target.value) ? p.posnet_pago : "" } : p))}>
+              {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+            <input type="number" min={0} placeholder="Monto" className={`${inp} w-28`} value={pago.monto}
+              onChange={(e) => setPagos((prev) => prev.map((p, i) => i === idx ? { ...p, monto: e.target.value } : p))} />
+            {usaPosnet && (
+              <select className={`${sel} w-24`} value={pago.posnet_pago || ""}
+                onChange={(e) => setPagos((prev) => prev.map((p, i) => i === idx ? { ...p, posnet_pago: e.target.value } : p))}>
+                <option value="">Posnet</option>
+                {POSNETS.map((pn) => <option key={pn} value={pn}>{pn}</option>)}
+              </select>
+            )}
+            {pagos.length > 1 && (
+              <button type="button" onClick={() => setPagos((prev) => prev.filter((_, i) => i !== idx))}
+                className="rounded-lg bg-zinc-800 px-2 py-1 text-xs font-bold text-red-400 hover:bg-zinc-700">✕</button>
+            )}
+          </div>
+        );
+      })}
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={() => setPagos((prev) => [...prev, { metodo_pago: "efectivo", monto: "", posnet_pago: "" }])}
+          className="rounded-lg border border-white/15 px-3 py-1 text-xs font-bold text-white/70 hover:border-white hover:text-white">+ Otro pago</button>
+        <span className="text-xs font-bold text-zinc-400">Total: <span className="text-white">{formatoDinero(total)}</span></span>
+      </div>
+    </div>
+  );
+}
+
+// Limpia pagos parciales para enviar al backend (descarta montos <= 0).
+function pagosParaEnviar(pagos: PagoDetalle[]) {
+  return pagos
+    .map((p) => ({ metodo_pago: p.metodo_pago, monto: Number(p.monto) || 0, posnet_pago: metodoUsaPosnet(p.metodo_pago) ? (p.posnet_pago || null) : null }))
+    .filter((p) => p.monto > 0);
+}
+
+// Badge de temporizador del turno en vivo (mismo comportamiento que el Turnero).
+function TurnoBadgeInscripcion({ i, now }: { i: Inscripcion; now: number }) {
+  if (!i.hora_subida) return <span className="text-zinc-600 text-xs">—</span>;
+  const st = getTurnoTimerState({ horaSubida: i.hora_subida, minutos: i.cantidad_minutos, listo: false }, now);
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-black ${TURNO_BADGE_CLASS[st.status]}`}>{st.label}</span>;
+}
+
 function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   inscripciones: Inscripcion[];
   campeonatos: Campeonato[];
@@ -1112,10 +1174,29 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   const [filters, setFilters] = useState({ campeonato_id: "", categoria: "", estado_pago: "", q: "" });
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(blankInscripcion);
+  const [pagosNueva, setPagosNueva] = useState<PagoDetalle[]>([{ metodo_pago: "efectivo", monto: "", posnet_pago: "" }]);
+  const [formaPago, setFormaPago] = useState<"pendiente" | "online" | "stand">("pendiente");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [cobrandoId, setCobrandoId] = useState<string | null>(null);
+  const now = useNow();
+
+  // Hora de bajada automática = hora de subida + minutos (igual que el Turnero).
+  const horaBajadaNueva = sumarMinutosAHora(form.hora_subida, Number(form.cantidad_minutos) || 0);
+  const timerNueva = form.hora_subida
+    ? getTurnoTimerState({ horaSubida: form.hora_subida, minutos: Number(form.cantidad_minutos) || 0, listo: false }, now)
+    : null;
+
+  // Abrir el alta autocompletando la hora de toma con la hora actual (como el Turnero).
+  const abrirNueva = () => {
+    setForm({ ...blankInscripcion, hora_toma: horaActual() });
+    setPagosNueva([{ metodo_pago: "efectivo", monto: "", posnet_pago: "" }]);
+    setFormaPago("pendiente");
+    setMsg("");
+    setShowForm(true);
+  };
 
   // Eliminar (soft-delete, solo admin): oculta la inscripción del panel sin borrar.
   const eliminarInscripcion = async (id: string) => {
@@ -1147,18 +1228,49 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   const totalRecaudado = filtered.filter((i) => i.estado_pago === "pagado").reduce((s, i) => s + (i.monto || 0), 0);
 
   const submitNueva = async () => {
-    if (!form.nombre.trim() || !form.apellido.trim() || !form.telefono.trim() || !form.dni.trim() || !form.escuderia_favorita || !form.campeonato_id || !form.monto || !form.metodo_pago) {
-      setMsg("Completá todos los campos obligatorios"); return;
+    // Únicos obligatorios: nombre, apellido, DNI, teléfono y campeonato.
+    if (!form.nombre.trim() || !form.apellido.trim() || !form.telefono.trim() || !form.dni.trim() || !form.campeonato_id) {
+      setMsg("Obligatorios: nombre, apellido, DNI, teléfono y campeonato."); return;
     }
     setSaving(true); setMsg("");
     try {
+      const payload = {
+        nombre: form.nombre, apellido: form.apellido, telefono: form.telefono, dni: form.dni,
+        instagram: form.instagram || null,
+        escuderia_favorita: form.escuderia_favorita || null,
+        categoria: form.categoria || null,
+        campeonato_id: form.campeonato_id,
+        monto: form.monto ? Number(form.monto) : undefined,
+        tiempo_clasificacion: form.tiempo_clasificacion || undefined,
+        hora_toma: form.hora_toma || null,
+        hora_estimada_subida: form.hora_estimada_subida || null,
+        hora_subida: form.hora_subida || null,
+        hora_bajada: horaBajadaNueva || null,
+        cantidad_minutos: form.cantidad_minutos ? Number(form.cantidad_minutos) : null,
+        ...(formaPago === "online" ? { metodo_pago: "online" } : {}),
+        ...(formaPago === "stand" ? { pagos_detalle: pagosParaEnviar(pagosNueva) } : {}),
+      };
       const res = await fetch("/api/admin/campeonatos/inscripciones", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, monto: Number(form.monto) }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) { const d = await res.json(); setMsg(d.error || "Error"); return; }
       setForm(blankInscripcion); setShowForm(false); onRefresh();
     } finally { setSaving(false); }
+  };
+
+  // Registrar pago en el stand (efectivo por defecto; se puede afinar en Editar).
+  // No aparece si ya está pagada (online o stand): respeta el pago existente.
+  const cobrarStand = async (id: string) => {
+    setCobrandoId(id);
+    try {
+      const res = await fetch(`/api/admin/campeonatos/inscripciones/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "cobrar_stand", metodo_pago: "efectivo" }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || "Error al cobrar"); return; }
+      onRefresh();
+    } finally { setCobrandoId(null); }
   };
 
   const cancelarInscripcion = async (id: string) => {
@@ -1176,50 +1288,78 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
 
   // ── Edit state ───────────────────────────────────────────────────────────────
   const [editId, setEditId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<Omit<Partial<Inscripcion>, "monto"> & { monto?: string }>({});
+  const [editForm, setEditForm] = useState<Omit<Partial<Inscripcion>, "monto" | "cantidad_minutos" | "pagos_detalle"> & { monto?: string; cantidad_minutos?: string }>({});
+  const [editPagos, setEditPagos] = useState<PagoDetalle[]>([{ metodo_pago: "efectivo", monto: "", posnet_pago: "" }]);
+  const [editarPagos, setEditarPagos] = useState(false);
+  const [editTiempo, setEditTiempo] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editMsg, setEditMsg] = useState("");
 
+  const horaBajadaEdit = sumarMinutosAHora(editForm.hora_subida || "", Number(editForm.cantidad_minutos) || 0);
+  const timerEdit = editForm.hora_subida
+    ? getTurnoTimerState({ horaSubida: editForm.hora_subida, minutos: Number(editForm.cantidad_minutos) || 0, listo: false }, now)
+    : null;
+
   const startEdit = (i: Inscripcion) => {
+    setShowForm(false);
     setEditId(i.id);
     setEditForm({
       nombre: i.nombre, apellido: i.apellido, telefono: i.telefono,
       dni: i.dni, instagram: i.instagram || "", escuderia_favorita: i.escuderia_favorita,
       categoria: i.categoria || "", estado_pago: i.estado_pago,
       monto: String(i.monto), metodo_pago: i.metodo_pago || "",
+      hora_toma: i.hora_toma || "", hora_estimada_subida: i.hora_estimada_subida || "",
+      hora_subida: i.hora_subida || "",
+      cantidad_minutos: i.cantidad_minutos != null ? String(i.cantidad_minutos) : "15",
     });
+    const tienePagos = Array.isArray(i.pagos_detalle) && i.pagos_detalle.length > 0;
+    setEditPagos(tienePagos
+      ? i.pagos_detalle!.map((p) => ({ metodo_pago: p.metodo_pago, monto: String(p.monto), posnet_pago: p.posnet_pago || "" }))
+      : [{ metodo_pago: i.metodo_pago && METODOS_PAGO.some((m) => m.value === i.metodo_pago) ? i.metodo_pago : "efectivo", monto: String(i.monto || ""), posnet_pago: "" }]);
+    setEditarPagos(tienePagos);
+    setEditTiempo("");
     setEditMsg("");
   };
 
-  const cancelEdit = () => { setEditId(null); setEditForm({}); setEditMsg(""); };
+  const cancelEdit = () => { setEditId(null); setEditForm({}); setEditMsg(""); setEditTiempo(""); setEditarPagos(false); };
 
   const submitEdit = async () => {
     if (!editId) return;
     setEditSaving(true); setEditMsg("");
     try {
+      const payload = {
+        nombre: editForm.nombre, apellido: editForm.apellido, telefono: editForm.telefono, dni: editForm.dni,
+        instagram: editForm.instagram || null,
+        escuderia_favorita: editForm.escuderia_favorita || null,
+        categoria: editForm.categoria || null,
+        estado_pago: editForm.estado_pago,
+        hora_toma: editForm.hora_toma || null,
+        hora_estimada_subida: editForm.hora_estimada_subida || null,
+        hora_subida: editForm.hora_subida || null,
+        hora_bajada: horaBajadaEdit || null,
+        cantidad_minutos: editForm.cantidad_minutos ? Number(editForm.cantidad_minutos) : null,
+        ...(editTiempo.trim() ? { tiempo_clasificacion: editTiempo.trim() } : {}),
+        ...(editarPagos
+          ? { pagos_detalle: pagosParaEnviar(editPagos) }
+          : { monto: editForm.monto ? Number(editForm.monto) : undefined, metodo_pago: editForm.metodo_pago || null }),
+      };
       const res = await fetch(`/api/admin/campeonatos/inscripciones/${editId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...editForm,
-          monto: editForm.monto ? Number(editForm.monto) : undefined,
-          instagram: editForm.instagram || null,
-          categoria: editForm.categoria || null,
-          metodo_pago: editForm.metodo_pago || null,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) { const d = await res.json(); setEditMsg(d.error || "Error al guardar"); return; }
       cancelEdit(); onRefresh();
     } finally { setEditSaving(false); }
   };
 
-  const colCount = 12; // siempre 12 con acciones
+  const colCount = role === "admin" ? 14 : 13;
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-lg font-black text-white">Inscripciones</h2>
         {!showForm && !editId && (
-          <button onClick={() => setShowForm(true)} className="rounded-xl bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500">
+          <button onClick={abrirNueva} className="rounded-xl bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500">
             + Nueva
           </button>
         )}
@@ -1227,51 +1367,65 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
 
       {/* ── Formulario nueva inscripción ── */}
       {showForm && (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
-          <h3 className="font-black text-white">Nueva inscripción (pago en stand o ya pagada online)</h3>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4" onKeyDown={handleArrowNav}>
+          <h3 className="font-black text-white">Nueva inscripción</h3>
+          <p className="text-xs text-zinc-400">Obligatorios: nombre, apellido, DNI, teléfono y campeonato. El resto es opcional: podés inscribir primero y cargar tiempo / pago después. Usá las flechas ←/→ para moverte entre campos.</p>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field label="Nombre *"><input className={inp} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} /></Field>
             <Field label="Apellido *"><input className={inp} value={form.apellido} onChange={(e) => set("apellido", e.target.value)} /></Field>
             <Field label="Teléfono *"><input className={inp} value={form.telefono} onChange={(e) => set("telefono", e.target.value)} /></Field>
             <Field label="DNI *"><input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} /></Field>
             <Field label="Instagram"><input className={inp} value={form.instagram} onChange={(e) => set("instagram", e.target.value)} placeholder="@usuario" /></Field>
-            <Field label="Escudería *">
+            <Field label="Escudería">
               <select className={sel} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
-                <option value="">Seleccionar...</option>
+                <option value="">Sin especificar</option>
                 {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
               </select>
             </Field>
-            <Field label="Categoría">
+            <Field label="Categoría (opcional — la define el tiempo)">
               <select className={sel} value={form.categoria} onChange={(e) => set("categoria", e.target.value)}>
                 <option value="">Sin asignar</option>
                 {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
               </select>
             </Field>
             <Field label="Campeonato *">
-              <select className={sel} value={form.campeonato_id} onChange={(e) => set("campeonato_id", e.target.value)}>
+              <select className={sel} value={form.campeonato_id} onChange={(e) => {
+                const cid = e.target.value;
+                const camp = campeonatos.find((c) => c.id === cid);
+                setForm((f) => ({ ...f, campeonato_id: cid, monto: f.monto || (camp?.precio_inscripcion ? String(camp.precio_inscripcion) : "") }));
+              }}>
                 <option value="">Seleccionar...</option>
                 {campeonatos.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
             </Field>
-            <Field label="Monto *"><input type="number" className={inp} value={form.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
-            <Field label="Método de pago *">
-              <select className={sel} value={form.metodo_pago} onChange={(e) => set("metodo_pago", e.target.value)}>
-                <option value="online">Pagado online (MP)</option>
-                {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            <Field label="Monto (opcional — usa el precio del campeonato)"><input type="number" className={inp} value={form.monto} onChange={(e) => set("monto", e.target.value)} placeholder="Automático" /></Field>
+            <Field label="Forma de pago">
+              <select className={sel} value={formaPago} onChange={(e) => setFormaPago(e.target.value as "pendiente" | "online" | "stand")}>
+                <option value="pendiente">Pendiente (cobrar en stand)</option>
+                <option value="online">Pagado online (Mercado Pago)</option>
+                <option value="stand">Cobrar ahora en stand (detallar)</option>
               </select>
             </Field>
-            <Field label="Tiempo clasificación (Fecha 0, opcional)">
-              <input className={inp} value={form.tiempo_clasificacion} onChange={(e) => set("tiempo_clasificacion", e.target.value)} placeholder="1:23.456 — define la categoría" />
+            <Field label="Mejor tiempo (opcional — define la categoría)">
+              <input className={inp} value={form.tiempo_clasificacion} onChange={(e) => set("tiempo_clasificacion", e.target.value)} placeholder="1:23.456" />
             </Field>
             <Field label="Hora de toma"><input type="time" className={inp} value={form.hora_toma} onChange={(e) => set("hora_toma", e.target.value)} /></Field>
-            <Field label="Hora de subida"><input type="time" className={inp} value={form.hora_subida} onChange={(e) => set("hora_subida", e.target.value)} /></Field>
+            <Field label="Hora estimada de subida"><input type="time" className={inp} value={form.hora_estimada_subida} onChange={(e) => set("hora_estimada_subida", e.target.value)} /></Field>
+            <Field label="Hora de subida (inicia el temporizador)"><input type="time" className={inp} value={form.hora_subida} onChange={(e) => set("hora_subida", e.target.value)} /></Field>
             <Field label="Minutos del turno"><input type="number" min={0} className={inp} value={form.cantidad_minutos} onChange={(e) => set("cantidad_minutos", e.target.value)} /></Field>
-            <Field label="Hora de bajada"><input type="time" className={inp} value={form.hora_bajada} onChange={(e) => set("hora_bajada", e.target.value)} /></Field>
+            <Field label="Hora de bajada (automática)"><input type="time" readOnly className={`${inp} opacity-70`} value={horaBajadaNueva} /></Field>
           </div>
-          {form.metodo_pago === "online" && (
-            <p className="text-xs font-bold text-blue-300">
-              Pagada online: no hace falta cobrar en el stand. Podés cargar el tiempo y los datos del turno.
-            </p>
+          {formaPago === "stand" && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-[0.15em] text-zinc-400">Pagos (uno o varios métodos)</label>
+              <PagosEditorInscripcion pagos={pagosNueva} setPagos={setPagosNueva} />
+            </div>
+          )}
+          {formaPago === "online" && (
+            <p className="text-xs font-bold text-blue-300">Pagada online: no hace falta cobrar en el stand. Podés cargar el tiempo y los datos del turno igual.</p>
+          )}
+          {timerNueva && (
+            <p className="text-xs font-bold text-zinc-300">Temporizador del turno: <span className={`ml-1 rounded-full px-2 py-0.5 ${TURNO_BADGE_CLASS[timerNueva.status]}`}>{timerNueva.label}</span></p>
           )}
           {msg && <p className="text-sm font-bold text-red-400">{msg}</p>}
           <div className="flex gap-3">
@@ -1283,7 +1437,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
 
       {/* ── Formulario editar inscripción ── */}
       {editId && (
-        <div className="rounded-2xl border border-blue-500/30 bg-blue-900/10 p-6 space-y-4">
+        <div className="rounded-2xl border border-blue-500/30 bg-blue-900/10 p-6 space-y-4" onKeyDown={handleArrowNav}>
           <h3 className="font-black text-white">Editar inscripción</h3>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field label="Nombre"><input className={inp} value={editForm.nombre || ""} onChange={(e) => setEditForm((f) => ({ ...f, nombre: e.target.value }))} /></Field>
@@ -1293,7 +1447,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
             <Field label="Instagram"><input className={inp} value={editForm.instagram || ""} onChange={(e) => setEditForm((f) => ({ ...f, instagram: e.target.value }))} placeholder="@usuario" /></Field>
             <Field label="Escudería">
               <select className={sel} value={editForm.escuderia_favorita || ""} onChange={(e) => setEditForm((f) => ({ ...f, escuderia_favorita: e.target.value }))}>
-                <option value="">Seleccionar...</option>
+                <option value="">Sin especificar</option>
                 {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
               </select>
             </Field>
@@ -1323,16 +1477,42 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                 <option value="cancelado">Cancelado</option>
               </select>
             </Field>
-            <Field label="Monto"><input type="number" className={inp} value={editForm.monto || ""} onChange={(e) => setEditForm((f) => ({ ...f, monto: e.target.value }))} /></Field>
-            <Field label="Método de pago">
-              <select className={sel} value={editForm.metodo_pago || ""} onChange={(e) => setEditForm((f) => ({ ...f, metodo_pago: e.target.value }))}>
-                <option value="">Sin especificar</option>
-                <option value="mercadopago">Mercado Pago</option>
-                <option value="stand">Stand</option>
-                {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </select>
+            <Field label="Mejor tiempo (cargar / mejorar — recalcula categoría)">
+              <input className={inp} value={editTiempo} onChange={(e) => setEditTiempo(e.target.value)} placeholder="1:23.456" />
             </Field>
+            <Field label="Hora de toma"><input type="time" className={inp} value={editForm.hora_toma || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_toma: e.target.value }))} /></Field>
+            <Field label="Hora estimada de subida"><input type="time" className={inp} value={editForm.hora_estimada_subida || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_estimada_subida: e.target.value }))} /></Field>
+            <Field label="Hora de subida (inicia el temporizador)"><input type="time" className={inp} value={editForm.hora_subida || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_subida: e.target.value }))} /></Field>
+            <Field label="Minutos del turno"><input type="number" min={0} className={inp} value={editForm.cantidad_minutos || ""} onChange={(e) => setEditForm((f) => ({ ...f, cantidad_minutos: e.target.value }))} /></Field>
+            <Field label="Hora de bajada (automática)"><input type="time" readOnly className={`${inp} opacity-70`} value={horaBajadaEdit} /></Field>
           </div>
+
+          {/* Pago: simple (monto + método) o pagos parciales múltiples. */}
+          <label className="flex items-center gap-2 text-xs font-bold text-zinc-300">
+            <input type="checkbox" className="accent-red-500" checked={editarPagos} onChange={(e) => setEditarPagos(e.target.checked)} />
+            Editar pagos parciales (varios métodos)
+          </label>
+          {editarPagos ? (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-[0.15em] text-zinc-400">Pagos (uno o varios métodos)</label>
+              <PagosEditorInscripcion pagos={editPagos} setPagos={setEditPagos} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Field label="Monto"><input type="number" className={inp} value={editForm.monto || ""} onChange={(e) => setEditForm((f) => ({ ...f, monto: e.target.value }))} /></Field>
+              <Field label="Método de pago">
+                <select className={sel} value={editForm.metodo_pago || ""} onChange={(e) => setEditForm((f) => ({ ...f, metodo_pago: e.target.value }))}>
+                  <option value="">Sin especificar</option>
+                  <option value="mercadopago">Mercado Pago</option>
+                  <option value="stand">Stand</option>
+                  {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </Field>
+            </div>
+          )}
+          {timerEdit && (
+            <p className="text-xs font-bold text-zinc-300">Temporizador del turno: <span className={`ml-1 rounded-full px-2 py-0.5 ${TURNO_BADGE_CLASS[timerEdit.status]}`}>{timerEdit.label}</span></p>
+          )}
           {editMsg && <p className="text-sm font-bold text-red-400">{editMsg}</p>}
           <div className="flex gap-3">
             <button onClick={submitEdit} disabled={editSaving} className="rounded-xl bg-blue-600 px-6 py-2 font-bold text-white hover:bg-blue-500 disabled:opacity-50">{editSaving ? "Guardando..." : "Guardar cambios"}</button>
@@ -1361,7 +1541,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
         <table className="w-full text-sm">
           <thead className="bg-zinc-900/80 text-zinc-400">
             <tr>
-              {["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Campeonato", "Monto", "Estado", "Fecha", "Editar"].map((h) => (
+              {["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Tiempo", "Campeonato", "Monto", "Estado", "Turno", "Fecha", "Editar"].map((h) => (
                 <th key={h} className="px-4 py-3 text-left font-bold uppercase text-xs">{h}</th>
               ))}
               {role === "admin" && <th className="px-4 py-3 text-left font-bold uppercase text-xs">Acciones</th>}
@@ -1377,20 +1557,34 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                 <td className="px-4 py-3 text-zinc-400">{i.instagram || "—"}</td>
                 <td className="px-4 py-3 text-zinc-300">{i.escuderia_favorita}</td>
                 <td className="px-4 py-3">{i.categoria ? <Badge v={i.categoria} /> : <span className="text-zinc-600 text-xs italic">sin asignar</span>}</td>
+                <td className="px-4 py-3 font-mono text-zinc-200">{i.mejor_tiempo || <span className="text-zinc-600">—</span>}</td>
                 <td className="px-4 py-3 text-zinc-400">{i.campeonatos?.nombre || "—"}</td>
                 <td className="px-4 py-3 font-bold text-white">
                   {formatoDinero(i.monto)}
-                  {i.metodo_pago && <span className="ml-1 text-xs text-zinc-500">({i.metodo_pago})</span>}
+                  {i.metodo_pago && <span className="ml-1 text-xs text-zinc-500">({i.metodo_pago === "multiple" ? "múltiple" : i.metodo_pago})</span>}
                 </td>
                 <td className="px-4 py-3"><BadgeInscripcion estado={i.estado_pago} /></td>
+                <td className="px-4 py-3"><TurnoBadgeInscripcion i={i} now={now} /></td>
                 <td className="px-4 py-3 text-zinc-400 text-xs">{i.created_at?.slice(0, 10)}</td>
                 <td className="px-4 py-3">
-                  <button
-                    onClick={() => editId === i.id ? cancelEdit() : startEdit(i)}
-                    className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-bold text-blue-400 hover:bg-zinc-700"
-                  >
-                    {editId === i.id ? "Cerrar" : "Editar"}
-                  </button>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => editId === i.id ? cancelEdit() : startEdit(i)}
+                      className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-bold text-blue-400 hover:bg-zinc-700"
+                    >
+                      {editId === i.id ? "Cerrar" : "Editar"}
+                    </button>
+                    {estadoVisualInscripcion(i.estado_pago) === "pendiente" && (
+                      <button
+                        onClick={() => cobrarStand(i.id)}
+                        disabled={cobrandoId === i.id}
+                        className="rounded-lg bg-green-900/40 px-3 py-1 text-xs font-bold text-green-300 hover:bg-green-900 disabled:opacity-50"
+                        title="Registrar pago en stand (efectivo)"
+                      >
+                        {cobrandoId === i.id ? "..." : "Cobrar"}
+                      </button>
+                    )}
+                  </div>
                 </td>
                 {role === "admin" && (
                   <td className="px-4 py-3">
