@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import GiftCardDownloadable from "@/components/GiftCardDownloadable";
 
 type GiftCard = {
   id: string;
@@ -24,8 +25,22 @@ type GiftCard = {
   mercado_pago_payment_id: string | null;
   fecha_pago: string | null;
   fecha_uso: string | null;
+  fecha_vencimiento: string | null;
   observaciones: string | null;
 };
+
+type GiftCardLog = {
+  id: string;
+  accion: string;
+  rol: string | null;
+  detalle: Record<string, unknown> | null;
+  created_at: string;
+};
+
+function fechaHoyISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function formatPrice(value: number | null) {
   return new Intl.NumberFormat("es-AR", {
@@ -88,16 +103,26 @@ export default function AdminGiftCardsPage() {
   const [cards, setCards] = useState<GiftCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [codigo, setCodigo] = useState("");
-  const [estadoUso, setEstadoUso] = useState("");
+  // Filtro por defecto: Activas (pendiente). Oculta las usadas por defecto (#6/#7).
+  const [estadoUso, setEstadoUso] = useState("pendiente");
   const [detalle, setDetalle] = useState<GiftCard | null>(null);
   const [accionId, setAccionId] = useState<string | null>(null);
+  // Modales de las nuevas acciones.
+  const [visual, setVisual] = useState<GiftCard | null>(null);
+  const [renovar, setRenovar] = useState<GiftCard | null>(null);
+  const [nuevaFecha, setNuevaFecha] = useState("");
+  const [audit, setAudit] = useState<GiftCard | null>(null);
+  const [logs, setLogs] = useState<GiftCardLog[] | null>(null);
 
   const fetchCards = useCallback(async () => {
     setLoading(true);
     try {
       const qs = new URLSearchParams();
-      if (codigo.trim()) qs.set("codigo", codigo.trim());
-      if (estadoUso) qs.set("estado_uso", estadoUso);
+      const termino = codigo.trim();
+      if (termino) qs.set("codigo", termino);
+      // Al buscar por código se ignora el filtro de estado para poder encontrar
+      // también las usadas/vencidas (#7). Sin búsqueda, aplica el estado elegido.
+      if (estadoUso && !termino) qs.set("estado_uso", estadoUso);
       const res = await fetch(`/api/admin/gift-cards?${qs.toString()}`, { cache: "no-store" });
       const data = await res.json();
       setCards(Array.isArray(data) ? data : []);
@@ -142,6 +167,31 @@ export default function AdminGiftCardsPage() {
     }
   }
 
+  function abrirRenovar(c: GiftCard) {
+    const base = c.fecha_vencimiento ? c.fecha_vencimiento.slice(0, 10) : fechaHoyISO();
+    setNuevaFecha(base);
+    setRenovar(c);
+  }
+
+  async function guardarRenovar() {
+    if (!renovar) return;
+    if (!nuevaFecha) { alert("Elegí una fecha de vencimiento."); return; }
+    await accion(renovar.id, { accion: "renovar", fecha_vencimiento: nuevaFecha });
+    setRenovar(null);
+  }
+
+  async function abrirAudit(c: GiftCard) {
+    setAudit(c);
+    setLogs(null);
+    try {
+      const res = await fetch(`/api/admin/gift-cards/${c.id}`, { cache: "no-store" });
+      const data = await res.json();
+      setLogs(Array.isArray(data?.logs) ? data.logs : []);
+    } catch {
+      setLogs([]);
+    }
+  }
+
   const sel =
     "rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-red-500";
 
@@ -164,15 +214,15 @@ export default function AdminGiftCardsPage() {
           onChange={(e) => setCodigo(e.target.value)}
         />
         <select className={sel} value={estadoUso} onChange={(e) => setEstadoUso(e.target.value)}>
+          <option value="pendiente">Activas</option>
+          <option value="usada">Usadas</option>
+          <option value="vencida">Vencidas</option>
+          <option value="cancelada">Canceladas</option>
           <option value="">Todas</option>
-          <option value="pendiente">Pendiente de usar</option>
-          <option value="usada">Usada</option>
-          <option value="vencida">Vencida</option>
-          <option value="cancelada">Cancelada</option>
         </select>
-        {(codigo || estadoUso) && (
+        {(codigo || estadoUso !== "pendiente") && (
           <button
-            onClick={() => { setCodigo(""); setEstadoUso(""); }}
+            onClick={() => { setCodigo(""); setEstadoUso("pendiente"); }}
             className="text-xs font-black uppercase tracking-wider text-red-400 hover:text-red-300"
           >
             Limpiar ×
@@ -226,6 +276,24 @@ export default function AdminGiftCardsPage() {
                         className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-bold text-zinc-300 hover:text-white"
                       >
                         Detalle
+                      </button>
+                      <button
+                        onClick={() => setVisual(c)}
+                        className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-bold text-zinc-300 hover:text-white"
+                      >
+                        Visualizar
+                      </button>
+                      <button
+                        onClick={() => abrirRenovar(c)}
+                        className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-bold text-zinc-300 hover:text-white"
+                      >
+                        Renovar
+                      </button>
+                      <button
+                        onClick={() => abrirAudit(c)}
+                        className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-bold text-zinc-300 hover:text-white"
+                      >
+                        Historial
                       </button>
                       {c.estado_uso === "pendiente" && (
                         <>
@@ -306,6 +374,7 @@ export default function AdminGiftCardsPage() {
                 ["Monto", formatPrice(detalle.monto)],
                 ["Código descuento", detalle.codigo_descuento || "—"],
                 ["Vendida", formatFechaHora(detalle.fecha_pago || detalle.created_at)],
+                ["Vence", formatFechaHora(detalle.fecha_vencimiento)],
                 ["Usada", formatFechaHora(detalle.fecha_uso)],
                 ["MP Payment ID", detalle.mercado_pago_payment_id || "—"],
               ] as [string, string][]).map(([k, v]) => (
@@ -363,6 +432,102 @@ export default function AdminGiftCardsPage() {
                 >
                   Volver a pendiente
                 </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Visualizar (#4): muestra la Gift Card existente tal cual la recibió el cliente. */}
+      {visual && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setVisual(null)}>
+          <div className="w-full max-w-xl rounded-3xl border border-white/10 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500">Gift Card</p>
+                <h2 className="mt-1 font-mono text-xl font-black text-white">{visual.codigo_unico}</h2>
+              </div>
+              <button onClick={() => setVisual(null)} className="text-2xl leading-none text-zinc-500 hover:text-white">×</button>
+            </div>
+            <GiftCardDownloadable
+              card={{
+                codigo_unico: visual.codigo_unico,
+                duracion_minutos: visual.duracion_minutos,
+                monto: visual.monto,
+                destinatario_nombre: visual.destinatario_nombre,
+                fecha: visual.fecha_pago || visual.created_at,
+                usos_totales: visual.usos_totales,
+                modo_uso: visual.modo_uso,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Renovar (#5): solo cambia la fecha de vencimiento. */}
+      {renovar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setRenovar(null)}>
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500">Renovar vencimiento</p>
+                <h2 className="mt-1 font-mono text-lg font-black text-white">{renovar.codigo_unico}</h2>
+              </div>
+              <button onClick={() => setRenovar(null)} className="text-2xl leading-none text-zinc-500 hover:text-white">×</button>
+            </div>
+            <p className="mb-3 text-sm text-zinc-400">
+              Solo se actualiza la fecha de vencimiento. No cambia el código, comprador, importe, estado ni la imagen.
+            </p>
+            <label className="mb-1 block text-xs font-black uppercase tracking-wider text-zinc-500">Nueva fecha de vencimiento</label>
+            <input
+              type="date"
+              value={nuevaFecha}
+              onChange={(e) => setNuevaFecha(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white outline-none focus:border-red-500"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setRenovar(null)} className="rounded-xl border border-white/10 px-5 py-2 text-sm font-bold text-zinc-300 hover:text-white">Cancelar</button>
+              <button
+                onClick={guardarRenovar}
+                disabled={accionId === renovar.id || !nuevaFecha}
+                className="rounded-xl bg-red-600 px-6 py-2 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                {accionId === renovar.id ? "Guardando..." : "Renovar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auditoría (#8): historial de acciones de la Gift Card. */}
+      {audit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setAudit(null)}>
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500">Historial</p>
+                <h2 className="mt-1 font-mono text-lg font-black text-white">{audit.codigo_unico}</h2>
+              </div>
+              <button onClick={() => setAudit(null)} className="text-2xl leading-none text-zinc-500 hover:text-white">×</button>
+            </div>
+            <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+              {logs === null ? (
+                <p className="py-6 text-center text-sm text-zinc-500">Cargando historial...</p>
+              ) : (
+                <>
+                  {logs.map((l) => (
+                    <div key={l.id} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5">
+                      <span className="text-sm font-bold text-white">{l.accion}</span>
+                      <span className="text-xs text-zinc-500">
+                        {l.rol ? `${l.rol} · ` : ""}{formatFechaHora(l.created_at)}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5">
+                    <span className="text-sm font-bold text-white">Creada</span>
+                    <span className="text-xs text-zinc-500">{formatFechaHora(audit.fecha_pago || audit.created_at)}</span>
+                  </div>
+                </>
               )}
             </div>
           </div>

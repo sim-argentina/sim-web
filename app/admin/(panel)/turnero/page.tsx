@@ -37,7 +37,7 @@ type TurnoStand = {
   observaciones?: string;
 };
 
-const SIMULADORES = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
+const SIMULADORES = ["Ferrari", "Alpine", "McLaren", "Red Bull"];
 const POSNETS = ["MP", "PayWay"];
 const METODOS_PAGO = [
   { value: "qr", label: "QR" },
@@ -279,8 +279,22 @@ export default function TurneroAdminPage() {
     return turnos
       .filter((turno) => turno.fecha === fecha)
       .filter((turno) => turno.estado !== "cancelado")
-      .sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
+      // Orden visual: el último registrado va primero (id descendente). No cambia
+      // cómo se almacenan los registros, solo el orden de la lista.
+      .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
   }, [turnos, fecha]);
+
+  // Totales del día para la barra de resumen (solo visualización; no altera los
+  // cálculos existentes de resumenDia).
+  const totalesDia = useMemo(() => {
+    let personas = 0;
+    let minutos = 0;
+    turnosDelDia.forEach((turno) => {
+      personas += Number(turno.cantidad_personas) || 1;
+      minutos += Number(turno.cantidad_minutos) || 15;
+    });
+    return { personas, minutos, turnos: turnosDelDia.length };
+  }, [turnosDelDia]);
 
   // Reloj para los temporizadores en vivo (un solo intervalo, se limpia al desmontar).
   const now = useNow();
@@ -1007,10 +1021,12 @@ export default function TurneroAdminPage() {
               <h2 className="text-xl font-black uppercase text-red-500">
                 Turnos guardados
               </h2>
-              <p className="text-sm text-white/50">{fecha}</p>
+              <p className="text-sm text-white/50">
+                {fecha ? fecha.split("-").reverse().join("/") : fecha}
+              </p>
             </div>
 
-            <div className="flex items-end gap-3">
+            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-end">
               <Campo label="Ver día">
                 <input
                   type="date"
@@ -1023,8 +1039,16 @@ export default function TurneroAdminPage() {
                 />
               </Campo>
 
-              <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/70">
-                {turnosDelDia.length} turnos
+              <div className="flex flex-wrap gap-2">
+                <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/80">
+                  👥 Personas: <span className="text-white">{totalesDia.personas}</span>
+                </div>
+                <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/80">
+                  ⏱ Minutos: <span className="text-white">{totalesDia.minutos}</span>
+                </div>
+                <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/80">
+                  🎟 Turnos: <span className="text-white">{totalesDia.turnos}</span>
+                </div>
               </div>
             </div>
           </div>

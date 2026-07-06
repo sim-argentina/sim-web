@@ -4,6 +4,59 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
 
+// Etiqueta legible para el historial de auditoría (#8).
+const ACCION_LABEL: Record<string, string> = {
+  registrar_uso: "Uso registrado",
+  marcar_usada: "Usada",
+  marcar_pendiente: "Reactivada",
+  marcar_vencida: "Vencida",
+  marcar_cancelada: "Cancelada",
+  observaciones: "Observaciones editadas",
+  renovar: "Renovada",
+};
+
+// Registra una acción en la auditoría de la Gift Card. Nunca rompe la operación
+// principal (solo agrega historial).
+async function registrarGiftCardLog(
+  giftCardId: string,
+  accion: string,
+  rol: string | undefined,
+  detalle: Record<string, unknown> = {}
+) {
+  try {
+    await supabaseAdmin.from("gift_card_logs").insert([
+      { gift_card_id: giftCardId, accion, rol: rol ?? null, detalle },
+    ]);
+  } catch {
+    /* el log nunca debe romper la acción */
+  }
+}
+
+// GET: historial de auditoría de la Gift Card (admin/staff).
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireStaffOrAdmin();
+  if (!auth.ok) return auth.response;
+
+  const { id } = await params;
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("gift_card_logs")
+    .select("id, accion, rol, detalle, created_at")
+    .eq("gift_card_id", id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return failResponse(500, "No se pudo cargar el historial", { logContext: "admin/gift-cards/[id] GET logs", error });
+  }
+  return NextResponse.json({ logs: data ?? [] });
+}
+
 // Actualiza el estado de uso / observaciones de una Gift Card.
 // Disponible para admin y staff. No se elimina físicamente: se usan estados.
 export async function PATCH(
@@ -70,6 +123,16 @@ export async function PATCH(
       updates.observaciones =
         typeof body.observaciones === "string" ? body.observaciones : null;
       break;
+    case "renovar": {
+      // Renovar vencimiento (#5): SOLO actualiza fecha_vencimiento. No toca
+      // código, comprador, importe, estado ni imagen.
+      const fecha = typeof body.fecha_vencimiento === "string" ? body.fecha_vencimiento : "";
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+        return NextResponse.json({ error: "Fecha de vencimiento inválida (YYYY-MM-DD)" }, { status: 400 });
+      }
+      updates.fecha_vencimiento = `${fecha}T12:00:00`;
+      break;
+    }
     default:
       return NextResponse.json({ error: "Acción inválida" }, { status: 400 });
   }
@@ -80,5 +143,16 @@ export async function PATCH(
     .eq("id", id);
 
   if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/gift-cards/[id]", error });
+
+  // Auditoría (#8): registra la acción realizada. No modifica la lógica anterior.
+  const accion = String(body.accion);
+  const label =
+    accion === "registrar_uso" && updates.estado_uso === "usada"
+      ? "Usada"
+      : ACCION_LABEL[accion] ?? accion;
+  const detalle: Record<string, unknown> =
+    accion === "renovar" ? { fecha_vencimiento: updates.fecha_vencimiento } : {};
+  await registrarGiftCardLog(id, label, auth.role, detalle);
+
   return NextResponse.json({ ok: true });
 }
