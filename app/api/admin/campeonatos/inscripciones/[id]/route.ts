@@ -66,6 +66,8 @@ export async function PATCH(
     "nombre", "apellido", "nombre_completo", "telefono", "dni",
     "instagram", "escuderia_favorita", "categoria", "monto",
     "metodo_pago", "estado_pago",
+    // Datos operativos del turno de la inscripción (#4).
+    "hora_toma", "hora_subida", "hora_bajada", "cantidad_minutos",
   ];
 
   const updates: Record<string, unknown> = {};

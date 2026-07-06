@@ -14,6 +14,7 @@ export async function POST(req: Request) {
     const {
       nombre, apellido, telefono, dni, instagram,
       escuderia_favorita, categoria, campeonato_id, monto, metodo_pago,
+      hora_toma, hora_subida, hora_bajada, cantidad_minutos,
     } = body;
 
     if (!nombre?.trim() || !apellido?.trim() || !telefono?.trim() || !dni?.trim() || !escuderia_favorita || !categoria || !campeonato_id || !monto || !metodo_pago) {
@@ -42,6 +43,11 @@ export async function POST(req: Request) {
         monto: montoFinal,
         estado_pago: "pagado",
         metodo_pago,
+        // Datos operativos del turno incluidos con la inscripción (#4). Opcionales.
+        hora_toma: typeof hora_toma === "string" && hora_toma.trim() ? hora_toma.trim() : null,
+        hora_subida: typeof hora_subida === "string" && hora_subida.trim() ? hora_subida.trim() : null,
+        hora_bajada: typeof hora_bajada === "string" && hora_bajada.trim() ? hora_bajada.trim() : null,
+        cantidad_minutos: Number.isFinite(Number(cantidad_minutos)) && Number(cantidad_minutos) > 0 ? Math.round(Number(cantidad_minutos)) : null,
       }])
       .select("id")
       .single();

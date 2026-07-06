@@ -82,6 +82,10 @@ type Inscripcion = {
   estado_pago: string;
   payment_id: string | null;
   metodo_pago: string | null;
+  hora_toma: string | null;
+  hora_subida: string | null;
+  hora_bajada: string | null;
+  cantidad_minutos: number | null;
   created_at: string;
   campeonatos?: { nombre: string } | null;
 };
@@ -1074,6 +1078,7 @@ const blankInscripcion = {
   nombre: "", apellido: "", telefono: "", dni: "", instagram: "",
   escuderia_favorita: "", categoria: "oro", campeonato_id: "", monto: "", metodo_pago: "efectivo",
   tiempo_clasificacion: "",
+  hora_toma: "", hora_subida: "", hora_bajada: "", cantidad_minutos: "15",
 };
 
 // Unifica los estados internos en 3 estados visuales: Pagado / Pendiente / Cancelado.
@@ -1223,7 +1228,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
       {/* ── Formulario nueva inscripción ── */}
       {showForm && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
-          <h3 className="font-black text-white">Nueva inscripción (pago en stand)</h3>
+          <h3 className="font-black text-white">Nueva inscripción (pago en stand o ya pagada online)</h3>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field label="Nombre *"><input className={inp} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} /></Field>
             <Field label="Apellido *"><input className={inp} value={form.apellido} onChange={(e) => set("apellido", e.target.value)} /></Field>
@@ -1251,13 +1256,23 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
             <Field label="Monto *"><input type="number" className={inp} value={form.monto} onChange={(e) => set("monto", e.target.value)} /></Field>
             <Field label="Método de pago *">
               <select className={sel} value={form.metodo_pago} onChange={(e) => set("metodo_pago", e.target.value)}>
+                <option value="online">Pagado online (MP)</option>
                 {METODOS_PAGO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </Field>
             <Field label="Tiempo clasificación (Fecha 0, opcional)">
               <input className={inp} value={form.tiempo_clasificacion} onChange={(e) => set("tiempo_clasificacion", e.target.value)} placeholder="1:23.456 — define la categoría" />
             </Field>
+            <Field label="Hora de toma"><input type="time" className={inp} value={form.hora_toma} onChange={(e) => set("hora_toma", e.target.value)} /></Field>
+            <Field label="Hora de subida"><input type="time" className={inp} value={form.hora_subida} onChange={(e) => set("hora_subida", e.target.value)} /></Field>
+            <Field label="Minutos del turno"><input type="number" min={0} className={inp} value={form.cantidad_minutos} onChange={(e) => set("cantidad_minutos", e.target.value)} /></Field>
+            <Field label="Hora de bajada"><input type="time" className={inp} value={form.hora_bajada} onChange={(e) => set("hora_bajada", e.target.value)} /></Field>
           </div>
+          {form.metodo_pago === "online" && (
+            <p className="text-xs font-bold text-blue-300">
+              Pagada online: no hace falta cobrar en el stand. Podés cargar el tiempo y los datos del turno.
+            </p>
+          )}
           {msg && <p className="text-sm font-bold text-red-400">{msg}</p>}
           <div className="flex gap-3">
             <button onClick={submitNueva} disabled={saving} className="rounded-xl bg-red-600 px-6 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-50">{saving ? "Guardando..." : "Crear inscripción"}</button>

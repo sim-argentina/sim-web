@@ -284,18 +284,6 @@ export default function TurneroAdminPage() {
       .sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
   }, [turnos, fecha]);
 
-  // Totales del día para la barra de resumen (solo visualización; no altera los
-  // cálculos existentes de resumenDia).
-  const totalesDia = useMemo(() => {
-    let personas = 0;
-    let minutos = 0;
-    turnosDelDia.forEach((turno) => {
-      personas += Number(turno.cantidad_personas) || 1;
-      minutos += Number(turno.cantidad_minutos) || 15;
-    });
-    return { personas, minutos, turnos: turnosDelDia.length };
-  }, [turnosDelDia]);
-
   // Reloj para los temporizadores en vivo (un solo intervalo, se limpia al desmontar).
   const now = useNow();
 
@@ -1021,12 +1009,10 @@ export default function TurneroAdminPage() {
               <h2 className="text-xl font-black uppercase text-red-500">
                 Turnos guardados
               </h2>
-              <p className="text-sm text-white/50">
-                {fecha ? fecha.split("-").reverse().join("/") : fecha}
-              </p>
+              <p className="text-sm text-white/50">{fecha}</p>
             </div>
 
-            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-end">
+            <div className="flex items-end gap-3">
               <Campo label="Ver día">
                 <input
                   type="date"
@@ -1039,16 +1025,8 @@ export default function TurneroAdminPage() {
                 />
               </Campo>
 
-              <div className="flex flex-wrap gap-2">
-                <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/80">
-                  👥 Personas: <span className="text-white">{totalesDia.personas}</span>
-                </div>
-                <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/80">
-                  ⏱ Minutos: <span className="text-white">{totalesDia.minutos}</span>
-                </div>
-                <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/80">
-                  🎟 Turnos: <span className="text-white">{totalesDia.turnos}</span>
-                </div>
+              <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/70">
+                {turnosDelDia.length} turnos
               </div>
             </div>
           </div>
@@ -1063,8 +1041,8 @@ export default function TurneroAdminPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1220px] space-y-2">
-                <div className="grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_1.4fr_130px_120px_80px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
+              <div className="min-w-[1300px] space-y-2">
+                <div className="grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_70px_1.4fr_130px_120px_80px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
                   <span>Listo</span>
                   <span>Toma</span>
                   <span>Est.</span>
@@ -1074,6 +1052,7 @@ export default function TurneroAdminPage() {
                   <span>Simus</span>
                   <span>Pers.</span>
                   <span>Min.</span>
+                  <span>Turnos</span>
                   <span>Pago</span>
                   <span>Posnet</span>
                   <span>Total</span>
@@ -1106,7 +1085,7 @@ export default function TurneroAdminPage() {
                   return (
                     <div
                       key={turno.id}
-                      className={`grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_1.4fr_130px_120px_80px] items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+                      className={`grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_70px_1.4fr_130px_120px_80px] items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
                         timer.status === "listo"
                           ? "border-green-500/50 bg-green-950/25"
                           : timer.status === "rojo"
@@ -1186,6 +1165,7 @@ export default function TurneroAdminPage() {
 
                       <span>{turno.cantidad_personas || 1}</span>
                       <span>{turno.cantidad_minutos || 15}</span>
+                      <span>{turno.cantidad_turnos || 1}</span>
                       <span className="truncate">
                         {formatearPagosDetalle(turno)}
                       </span>

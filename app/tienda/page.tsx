@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { MessageCircle, ArrowRight, Check } from "lucide-react";
 
-const WA = "https://wa.me/5493512520927";
+const WA = "https://wa.me/5493517361030";
 const WA_F1 = `${WA}?text=${encodeURIComponent("Hola! Me interesa el Simulador F1. ¿Podés darme más información y precio?")}`;
 const WA_GT = `${WA}?text=${encodeURIComponent("Hola! Me interesa el Simulador GT. ¿Podés darme más información y precio?")}`;
 
