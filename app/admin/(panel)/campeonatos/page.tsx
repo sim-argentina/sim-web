@@ -1160,9 +1160,12 @@ function pagosParaEnviar(pagos: PagoDetalle[]) {
 }
 
 // Badge de temporizador del turno en vivo (mismo comportamiento que el Turnero).
-function TurnoBadgeInscripcion({ i, now }: { i: Inscripcion; now: number }) {
-  if (!i.hora_subida) return <span className="text-zinc-600 text-xs">—</span>;
-  const st = getTurnoTimerState({ horaSubida: i.hora_subida, minutos: i.cantidad_minutos, listo: false }, now);
+function TurnoBadgeInscripcion({ i, now, listo }: { i: Inscripcion; now: number; listo: boolean }) {
+  // Igual que el Turnero: si el turno está "listo", el temporizador se detiene y
+  // muestra "Listo" (getTurnoTimerState cortocircuita con listo=true, sin depender
+  // de `now`, así que no sigue descontando ni al refrescar).
+  if (!listo && !i.hora_subida) return <span className="text-zinc-600 text-xs">—</span>;
+  const st = getTurnoTimerState({ horaSubida: i.hora_subida, minutos: i.cantidad_minutos, listo }, now);
   return <span className={`rounded-full px-2 py-0.5 text-xs font-black ${TURNO_BADGE_CLASS[st.status]}`}>{st.label}</span>;
 }
 
@@ -1594,7 +1597,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                   {i.metodo_pago && <span className="ml-1 text-xs text-zinc-500">({i.metodo_pago === "multiple" ? "múltiple" : i.metodo_pago})</span>}
                 </td>
                 <td className="px-4 py-3"><BadgeInscripcion estado={i.estado_pago} /></td>
-                <td className="px-4 py-3"><TurnoBadgeInscripcion i={i} now={now} /></td>
+                <td className="px-4 py-3"><TurnoBadgeInscripcion i={i} now={now} listo={listoOverride[i.id] ?? i.turno_listo} /></td>
                 <td className="px-4 py-3">
                   <label className="inline-flex cursor-pointer items-center gap-2" title="Turno completado (se subió, bajó e hizo su tiempo)">
                     <input
