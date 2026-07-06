@@ -3,7 +3,7 @@ import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { sanitizeSearchTerm } from "@/lib/security";
-import { tiempoToMs, msToTiempo } from "@/lib/campeonatos";
+import { tiempoToMs, msToTiempo, inscripcionEstaLista } from "@/lib/campeonatos";
 import { recalcularCategorias, getOrCreateFecha0 } from "@/lib/campeonatosCategorias";
 
 // Métodos de pago aceptados en el stand (mismos que el Turnero). "online" y
@@ -241,6 +241,7 @@ export async function GET(req: Request) {
       ...d,
       mejor_tiempo_ms: mejores[d.id] ?? null,
       mejor_tiempo: mejores[d.id] != null ? msToTiempo(mejores[d.id]) : null,
+      turno_listo: inscripcionEstaLista(d.observaciones),
     }));
 
     return NextResponse.json(enriched);

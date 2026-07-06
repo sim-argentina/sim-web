@@ -3,7 +3,7 @@ import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
-import { tiempoToMs } from "@/lib/campeonatos";
+import { tiempoToMs, marcarInscripcionLista } from "@/lib/campeonatos";
 import { recalcularCategorias, getOrCreateFecha0 } from "@/lib/campeonatosCategorias";
 
 type PagoLimpio = { metodo_pago: string; monto: number; posnet_pago: string | null };
@@ -157,6 +157,25 @@ export async function PATCH(
     const error = await actualizarInscripcion(id, upd);
     if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/inscripciones/[id] cobrar", error });
     return NextResponse.json({ ok: true });
+  }
+
+  // ── Marcar turno listo/completado (admin y staff): igual que el Turnero.
+  //    Se guarda como marca en observaciones (no hay columna dedicada). No toca
+  //    tiempo, ranking ni categoría.
+  if (body.accion === "toggle_listo") {
+    const listo = body.listo === true;
+    const { data: actual } = await supabaseAdmin
+      .from("campeonato_inscripciones")
+      .select("observaciones")
+      .eq("id", id)
+      .maybeSingle();
+    const nuevo = marcarInscripcionLista(actual?.observaciones ?? null, listo);
+    const { error } = await supabaseAdmin
+      .from("campeonato_inscripciones")
+      .update({ observaciones: nuevo })
+      .eq("id", id);
+    if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/campeonatos/inscripciones/[id] listo", error });
+    return NextResponse.json({ ok: true, turno_listo: listo });
   }
 
   // ── Editar: admin y staff ───────────────────────────────────────────────────

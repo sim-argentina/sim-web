@@ -42,6 +42,23 @@ export function msToTiempo(ms: number | null | undefined): string {
   return `${min}:${String(seg).padStart(2, "0")}.${String(milis).padStart(3, "0")}`;
 }
 
+// "Turno listo" de una inscripción (piloto ya se subió, bajó, hizo su tiempo y
+// el turno quedó completado). Se persiste como prefijo en el campo observaciones
+// de campeonato_inscripciones (no hay columna dedicada); convive con notas de
+// texto y no afecta tiempo, ranking ni categoría.
+export const INSCRIPCION_LISTO_MARK = "[LISTO]";
+export function inscripcionEstaLista(observaciones: string | null | undefined): boolean {
+  return typeof observaciones === "string" && observaciones.trimStart().startsWith(INSCRIPCION_LISTO_MARK);
+}
+export function marcarInscripcionLista(
+  observaciones: string | null | undefined,
+  listo: boolean
+): string | null {
+  const base = String(observaciones ?? "").replace(/^\s*\[LISTO\]\s?/, "").trim();
+  if (listo) return base ? `${INSCRIPCION_LISTO_MARK} ${base}` : INSCRIPCION_LISTO_MARK;
+  return base ? base : null;
+}
+
 // Formatea una penalización en ms como "+0.600". "" si es 0/inválida.
 export function formatPenalizacion(ms: number | null | undefined): string {
   if (!ms || !Number.isFinite(ms)) return "";

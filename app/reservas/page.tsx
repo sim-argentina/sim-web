@@ -424,21 +424,6 @@ export default function ReservasPage() {
     setSelectedTeams([]);
   }
 
-  function openDatePicker() {
-    if (!dateInputRef.current) return;
-
-    const input = dateInputRef.current as HTMLInputElement & {
-      showPicker?: () => void;
-    };
-
-    if (typeof input.showPicker === "function") {
-      input.showPicker();
-    } else {
-      input.focus();
-      input.click();
-    }
-  }
-
   async function aplicarCodigo() {
     const codigo = codigoInput.trim().toUpperCase();
 
@@ -960,42 +945,53 @@ export default function ReservasPage() {
                     </div>
                   </div>
 
-                  <input
-                    ref={dateInputRef}
-                    type="date"
-                    value={selectedDate}
-                    min={minDate}
-                    max={maxDate}
-                    onChange={(e) => handleChangeDate(e.target.value)}
-                    className="pointer-events-none absolute opacity-0"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={openDatePicker}
-                    className="flex w-full items-center justify-between rounded-[22px] border border-white/10 bg-zinc-900/70 px-4 py-4 text-left transition hover:border-white/20 hover:bg-zinc-900"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="rounded-xl bg-red-500/10 p-2 text-red-400">
-                        <CalendarDays className="h-5 w-5" />
+                  <div className="relative">
+                    {/* Visual del botón (decorativo). El control real es el input
+                        nativo que va por encima. */}
+                    <div
+                      aria-hidden="true"
+                      className="flex w-full items-center justify-between rounded-[22px] border border-white/10 bg-zinc-900/70 px-4 py-4 text-left transition"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-xl bg-red-500/10 p-2 text-red-400">
+                          <CalendarDays className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="text-xs uppercase tracking-[0.22em] text-zinc-500">
+                            Día elegido
+                          </div>
+                          <div className="mt-1 text-base font-bold text-white md:text-lg">
+                            {selectedDateLabel}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-xs uppercase tracking-[0.22em] text-zinc-500">
-                          Día elegido
-                        </div>
-                        <div className="mt-1 text-base font-bold text-white md:text-lg">
-                          {selectedDateLabel}
-                        </div>
+
+                      <div className="flex items-center gap-2 text-zinc-400">
+                        <span className="hidden text-sm sm:inline">Cambiar</span>
+                        <ChevronDown className="h-5 w-5" />
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 text-zinc-400">
-                      <span className="hidden text-sm sm:inline">Cambiar</span>
-                      <ChevronDown className="h-5 w-5" />
-                    </div>
-                  </button>
+                    {/* Input nativo real, transparente y tappable, por encima del
+                        visual. En iOS/Safari `showPicker` no existe y un input
+                        oculto no se puede abrir: al tocar el input real se abre el
+                        selector nativo. En desktop, `showPicker` (si existe) abre
+                        el calendario al hacer click. */}
+                    <input
+                      ref={dateInputRef}
+                      type="date"
+                      value={selectedDate}
+                      min={minDate}
+                      max={maxDate}
+                      onChange={(e) => handleChangeDate(e.target.value)}
+                      onClick={(e) => {
+                        const el = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+                        try { el.showPicker?.(); } catch { /* no-op: iOS/no soportado */ }
+                      }}
+                      aria-label="Elegí la fecha de tu reserva"
+                      className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                    />
+                  </div>
                 </div>
 
                 <div className="rounded-[24px] border border-white/10 bg-black/40 p-4 md:p-5">

@@ -91,6 +91,7 @@ type Inscripcion = {
   mejor_tiempo: string | null;
   mejor_tiempo_ms: number | null;
   observaciones: string | null;
+  turno_listo: boolean;
   created_at: string;
   campeonatos?: { nombre: string } | null;
 };
@@ -1181,7 +1182,31 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [cobrandoId, setCobrandoId] = useState<string | null>(null);
+  const [listoOverride, setListoOverride] = useState<Record<string, boolean>>({});
   const now = useNow();
+
+  // Marca "turno listo" (piloto ya se subió, bajó, hizo su tiempo). Optimista:
+  // refleja el cambio al instante y persiste; revierte si el guardado falla.
+  const toggleListo = async (i: Inscripcion) => {
+    const actual = listoOverride[i.id] ?? i.turno_listo;
+    const nuevo = !actual;
+    setListoOverride((m) => ({ ...m, [i.id]: nuevo }));
+    try {
+      const res = await fetch(`/api/admin/campeonatos/inscripciones/${i.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accion: "toggle_listo", listo: nuevo }),
+      });
+      if (!res.ok) {
+        setListoOverride((m) => ({ ...m, [i.id]: actual }));
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "No se pudo guardar el estado");
+        return;
+      }
+      onRefresh();
+    } catch {
+      setListoOverride((m) => ({ ...m, [i.id]: actual }));
+    }
+  };
 
   // Hora de bajada automática = hora de subida + minutos (igual que el Turnero).
   const horaBajadaNueva = sumarMinutosAHora(form.hora_subida, Number(form.cantidad_minutos) || 0);
@@ -1357,7 +1382,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
     } finally { setEditSaving(false); }
   };
 
-  const colCount = role === "admin" ? 14 : 13;
+  const colCount = role === "admin" ? 15 : 14;
 
   return (
     <div className="space-y-6">
@@ -1546,7 +1571,7 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
         <table className="w-full text-sm">
           <thead className="bg-zinc-900/80 text-zinc-400">
             <tr>
-              {["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Tiempo", "Campeonato", "Monto", "Estado", "Turno", "Fecha", "Editar"].map((h) => (
+              {["Nombre", "DNI", "Tel", "Instagram", "Escudería", "Cat", "Tiempo", "Campeonato", "Monto", "Estado", "Turno", "Listo", "Fecha", "Editar"].map((h) => (
                 <th key={h} className="px-4 py-3 text-left font-bold uppercase text-xs">{h}</th>
               ))}
               {role === "admin" && <th className="px-4 py-3 text-left font-bold uppercase text-xs">Acciones</th>}
@@ -1570,6 +1595,17 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                 </td>
                 <td className="px-4 py-3"><BadgeInscripcion estado={i.estado_pago} /></td>
                 <td className="px-4 py-3"><TurnoBadgeInscripcion i={i} now={now} /></td>
+                <td className="px-4 py-3">
+                  <label className="inline-flex cursor-pointer items-center gap-2" title="Turno completado (se subió, bajó e hizo su tiempo)">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-green-500"
+                      checked={listoOverride[i.id] ?? i.turno_listo}
+                      onChange={() => toggleListo(i)}
+                    />
+                    {(listoOverride[i.id] ?? i.turno_listo) && <span className="text-xs font-bold text-green-400">Listo</span>}
+                  </label>
+                </td>
                 <td className="px-4 py-3 text-zinc-400 text-xs">{i.created_at?.slice(0, 10)}</td>
                 <td className="px-4 py-3">
                   <div className="flex gap-1">
