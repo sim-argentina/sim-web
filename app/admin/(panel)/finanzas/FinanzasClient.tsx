@@ -211,8 +211,27 @@ const CLASIF_LABEL: Record<string, string> = {
   sueldo_personal: "Mi sueldo", ajuste: "Ajuste", otro: "Otro", retiro: "Mi sueldo",
 };
 const TIPO_CAT_LABEL: Record<string, string> = {
-  ingreso: "Ingreso", costo: "Costo", gasto: "Gasto", inversion: "Inversión", sueldo_personal: "Sueldo personal", ajuste: "Ajuste",
+  ingreso: "Ingreso", costo: "Costo", gasto: "Gasto", inversion: "Inversión", sueldo_personal: "Sueldo personal", ajuste: "Ajuste", retiro: "Retiro",
 };
+
+// Orden de las categorías en el selector: primero por clasificación, luego por orden/nombre.
+const ORDEN_TIPO_CAT: Record<string, number> = {
+  ingreso: 0, costo: 1, gasto: 2, inversion: 3, sueldo_personal: 4, retiro: 5, ajuste: 6,
+};
+
+// Al elegir una categoría, el movimiento adopta la clasificación (y el tipo/es-sueldo
+// coherente) de esa categoría, para que lo guardado y las métricas queden consistentes.
+function movDesdeCategoria(catTipo: string): { tipo: "ingreso" | "egreso" | "ajuste"; clasificacion: string; esSueldo: boolean } {
+  switch (catTipo) {
+    case "ingreso": return { tipo: "ingreso", clasificacion: "ingreso", esSueldo: false };
+    case "costo": return { tipo: "egreso", clasificacion: "costo", esSueldo: false };
+    case "inversion": return { tipo: "egreso", clasificacion: "inversion", esSueldo: false };
+    case "sueldo_personal":
+    case "retiro": return { tipo: "egreso", clasificacion: "sueldo_personal", esSueldo: true };
+    case "gasto":
+    default: return { tipo: "egreso", clasificacion: "gasto", esSueldo: false };
+  }
+}
 
 const TABS = [
   { id: "resumen", label: "Resumen" },
@@ -469,16 +488,33 @@ export default function FinanzasClient() {
 
   const categoriasForm = useMemo(() => {
     if (!movForm) return [];
-    if (movForm.esSueldo) return categorias.filter((c) => c.activa);
-    const tipoCat = movForm.tipo === "ingreso" ? "ingreso" : movForm.tipo === "ajuste" ? "ajuste" : movForm.clasificacion;
-    // Todas las categorías de la clasificación elegida (no solo las activas): así
-    // aparecen todas las configuradas en la sección Categorías (p. ej. Inversión,
-    // que podía no tener ninguna activa) y la edición conserva la categoría aunque
-    // esté inactiva. Las activas se listan primero, luego por su orden.
+    // TODAS las categorías configuradas, sin filtrar por la clasificación elegida:
+    // se puede asignar cualquiera y, al elegirla, la clasificación del movimiento se
+    // actualiza sola. Incluye activas e inactivas (compatibilidad con movimientos
+    // viejos). Se excluye "ajuste" (los ajustes de saldo no usan este selector),
+    // salvo que sea la categoría ya asignada al movimiento en edición.
+    const actual = movForm.categoria_id || "";
     return categorias
-      .filter((c) => c.tipo === tipoCat)
-      .sort((a, b) => (a.activa === b.activa ? a.orden - b.orden : a.activa ? -1 : 1));
+      .filter((c) => c.tipo !== "ajuste" || c.id === actual)
+      .sort((a, b) => {
+        const ta = ORDEN_TIPO_CAT[a.tipo] ?? 99;
+        const tb = ORDEN_TIPO_CAT[b.tipo] ?? 99;
+        if (ta !== tb) return ta - tb;
+        return (a.orden - b.orden) || a.nombre.localeCompare(b.nombre);
+      });
   }, [categorias, movForm]);
+
+  // Elegir una categoría: adopta su clasificación/tipo/es-sueldo para que quede coherente.
+  const aplicarCategoria = (catId: string) => {
+    setMovForm((f) => {
+      if (!f) return f;
+      if (!catId) return { ...f, categoria_id: "" };
+      const cat = categoriasPorId[catId];
+      if (!cat) return { ...f, categoria_id: catId };
+      const m = movDesdeCategoria(cat.tipo);
+      return { ...f, categoria_id: catId, tipo: m.tipo, clasificacion: m.clasificacion, esSueldo: m.esSueldo };
+    });
+  };
 
   const abrirGasto = () => setMovForm(movFormVacio({ tipo: "egreso", clasificacion: "gasto" }));
   const abrirIngreso = () => setMovForm(movFormVacio({ tipo: "ingreso", clasificacion: "ingreso" }));
@@ -627,8 +663,8 @@ export default function FinanzasClient() {
             )}
             {movForm.tipo !== "ajuste" && (
               <Campo label="Categoría">
-                <select value={movForm.categoria_id} onChange={(e) => setMovForm({ ...movForm, categoria_id: e.target.value })} className={inputCls}>
-                  <option value="">Sin categoría</option>{categoriasForm.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                <select value={movForm.categoria_id} onChange={(e) => aplicarCategoria(e.target.value)} className={inputCls}>
+                  <option value="">Sin categoría</option>{categoriasForm.map((c) => <option key={c.id} value={c.id}>{c.nombre} — {TIPO_CAT_LABEL[c.tipo] ?? c.tipo}</option>)}
                 </select>
               </Campo>
             )}
