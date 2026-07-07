@@ -471,7 +471,13 @@ export default function FinanzasClient() {
     if (!movForm) return [];
     if (movForm.esSueldo) return categorias.filter((c) => c.activa);
     const tipoCat = movForm.tipo === "ingreso" ? "ingreso" : movForm.tipo === "ajuste" ? "ajuste" : movForm.clasificacion;
-    return categorias.filter((c) => c.activa && c.tipo === tipoCat);
+    // Todas las categorías de la clasificación elegida (no solo las activas): así
+    // aparecen todas las configuradas en la sección Categorías (p. ej. Inversión,
+    // que podía no tener ninguna activa) y la edición conserva la categoría aunque
+    // esté inactiva. Las activas se listan primero, luego por su orden.
+    return categorias
+      .filter((c) => c.tipo === tipoCat)
+      .sort((a, b) => (a.activa === b.activa ? a.orden - b.orden : a.activa ? -1 : 1));
   }, [categorias, movForm]);
 
   const abrirGasto = () => setMovForm(movFormVacio({ tipo: "egreso", clasificacion: "gasto" }));
