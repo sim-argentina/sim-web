@@ -107,15 +107,14 @@ export const TIPOS_CATEGORIA = [
   "ingreso", "costo", "gasto", "inversion", "sueldo_personal", "ajuste",
 ] as const;
 
+// Fuentes de ingreso automático de SIM. La recaudación del colectivo se administra
+// por separado y NO forma parte de Finanzas SIM: ninguna consulta financiera debe
+// incluir tablas colectivo_* ni fuentes del colectivo.
 export const FUENTES_LABEL: Record<string, string> = {
   turnero: "Turnero del stand",
   reservas_online: "Reservas online",
   gift_cards: "Gift cards",
   campeonatos: "Campeonatos",
-  colectivo_turnos: "Colectivo · Turnos",
-  colectivo_gorra: "Colectivo · Gorras",
-  colectivo_buzo: "Colectivo · Buzos",
-  colectivo_productos: "Colectivo · Productos",
 };
 
 // ── Utilidades de mes/fecha ──────────────────────────────────────────────────

@@ -1,6 +1,11 @@
 // Lógica y constantes compartidas del módulo Colectivo (eventos itinerantes con
 // turnero + venta de productos). Reutilizadas por las rutas admin y el frontend.
 // Puras (sin acceso a DB) para poder importarse desde cliente y servidor.
+//
+// IMPORTANTE: la recaudación del colectivo se administra por separado y NO forma
+// parte de Finanzas SIM. El módulo Colectivo maneja sus propios importes (solo
+// informativos/operativos dentro de /admin/colectivo). Ninguna consulta financiera
+// debe incluir tablas colectivo_*.
 
 // Los 6 simuladores del colectivo (distintos a los del stand).
 export const SIMULADORES_COLECTIVO = [
