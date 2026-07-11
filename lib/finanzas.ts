@@ -112,6 +112,10 @@ export const FUENTES_LABEL: Record<string, string> = {
   reservas_online: "Reservas online",
   gift_cards: "Gift cards",
   campeonatos: "Campeonatos",
+  colectivo_turnos: "Colectivo · Turnos",
+  colectivo_gorra: "Colectivo · Gorras",
+  colectivo_buzo: "Colectivo · Buzos",
+  colectivo_productos: "Colectivo · Productos",
 };
 
 // ── Utilidades de mes/fecha ──────────────────────────────────────────────────
