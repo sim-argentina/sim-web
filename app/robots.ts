@@ -7,7 +7,21 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: ["/admin", "/api"],
+      // Panel/API y páginas transaccionales de resultado (éxito/pendiente/error):
+      // son de confirmación, sin valor de búsqueda y no deben indexarse.
+      disallow: [
+        "/admin",
+        "/api",
+        "/reservas/exito",
+        "/reservas/pendiente",
+        "/reservas/error",
+        "/gift-cards/exito",
+        "/gift-cards/pendiente",
+        "/gift-cards/error",
+        "/campeonatos/exito",
+        "/campeonatos/pendiente",
+        "/campeonatos/error",
+      ],
     },
     sitemap: `${BASE}/sitemap.xml`,
     host: BASE,

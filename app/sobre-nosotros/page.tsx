@@ -1,4 +1,12 @@
 import Link from "next/link";
+import { pageMetadata } from "@/lib/seo";
+
+export const metadata = pageMetadata({
+  title: "Sobre SIM Argentina — Simuladores de automovilismo en Córdoba",
+  description:
+    "Conocé SIM Argentina: simuladores profesionales de Fórmula 1 y GT en Córdoba. Experiencias de manejo, campeonatos, gift cards y eventos para toda la familia.",
+  path: "/sobre-nosotros",
+});
 
 export default function SobreNosotrosPage() {
   return (

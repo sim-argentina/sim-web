@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import VideoLoop from "@/components/VideoLoop";
+import { pageMetadata } from "@/lib/seo";
 import {
   ArrowRight,
   Building2,
@@ -15,6 +16,13 @@ import {
   Zap,
   Flag,
 } from "lucide-react";
+
+export const metadata = pageMetadata({
+  title: "Alquiler de simuladores para eventos y empresas en Córdoba",
+  description:
+    "Llevamos los simuladores profesionales de F1 a tu evento, cumpleaños o empresa en Córdoba y toda Argentina. Alquilá el colectivo SIM con simuladores para activaciones y fiestas.",
+  path: "/alquiler",
+});
 
 const services = [
   {

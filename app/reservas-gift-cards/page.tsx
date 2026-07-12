@@ -1,3 +1,4 @@
+import { pageMetadata } from "@/lib/seo";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -9,6 +10,13 @@ import {
   Gift,
   ArrowRight,
 } from "lucide-react";
+
+export const metadata = pageMetadata({
+  title: "Reservá o regalá simuladores de F1 en Córdoba",
+  description:
+    "Elegí tu experiencia SIM Argentina: reservá tu turno en los simuladores de F1 o regalá una gift card. Simuladores profesionales en Nuevo Centro Shopping, Córdoba.",
+  path: "/reservas-gift-cards",
+});
 
 type Stat = { icon: React.ReactNode; label: string; value: string };
 
