@@ -62,6 +62,24 @@ type IngresoAuto = {
   cantidad: number;
 };
 
+type ComisionDetalle = {
+  fecha: string; turno_id: number | string; metodo_pago: string; procesador: string | null;
+  monto: number; porcentaje_base: number; iva_porcentaje: number; porcentaje_total: number;
+  comision: number; neto: number; advertencia: string | null;
+};
+type ComisionesResumen = {
+  brutoStand: number; comisionStand: number; netoStand: number; tasaEfectiva: number;
+  porMetodo: Record<string, { bruto: number; comision: number }>;
+  porProcesador: Record<string, { bruto: number; comision: number }>;
+  detalle: ComisionDetalle[];
+  advertencias: Array<{ fecha: string; turno_id: number | string; metodo_pago: string; monto: number; procesador: string | null; motivo: string }>;
+  sinConfig: boolean;
+};
+type ComisionConfigRow = {
+  id: string; procesador: string; metodo_pago: string; porcentaje_base: number;
+  aplica_iva: boolean; iva_porcentaje: number; acreditacion: string; activa: boolean;
+};
+
 type ResumenApi = {
   mes: string;
   antes_de_inicio?: boolean;
@@ -69,6 +87,9 @@ type ResumenApi = {
   resumen: {
     ingresosAutomaticos: number;
     ingresosManuales: number;
+    ingresosBruto: number;
+    comisionesCobro: number;
+    comisiones: ComisionesResumen | null;
     ingresos: number;
     financiamiento: number;
     costos: number;
@@ -132,7 +153,8 @@ type CierreApi = {
   saldo_teorico_general: number;
   saldo_real_guardado: number | null;
   diferencia_guardada: number | null;
-  desglose: { ingresos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
+  comisiones?: ComisionesResumen | null;
+  desglose: { ingresos: number; comisiones_cobro: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
   por_fuente: PorFuenteApi[];
   detalle: {
     ingresos: { total: number; automaticos: Array<{ fuente: string; total: number; cantidad: number }>; automaticos_total: number; manuales_por_categoria: RubroCat[]; manuales_total: number };
@@ -241,6 +263,7 @@ const TABS = [
   { id: "calendario", label: "Calendario financiero" },
   { id: "categorias", label: "Categorías" },
   { id: "reglas", label: "Reglas" },
+  { id: "comisiones", label: "Comisiones" },
   { id: "metricas", label: "Métricas" },
   { id: "config", label: "Config" },
 ] as const;
@@ -598,6 +621,7 @@ export default function FinanzasClient() {
             )}
             {tab === "categorias" && <TabCategorias categorias={categorias} onCambio={cargarBase} mostrarAviso={mostrarAviso} />}
             {tab === "reglas" && <TabReglas reglas={reglas} categorias={categorias} cuentas={cuentasActivas} onCambio={cargarReglas} mostrarAviso={mostrarAviso} />}
+            {tab === "comisiones" && <TabComisiones mostrarAviso={mostrarAviso} />}
             {tab === "metricas" && (
               <div className="space-y-8">
                 <TabMetricas metricas={metricas} />
@@ -743,6 +767,76 @@ function CardKpi({ titulo, valor, detalle, color }: { titulo: string; valor: str
 
 // ═════════ TAB: Resumen ═════════
 
+function dinero2(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+  return `$${Number(v).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function pctNum(n: number): string {
+  return `${(Number(n) || 0).toLocaleString("es-AR", { maximumFractionDigits: 3 })}%`;
+}
+
+// Bloque "Comisiones e ingresos netos" del stand. Solo informativo: Finanzas usa
+// el neto (bruto − comisiones) para revenue/caja/resultado/cierre, sin doble descuento.
+function BloqueComisiones({ com }: { com: ComisionesResumen | null }) {
+  const [verDetalle, setVerDetalle] = useState(false);
+  const [verAdv, setVerAdv] = useState(false);
+  if (!com) return null;
+  const rows = com.detalle.filter((d) => d.metodo_pago === "qr" || d.metodo_pago === "debito" || d.metodo_pago === "credito");
+  return (
+    <div>
+      <h2 className="mb-3 text-lg font-black uppercase text-red-500">Comisiones e ingresos netos (stand)</h2>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <CardKpi titulo="Ingresos brutos del stand" valor={dinero(com.brutoStand)} detalle="Cobrado en el turnero" />
+        <CardKpi titulo="Comisiones de cobro" valor={dinero(com.comisionStand)} color="rojo" detalle="QR / Débito / Crédito" />
+        <CardKpi titulo="Ingresos netos del stand" valor={dinero(com.netoStand)} color="verde" detalle="Bruto − comisiones" />
+        <CardKpi titulo="Tasa efectiva" valor={pct(com.tasaEfectiva)} detalle="Comisiones / bruto" />
+      </div>
+
+      {com.sinConfig && <p className="mt-2 text-xs font-bold text-amber-300">No hay comisiones configuradas activas: se calculó 0% hasta cargarlas.</p>}
+
+      {com.advertencias.length > 0 && (
+        <div className="mt-3 rounded-2xl border border-amber-500/40 bg-amber-950/20 p-4">
+          <button onClick={() => setVerAdv((v) => !v)} className="flex w-full items-center justify-between gap-3 text-left">
+            <span className="text-sm font-black text-amber-200">Hay cobros con QR/Débito/Crédito sin procesador definido. Se calcularon con comisión 0% hasta corregirlos. ({com.advertencias.length})</span>
+            <span className="shrink-0 text-amber-300">{verAdv ? "▲" : "▼"}</span>
+          </button>
+          {verAdv && (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[520px] text-xs">
+                <thead className="text-left text-white/40"><tr><th className="pb-1">Fecha</th><th className="pb-1">Método</th><th className="pb-1 text-right">Monto</th><th className="pb-1">Turno</th><th className="pb-1">Falta</th></tr></thead>
+                <tbody>{com.advertencias.map((a, i) => (
+                  <tr key={i} className="border-t border-white/5"><td className="py-1">{a.fecha}</td><td>{a.metodo_pago}</td><td className="text-right">{dinero(a.monto)}</td><td>#{a.turno_id}</td><td className="text-amber-300">{a.motivo === "sin_config" ? "configuración" : "procesador"}</td></tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="mt-3 rounded-2xl border border-white/10 bg-black p-4">
+          <button onClick={() => setVerDetalle((v) => !v)} className="mb-2 text-xs font-black uppercase text-white/50 hover:text-white">{verDetalle ? "Ocultar" : "Ver"} detalle de comisiones ({rows.length})</button>
+          {verDetalle && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] text-xs">
+                <thead className="text-left text-white/35"><tr><th className="pb-2">Fecha</th><th className="pb-2">Turno</th><th className="pb-2">Método</th><th className="pb-2">Procesador</th><th className="pb-2 text-right">Bruto</th><th className="pb-2 text-right">% base</th><th className="pb-2 text-right">IVA</th><th className="pb-2 text-right">% total</th><th className="pb-2 text-right">Comisión</th><th className="pb-2 text-right">Neto</th></tr></thead>
+                <tbody>{rows.map((d, i) => (
+                  <tr key={i} className="border-t border-white/5">
+                    <td className="py-1">{d.fecha}</td><td>#{d.turno_id}</td><td className="uppercase">{d.metodo_pago}</td><td>{d.procesador || <span className="text-amber-300">—</span>}</td>
+                    <td className="text-right">{dinero2(d.monto)}</td><td className="text-right">{pctNum(d.porcentaje_base)}</td><td className="text-right">{d.iva_porcentaje}%</td><td className="text-right">{pctNum(d.porcentaje_total)}</td>
+                    <td className="text-right text-red-400">{dinero2(d.comision)}</td><td className="text-right text-green-400">{dinero2(d.neto)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="mt-2 text-[11px] text-white/30">Las comisiones son estimadas según la configuración. Finanzas usa el ingreso neto (bruto − comisiones) para revenue, caja, resultado y cierre; la comisión no se descuenta dos veces.</p>
+    </div>
+  );
+}
+
 function TabResumen({ resumen }: { resumen: ResumenApi }) {
   const r = resumen.resumen;
   const porFuente = useMemo(() => {
@@ -758,7 +852,7 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <CardKpi titulo="Ingresos del mes" valor={dinero(r.ingresos)} color="verde" detalle={`Auto ${dinero(r.ingresosAutomaticos)} + manual ${dinero(r.ingresosManuales)}`} />
+        <CardKpi titulo="Ingresos del mes (neto)" valor={dinero(r.ingresos)} color="verde" detalle={r.comisionesCobro > 0 ? `Bruto ${dinero(r.ingresosBruto)} − comisiones ${dinero(r.comisionesCobro)}` : `Auto ${dinero(r.ingresosAutomaticos)} + manual ${dinero(r.ingresosManuales)}`} />
         <CardKpi titulo="Costos del mes" valor={dinero(r.costos)} color="rojo" />
         <CardKpi titulo="Gastos del mes" valor={dinero(r.gastos)} color="rojo" />
         <CardKpi titulo="Inversiones" valor={dinero(r.inversiones)} />
@@ -776,6 +870,9 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
         <CardKpi titulo="Diferencia de cierre" valor={resumen.cierre.diferencia_general !== null ? dinero(resumen.cierre.diferencia_general) : "—"}
           color={resumen.cierre.diferencia_general === null ? "neutro" : Math.abs(resumen.cierre.diferencia_general) < 1 ? "verde" : "ambar"} />
       </div>
+
+      {/* Comisiones e ingresos netos del stand */}
+      <BloqueComisiones com={r.comisiones} />
 
       {/* Ingresos por fuente (Efectivo / Mercado Pago) */}
       <div>
@@ -1005,7 +1102,8 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
         <h3 className="mb-3 text-sm font-black uppercase text-white/60">A) Cierre general del mes</h3>
         <div className="space-y-1.5 text-sm">
           <FilaCierre label="Saldo inicial general" valor={cierre.saldo_inicial_general} />
-          <FilaCierre label="+ Ingresos operativos" valor={dg.ingresos} color="verde" />
+          <FilaCierre label="+ Ingresos brutos" valor={dg.ingresos} color="verde" />
+          {dg.comisiones_cobro > 0 && <FilaCierre label="− Comisiones de cobro" valor={-dg.comisiones_cobro} color="rojo" />}
           {dg.financiamiento > 0 && <FilaCierre label="+ Financiamiento (préstamos)" valor={dg.financiamiento} color="verde" />}
           <FilaCierre label="− Costos" valor={-dg.costos} color="rojo" />
           <FilaCierre label="− Gastos" valor={-dg.gastos} color="rojo" />
@@ -1017,6 +1115,10 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
           <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2 text-base font-black"><span className="uppercase">Saldo final teórico general</span><span>{dinero(cierre.saldo_teorico_general)}</span></div>
         </div>
       </div>
+
+      {cierre.comisiones && (cierre.comisiones.comisionStand > 0 || cierre.comisiones.advertencias.length > 0) && (
+        <BloqueComisiones com={cierre.comisiones} />
+      )}
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-2xl border border-white/10 bg-black p-4">
@@ -1281,6 +1383,65 @@ function TabSueldo({ mes, resumen, movimientos, cuentasPorId, categoriasPorId, o
 
 // ═════════ TAB: Categorías ═════════
 
+function TabComisiones({ mostrarAviso }: { mostrarAviso: (m: string) => void }) {
+  const [rows, setRows] = useState<ComisionConfigRow[]>([]);
+  const [editing, setEditing] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+
+  const cargar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/admin/finanzas/comisiones", { cache: "no-store" });
+      const d = await r.json();
+      if (r.ok) setRows(d.comisiones || []);
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const guardar = async (row: ComisionConfigRow) => {
+    const val = editing[row.id] ?? String(row.porcentaje_base);
+    const r = await fetch("/api/admin/finanzas/comisiones", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: row.id, porcentaje_base: Number(val) }) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Error"); return; }
+    mostrarAviso("Comisión actualizada"); cargar();
+  };
+  const toggleActiva = async (row: ComisionConfigRow) => {
+    const r = await fetch("/api/admin/finanzas/comisiones", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: row.id, activa: !row.activa }) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Error"); return; }
+    cargar();
+  };
+  const total = (row: ComisionConfigRow) => (row.aplica_iva ? row.porcentaje_base * (1 + row.iva_porcentaje / 100) : row.porcentaje_base);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+        <h3 className="mb-1 text-sm font-black uppercase text-white/60">Comisiones de cobro (solo acreditación rápida)</h3>
+        <p className="mb-3 text-[11px] text-white/40">Se aplican por pago individual a QR / Débito / Crédito según procesador. Efectivo y transferencia no tienen comisión. Porcentaje total = base × (1 + IVA/100).</p>
+        {loading ? <p className="text-white/50">Cargando...</p> : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] text-sm">
+              <thead className="text-left text-[10px] font-black uppercase tracking-[0.12em] text-white/35"><tr><th className="pb-2">Procesador</th><th className="pb-2">Método</th><th className="pb-2 text-right">% base</th><th className="pb-2 text-right">IVA</th><th className="pb-2 text-right">% total</th><th className="pb-2">Acreditación</th><th className="pb-2">Activa</th><th className="pb-2"></th></tr></thead>
+              <tbody className="divide-y divide-white/5">
+                {rows.map((row) => (
+                  <tr key={row.id}>
+                    <td className="py-2 font-bold capitalize">{row.procesador.replace("_", " ")}</td>
+                    <td className="py-2 uppercase">{row.metodo_pago}</td>
+                    <td className="py-2 text-right"><input type="number" step="0.01" min={0} defaultValue={row.porcentaje_base} onChange={(e) => setEditing((x) => ({ ...x, [row.id]: e.target.value }))} className="w-20 rounded-lg border border-white/15 bg-black px-2 py-1 text-right text-sm font-bold outline-none focus:border-red-500" />%</td>
+                    <td className="py-2 text-right">{row.aplica_iva ? `${row.iva_porcentaje}%` : "—"}</td>
+                    <td className="py-2 text-right font-black text-white">{pctNum(total(row))}</td>
+                    <td className="py-2 text-white/60">{row.acreditacion === "inmediata" ? "Inmediata" : "24 hs"}</td>
+                    <td className="py-2"><input type="checkbox" checked={row.activa} onChange={() => toggleActiva(row)} className="h-4 w-4 accent-red-500" /></td>
+                    <td className="py-2"><button onClick={() => guardar(row)} className="rounded-lg bg-red-600 px-3 py-1 text-xs font-black uppercase hover:bg-red-700">Guardar</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TabCategorias({ categorias, onCambio, mostrarAviso }: { categorias: Categoria[]; onCambio: () => void; mostrarAviso: (m: string) => void }) {
   const [nombre, setNombre] = useState("");
   const [tipo, setTipo] = useState("gasto");
@@ -1450,7 +1611,9 @@ function TabReglas({ reglas, categorias, cuentas, onCambio, mostrarAviso }: { re
 
 type MetricaKey = string;
 const METRICA_DEFS: Record<MetricaKey, { titulo: string; significado: string; formula: string; fmt: "money" | "pct" | "meses" | "num" }> = {
-  revenue: { titulo: "Revenue", significado: "Ingresos totales del mes (ventas del stand + ingresos manuales).", formula: "Ingresos totales", fmt: "money" },
+  revenue: { titulo: "Revenue (neto)", significado: "Ingresos netos del mes = brutos − comisiones de cobro (+ manuales). Es lo que realmente queda para Finanzas.", formula: "Ingresos brutos − comisiones + manuales", fmt: "money" },
+  comisiones_cobro: { titulo: "Comisiones de cobro", significado: "Comisiones estimadas de QR/Débito/Crédito del stand según procesador y configuración.", formula: "Σ comisión por pago (qr/débito/crédito)", fmt: "money" },
+  tasa_comision: { titulo: "Tasa efectiva comisión", significado: "Qué porcentaje del bruto del stand se va en comisiones de cobro.", formula: "Comisiones / ingresos brutos", fmt: "pct" },
   gross_profit: { titulo: "Gross Profit", significado: "Lo que queda después de los costos directos del servicio.", formula: "Ingresos − costos", fmt: "money" },
   gross_margin: { titulo: "Gross Margin", significado: "Porcentaje de los ingresos que sobrevive a los costos directos.", formula: "Utilidad bruta / ingresos", fmt: "pct" },
   operating_profit: { titulo: "Operating Profit", significado: "Resultado del negocio después de costos y gastos operativos.", formula: "Ingresos − costos − gastos", fmt: "money" },
@@ -1507,8 +1670,13 @@ function diagnosticoMetrica(key: string, m: MetricasApi["metricas"], ctx: Metric
   switch (key) {
     case "revenue":
       datos.push(["Automáticos", dinero(Number(ctx.ingresos_automaticos))], ["Manuales", dinero(Number(ctx.ingresos_manuales))], ["Turnos", String(turnos)]);
-      diagnostico = sinIngresos ? "No hay ingresos cargados este mes todavía (ni automáticos ni manuales)." : `Facturaste ${dinero(ingresos)} este mes.`;
+      diagnostico = sinIngresos ? "No hay ingresos cargados este mes todavía (ni automáticos ni manuales)." : `Revenue neto ${dinero(ingresos)}: los ingresos brutos son lo cobrado al cliente, las comisiones son estimadas según la configuración y el neto es lo que realmente queda para Finanzas.`;
       recomendacion = sinIngresos ? "Verificá que el turnero y los pagos estén cargando movimientos." : "Compará contra tu meta de facturación en Config.";
+      break;
+    case "comisiones_cobro":
+    case "tasa_comision":
+      diagnostico = "Las comisiones de cobro (QR/Débito/Crédito) son estimadas según la configuración por procesador. Se descuentan del ingreso bruto para obtener el neto que usa Finanzas.";
+      recomendacion = "Ajustá los porcentajes en la pestaña Comisiones si cambian tus condiciones con Mercado Pago o Payway.";
       break;
     case "operating_margin":
     case "gross_margin":

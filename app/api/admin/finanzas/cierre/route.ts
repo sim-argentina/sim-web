@@ -88,8 +88,13 @@ export async function GET(req: NextRequest) {
       saldo_teorico_general: r.saldoFinalTeoricoGeneral,
       saldo_real_guardado: cierre && cierre.estado !== "abierto" ? Number(cierre.saldo_real_general) || 0 : null,
       diferencia_guardada: cierre && cierre.estado !== "abierto" ? Number(cierre.diferencia_general) || 0 : null,
+      // Comisiones de cobro del stand: informativas + línea que baja el saldo.
+      // El saldo teórico ya está NETO (no se resta dos veces).
+      comisiones: r.comisiones,
       desglose: {
-        ingresos: r.ingresos,
+        ingresos: r.ingresosBruto,
+        comisiones_cobro: r.comisionesCobro,
+        ingresos_netos: r.ingresos,
         financiamiento: r.financiamiento,
         costos: r.costos,
         gastos: r.gastos,
@@ -102,7 +107,7 @@ export async function GET(req: NextRequest) {
       por_fuente: r.porFuente,
       detalle: {
         ingresos: {
-          total: r.ingresos,
+          total: r.ingresosBruto,
           automaticos: Object.values(autoPorFuente).sort((a, b) => b.total - a.total),
           automaticos_total: r.ingresosAutomaticos,
           manuales_por_categoria: agrupar((m) => m.tipo === "ingreso" && m.clasificacion !== "financiamiento"),

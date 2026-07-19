@@ -135,7 +135,10 @@ export async function GET(req: NextRequest) {
     const cajaDisponible = resumen.saldoFinalTeoricoGeneral;
 
     const metricas = {
-      revenue: ingresos,
+      revenue: ingresos, // NETO (bruto − comisiones de cobro)
+      ingresos_bruto: resumen.ingresosBruto,
+      comisiones_cobro: resumen.comisionesCobro,
+      tasa_comision: resumen.comisiones ? resumen.comisiones.tasaEfectiva : 0,
       gross_profit: utilidadBruta,
       gross_margin: ratio(utilidadBruta, ingresos),
       operating_profit: resultadoOperativo,

@@ -12,6 +12,10 @@
 // LECTURAS. turnos_historicos NO es fuente. Escritura solo en tablas fin_*.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  calcularComisionesPagos, claveComision, METODOS_CON_COMISION,
+  type ComisionConfig,
+} from "@/lib/finanzasComisiones";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -456,11 +460,37 @@ export type ResumenPorFuente = {
   neto: number;
 };
 
+// Comisiones de cobro del stand (turnero) para un mes: se calculan por pago
+// individual (qr/débito/crédito con procesador). Solo lectura; no toca el turnero.
+export type ComisionDetalleFila = {
+  fecha: string; turno_id: number | string; metodo_pago: string; procesador: string | null;
+  monto: number; porcentaje_base: number; iva_porcentaje: number; porcentaje_total: number;
+  comision: number; neto: number; advertencia: string | null;
+};
+export type ComisionAdvertencia = {
+  fecha: string; turno_id: number | string; metodo_pago: string; monto: number;
+  procesador: string | null; motivo: string;
+};
+export type ComisionesResumen = {
+  brutoStand: number;
+  comisionStand: number;
+  netoStand: number;
+  tasaEfectiva: number; // comision / bruto (0..1)
+  porMetodo: Record<string, { bruto: number; comision: number }>;
+  porProcesador: Record<string, { bruto: number; comision: number }>;
+  detalle: ComisionDetalleFila[];
+  advertencias: ComisionAdvertencia[];
+  sinConfig: boolean;
+};
+
 export type ResumenMes = {
   mes: string;
   ingresosAutomaticos: number;
   ingresosManuales: number;
-  ingresos: number; // operativos (auto + manuales), SIN financiamiento
+  ingresosBruto: number; // bruto (auto + manuales), antes de comisiones
+  comisionesCobro: number; // comisiones de cobro del stand (se descuentan del revenue)
+  ingresos: number; // NETO operativo (bruto − comisiones), SIN financiamiento
+  comisiones: ComisionesResumen | null; // detalle informativo de comisiones del stand
   financiamiento: number; // préstamos / entradas de financiamiento (no es revenue)
   costos: number;
   gastos: number;
@@ -490,8 +520,13 @@ export function resumirMes(params: {
   sueldoAsignado: number;
   cuentas: FinCuenta[];
   categorias: FinCategoria[];
+  comisionesData?: ComisionesResumen | null;
 }): ResumenMes {
   const { mes, movimientos, ingresosAuto, ingresosAutoTotal, turnosDelMes, saldoInicialGeneral, sueldoAsignado, cuentas, categorias } = params;
+  const comisionesData = params.comisionesData ?? null;
+  // Comisiones de cobro del stand: reducen el revenue/caja (Mercado Pago). Nunca
+  // se vuelven a restar como costo (evita doble descuento).
+  const comisionesCobro = comisionesData ? comisionesData.comisionStand : 0;
 
   const catById: Record<string, FinCategoria> = {};
   for (const c of categorias) catById[c.id] = c;
@@ -581,14 +616,19 @@ export function resumirMes(params: {
 
   const porFuente = Object.values(porFuenteMap).map((f) => {
     const egresos = f.costos + f.gastos + f.inversiones + f.gastosSueldo + f.otros + f.pagosDeuda;
+    // La comisión de cobro solo afecta a Mercado Pago (qr/débito/crédito acreditan
+    // neto). Se descuenta del neto de caja; `ingresos` de la fuente queda en bruto
+    // (para "Ingresos por fuente").
+    const comFuente = f.tipo === "mercado_pago" ? comisionesCobro : 0;
     return {
       ...f,
       egresos,
-      neto: f.ingresos + f.financiamiento - egresos + f.transferenciasEntrantes - f.transferenciasSalientes,
+      neto: f.ingresos + f.financiamiento - egresos + f.transferenciasEntrantes - f.transferenciasSalientes - comFuente,
     };
   });
 
-  const ingresos = ingresosAutoTotal + ingresosManuales; // operativos, sin financiamiento
+  const ingresosBruto = ingresosAutoTotal + ingresosManuales; // bruto, sin financiamiento
+  const ingresos = ingresosBruto - comisionesCobro; // NETO operativo (revenue real)
   const egresosTotales = costos + gastos + inversiones + gastosSueldo + otros + pagosDeuda;
   const saldoFinalTeoricoGeneral = saldoInicialGeneral + ingresos + financiamiento - egresosTotales + ajustesNet;
 
@@ -596,7 +636,10 @@ export function resumirMes(params: {
     mes,
     ingresosAutomaticos: ingresosAutoTotal,
     ingresosManuales,
+    ingresosBruto,
+    comisionesCobro,
     ingresos,
+    comisiones: comisionesData,
     financiamiento,
     costos,
     gastos,
@@ -617,19 +660,100 @@ export function resumirMes(params: {
   };
 }
 
+// ── Comisiones de cobro del stand (turnero) ──────────────────────────────────
+
+// Configuración de comisiones (para el endpoint admin). Solo service_role.
+export async function getComisionesConfig(): Promise<ComisionConfig[]> {
+  const { data, error } = await supabaseAdmin
+    .from("fin_comisiones_cobro")
+    .select("*")
+    .order("procesador", { ascending: true })
+    .order("metodo_pago", { ascending: true });
+  if (error) throw error;
+  return (data || []).map((c) => ({
+    procesador: c.procesador, metodo_pago: c.metodo_pago,
+    porcentaje_base: Number(c.porcentaje_base) || 0,
+    aplica_iva: Boolean(c.aplica_iva), iva_porcentaje: Number(c.iva_porcentaje) || 0,
+    activa: Boolean(c.activa),
+  })) as ComisionConfig[];
+}
+
+// Comisiones del turnero del stand para el mes (por pago individual). Solo lectura;
+// no modifica ni cómo se carga ni cómo se muestra el turnero.
+export async function getComisionesStandMes(mes: string): Promise<ComisionesResumen> {
+  const [{ data: cfgRows }, { data: turnos }] = await Promise.all([
+    supabaseAdmin.from("fin_comisiones_cobro").select("*").eq("activa", true),
+    supabaseAdmin
+      .from("turnos_stand")
+      .select("id, fecha, metodo_pago, total, posnet_pago, pagos_detalle")
+      .gte("fecha", `${mes}-01`)
+      .lte("fecha", `${mes}-31`)
+      .or("estado.is.null,estado.neq.cancelado"),
+  ]);
+
+  const configByKey: Record<string, ComisionConfig> = {};
+  for (const c of cfgRows || []) {
+    configByKey[claveComision(c.procesador, c.metodo_pago)] = {
+      procesador: c.procesador, metodo_pago: c.metodo_pago,
+      porcentaje_base: Number(c.porcentaje_base) || 0,
+      aplica_iva: Boolean(c.aplica_iva), iva_porcentaje: Number(c.iva_porcentaje) || 0,
+      activa: Boolean(c.activa),
+    };
+  }
+
+  let brutoStand = 0, comisionStand = 0, netoStand = 0;
+  const porMetodo: Record<string, { bruto: number; comision: number }> = {};
+  const porProcesador: Record<string, { bruto: number; comision: number }> = {};
+  const detalle: ComisionDetalleFila[] = [];
+  const advertencias: ComisionAdvertencia[] = [];
+
+  for (const t of (turnos || []) as Array<{ id: number; fecha: string; metodo_pago: string | null; total: number | null; posnet_pago: string | null; pagos_detalle: unknown }>) {
+    const raw = t.pagos_detalle;
+    const pagos = Array.isArray(raw) && raw.length > 0
+      ? raw
+      : [{ metodo_pago: t.metodo_pago, monto: t.total, posnet_pago: t.posnet_pago }];
+    const r = calcularComisionesPagos(pagos, configByKey);
+    brutoStand += r.bruto; comisionStand += r.comision; netoStand += r.neto;
+    for (const d of r.detalle) {
+      detalle.push({ fecha: t.fecha, turno_id: t.id, ...d });
+      if ((METODOS_CON_COMISION as readonly string[]).includes(d.metodo_pago)) {
+        porMetodo[d.metodo_pago] = porMetodo[d.metodo_pago] || { bruto: 0, comision: 0 };
+        porMetodo[d.metodo_pago].bruto += d.monto;
+        porMetodo[d.metodo_pago].comision += d.comision;
+        if (d.procesador) {
+          porProcesador[d.procesador] = porProcesador[d.procesador] || { bruto: 0, comision: 0 };
+          porProcesador[d.procesador].bruto += d.monto;
+          porProcesador[d.procesador].comision += d.comision;
+        }
+      }
+    }
+    for (const a of r.advertencias) advertencias.push({ fecha: t.fecha, turno_id: t.id, ...a });
+  }
+
+  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  brutoStand = round2(brutoStand); comisionStand = round2(comisionStand); netoStand = round2(netoStand);
+  return {
+    brutoStand, comisionStand, netoStand,
+    tasaEfectiva: brutoStand > 0 ? comisionStand / brutoStand : 0,
+    porMetodo, porProcesador, detalle, advertencias,
+    sinConfig: (cfgRows || []).length === 0,
+  };
+}
+
 // Calcula todo lo necesario para resumen/cierre de un mes.
 export async function calcularMes(mes: string): Promise<{
   resumen: ResumenMes;
   ingresosAuto: IngresoAutomatico[];
   movimientos: FinMovimiento[];
 }> {
-  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicial, sueldo] = await Promise.all([
+  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicial, sueldo, comisiones] = await Promise.all([
     getCuentas(),
     getCategorias(),
     getIngresosAutomaticos(mes),
     getMovimientosMes(mes),
     getSaldoInicialGeneral(mes),
     getSueldoMes(mes),
+    getComisionesStandMes(mes),
   ]);
 
   const resumen = resumirMes({
@@ -642,6 +766,7 @@ export async function calcularMes(mes: string): Promise<{
     sueldoAsignado: sueldo,
     cuentas,
     categorias,
+    comisionesData: comisiones,
   });
 
   return { resumen, ingresosAuto: ingresosAutoData.items, movimientos };
