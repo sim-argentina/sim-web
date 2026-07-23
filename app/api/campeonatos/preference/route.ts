@@ -56,10 +56,13 @@ export async function POST(req: Request) {
     }
 
     // Verificar campeonato y usar SU precio (nunca el monto enviado por el cliente)
+    // Un campeonato archivado (deleted_at) no acepta nuevas inscripciones: el
+    // filtro lo excluye y el chequeo `!campeonato` devuelve 404.
     const { data: campeonato } = await supabaseAdmin
       .from("campeonatos")
       .select("id, nombre, inscripcion_habilitada, cupos_maximos, precio_inscripcion")
       .eq("id", campeonato_id)
+      .is("deleted_at", null)
       .single();
 
     if (!campeonato) {

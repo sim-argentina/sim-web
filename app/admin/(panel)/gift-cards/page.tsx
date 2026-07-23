@@ -27,6 +27,7 @@ type GiftCard = {
   fecha_uso: string | null;
   fecha_vencimiento: string | null;
   observaciones: string | null;
+  deleted_at?: string | null;
 };
 
 type GiftCardLog = {
@@ -113,6 +114,15 @@ export default function AdminGiftCardsPage() {
   const [nuevaFecha, setNuevaFecha] = useState("");
   const [audit, setAudit] = useState<GiftCard | null>(null);
   const [logs, setLogs] = useState<GiftCardLog[] | null>(null);
+  // Eliminación (archivado) — solo admin.
+  const [role, setRole] = useState<string | null>(null);
+  const esAdmin = role === "admin";
+  const [verArchivadas, setVerArchivadas] = useState(false);
+  const [aEliminar, setAEliminar] = useState<GiftCard | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
+  }, []);
 
   const fetchCards = useCallback(async () => {
     setLoading(true);
@@ -123,6 +133,7 @@ export default function AdminGiftCardsPage() {
       // Al buscar por código se ignora el filtro de estado para poder encontrar
       // también las usadas/vencidas (#7). Sin búsqueda, aplica el estado elegido.
       if (estadoUso && !termino) qs.set("estado_uso", estadoUso);
+      if (verArchivadas) qs.set("mostrar", "eliminadas");
       const res = await fetch(`/api/admin/gift-cards?${qs.toString()}`, { cache: "no-store" });
       const data = await res.json();
       setCards(Array.isArray(data) ? data : []);
@@ -131,7 +142,7 @@ export default function AdminGiftCardsPage() {
     } finally {
       setLoading(false);
     }
-  }, [codigo, estadoUso]);
+  }, [codigo, estadoUso, verArchivadas]);
 
   useEffect(() => {
     const t = setTimeout(fetchCards, 250);
@@ -162,6 +173,24 @@ export default function AdminGiftCardsPage() {
       }
       await fetchCards();
       setDetalle((prev) => (prev && prev.id === id ? null : prev));
+    } finally {
+      setAccionId(null);
+    }
+  }
+
+  // Eliminar (archivar): solo admin. No borra pago ni datos de MP.
+  async function eliminarCard() {
+    if (!aEliminar) return;
+    setAccionId(aEliminar.id);
+    try {
+      const res = await fetch(`/api/admin/gift-cards/${aEliminar.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        alert(d?.error || "No se pudo eliminar");
+        return;
+      }
+      setAEliminar(null);
+      await fetchCards();
     } finally {
       setAccionId(null);
     }
@@ -226,6 +255,14 @@ export default function AdminGiftCardsPage() {
             className="text-xs font-black uppercase tracking-wider text-red-400 hover:text-red-300"
           >
             Limpiar ×
+          </button>
+        )}
+        {esAdmin && (
+          <button
+            onClick={() => setVerArchivadas((v) => !v)}
+            className={`rounded-xl px-3 py-2 text-sm font-bold ${verArchivadas ? "bg-zinc-700 text-white" : "border border-white/10 text-zinc-300 hover:text-white"}`}
+          >
+            {verArchivadas ? "Ver activas" : "Ver archivadas"}
           </button>
         )}
       </div>
@@ -295,7 +332,7 @@ export default function AdminGiftCardsPage() {
                       >
                         Historial
                       </button>
-                      {c.estado_uso === "pendiente" && (
+                      {!verArchivadas && c.estado_uso === "pendiente" && (
                         <>
                           {c.usos_totales > 1 && c.usos_disponibles > 0 && (
                             <button
@@ -329,13 +366,31 @@ export default function AdminGiftCardsPage() {
                           </button>
                         </>
                       )}
-                      {c.estado_uso !== "pendiente" && (
+                      {!verArchivadas && c.estado_uso !== "pendiente" && (
                         <button
                           disabled={accionId === c.id}
                           onClick={() => accion(c.id, { accion: "marcar_pendiente" })}
                           className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-bold text-zinc-300 hover:text-white disabled:opacity-50"
                         >
                           Volver a pendiente
+                        </button>
+                      )}
+                      {esAdmin && !verArchivadas && (
+                        <button
+                          disabled={accionId === c.id}
+                          onClick={() => setAEliminar(c)}
+                          className="rounded-lg border border-red-500/40 px-3 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          Eliminar
+                        </button>
+                      )}
+                      {esAdmin && verArchivadas && (
+                        <button
+                          disabled={accionId === c.id}
+                          onClick={() => accion(c.id, { accion: "restaurar" })}
+                          className="rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-zinc-600 disabled:opacity-50"
+                        >
+                          Restaurar
                         </button>
                       )}
                     </div>
@@ -529,6 +584,23 @@ export default function AdminGiftCardsPage() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Eliminar (archivar): solo admin. Confirmación con el código. */}
+      {aEliminar && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" onClick={() => setAEliminar(null)}>
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-black text-white">Eliminar Gift Card</h3>
+            <p className="mt-2 text-sm text-zinc-400">
+              Este registro dejará de mostrarse y de utilizarse, pero se conservará en el historial. El pago, los datos de Mercado Pago y los movimientos financieros no se tocan.
+            </p>
+            <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 font-mono font-bold text-white">{aEliminar.codigo_unico}</p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setAEliminar(null)} disabled={accionId === aEliminar.id} className="rounded-xl border border-white/10 px-5 py-2 text-sm font-bold text-zinc-300 hover:text-white disabled:opacity-50">Cancelar</button>
+              <button onClick={eliminarCard} disabled={accionId === aEliminar.id} className="rounded-xl bg-red-600 px-6 py-2 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50">{accionId === aEliminar.id ? "..." : "Eliminar"}</button>
             </div>
           </div>
         </div>

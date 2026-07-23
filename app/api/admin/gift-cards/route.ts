@@ -12,6 +12,9 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const codigo = url.searchParams.get("codigo");
     const estado_uso = url.searchParams.get("estado_uso");
+    // Archivadas (deleted_at) ocultas por defecto. Solo admin puede pedir verlas.
+    const mostrar = url.searchParams.get("mostrar");
+    const verArchivadas = auth.role === "admin" && mostrar === "eliminadas";
 
     // El panel solo muestra Gift Cards efectivamente vendidas (pago aprobado).
     let query = supabaseAdmin
@@ -19,6 +22,9 @@ export async function GET(req: Request) {
       .select("*")
       .eq("estado_pago", "pagado")
       .order("created_at", { ascending: false });
+
+    if (verArchivadas) query = query.not("deleted_at", "is", null);
+    else query = query.is("deleted_at", null);
 
     if (codigo) query = query.ilike("codigo_unico", `%${codigo.trim().toUpperCase()}%`);
     if (estado_uso) query = query.eq("estado_uso", estado_uso);

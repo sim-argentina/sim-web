@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { failResponse } from "@/lib/apiError";
+import { failResponse, logSecurityEvent } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { requireStaffOrAdmin, requireAdmin } from "@/lib/adminGuards";
 
 function limpiarPagosDetalle(pagos: any[]) {
   if (!Array.isArray(pagos)) return [];
@@ -76,4 +76,35 @@ export async function PATCH(
       { status: 500 },
     );
   }
+}
+
+// DELETE: eliminación física DEFINITIVA de un turno del Turnero SIM. SOLO admin.
+// El turno no tiene registros hijos (los pagos viven en el JSON pagos_detalle de
+// la propia fila), así que borrarlo no deja huérfanos ni rompe FKs. Las métricas
+// y resúmenes leen la tabla en vivo, por lo que el turno deja de contar apenas se
+// elimina. No se conserva historial del turno borrado (es hard delete).
+export async function DELETE(
+  _req: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
+
+  const { id } = await context.params;
+  const turnoId = Number(id);
+  if (!Number.isInteger(turnoId) || turnoId <= 0) {
+    return NextResponse.json({ error: "Turno no encontrado" }, { status: 404 });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("turnos_stand")
+    .delete()
+    .eq("id", turnoId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-stand/[id] DELETE", error });
+  if (!data) return NextResponse.json({ error: "Turno no encontrado" }, { status: 404 });
+  logSecurityEvent("turno_stand_eliminado", { id: turnoId, role: auth.role });
+  return NextResponse.json({ ok: true });
 }

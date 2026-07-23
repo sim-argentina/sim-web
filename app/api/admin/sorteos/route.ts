@@ -3,15 +3,19 @@ import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 
-export async function GET() {
+export async function GET(req: Request) {
   const auth = await requireStaffOrAdmin();
   if (!auth.ok) return auth.response;
   try {
-    const { data, error } = await supabaseAdmin
-      .from("sorteos")
-      .select("*")
-      .order("created_at", { ascending: false });
+    // Archivados ocultos por defecto. Solo admin puede pedir verlos.
+    const estado = new URL(req.url).searchParams.get("estado");
+    const verArchivados = auth.role === "admin" && (estado === "eliminados" || estado === "todos");
 
+    let query = supabaseAdmin.from("sorteos").select("*").order("created_at", { ascending: false });
+    if (estado === "eliminados" && auth.role === "admin") query = query.not("deleted_at", "is", null);
+    else if (!verArchivados) query = query.is("deleted_at", null);
+
+    const { data, error } = await query;
     if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/sorteos", error });
     return NextResponse.json(data ?? []);
   } catch {

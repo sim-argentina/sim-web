@@ -835,6 +835,27 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
 
 // ─── Tab: Campeonatos ─────────────────────────────────────────────────────────
 
+// Modal de confirmación reutilizable (archivar soft-delete). Muestra una
+// identificación del registro y conserva el diseño del panel.
+function ConfirmDialog({ title, message, identifier, confirmLabel, busy, onConfirm, onCancel }: {
+  title: string; message: string; identifier?: string; confirmLabel: string;
+  busy?: boolean; onConfirm: () => void; onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" onClick={onCancel}>
+      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-black text-white">{title}</h3>
+        <p className="mt-2 text-sm text-zinc-400">{message}</p>
+        {identifier && <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 font-bold text-white break-words">{identifier}</p>}
+        <div className="mt-6 flex justify-end gap-2">
+          <button onClick={onCancel} disabled={busy} className="rounded-xl border border-white/10 px-5 py-2 text-sm font-bold text-zinc-300 hover:text-white disabled:opacity-50">Cancelar</button>
+          <button onClick={onConfirm} disabled={busy} className="rounded-xl bg-red-600 px-6 py-2 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50">{busy ? "..." : confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[]; onRefresh: () => void }) {
   const blank = {
     nombre: "", descripcion: "", estado: "proximo",
@@ -849,6 +870,41 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
   const [showForm, setShowForm] = useState(false);
   const [subiendo, setSubiendo] = useState(false);
   const imgRef = useRef<HTMLInputElement>(null);
+  // Eliminación (archivado) + vista de archivados (solo admin ve esta tab).
+  const [aEliminar, setAEliminar] = useState<Campeonato | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [verArchivados, setVerArchivados] = useState(false);
+  const [archivados, setArchivados] = useState<Campeonato[]>([]);
+
+  const cargarArchivados = async () => {
+    try {
+      const res = await fetch("/api/admin/campeonatos?estado=eliminados", { cache: "no-store" });
+      const d = await res.json();
+      setArchivados(Array.isArray(d) ? d : []);
+    } catch { setArchivados([]); }
+  };
+  useEffect(() => { if (verArchivados) cargarArchivados(); }, [verArchivados]);
+
+  const eliminar = async () => {
+    if (!aEliminar) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/campeonatos/${aEliminar.id}`, { method: "DELETE" });
+      if (!res.ok) { const d = await res.json().catch(() => null); alert(d?.error || "No se pudo eliminar"); return; }
+      setAEliminar(null); onRefresh(); if (verArchivados) cargarArchivados();
+    } finally { setBusy(false); }
+  };
+
+  const restaurar = async (c: Campeonato) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/campeonatos/${c.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "restaurar" }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => null); alert(d?.error || "No se pudo restaurar"); return; }
+      onRefresh(); cargarArchivados();
+    } finally { setBusy(false); }
+  };
 
   const subirImagen = async (file: File) => {
     setSubiendo(true);
@@ -893,9 +949,14 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <h2 className="text-lg font-black text-white">Gestión de Campeonatos</h2>
-        {!showForm && <button onClick={() => setShowForm(true)} className="rounded-xl bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500">+ Nuevo</button>}
+        <div className="flex gap-2">
+          <button onClick={() => setVerArchivados((v) => !v)} className={`rounded-xl px-4 py-2 text-sm font-bold ${verArchivados ? "bg-zinc-700 text-white" : "border border-white/15 text-zinc-300 hover:text-white"}`}>
+            {verArchivados ? "Ocultar archivados" : "Ver archivados"}
+          </button>
+          {!showForm && <button onClick={() => setShowForm(true)} className="rounded-xl bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500">+ Nuevo</button>}
+        </div>
       </div>
       {showForm && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
@@ -978,10 +1039,45 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
               </div>
               <p className="text-sm text-zinc-500 mt-1">{c.fecha_inicio && `${c.fecha_inicio} → ${c.fecha_fin}`} · ${c.precio_inscripcion.toLocaleString()} · {Number(c.cupos_maximos) > 0 ? `${c.cupos_maximos} cupos` : "Cupos ilimitados"}</p>
             </div>
-            <button onClick={() => startEdit(c)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700 shrink-0">Editar</button>
+            <div className="flex gap-2 shrink-0">
+              <button onClick={() => startEdit(c)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">Editar</button>
+              <button onClick={() => setAEliminar(c)} className="rounded-xl border border-red-500/40 px-4 py-2 text-sm font-bold text-red-400 hover:bg-red-500/10">Eliminar</button>
+            </div>
           </div>
         ))}
       </div>
+
+      {/* Archivados (solo admin ve esta tab). Ocultos del listado normal. */}
+      {verArchivados && (
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+          <h3 className="text-sm font-black uppercase tracking-wider text-zinc-400">Campeonatos archivados</h3>
+          {archivados.length === 0 && <p className="text-zinc-500 text-sm">No hay campeonatos archivados.</p>}
+          {archivados.map((c) => (
+            <div key={c.id} className="rounded-2xl border border-white/10 bg-black/40 p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="font-black text-white/70">{c.nombre}</span>
+                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-bold text-zinc-400">Archivado</span>
+                </div>
+                <p className="text-sm text-zinc-500 mt-1">{c.fecha_inicio && `${c.fecha_inicio} → ${c.fecha_fin}`}</p>
+              </div>
+              <button onClick={() => restaurar(c)} disabled={busy} className="rounded-xl bg-zinc-700 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50 shrink-0">Restaurar</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {aEliminar && (
+        <ConfirmDialog
+          title="Eliminar campeonato"
+          message="Este registro dejará de mostrarse y de utilizarse, pero se conservará en el historial (fechas, inscripciones, tiempos, rankings y pagos)."
+          identifier={aEliminar.nombre}
+          confirmLabel="Eliminar"
+          busy={busy}
+          onConfirm={eliminar}
+          onCancel={() => setAEliminar(null)}
+        />
+      )}
     </div>
   );
 }
@@ -997,6 +1093,40 @@ function TabSorteos({ sorteos, onRefresh }: { sorteos: Sorteo[]; onRefresh: () =
   const [showForm, setShowForm] = useState(false);
   const [subiendo, setSubiendo] = useState(false);
   const imgRef = useRef<HTMLInputElement>(null);
+  const [aEliminar, setAEliminar] = useState<Sorteo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [verArchivados, setVerArchivados] = useState(false);
+  const [archivados, setArchivados] = useState<Sorteo[]>([]);
+
+  const cargarArchivados = async () => {
+    try {
+      const res = await fetch("/api/admin/sorteos?estado=eliminados", { cache: "no-store" });
+      const d = await res.json();
+      setArchivados(Array.isArray(d) ? d : []);
+    } catch { setArchivados([]); }
+  };
+  useEffect(() => { if (verArchivados) cargarArchivados(); }, [verArchivados]);
+
+  const eliminar = async () => {
+    if (!aEliminar) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/sorteos/${aEliminar.id}`, { method: "DELETE" });
+      if (!res.ok) { const d = await res.json().catch(() => null); alert(d?.error || "No se pudo eliminar"); return; }
+      setAEliminar(null); onRefresh(); if (verArchivados) cargarArchivados();
+    } finally { setBusy(false); }
+  };
+
+  const restaurar = async (s: Sorteo) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/sorteos/${s.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accion: "restaurar" }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => null); alert(d?.error || "No se pudo restaurar"); return; }
+      onRefresh(); cargarArchivados();
+    } finally { setBusy(false); }
+  };
 
   const subirImagen = async (file: File) => {
     setSubiendo(true);
@@ -1030,9 +1160,14 @@ function TabSorteos({ sorteos, onRefresh }: { sorteos: Sorteo[]; onRefresh: () =
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <h2 className="text-lg font-black text-white">Gestión de Sorteos</h2>
-        {!showForm && <button onClick={() => setShowForm(true)} className="rounded-xl bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500">+ Nuevo</button>}
+        <div className="flex gap-2">
+          <button onClick={() => setVerArchivados((v) => !v)} className={`rounded-xl px-4 py-2 text-sm font-bold ${verArchivados ? "bg-zinc-700 text-white" : "border border-white/15 text-zinc-300 hover:text-white"}`}>
+            {verArchivados ? "Ocultar archivados" : "Ver archivados"}
+          </button>
+          {!showForm && <button onClick={() => setShowForm(true)} className="rounded-xl bg-red-600 px-5 py-2 font-bold text-white hover:bg-red-500">+ Nuevo</button>}
+        </div>
       </div>
       {showForm && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
@@ -1071,10 +1206,41 @@ function TabSorteos({ sorteos, onRefresh }: { sorteos: Sorteo[]; onRefresh: () =
               <div className="flex items-center gap-3"><span className="font-black text-white">{s.titulo}</span><Badge v={s.estado} /></div>
               <p className="text-sm text-zinc-500 mt-1">Premio: {s.premio}</p>
             </div>
-            <button onClick={() => startEdit(s)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700 shrink-0">Editar</button>
+            <div className="flex gap-2 shrink-0">
+              <button onClick={() => startEdit(s)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">Editar</button>
+              <button onClick={() => setAEliminar(s)} className="rounded-xl border border-red-500/40 px-4 py-2 text-sm font-bold text-red-400 hover:bg-red-500/10">Eliminar</button>
+            </div>
           </div>
         ))}
       </div>
+
+      {verArchivados && (
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+          <h3 className="text-sm font-black uppercase tracking-wider text-zinc-400">Sorteos archivados</h3>
+          {archivados.length === 0 && <p className="text-zinc-500 text-sm">No hay sorteos archivados.</p>}
+          {archivados.map((s) => (
+            <div key={s.id} className="rounded-2xl border border-white/10 bg-black/40 p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-3"><span className="font-black text-white/70">{s.titulo}</span><span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-bold text-zinc-400">Archivado</span></div>
+                <p className="text-sm text-zinc-500 mt-1">Premio: {s.premio}</p>
+              </div>
+              <button onClick={() => restaurar(s)} disabled={busy} className="rounded-xl bg-zinc-700 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-600 disabled:opacity-50 shrink-0">Restaurar</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {aEliminar && (
+        <ConfirmDialog
+          title="Eliminar sorteo"
+          message="Este registro dejará de mostrarse y de utilizarse, pero se conservará en el historial (participantes, ganador y configuración)."
+          identifier={aEliminar.titulo}
+          confirmLabel="Eliminar"
+          busy={busy}
+          onConfirm={eliminar}
+          onCancel={() => setAEliminar(null)}
+        />
+      )}
     </div>
   );
 }

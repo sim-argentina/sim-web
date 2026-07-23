@@ -205,6 +205,16 @@ export default function TurneroAdminPage() {
 
   const [turnoEditando, setTurnoEditando] = useState<TurnoStand | null>(null);
 
+  // Eliminación física de turnos: SOLO admin. `role` se resuelve server-side.
+  const [role, setRole] = useState<string | null>(null);
+  const esAdmin = role === "admin";
+  const [turnoAEliminar, setTurnoAEliminar] = useState<TurnoStand | null>(null);
+  const [eliminando, setEliminando] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
+  }, []);
+
   const horaBajada = useMemo(() => {
     return sumarMinutosAHora(horaSubida, cantidadMinutos);
   }, [horaSubida, cantidadMinutos]);
@@ -274,6 +284,26 @@ export default function TurneroAdminPage() {
     cargarTurnos(fecha);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fecha]);
+
+  // Elimina físicamente el turno (definitivo). Solo admin. Al borrarse deja de
+  // contar en métricas/resúmenes porque estos leen la tabla en vivo.
+  async function eliminarTurno() {
+    if (!turnoAEliminar) return;
+    setEliminando(true);
+    try {
+      const res = await fetch(`/api/turnos-stand/${turnoAEliminar.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        alert(d?.error || "No se pudo eliminar el turno");
+        return;
+      }
+      setTurnos((prev) => prev.filter((t) => t.id !== turnoAEliminar.id));
+      setTurnoAEliminar(null);
+      await cargarTurnos(fecha);
+    } finally {
+      setEliminando(false);
+    }
+  }
 
   const turnosDelDia = useMemo(() => {
     return turnos
@@ -1175,12 +1205,22 @@ export default function TurneroAdminPage() {
                         {formatoDinero(Number(turno.total || 0))}
                       </span>
 
-                      <button
-                        onClick={() => abrirEdicion(turno)}
-                        className="rounded-lg border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/70 transition hover:border-red-500 hover:bg-red-600 hover:text-white"
-                      >
-                        Editar
-                      </button>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          onClick={() => abrirEdicion(turno)}
+                          className="rounded-lg border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/70 transition hover:border-red-500 hover:bg-red-600 hover:text-white"
+                        >
+                          Editar
+                        </button>
+                        {esAdmin && (
+                          <button
+                            onClick={() => setTurnoAEliminar(turno)}
+                            className="rounded-lg border border-red-500/40 px-3 py-1.5 text-[11px] font-black uppercase text-red-400 transition hover:bg-red-600 hover:text-white"
+                          >
+                            Eliminar
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -1254,6 +1294,29 @@ export default function TurneroAdminPage() {
           </div>
         </div>
       </section>
+
+      {/* Eliminar turno (definitivo): solo admin. Confirmación con los datos del turno. */}
+      {turnoAEliminar && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" onClick={() => setTurnoAEliminar(null)}>
+          <div className="w-full max-w-md rounded-3xl border border-red-500/30 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-black text-white">Eliminar turno</h3>
+            <p className="mt-2 text-sm text-zinc-400">
+              Este turno se eliminará definitivamente y no podrá recuperarse. Dejará de contar en métricas y resúmenes.
+            </p>
+            <div className="mt-3 space-y-1 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm">
+              <div className="flex justify-between gap-4"><span className="text-zinc-500">Fecha / Hora</span><span className="font-bold text-white">{turnoAEliminar.fecha} · {turnoAEliminar.hora || "-"}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-zinc-500">Cliente</span><span className="font-bold text-white">{turnoAEliminar.nombre || "Sin nombre"}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-zinc-500">Minutos</span><span className="font-bold text-white">{turnoAEliminar.cantidad_minutos || 15}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-zinc-500">Simuladores</span><span className="font-bold text-white text-right">{normalizarSimuladores(turnoAEliminar.simuladores).join(", ") || "-"}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-zinc-500">Importe</span><span className="font-black text-red-500">{formatoDinero(Number(turnoAEliminar.total || 0))}</span></div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setTurnoAEliminar(null)} disabled={eliminando} className="rounded-xl border border-white/10 px-5 py-2 text-sm font-bold text-zinc-300 hover:text-white disabled:opacity-50">Cancelar</button>
+              <button onClick={eliminarTurno} disabled={eliminando} className="rounded-xl bg-red-600 px-6 py-2 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50">{eliminando ? "Eliminando..." : "Eliminar definitivamente"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

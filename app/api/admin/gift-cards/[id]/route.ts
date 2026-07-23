@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { failResponse } from "@/lib/apiError";
+import { failResponse, logSecurityEvent } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { requireStaffOrAdmin, requireAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
 
 // Etiqueta legible para el historial de auditoría (#8).
@@ -80,19 +80,34 @@ export async function PATCH(
   }
 
   const nowIso = new Date().toISOString();
-  const updates: Record<string, unknown> = { updated_at: nowIso };
 
-  // Acciones que dependen de los usos actuales necesitan leer la fila.
-  type UsosRow = { usos_totales: number; usos_disponibles: number };
-  let fila: UsosRow | null = null;
-  if (body.accion === "registrar_uso" || body.accion === "marcar_pendiente") {
-    const { data } = await supabaseAdmin
+  // Lee la fila una vez: valida existencia (404), estado de archivado y usos.
+  type FilaGC = { usos_totales: number; usos_disponibles: number; deleted_at: string | null };
+  const { data: filaData } = await supabaseAdmin
+    .from("gift_cards")
+    .select("usos_totales, usos_disponibles, deleted_at")
+    .eq("id", id)
+    .maybeSingle();
+  const fila = (filaData as FilaGC | null) ?? null;
+  if (!fila) return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
+
+  // ── Restaurar (des-archivar): solo admin. Limpia deleted_at/deleted_by. ──
+  if (body.accion === "restaurar") {
+    if (auth.role !== "admin") return NextResponse.json({ error: "Solo el admin puede restaurar Gift Cards" }, { status: 403 });
+    const { error } = await supabaseAdmin
       .from("gift_cards")
-      .select("usos_totales, usos_disponibles")
-      .eq("id", id)
-      .maybeSingle();
-    fila = (data as UsosRow | null) ?? null;
+      .update({ deleted_at: null, deleted_by: null, updated_at: nowIso })
+      .eq("id", id);
+    if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/gift-cards/[id] restaurar", error });
+    await registrarGiftCardLog(id, "Restaurada", auth.role, {});
+    logSecurityEvent("gift_card_restaurada", { id, role: auth.role });
+    return NextResponse.json({ ok: true });
   }
+
+  // Una Gift Card archivada no admite nuevos usos/canjes ni cambios de estado.
+  if (fila.deleted_at) return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
+
+  const updates: Record<string, unknown> = { updated_at: nowIso };
 
   switch (body.accion) {
     case "registrar_uso": {
@@ -154,5 +169,38 @@ export async function PATCH(
     accion === "renovar" ? { fecha_vencimiento: updates.fecha_vencimiento } : {};
   await registrarGiftCardLog(id, label, auth.role, detalle);
 
+  return NextResponse.json({ ok: true });
+}
+
+// DELETE: eliminación lógica (archivado). SOLO admin. NO borra la fila ni sus
+// logs, NO toca el pago real ni los datos de Mercado Pago ni movimientos de
+// Finanzas: solo la oculta del panel e impide nuevos usos/canjes. Se puede
+// archivar en cualquier estado (pendiente/usada/vencida/cancelada). El historial
+// (pago, uso, reserva, MP, importe) se conserva íntegro.
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
+
+  const { id } = await params;
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("gift_cards")
+    .update({ deleted_at: new Date().toISOString(), deleted_by: auth.role, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .is("deleted_at", null)
+    .select("id")
+    .maybeSingle();
+
+  if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "admin/gift-cards/[id] DELETE", error });
+  if (!data) return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
+
+  await registrarGiftCardLog(id, "Eliminada (archivada)", auth.role, {});
+  logSecurityEvent("gift_card_eliminada", { id, role: auth.role });
   return NextResponse.json({ ok: true });
 }

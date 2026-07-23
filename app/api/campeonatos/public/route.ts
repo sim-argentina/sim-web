@@ -33,10 +33,12 @@ export async function GET(req: Request) {
         supabaseAdmin
           .from("campeonatos")
           .select("*")
+          .is("deleted_at", null)
           .order("fecha_inicio", { ascending: false }),
         supabaseAdmin
           .from("sorteos")
           .select("*")
+          .is("deleted_at", null)
           .order("created_at", { ascending: false }),
         supabaseAdmin
           .from("campeonato_registros")

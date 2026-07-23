@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { failResponse } from "@/lib/apiError";
+import { failResponse, logSecurityEvent } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { requireStaffOrAdmin, requireAdmin } from "@/lib/adminGuards";
 import {
   limpiarPagosColectivo, resumirPagos, normalizarSimuladoresColectivo,
   esFechaValida, fechaDentroDelEvento,
@@ -88,4 +88,31 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   } catch {
     return NextResponse.json({ error: "Error actualizando turno" }, { status: 500 });
   }
+}
+
+// DELETE: eliminación física DEFINITIVA de un turno del Colectivo. SOLO admin.
+// El turno no tiene hijos (pagos en el JSON de la fila). NO toca colectivo_ventas
+// (gorras/buzos/productos) ni ningún otro turno o evento: son filas
+// independientes. El resumen del evento (turnos/personas/minutos/recaudación de
+// simuladores) recalcula solo porque se lee en vivo. Sin historial del turno.
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth.response;
+  const { id } = await params;
+  const turnoId = Number(id);
+  if (!Number.isInteger(turnoId) || turnoId <= 0) {
+    return NextResponse.json({ error: "Turno no encontrado" }, { status: 404 });
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("colectivo_turnos")
+    .delete()
+    .eq("id", turnoId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "colectivo/turnos/[id] DELETE", error });
+  if (!data) return NextResponse.json({ error: "Turno no encontrado" }, { status: 404 });
+  logSecurityEvent("turno_colectivo_eliminado", { id: turnoId, role: auth.role });
+  return NextResponse.json({ ok: true });
 }

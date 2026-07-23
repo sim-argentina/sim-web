@@ -205,7 +205,7 @@ export default function EventoColectivoPage() {
         {/* Turnero del día */}
         {!cerrado && <TurneroForm eventoId={eventoId} dia={dia} onSaved={cargar} />}
 
-        <TurnosGuardados turnos={turnosDelDia} dia={dia} now={now} cerrado={cerrado} eventoId={eventoId} onSaved={cargar} />
+        <TurnosGuardados turnos={turnosDelDia} dia={dia} now={now} cerrado={cerrado} eventoId={eventoId} esAdmin={esAdmin} onSaved={cargar} />
 
         <ResumenDia turnos={turnosDelDia} dia={dia} />
 
@@ -372,10 +372,12 @@ function TurneroForm({ eventoId, dia, onSaved, editando, onCancelEdit }: {
 }
 
 // ═════════ Turnos guardados ═════════
-function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, onSaved }: {
-  turnos: Turno[]; dia: string; now: number; cerrado: boolean; eventoId: string; onSaved: () => void;
+function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, esAdmin, onSaved }: {
+  turnos: Turno[]; dia: string; now: number; cerrado: boolean; eventoId: string; esAdmin: boolean; onSaved: () => void;
 }) {
   const [editando, setEditando] = useState<Turno | null>(null);
+  const [aEliminar, setAEliminar] = useState<Turno | null>(null);
+  const [eliminando, setEliminando] = useState(false);
 
   const toggleListo = async (t: Turno, valor: boolean) => {
     await fetch(`/api/admin/colectivo/turnos/${t.id}`, {
@@ -383,6 +385,19 @@ function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, onSaved }: {
       body: JSON.stringify({ ...t, turno_listo: valor }),
     });
     onSaved();
+  };
+
+  // Elimina físicamente el turno de colectivo (definitivo). Solo admin. NO toca
+  // ventas de productos: el resumen del evento recalcula al releer los turnos.
+  const eliminar = async () => {
+    if (!aEliminar) return;
+    setEliminando(true);
+    try {
+      const res = await fetch(`/api/admin/colectivo/turnos/${aEliminar.id}`, { method: "DELETE" });
+      if (!res.ok) { const d = await res.json().catch(() => null); alert(d?.error || "No se pudo eliminar el turno"); return; }
+      setAEliminar(null);
+      onSaved();
+    } finally { setEliminando(false); }
   };
 
   return (
@@ -436,11 +451,39 @@ function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, onSaved }: {
                   <span>{posnets}</span>
                   <span className="font-black text-red-500">{dinero(Number(t.total || 0))}</span>
                   {!cerrado ? (
-                    <button onClick={() => { setEditando(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/70 hover:border-red-500 hover:bg-red-600 hover:text-white">Editar</button>
+                    <div className="flex flex-col gap-1">
+                      <button onClick={() => { setEditando(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/70 hover:border-red-500 hover:bg-red-600 hover:text-white">Editar</button>
+                      {esAdmin && (
+                        <button onClick={() => setAEliminar(t)} className="rounded-lg border border-red-500/40 px-3 py-1.5 text-[11px] font-black uppercase text-red-400 hover:bg-red-600 hover:text-white">Eliminar</button>
+                      )}
+                    </div>
                   ) : <span className="text-white/30 text-xs">—</span>}
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Eliminar turno de colectivo (definitivo): solo admin. No toca ventas. */}
+      {aEliminar && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" onClick={() => setAEliminar(null)}>
+          <div className="w-full max-w-md rounded-3xl border border-red-500/30 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-black text-white">Eliminar turno</h3>
+            <p className="mt-2 text-sm text-white/60">
+              Este turno se eliminará definitivamente y no podrá recuperarse. Dejará de contar en el resumen del evento. Las ventas de productos no se tocan.
+            </p>
+            <div className="mt-3 space-y-1 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm">
+              <div className="flex justify-between gap-4"><span className="text-white/45">Fecha / Hora</span><span className="font-bold text-white">{aEliminar.fecha} · {aEliminar.hora || "-"}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-white/45">Cliente</span><span className="font-bold text-white">{aEliminar.nombre || "Sin identificar"}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-white/45">Minutos</span><span className="font-bold text-white">{aEliminar.cantidad_minutos || DURACION_DEFAULT}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-white/45">Simuladores</span><span className="font-bold text-white text-right">{normalizarSimuladores(aEliminar.simuladores).join(", ") || "-"}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-white/45">Importe</span><span className="font-black text-red-500">{dinero(Number(aEliminar.total || 0))}</span></div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setAEliminar(null)} disabled={eliminando} className="rounded-xl border border-white/10 px-5 py-2 text-sm font-bold text-zinc-300 hover:text-white disabled:opacity-50">Cancelar</button>
+              <button onClick={eliminar} disabled={eliminando} className="rounded-xl bg-red-600 px-6 py-2 text-sm font-black text-white hover:bg-red-500 disabled:opacity-50">{eliminando ? "Eliminando..." : "Eliminar definitivamente"}</button>
+            </div>
           </div>
         </div>
       )}

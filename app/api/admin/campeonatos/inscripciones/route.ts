@@ -63,6 +63,17 @@ export async function POST(req: Request) {
       );
     }
 
+    // Un campeonato archivado (deleted_at) no acepta nuevas inscripciones.
+    const { data: campActivo } = await supabaseAdmin
+      .from("campeonatos")
+      .select("id")
+      .eq("id", campeonato_id)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (!campActivo) {
+      return NextResponse.json({ error: "El campeonato no existe o fue eliminado" }, { status: 400 });
+    }
+
     // Pagos múltiples (opcional). Si vienen, definen el total y el estado.
     const pagos = limpiarPagos(pagos_detalle);
     const totalPagos = pagos.reduce((s, p) => s + p.monto, 0);
