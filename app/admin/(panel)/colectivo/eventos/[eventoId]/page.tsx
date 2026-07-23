@@ -450,14 +450,19 @@ function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, esAdmin, onSaved
                   <span className="truncate">{pagoStr}</span>
                   <span>{posnets}</span>
                   <span className="font-black text-red-500">{dinero(Number(t.total || 0))}</span>
-                  {!cerrado ? (
-                    <div className="flex flex-col gap-1">
+                  <div className="flex flex-col gap-1">
+                    {/* Editar sigue bloqueado en eventos cerrados. */}
+                    {!cerrado && (
                       <button onClick={() => { setEditando(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/70 hover:border-red-500 hover:bg-red-600 hover:text-white">Editar</button>
-                      {esAdmin && (
-                        <button onClick={() => setAEliminar(t)} className="rounded-lg border border-red-500/40 px-3 py-1.5 text-[11px] font-black uppercase text-red-400 hover:bg-red-600 hover:text-white">Eliminar</button>
-                      )}
-                    </div>
-                  ) : <span className="text-white/30 text-xs">—</span>}
+                    )}
+                    {/* Eliminar (admin) es independiente del estado del evento: se
+                        puede borrar el turno aunque el evento esté finalizado/cancelado,
+                        sin reabrirlo ni modificarlo. */}
+                    {esAdmin && (
+                      <button onClick={() => setAEliminar(t)} className="rounded-lg border border-red-500/40 px-3 py-1.5 text-[11px] font-black uppercase text-red-400 hover:bg-red-600 hover:text-white">Eliminar</button>
+                    )}
+                    {cerrado && !esAdmin && <span className="text-white/30 text-xs">—</span>}
+                  </div>
                 </div>
               );
             })}
