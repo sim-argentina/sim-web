@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type ClientePromo = {
   nombre: string;
@@ -24,7 +24,9 @@ export default function AdminPromocionesPage() {
 
   const [turnosObjetivo, setTurnosObjetivo] = useState(5);
 
-  async function cargarClientes() {
+  const hayBusqueda = busqueda.trim().length >= 2;
+
+  const cargarClientes = useCallback(async () => {
     setLoading(true);
 
     try {
@@ -55,11 +57,13 @@ export default function AdminPromocionesPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [busqueda, dias, historico]);
 
+  // Debounce: al escribir busca; al borrar la búsqueda vuelve al Top 10.
   useEffect(() => {
-    cargarClientes();
-  }, [dias, historico]);
+    const t = setTimeout(cargarClientes, 300);
+    return () => clearTimeout(t);
+  }, [cargarClientes]);
 
   const resumen = useMemo(() => {
     const clientesConPromo = clientes.filter(
@@ -174,9 +178,11 @@ export default function AdminPromocionesPage() {
                 Estado de clientes
               </h2>
               <p className="text-sm text-white/50">
-                {historico
-                  ? "Mostrando historial completo"
-                  : `Mostrando últimos ${dias} días`}
+                {hayBusqueda
+                  ? "Resultados de búsqueda"
+                  : "Top 10 clientes con más turnos"}
+                {" · "}
+                {historico ? "historial completo" : `últimos ${dias} días`}
               </p>
             </div>
           </div>
@@ -186,7 +192,9 @@ export default function AdminPromocionesPage() {
           ) : clientes.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-black p-5">
               <p className="text-white/60">
-                No hay clientes para los filtros seleccionados.
+                {hayBusqueda
+                  ? "No hay clientes que coincidan con la búsqueda."
+                  : "No hay clientes para los filtros seleccionados."}
               </p>
             </div>
           ) : (
