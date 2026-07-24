@@ -84,11 +84,12 @@ export default function AdminSidebar({ role }: Props) {
       )}
 
       <aside
-        className={`fixed top-0 left-0 z-50 h-screen w-[280px] bg-black border-r border-zinc-800 text-white p-6 transition-transform duration-300 ${
+        className={`fixed top-0 left-0 z-50 flex h-[100dvh] w-[280px] flex-col overflow-hidden bg-black border-r border-zinc-800 text-white transition-transform duration-300 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex items-start justify-between mb-10">
+        {/* Cabecera fija: permanece visible al hacer scroll en la navegación */}
+        <div className="flex shrink-0 items-start justify-between px-6 pt-6 pb-6">
           <div>
             <p className="text-red-500 tracking-[0.3em] text-xs mb-2">
               PANEL INTERNO
@@ -101,13 +102,17 @@ export default function AdminSidebar({ role }: Props) {
 
           <button
             onClick={() => setOpen(false)}
-            className="text-zinc-400 hover:text-white text-2xl"
+            className="text-zinc-400 hover:text-white text-2xl leading-none"
+            aria-label="Cerrar menú"
           >
             ×
           </button>
         </div>
 
-        <nav className="flex flex-col gap-3">
+        {/* Única parte scrolleable. min-h-0 permite que el área desplazable
+            funcione dentro del contenedor flex; padding inferior (+ safe area)
+            evita que el último ítem quede pegado/cortado al borde. */}
+        <nav className="sidebar-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
           {visibleLinks.map((link) => {
             const active = pathname === link.href;
 
@@ -116,7 +121,7 @@ export default function AdminSidebar({ role }: Props) {
                 key={link.href}
                 href={link.href}
                 onClick={() => setOpen(false)}
-                className={`rounded-xl px-4 py-3 transition-all ${
+                className={`shrink-0 rounded-xl px-4 py-3 transition-all ${
                   active
                     ? "bg-red-600 text-white"
                     : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300"
