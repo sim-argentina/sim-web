@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { getOccupiedSlots } from "@/lib/reservasSlots";
 
 type Reserva = {
   id: number;
@@ -10,6 +11,7 @@ type Reserva = {
   hora: string;
   simuladores: string[] | string;
   cantidad_turnos?: number;
+  duracion_minutos?: number;
   total?: number;
   estado?: string;
   created_at?: string;
@@ -57,6 +59,18 @@ function sumar20Minutos(hora: string) {
     minute: "2-digit",
     hour12: false,
   });
+}
+
+// Rango horario VISUAL de una reserva (solo presentación, no muta nada).
+// Deriva el fin a partir de los slots que la reserva YA ocupa según su
+// duración existente, reutilizando la misma lógica de ocupación del sistema
+// (getOccupiedSlots): 15 min → 1 slot de 20'; 30 min → 2 slots consecutivos.
+// El fin visible = hora final del último slot ocupado (último slot + 20').
+function rangoVisual(reserva: Pick<Reserva, "fecha" | "hora" | "duracion_minutos">) {
+  const duracion = Number(reserva.duracion_minutos) || 15;
+  const slots = getOccupiedSlots(reserva.fecha, reserva.hora, duracion);
+  const ultimoSlot = slots[slots.length - 1] ?? reserva.hora;
+  return `${horaBonita(reserva.hora)} - ${sumar20Minutos(ultimoSlot)}`;
 }
 
 function inicioSemana(date: Date) {
@@ -338,8 +352,7 @@ export default function CalendarioAdminPage() {
                         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                           <div>
                             <p className="text-lg font-black uppercase">
-                              {horaBonita(reserva.hora)} -{" "}
-                              {sumar20Minutos(reserva.hora)}
+                              {rangoVisual(reserva)}
                             </p>
 
                             <p className="mt-1 text-white/70">
@@ -418,8 +431,7 @@ export default function CalendarioAdminPage() {
               <div className="rounded-2xl bg-white/[0.04] p-4">
                 <p className="text-white/50">Horario</p>
                 <p className="text-lg font-bold">
-                  {horaBonita(reservaSeleccionada.hora)} -{" "}
-                  {sumar20Minutos(reservaSeleccionada.hora)}
+                  {rangoVisual(reservaSeleccionada)}
                 </p>
               </div>
 
