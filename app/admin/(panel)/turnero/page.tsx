@@ -87,6 +87,13 @@ function horaActual() {
   ).padStart(2, "0")}`;
 }
 
+// Equivalencia conceptual de SIM: cada 15 minutos = 1 turno.
+// 15→1, 30→2, 45→3, 60→4. Solo se usa para DERIVAR el valor mostrado en la
+// columna "Turnos" de las filas de reserva; no altera datos ni métricas.
+function turnosPorDuracion(minutos?: number | null): number {
+  return Math.max(1, Math.round((Number(minutos) || 15) / 15));
+}
+
 function sumarMinutosAHora(hora: string, minutos: number) {
   if (!hora) return "";
 
@@ -1523,7 +1530,8 @@ function FilaReserva({
 
       <span>{simus.length || 1}</span>
       <span>{minutos}</span>
-      <span>{reserva.cantidad_turnos || 1}</span>
+      {/* Turnos derivados de la duración (15 min = 1 turno). Solo visual. */}
+      <span>{turnosPorDuracion(minutos)}</span>
       <span className="truncate text-white/70">{pago}</span>
       <span className="text-white/40">—</span>
 
