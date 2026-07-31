@@ -37,6 +37,32 @@ type TurnoStand = {
   observaciones?: string;
 };
 
+// Reserva web CONFIRMADA proyectada como fila operativa del Turnero. Sus datos
+// comerciales son de solo lectura (fuente de verdad: dominio Reservas). Los
+// campos operativos (hora_subida/hora_bajada/listo) viven en reserva_operacion.
+type ReservaOp = {
+  id: number;
+  nombre?: string;
+  telefono?: string;
+  fecha: string;
+  hora: string;
+  simuladores?: string[] | string;
+  cantidad_turnos?: number;
+  duracion_minutos?: number;
+  total?: number;
+  estado?: string;
+  mercado_pago_payment_id?: string | null;
+  hora_subida?: string | null;
+  hora_bajada?: string | null;
+  listo?: boolean;
+};
+
+// Fila del Turnero: turno del stand (turnos_stand) o reserva web (reservas).
+// El origen determina qué operaciones están permitidas.
+type FilaTurnero =
+  | { origen: "stand"; hora: string; turno: TurnoStand }
+  | { origen: "reserva"; hora: string; reserva: ReservaOp };
+
 const SIMULADORES = ["Ferrari", "Alpine", "McLaren", "Red Bull"];
 const POSNETS = ["MP", "PayWay"];
 const METODOS_PAGO = [
@@ -215,6 +241,25 @@ export default function TurneroAdminPage() {
     fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
   }, []);
 
+  // Reservas web confirmadas del día (solo lectura del dominio Reservas). Se
+  // muestran como filas operativas del Turnero, pero NO son turnos_stand: no
+  // entran en facturación, métricas, resumen ni Promociones.
+  const [reservasDelDia, setReservasDelDia] = useState<ReservaOp[]>([]);
+
+  async function cargarReservas(dia: string = fecha) {
+    try {
+      const res = await fetch(`/api/reservas/operacion?fecha=${encodeURIComponent(dia)}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setReservasDelDia(Array.isArray(data.reservas) ? data.reservas : []);
+      }
+    } catch (error) {
+      console.error("Error al cargar reservas del día:", error);
+    }
+  }
+
   const horaBajada = useMemo(() => {
     return sumarMinutosAHora(horaSubida, cantidadMinutos);
   }, [horaSubida, cantidadMinutos]);
@@ -282,6 +327,7 @@ export default function TurneroAdminPage() {
 
   useEffect(() => {
     cargarTurnos(fecha);
+    cargarReservas(fecha);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fecha]);
 
@@ -406,6 +452,30 @@ export default function TurneroAdminPage() {
       porPosnetYMetodo,
     };
   }, [turnosDelDia]);
+
+  // Filas operativas del día = turnos del stand + reservas confirmadas. Se
+  // mantiene EXACTAMENTE el orden de los turnos del stand (id desc); las reservas
+  // se intercalan por su hora reservada (hora toma) sin reordenar los del stand.
+  // Es solo para renderizar: resumenDia/facturación/métricas usan turnosDelDia.
+  const filasDelDia = useMemo<FilaTurnero[]>(() => {
+    const reservasOrden = [...reservasDelDia].sort((a, b) =>
+      (b.hora || "").localeCompare(a.hora || "")
+    );
+    const filas: FilaTurnero[] = [];
+    let ri = 0;
+    for (const turno of turnosDelDia) {
+      while (ri < reservasOrden.length && (reservasOrden[ri].hora || "") > (turno.hora || "")) {
+        filas.push({ origen: "reserva", hora: reservasOrden[ri].hora, reserva: reservasOrden[ri] });
+        ri++;
+      }
+      filas.push({ origen: "stand", hora: turno.hora, turno });
+    }
+    while (ri < reservasOrden.length) {
+      filas.push({ origen: "reserva", hora: reservasOrden[ri].hora, reserva: reservasOrden[ri] });
+      ri++;
+    }
+    return filas;
+  }, [turnosDelDia, reservasDelDia]);
 
   function manejarFlechitas(e: React.KeyboardEvent<HTMLFormElement>) {
     if (!["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"].includes(e.key))
@@ -1056,14 +1126,14 @@ export default function TurneroAdminPage() {
               </Campo>
 
               <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/70">
-                {turnosDelDia.length} turnos
+                {filasDelDia.length} turnos
               </div>
             </div>
           </div>
 
           {loading ? (
             <p className="text-white/60">Cargando turnos...</p>
-          ) : turnosDelDia.length === 0 ? (
+          ) : filasDelDia.length === 0 ? (
             <div className="rounded-2xl border border-white/10 bg-black p-5">
               <p className="text-white/60">
                 No hay turnos cargados para esta fecha.
@@ -1089,7 +1159,21 @@ export default function TurneroAdminPage() {
                   <span></span>
                 </div>
 
-                {turnosDelDia.map((turno) => {
+                {filasDelDia.map((fila) => {
+                  // Fila de reserva web: componente propio (solo lectura comercial,
+                  // sin editar/eliminar). Nunca toca turnos_stand.
+                  if (fila.origen === "reserva") {
+                    return (
+                      <FilaReserva
+                        key={`reserva-${fila.reserva.id}`}
+                        reserva={fila.reserva}
+                        now={now}
+                        onSaved={() => cargarReservas(fecha)}
+                      />
+                    );
+                  }
+
+                  const turno = fila.turno;
                   const simus = normalizarSimuladores(turno.simuladores);
                   const pagos = normalizarPagos(turno).filter(
                     (pago) => Number(pago.monto) > 0,
@@ -1114,7 +1198,7 @@ export default function TurneroAdminPage() {
 
                   return (
                     <div
-                      key={turno.id}
+                      key={`stand-${turno.id}`}
                       className={`grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_70px_1.4fr_130px_120px_80px] items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
                         timer.status === "listo"
                           ? "border-green-500/50 bg-green-950/25"
@@ -1318,6 +1402,140 @@ export default function TurneroAdminPage() {
         </div>
       )}
     </main>
+  );
+}
+
+// Fila de RESERVA WEB dentro del Turnero. Mismo grid que la fila del stand.
+// Datos comerciales de solo lectura (nombre, teléfono, hora toma, duración,
+// simuladores, importe, pago). Operable: hora subida, listo (y hora bajada
+// derivada). Sin Editar ni Eliminar: la reserva se gestiona desde Reservas.
+// Persiste en reserva_operacion, NUNCA en turnos_stand.
+function FilaReserva({
+  reserva,
+  now,
+  onSaved,
+}: {
+  reserva: ReservaOp;
+  now: number;
+  onSaved: () => void;
+}) {
+  const simus = normalizarSimuladores(reserva.simuladores);
+  const minutos = reserva.duracion_minutos || 15;
+
+  const [horaSubida, setHoraSubida] = useState(reserva.hora_subida ?? "");
+  const [listo, setListo] = useState(Boolean(reserva.listo));
+  const [guardando, setGuardando] = useState(false);
+
+  // Reservas es la fuente de verdad: al refetch se re-sincroniza la fila.
+  useEffect(() => {
+    setHoraSubida(reserva.hora_subida ?? "");
+    setListo(Boolean(reserva.listo));
+  }, [reserva.hora_subida, reserva.listo]);
+
+  const timer = getTurnoTimerState(
+    { fecha: reserva.fecha, horaSubida: horaSubida || undefined, minutos, listo },
+    now,
+  );
+
+  async function guardar(patch: Record<string, unknown>) {
+    setGuardando(true);
+    try {
+      await fetch(`/api/reservas/operacion/${reserva.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      onSaved();
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  const horaBajada =
+    reserva.hora_bajada || sumarMinutosAHora(horaSubida || "", minutos) || "-";
+  const pago = reserva.mercado_pago_payment_id ? "Mercado Pago" : "Web";
+
+  return (
+    <div
+      className={`grid grid-cols-[60px_70px_80px_80px_80px_1.4fr_1fr_90px_90px_70px_1.4fr_130px_120px_80px] items-center gap-2 rounded-xl border px-3 py-2 text-sm transition ${
+        timer.status === "listo"
+          ? "border-green-500/50 bg-green-950/25"
+          : timer.status === "rojo"
+          ? "border-red-500/60 bg-red-950/30"
+          : timer.status === "amarillo"
+          ? "border-amber-500/50 bg-amber-950/20"
+          : "border-sky-500/40 bg-sky-950/10"
+      }`}
+    >
+      <label className="flex items-center justify-center">
+        <input
+          type="checkbox"
+          checked={listo}
+          disabled={guardando}
+          onChange={(e) => {
+            const v = e.target.checked;
+            setListo(v);
+            guardar({ listo: v });
+          }}
+          className="h-5 w-5 accent-red-600"
+        />
+      </label>
+
+      {/* Hora toma = horario reservado */}
+      <span className="font-black">{reserva.hora || "-"}</span>
+      {/* Hora estimada de subida: NO aplica (ya tiene horario asignado) */}
+      <span className="text-white/40">—</span>
+      {/* Hora subida: la carga el empleado (operable) */}
+      <input
+        type="time"
+        value={horaSubida}
+        disabled={guardando}
+        onChange={(e) => setHoraSubida(e.target.value)}
+        onBlur={() => {
+          if ((reserva.hora_subida ?? "") !== horaSubida) guardar({ hora_subida: horaSubida });
+        }}
+        className="w-full rounded-md border border-white/15 bg-black px-1 py-1 text-xs font-bold outline-none focus:border-red-500 disabled:opacity-50"
+      />
+      <span className="text-white/70">{horaBajada}</span>
+
+      <div className="min-w-0">
+        <p className={`truncate font-black ${listo ? "text-white/60 line-through" : ""}`}>
+          {reserva.nombre || "Sin nombre"}
+        </p>
+        <p className="truncate text-xs text-white/40">
+          {reserva.telefono || "Sin teléfono"}
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          <span className="inline-flex w-fit items-center rounded-md bg-sky-600/90 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">
+            Reserva web
+          </span>
+          <span
+            className={`inline-flex w-fit items-center rounded-md px-2 py-0.5 text-[11px] font-bold ${TURNO_BADGE_CLASS[timer.status]}`}
+          >
+            {timer.label}
+          </span>
+        </div>
+      </div>
+
+      <span className="truncate text-white/70">
+        {simus.length ? simus.join(", ") : "-"}
+      </span>
+
+      <span>{simus.length || 1}</span>
+      <span>{minutos}</span>
+      <span>{reserva.cantidad_turnos || 1}</span>
+      <span className="truncate text-white/70">{pago}</span>
+      <span className="text-white/40">—</span>
+
+      <span className="font-black text-red-500">
+        {formatoDinero(Number(reserva.total || 0))}
+      </span>
+
+      {/* Sin acciones destructivas: la reserva se cancela/edita desde Reservas. */}
+      <span className="text-center text-[10px] font-bold uppercase text-white/30">
+        Reserva
+      </span>
+    </div>
   );
 }
 
