@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { ListChecks } from "lucide-react";
 
 type Props = {
   role: string;
@@ -46,6 +47,11 @@ export default function AdminSidebar({ role }: Props) {
     {
       label: "Colectivo",
       href: "/admin/colectivo",
+      roles: ["admin", "staff"],
+    },
+    {
+      label: "Pendientes",
+      href: "/admin/pendientes",
       roles: ["admin", "staff"],
     },
     {
@@ -121,12 +127,13 @@ export default function AdminSidebar({ role }: Props) {
                 key={link.href}
                 href={link.href}
                 onClick={() => setOpen(false)}
-                className={`shrink-0 rounded-xl px-4 py-3 transition-all ${
+                className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-3 transition-all ${
                   active
                     ? "bg-red-600 text-white"
                     : "bg-zinc-900 hover:bg-zinc-800 text-zinc-300"
                 }`}
               >
+                {link.href === "/admin/pendientes" && <ListChecks className="h-4 w-4 shrink-0" />}
                 {link.label}
               </Link>
             );
