@@ -22,9 +22,9 @@ export async function GET(req: NextRequest) {
 
     const cerrado = Boolean(cierre && cierre.estado !== "abierto");
 
-    // Reparte el saldo inicial general por fuente (solo para mostrar "Saldo actual
-    // disponible"). Reutiliza el saldo inicial ya calculado; no cambia ningún cálculo.
-    const saldoInicialPorFuente = await getSaldoInicialPorFuente(mes, resumen.saldoInicialGeneral);
+    // Saldo inicial por fuente (arrastre por fuente Efectivo/MP) para "Saldo actual
+    // disponible". Mismo valor que usa el cálculo del mes.
+    const saldoInicialPorFuente = await getSaldoInicialPorFuente(mes);
 
     return NextResponse.json({
       mes,

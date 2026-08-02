@@ -389,56 +389,52 @@ export async function getMovimientosMes(mes: string): Promise<FinMovimiento[]> {
 
 // ── Saldo inicial GENERAL ─────────────────────────────────────────────────────
 
-export async function getSaldoInicialGeneral(mes: string): Promise<number> {
-  // 1) Si el mes anterior está cerrado, arrastra su saldo real general.
+// Saldo inicial del mes DESGLOSADO por fuente (Efectivo / Mercado Pago). Es la
+// fuente de verdad del arrastre entre meses:
+// - Mes anterior cerrado CON desglose → arrastra su saldo real Efectivo/MP.
+// - Mes anterior cerrado SIN desglose (cierre viejo) → arrastra el general a
+//   Efectivo (compatibilidad; desglosado=false).
+// - Mes no cerrado → fin_saldos_iniciales (monto_efectivo/monto_mercado_pago), o
+//   el general en Efectivo si no hay desglose cargado.
+export async function getSaldoInicialPorFuente(mes: string): Promise<{
+  efectivo: number; mercado_pago: number; general: number; desglosado: boolean; arrastrado: boolean;
+}> {
   const prev = mesAnterior(mes);
   const { data: cierrePrev, error: e1 } = await supabaseAdmin
     .from("fin_cierres_mensuales")
-    .select("estado, saldo_real_general")
+    .select("estado, saldo_real_general, saldo_real_efectivo, saldo_real_mp")
     .eq("mes", prev)
     .maybeSingle();
   if (e1) throw e1;
+
   if (cierrePrev && cierrePrev.estado !== "abierto") {
-    return Number(cierrePrev.saldo_real_general) || 0;
+    const realGeneral = Number(cierrePrev.saldo_real_general) || 0;
+    const realEf = Number(cierrePrev.saldo_real_efectivo) || 0;
+    const realMp = Number(cierrePrev.saldo_real_mp) || 0;
+    const tieneDesglose = realEf + realMp !== 0 || realGeneral === 0;
+    if (tieneDesglose) {
+      return { efectivo: realEf, mercado_pago: realMp, general: realEf + realMp, desglosado: true, arrastrado: true };
+    }
+    return { efectivo: realGeneral, mercado_pago: 0, general: realGeneral, desglosado: false, arrastrado: true };
   }
-  // 2) Si no, usa el saldo inicial general cargado manualmente para este mes.
+
   const { data: ini, error: e2 } = await supabaseAdmin
     .from("fin_saldos_iniciales")
-    .select("monto")
+    .select("monto, monto_efectivo, monto_mercado_pago")
     .eq("mes", mes)
     .maybeSingle();
   if (e2) throw e2;
-  return Number(ini?.monto ?? 0) || 0;
+  const ef = Number(ini?.monto_efectivo ?? 0) || 0;
+  const mp = Number(ini?.monto_mercado_pago ?? 0) || 0;
+  const general = Number(ini?.monto ?? 0) || 0;
+  if (ef + mp === 0) {
+    return { efectivo: general, mercado_pago: 0, general, desglosado: false, arrastrado: false };
+  }
+  return { efectivo: ef, mercado_pago: mp, general: ef + mp, desglosado: true, arrastrado: false };
 }
 
-// Reparte el saldo inicial GENERAL del mes entre Efectivo y Mercado Pago usando
-// el desglose declarado en fin_saldos_iniciales (monto_efectivo / monto_mercado_pago).
-// No cambia el saldo inicial general (fuente de verdad, ya calculado por
-// getSaldoInicialGeneral y que respeta el arrastre de cierres): solo lo divide por
-// fuente. El resultado SIEMPRE suma exactamente el general. Si no hay desglose
-// cargado, el general no se puede repartir y queda todo en Efectivo (desglosado=false).
-export async function getSaldoInicialPorFuente(
-  mes: string,
-  saldoInicialGeneral: number
-): Promise<{ efectivo: number; mercado_pago: number; desglosado: boolean }> {
-  const { data, error } = await supabaseAdmin
-    .from("fin_saldos_iniciales")
-    .select("monto_efectivo, monto_mercado_pago")
-    .eq("mes", mes)
-    .maybeSingle();
-  if (error) throw error;
-
-  const ef = Number(data?.monto_efectivo ?? 0) || 0;
-  const mp = Number(data?.monto_mercado_pago ?? 0) || 0;
-  const suma = ef + mp;
-
-  if (suma === 0) {
-    return { efectivo: saldoInicialGeneral, mercado_pago: 0, desglosado: false };
-  }
-  // Aplica la proporción declarada al saldo inicial general (coincide exacto
-  // cuando el desglose ya suma el general; se reescala si hubo arrastre de cierre).
-  const efectivo = Math.round((saldoInicialGeneral * ef) / suma);
-  return { efectivo, mercado_pago: saldoInicialGeneral - efectivo, desglosado: true };
+export async function getSaldoInicialGeneral(mes: string): Promise<number> {
+  return (await getSaldoInicialPorFuente(mes)).general;
 }
 
 // ── Resumen mensual (general + por fuente) ───────────────────────────────────
@@ -458,6 +454,8 @@ export type ResumenPorFuente = {
   transferenciasSalientes: number;
   egresos: number; // total egresos (costos+gastos+inversiones+sueldo+otros+pagosDeuda)
   neto: number;
+  saldoInicial: number; // saldo inicial de la fuente (arrastre por fuente)
+  saldoTeorico: number; // saldoInicial + neto
 };
 
 // Comisiones de cobro del stand (turnero) para un mes: se calculan por pago
@@ -503,7 +501,11 @@ export type ResumenMes = {
   sueldoDisponible: number;
   resultadoOperativo: number;
   saldoInicialGeneral: number;
+  saldoInicialEfectivo: number;
+  saldoInicialMp: number;
   saldoFinalTeoricoGeneral: number;
+  saldoTeoricoEfectivo: number;
+  saldoTeoricoMp: number;
   turnosDelMes: number;
   porFuente: ResumenPorFuente[];
   sueldoPorCategoria: Record<string, number>;
@@ -517,12 +519,18 @@ export function resumirMes(params: {
   ingresosAutoTotal: number;
   turnosDelMes: number;
   saldoInicialGeneral: number;
+  saldoInicialEfectivo?: number;
+  saldoInicialMp?: number;
   sueldoAsignado: number;
   cuentas: FinCuenta[];
   categorias: FinCategoria[];
   comisionesData?: ComisionesResumen | null;
 }): ResumenMes {
   const { mes, movimientos, ingresosAuto, ingresosAutoTotal, turnosDelMes, saldoInicialGeneral, sueldoAsignado, cuentas, categorias } = params;
+  // Saldo inicial por fuente para el arrastre/teórico por fuente. Si no se provee,
+  // se asume todo en Efectivo (compatibilidad) y el general no cambia.
+  const saldoInicialEfectivo = params.saldoInicialEfectivo ?? saldoInicialGeneral;
+  const saldoInicialMp = params.saldoInicialMp ?? 0;
   const comisionesData = params.comisionesData ?? null;
   // Comisiones de cobro del stand: reducen el revenue/caja (Mercado Pago). Nunca
   // se vuelven a restar como costo (evita doble descuento).
@@ -552,6 +560,8 @@ export function resumirMes(params: {
       transferenciasSalientes: 0,
       egresos: 0,
       neto: 0,
+      saldoInicial: 0,
+      saldoTeorico: 0,
     };
   }
 
@@ -620,12 +630,19 @@ export function resumirMes(params: {
     // neto). Se descuenta del neto de caja; `ingresos` de la fuente queda en bruto
     // (para "Ingresos por fuente").
     const comFuente = f.tipo === "mercado_pago" ? comisionesCobro : 0;
+    const saldoInicialFuente = f.tipo === "efectivo" ? saldoInicialEfectivo : saldoInicialMp;
+    const neto = f.ingresos + f.financiamiento - egresos + f.transferenciasEntrantes - f.transferenciasSalientes - comFuente;
     return {
       ...f,
       egresos,
-      neto: f.ingresos + f.financiamiento - egresos + f.transferenciasEntrantes - f.transferenciasSalientes - comFuente,
+      neto,
+      saldoInicial: saldoInicialFuente,
+      saldoTeorico: saldoInicialFuente + neto,
     };
   });
+
+  const saldoTeoricoEfectivo = porFuente.find((f) => f.tipo === "efectivo")?.saldoTeorico ?? saldoInicialEfectivo;
+  const saldoTeoricoMp = porFuente.find((f) => f.tipo === "mercado_pago")?.saldoTeorico ?? saldoInicialMp;
 
   const ingresosBruto = ingresosAutoTotal + ingresosManuales; // bruto, sin financiamiento
   const ingresos = ingresosBruto - comisionesCobro; // NETO operativo (revenue real)
@@ -652,7 +669,11 @@ export function resumirMes(params: {
     sueldoDisponible: sueldoAsignado - gastosSueldo,
     resultadoOperativo: ingresos - costos - gastos,
     saldoInicialGeneral,
+    saldoInicialEfectivo,
+    saldoInicialMp,
     saldoFinalTeoricoGeneral,
+    saldoTeoricoEfectivo,
+    saldoTeoricoMp,
     turnosDelMes,
     porFuente,
     sueldoPorCategoria,
@@ -746,12 +767,12 @@ export async function calcularMes(mes: string): Promise<{
   ingresosAuto: IngresoAutomatico[];
   movimientos: FinMovimiento[];
 }> {
-  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicial, sueldo, comisiones] = await Promise.all([
+  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicialFuente, sueldo, comisiones] = await Promise.all([
     getCuentas(),
     getCategorias(),
     getIngresosAutomaticos(mes),
     getMovimientosMes(mes),
-    getSaldoInicialGeneral(mes),
+    getSaldoInicialPorFuente(mes),
     getSueldoMes(mes),
     getComisionesStandMes(mes),
   ]);
@@ -762,7 +783,9 @@ export async function calcularMes(mes: string): Promise<{
     ingresosAuto: ingresosAutoData.items,
     ingresosAutoTotal: ingresosAutoData.total,
     turnosDelMes: ingresosAutoData.turnosDelMes,
-    saldoInicialGeneral: saldoInicial,
+    saldoInicialGeneral: saldoInicialFuente.general,
+    saldoInicialEfectivo: saldoInicialFuente.efectivo,
+    saldoInicialMp: saldoInicialFuente.mercado_pago,
     sueldoAsignado: sueldo,
     cuentas,
     categorias,

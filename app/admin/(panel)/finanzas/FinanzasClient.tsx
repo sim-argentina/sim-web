@@ -127,7 +127,8 @@ type Regla = {
   cuenta?: { id: string; nombre: string } | null;
 };
 
-type RubroCat = { categoria: string; total: number; cantidad: number; efectivo: number; mercado_pago: number };
+type MovDetalle = { id: string; fecha: string; descripcion: string; monto: number; fuente: "efectivo" | "mercado_pago" | null; observaciones: string | null; origen: string; subcategoria: string | null };
+type RubroCat = { categoria: string; total: number; cantidad: number; efectivo: number; mercado_pago: number; movimientos?: MovDetalle[] };
 type PorFuenteApi = {
   tipo: "efectivo" | "mercado_pago";
   nombre: string;
@@ -143,6 +144,8 @@ type PorFuenteApi = {
   transferenciasSalientes: number;
   egresos: number;
   neto: number;
+  saldoInicial: number;
+  saldoTeorico: number;
 };
 type CierreApi = {
   mes: string;
@@ -150,9 +153,18 @@ type CierreApi = {
   observaciones: string | null;
   cerrado_at: string | null;
   saldo_inicial_general: number;
+  saldo_inicial_efectivo: number;
+  saldo_inicial_mp: number;
   saldo_teorico_general: number;
+  saldo_teorico_efectivo: number;
+  saldo_teorico_mp: number;
   saldo_real_guardado: number | null;
+  saldo_real_efectivo: number | null;
+  saldo_real_mp: number | null;
   diferencia_guardada: number | null;
+  diferencia_efectivo: number | null;
+  diferencia_mp: number | null;
+  informe_generado_at: string | null;
   comisiones?: ComisionesResumen | null;
   desglose: { ingresos: number; comisiones_cobro: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
   por_fuente: PorFuenteApi[];
@@ -1041,30 +1053,61 @@ function TabMovimientos({ movimientos, cuentasPorId, categoriasPorId, cuentas, c
 // ═════════ TAB: Cierre ═════════
 
 function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | null; onHecho: () => void }) {
-  const [real, setReal] = useState("");
+  const [realEf, setRealEf] = useState("");
+  const [realMp, setRealMp] = useState("");
   const [obs, setObs] = useState("");
   const [guardando, setGuardando] = useState(false);
+  const [generando, setGenerando] = useState(false);
 
   useEffect(() => {
     if (!cierre) return;
-    setReal(cierre.saldo_real_guardado !== null ? String(cierre.saldo_real_guardado) : "");
+    setRealEf(cierre.saldo_real_efectivo !== null ? String(cierre.saldo_real_efectivo) : "");
+    setRealMp(cierre.saldo_real_mp !== null ? String(cierre.saldo_real_mp) : "");
     setObs(cierre.observaciones || "");
   }, [cierre]);
 
   if (!cierre) return <p className="text-white/60">Cargando cierre...</p>;
   const cerrado = cierre.estado !== "abierto";
-  const realNum = real === "" ? null : Number(real);
-  const dif = realNum !== null && Number.isFinite(realNum) ? realNum - cierre.saldo_teorico_general : null;
+  const efNum = realEf === "" ? null : Number(realEf);
+  const mpNum = realMp === "" ? null : Number(realMp);
+  const hayReal = realEf !== "" || realMp !== "";
+  const realGeneral = (efNum ?? 0) + (mpNum ?? 0);
+  const difEf = efNum !== null && Number.isFinite(efNum) ? efNum - cierre.saldo_teorico_efectivo : null;
+  const difMp = mpNum !== null && Number.isFinite(mpNum) ? mpNum - cierre.saldo_teorico_mp : null;
+  const difGeneral = hayReal ? realGeneral - cierre.saldo_teorico_general : null;
+
+  async function generarPDF(cierreData: CierreApi) {
+    setGenerando(true);
+    try {
+      const { generarInformePdf } = await import("./informePdf");
+      let metricas: Record<string, number | null> | null = null;
+      try {
+        const mr = await fetch(`/api/admin/finanzas/metricas?mes=${mes}`, { cache: "no-store" });
+        const md = await mr.json();
+        if (mr.ok && md.metricas) metricas = { ...md.metricas, turnos: md.contexto?.turnos ?? null };
+      } catch { /* el informe se genera igual sin métricas */ }
+      generarInformePdf({ mes, mesLabel: labelMes(mes), cierre: cierreData, metricas });
+    } catch (e) {
+      console.error(e); alert("No se pudo generar el informe PDF.");
+    } finally { setGenerando(false); }
+  }
 
   async function cerrar() {
-    if (real === "" || !Number.isFinite(Number(real))) { alert("Cargá el saldo real general."); return; }
+    if (!hayReal) { alert("Cargá el saldo real de Efectivo y de Mercado Pago."); return; }
     if (!confirm(`¿Cerrar ${labelMes(mes)}? No se podrán cargar movimientos hasta reabrirlo.`)) return;
     setGuardando(true);
     try {
-      const r = await fetch("/api/admin/finanzas/cierre", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mes, saldo_real: Number(real), observaciones: obs || null }) });
+      const r = await fetch("/api/admin/finanzas/cierre", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mes, saldo_real_efectivo: Number(realEf || 0), saldo_real_mp: Number(realMp || 0), observaciones: obs || null }) });
       const d = await r.json();
       if (!r.ok) { alert(d.error || "Error cerrando"); return; }
       onHecho();
+      // Informe automático al cerrar (no bloquea el cierre si falla).
+      const cerradoData: CierreApi = {
+        ...cierre!, estado: d.estado || "cerrado",
+        saldo_real_guardado: realGeneral, saldo_real_efectivo: efNum, saldo_real_mp: mpNum,
+        diferencia_guardada: difGeneral, diferencia_efectivo: difEf, diferencia_mp: difMp,
+      };
+      generarPDF(cerradoData).catch(() => {});
     } finally { setGuardando(false); }
   }
   async function reabrir() {
@@ -1088,11 +1131,14 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
           <h2 className="text-lg font-black uppercase text-red-500">Cierre de {labelMes(mes)}</h2>
           <p className="mt-1 text-xs text-white/50">Estado: <span className={`font-black uppercase ${cierre.estado === "abierto" ? "text-white/70" : cierre.estado === "cerrado" ? "text-green-400" : "text-amber-400"}`}>{cierre.estado === "cerrado_con_diferencia" ? "Cerrado con diferencia" : cierre.estado}</span>{cierre.cerrado_at && ` · ${new Date(cierre.cerrado_at).toLocaleString("es-AR")}`}</p>
         </div>
-        {cerrado ? (
-          <button onClick={reabrir} disabled={guardando} className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-6 py-2.5 text-xs font-black uppercase text-amber-400 transition hover:bg-amber-500/20 disabled:opacity-40">↻ Reabrir mes</button>
-        ) : (
-          <button onClick={cerrar} disabled={guardando} className="rounded-xl bg-red-600 px-6 py-2.5 text-xs font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30">{guardando ? "Cerrando..." : "Cerrar mes"}</button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => generarPDF(cierre)} disabled={generando} className="rounded-xl border border-white/15 bg-white/[0.03] px-5 py-2.5 text-xs font-black uppercase text-white/70 transition hover:border-white/40 hover:text-white disabled:opacity-40">{generando ? "Generando..." : "⬇ Informe PDF"}</button>
+          {cerrado ? (
+            <button onClick={reabrir} disabled={guardando} className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-6 py-2.5 text-xs font-black uppercase text-amber-400 transition hover:bg-amber-500/20 disabled:opacity-40">↻ Reabrir mes</button>
+          ) : (
+            <button onClick={cerrar} disabled={guardando} className="rounded-xl bg-red-600 px-6 py-2.5 text-xs font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30">{guardando ? "Cerrando..." : "Cerrar mes"}</button>
+          )}
+        </div>
       </div>
 
       {cerrado && <p className="rounded-xl border border-amber-500/25 bg-amber-950/10 px-4 py-2 text-xs font-bold text-amber-400">Mes cerrado: no se pueden cargar ni editar movimientos. Tocá “Reabrir mes” para volver a habilitar cambios.</p>}
@@ -1120,18 +1166,29 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
         <BloqueComisiones com={cierre.comisiones} />
       )}
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-white/10 bg-black p-4">
-          <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Saldo real general (contado por vos)</label>
-          <input type="number" value={real} disabled={cerrado} onChange={(e) => setReal(e.target.value)} placeholder="0" className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-lg font-black outline-none focus:border-red-500 disabled:opacity-50" />
-          {dif !== null && <p className={`mt-2 text-sm font-black ${Math.abs(dif) < 1 ? "text-green-400" : "text-amber-400"}`}>Diferencia general: {dinero(dif)}</p>}
+          <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Saldo real Efectivo</label>
+          <input type="number" value={realEf} disabled={cerrado} onChange={(e) => setRealEf(e.target.value)} placeholder="0" className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-lg font-black outline-none focus:border-red-500 disabled:opacity-50" />
+          <p className="mt-1 text-[10px] text-white/35">Teórico: {dinero(cierre.saldo_teorico_efectivo)}</p>
+          {difEf !== null && <p className={`mt-1 text-sm font-black ${Math.abs(difEf) < 1 ? "text-green-400" : "text-amber-400"}`}>Dif. Efectivo: {dinero(difEf)}</p>}
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Saldo real Mercado Pago</label>
+          <input type="number" value={realMp} disabled={cerrado} onChange={(e) => setRealMp(e.target.value)} placeholder="0" className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-lg font-black outline-none focus:border-red-500 disabled:opacity-50" />
+          <p className="mt-1 text-[10px] text-white/35">Teórico: {dinero(cierre.saldo_teorico_mp)}</p>
+          {difMp !== null && <p className={`mt-1 text-sm font-black ${Math.abs(difMp) < 1 ? "text-green-400" : "text-amber-400"}`}>Dif. MP: {dinero(difMp)}</p>}
         </div>
         <div className="rounded-2xl border border-white/10 bg-black p-4">
           <label className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Observaciones</label>
           <textarea value={obs} onChange={(e) => setObs(e.target.value)} disabled={cerrado} rows={3} placeholder="Notas del cierre..." className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/25 focus:border-red-500 disabled:opacity-50" />
         </div>
       </div>
-      <p className="text-xs text-white/35">El cierre oficial es general. El saldo inicial del mes siguiente arranca automáticamente con este saldo real.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2 text-sm">
+        <span className="font-black uppercase text-white/60">Saldo real general (Efectivo + MP)</span>
+        <span className="font-black">{hayReal ? dinero(realGeneral) : "—"}{difGeneral !== null && <span className={`ml-3 ${Math.abs(difGeneral) < 1 ? "text-green-400" : "text-amber-400"}`}>Dif: {dinero(difGeneral)}</span>}</span>
+      </div>
+      <p className="text-xs text-white/35">El cierre oficial es general, pero se carga por fuente. El mes siguiente arranca con el saldo real de Efectivo y de Mercado Pago por separado.</p>
 
       {/* B) Desglose por fuente */}
       <div>
@@ -1153,6 +1210,16 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
                 {f.pagosDeuda > 0 && <FilaFuente label="Pagos de deuda" valor={f.pagosDeuda} />}
                 <FilaFuente label="Transf. entrantes" valor={f.transferenciasEntrantes} />
                 <FilaFuente label="Transf. salientes" valor={f.transferenciasSalientes} />
+              </div>
+              <div className="mt-2 space-y-1 border-t border-white/10 pt-2 text-xs">
+                <div className="flex items-center justify-between"><span className="text-white/50">Saldo inicial</span><span className="font-bold text-white/80">{dinero(f.saldoInicial)}</span></div>
+                <div className="flex items-center justify-between"><span className="text-white/50">Saldo teórico</span><span className="font-black">{dinero(f.saldoTeorico)}</span></div>
+                {cerrado && (
+                  <>
+                    <div className="flex items-center justify-between"><span className="text-white/50">Saldo real</span><span className="font-black">{dinero((f.tipo === "efectivo" ? cierre.saldo_real_efectivo : cierre.saldo_real_mp) ?? 0)}</span></div>
+                    <div className="flex items-center justify-between"><span className="text-white/50">Diferencia</span><span className={`font-black ${Math.abs((f.tipo === "efectivo" ? cierre.diferencia_efectivo : cierre.diferencia_mp) ?? 0) < 1 ? "text-green-400" : "text-amber-400"}`}>{dinero((f.tipo === "efectivo" ? cierre.diferencia_efectivo : cierre.diferencia_mp) ?? 0)}</span></div>
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -1182,7 +1249,7 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
                 <>
                   <p className="mb-1 mt-3 text-[10px] font-black uppercase text-white/40">Manuales</p>
                   {det.ingresos.manuales_por_categoria.map((c) => (
-                    <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={ingresosTotal} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} />
+                    <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={ingresosTotal} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} movimientos={c.movimientos} />
                   ))}
                 </>
               )}
@@ -1204,7 +1271,7 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
             <div className="border-t border-white/10 px-4 py-3">
               {det.sueldo_por_categoria.length === 0 ? <p className="text-sm text-white/40">Sin gastos de sueldo este mes.</p> : (
                 det.sueldo_por_categoria.map((c) => (
-                  <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={det.sueldo_total} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} />
+                  <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={det.sueldo_total} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} movimientos={c.movimientos} />
                 ))
               )}
             </div>
@@ -1244,15 +1311,34 @@ function FilaFuente({ label, valor, color }: { label: string; valor: number; col
   const cls = color === "verde" ? "text-green-400" : color === "ambar" ? "text-amber-400" : "text-white/80";
   return (<div className="flex items-center justify-between"><span className="text-white/50">{label}</span><span className={`font-bold ${cls}`}>{dinero(valor)}</span></div>);
 }
-function RubroFila({ nombre, total, base, cantidad, ef, mp }: { nombre: string; total: number; base: number; cantidad?: number; ef?: number; mp?: number }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-t border-white/5 py-1.5 text-xs first:border-t-0">
+function RubroFila({ nombre, total, base, cantidad, ef, mp, movimientos }: { nombre: string; total: number; base: number; cantidad?: number; ef?: number; mp?: number; movimientos?: MovDetalle[] }) {
+  const resumen = (
+    <div className="flex items-center justify-between gap-3 text-xs">
       <div className="min-w-0">
         <span className="font-bold text-white/70">{nombre}</span>
         <span className="ml-2 text-white/30">{base > 0 ? `${Math.round((total / base) * 100)}%` : ""}{cantidad ? ` · ${cantidad} mov.` : ""}{(ef || mp) ? ` · Ef ${dinero(ef || 0)} / MP ${dinero(mp || 0)}` : ""}</span>
       </div>
       <span className="shrink-0 font-black">{dinero(total)}</span>
     </div>
+  );
+  const det = Array.isArray(movimientos) && movimientos.length > 0;
+  if (!det) return <div className="border-t border-white/5 py-1.5 first:border-t-0">{resumen}</div>;
+  return (
+    <details className="border-t border-white/5 first:border-t-0">
+      <summary className="cursor-pointer list-none py-1.5 marker:content-none">{resumen}</summary>
+      <div className="mb-2 ml-1 border-l border-white/10 pl-3">
+        {movimientos.map((m) => (
+          <div key={m.id} className="flex items-start justify-between gap-3 py-1 text-[11px]">
+            <div className="min-w-0">
+              <span className="text-white/60">{m.fecha.slice(8)}/{m.fecha.slice(5, 7)} · {m.descripcion || "Sin descripción"}</span>
+              <span className="ml-1 text-white/30">{m.fuente ? (m.fuente === "efectivo" ? "· Efectivo" : "· MP") : ""}{m.origen && m.origen !== "manual" ? ` · ${m.origen}` : ""}</span>
+              {m.observaciones && <div className="text-white/30">{m.observaciones}</div>}
+            </div>
+            <span className="shrink-0 font-bold text-white/70">{dinero(m.monto)}</span>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 function RubroDetalle({ titulo, items, base, color }: { titulo: string; items: RubroCat[]; base: number; color: string }) {
@@ -1264,7 +1350,7 @@ function RubroDetalle({ titulo, items, base, color }: { titulo: string; items: R
       </summary>
       <div className="border-t border-white/10 px-4 py-3">
         {items.length === 0 ? <p className="text-sm text-white/40">Sin movimientos en este rubro.</p> : (
-          items.map((c) => <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={base} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} />)
+          items.map((c) => <RubroFila key={c.categoria} nombre={c.categoria} total={c.total} base={base} cantidad={c.cantidad} ef={c.efectivo} mp={c.mercado_pago} movimientos={c.movimientos} />)
         )}
       </div>
     </details>
