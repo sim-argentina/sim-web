@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
 import { isValidDateStr } from "@/lib/security";
 
@@ -15,7 +15,7 @@ function parseId(id: string): number | null {
 
 // PATCH: solo descripcion / fecha_limite / completado (anti mass-assignment).
 export async function PATCH(req: Request, { params }: RouteContext) {
-  const auth = await requireStaffOrAdmin();
+  const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
@@ -69,7 +69,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
 // DELETE: eliminación definitiva.
 export async function DELETE(_req: Request, { params }: RouteContext) {
-  const auth = await requireStaffOrAdmin();
+  const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
 
   const { id } = await params;

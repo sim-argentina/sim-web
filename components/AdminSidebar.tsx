@@ -52,7 +52,7 @@ export default function AdminSidebar({ role }: Props) {
     {
       label: "Pendientes",
       href: "/admin/pendientes",
-      roles: ["admin", "staff"],
+      roles: ["admin"],
     },
     {
       label: "Gift Cards",

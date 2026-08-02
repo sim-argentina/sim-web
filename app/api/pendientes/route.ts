@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
 import { isValidDateStr } from "@/lib/security";
 
@@ -18,7 +18,7 @@ function parseFecha(v: unknown): { ok: true; value: string | null } | { ok: fals
 }
 
 export async function GET() {
-  const auth = await requireStaffOrAdmin();
+  const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
 
   const { data, error } = await supabaseAdmin
@@ -31,7 +31,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const auth = await requireStaffOrAdmin();
+  const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
 
   let body: Record<string, unknown> = {};
