@@ -910,11 +910,13 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
     break;
   }
 
-  // Gasto de "Mi sueldo": si el texto menciona sueldo/personal, es un egreso
-  // clasificado como sueldo_personal. Si además el texto nombra otra categoría
-  // (de cualquier tipo activo, ej. comida, nafta, tarjeta…), se usa esa; si no,
-  // cae en la categoría "Mi sueldo".
-  if (/\bsueldo\b|mi\s*sueldo|\bpersonal\b|gasto\s*sueldo/.test(t)) {
+  // Gasto de "Mi sueldo": SOLO cuando el texto dice literalmente "mi sueldo"
+  // (con espacio) es un egreso clasificado como sueldo_personal. "sueldo"/"sueldos"
+  // solos (p. ej. "sueldo fede", "sueldos chicos", "adelanto sueldo") NO disparan
+  // esto: son gasto/costo común del stand según su categoría.
+  // Si además el texto nombra otra categoría (de cualquier tipo activo, ej. F1TV,
+  // comida, nafta…), se usa esa; si no, cae en la categoría "Mi sueldo".
+  if (/\bmi\s+sueldo\b/.test(t)) {
     tipo = "egreso";
     clasificacion = "sueldo_personal";
     confianza += 0.2;

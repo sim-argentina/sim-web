@@ -486,8 +486,10 @@ export default function FinanzasClient() {
   const interpretar = useCallback(async (texto: string, forzarSueldo = false) => {
     const t = texto.trim();
     if (t.length < 3) return;
-    // Fuerza la intención "Mi sueldo" cuando se carga desde la barra de sueldo.
-    const consulta = forzarSueldo && !/sueldo|personal/i.test(t) ? `sueldo ${t}` : t;
+    // Fuerza la intención "Mi sueldo" cuando se carga desde la barra de sueldo:
+    // antepone "mi sueldo" para que el clasificador dispare gasto de sueldo y
+    // detecte la categoría secundaria (F1TV, comida, etc.).
+    const consulta = forzarSueldo && !/\bmi\s+sueldo\b/i.test(t) ? `mi sueldo ${t}` : t;
     const r = await fetch("/api/admin/finanzas/clasificar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
