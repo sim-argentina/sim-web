@@ -896,8 +896,13 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
   let clasificacion: string = tipo === "ingreso" ? "ingreso" : "gasto";
   let cuentaRegla: string | null = null;
 
+  // Para textos de "mi sueldo", las reglas se evalúan SIN el identificador
+  // "mi sueldo" (que solo define el tipo), conservando el resto del texto. Para el
+  // resto de los textos, tReglas === t (no hay nada que quitar).
+  const tReglas = t.replace(/\bmi\s+sueldo\b/g, " ").replace(/\s+/g, " ").trim();
+
   for (const r of reglas) {
-    if (!t.includes(normalizar(r.keyword))) continue;
+    if (!tReglas.includes(normalizar(r.keyword))) continue;
     if (tipoExplicito && r.tipo_sugerido && r.tipo_sugerido !== tipo) continue;
     if (r.tipo_sugerido && tipo !== "transferencia") tipo = r.tipo_sugerido as ClasificacionSugerida["tipo"];
     if (r.clasificacion_sugerida) clasificacion = r.clasificacion_sugerida;
@@ -921,29 +926,31 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
     tipo = "egreso";
     clasificacion = "sueldo_personal";
     confianza += 0.2;
-    // Quita "mi sueldo" del texto antes de buscar la categoría secundaria.
-    const sinMiSueldo = ` ${t.replace(/\bmi\s+sueldo\b/g, " ").replace(/\s+/g, " ").trim()} `;
-    const activas = categorias.filter((c) => c.activa);
-    const esMiSueldo = (c: FinCategoria) => normalizar(c.nombre).trim() === "mi sueldo";
-    // Categoría secundaria = categoría activa (distinta de "Mi sueldo") cuyo nombre
-    // normalizado aparece en el texto. Prioriza el match más largo (longest match)
-    // y, a igualdad, la categoría de tipo sueldo_personal (subcategoría del sueldo).
-    let mejor: FinCategoria | null = null;
-    let mejorLen = 0;
-    for (const c of activas) {
-      if (esMiSueldo(c)) continue;
-      const nombreNorm = normalizar(c.nombre.split("/")[0].trim());
-      if (nombreNorm.length < 3) continue;
-      if (!sinMiSueldo.includes(nombreNorm)) continue;
-      const mejorEsSueldo = mejor?.tipo === "sueldo_personal";
-      const esSueldoCat = c.tipo === "sueldo_personal";
-      if (nombreNorm.length > mejorLen || (nombreNorm.length === mejorLen && esSueldoCat && !mejorEsSueldo)) {
-        mejor = c;
-        mejorLen = nombreNorm.length;
+    // Las reglas activas tienen prioridad: si el loop anterior ya asignó una
+    // categoría por regla (ej. F1TV → Plataformas e IAs), se respeta. Solo si NO
+    // hubo regla se busca la categoría por coincidencia de nombre; si tampoco hay,
+    // queda "Sin categoría" (nunca la categoría "Mi sueldo").
+    if (!categoriaId) {
+      const sinMiSueldo = ` ${tReglas} `;
+      const activas = categorias.filter((c) => c.activa);
+      const esMiSueldo = (c: FinCategoria) => normalizar(c.nombre).trim() === "mi sueldo";
+      let mejor: FinCategoria | null = null;
+      let mejorLen = 0;
+      for (const c of activas) {
+        if (esMiSueldo(c)) continue;
+        const nombreNorm = normalizar(c.nombre.split("/")[0].trim());
+        if (nombreNorm.length < 3) continue;
+        if (!sinMiSueldo.includes(nombreNorm)) continue;
+        const mejorEsSueldo = mejor?.tipo === "sueldo_personal";
+        const esSueldoCat = c.tipo === "sueldo_personal";
+        if (nombreNorm.length > mejorLen || (nombreNorm.length === mejorLen && esSueldoCat && !mejorEsSueldo)) {
+          mejor = c;
+          mejorLen = nombreNorm.length;
+        }
       }
+      categoriaId = mejor ? mejor.id : null;
+      categoriaNombre = mejor ? mejor.nombre : null;
     }
-    categoriaId = mejor ? mejor.id : null;
-    categoriaNombre = mejor ? mejor.nombre : null;
   }
 
   let cuentaOrigen: string | null = null;
