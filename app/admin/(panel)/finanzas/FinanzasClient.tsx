@@ -295,11 +295,14 @@ type MovForm = {
   monto: string;
   observaciones: string;
   esSueldo: boolean;
+  // Formulario "Gasto de sueldo": bloquea el movimiento como sueldo_personal
+  // aunque se elija otra categoría (F1TV, Comida, Nafta…).
+  sueldoLock: boolean;
 };
 function movFormVacio(preset: Partial<MovForm> = {}): MovForm {
   return {
     id: null, fecha: fechaHoy(), tipo: "egreso", clasificacion: "gasto",
-    cuenta_origen_id: "", cuenta_destino_id: "", categoria_id: "", descripcion: "", monto: "", observaciones: "", esSueldo: false,
+    cuenta_origen_id: "", cuenta_destino_id: "", categoria_id: "", descripcion: "", monto: "", observaciones: "", esSueldo: false, sueldoLock: false,
     ...preset,
   };
 }
@@ -506,6 +509,7 @@ export default function FinanzasClient() {
         tipo: esSueldo ? "egreso" : s.tipo === "ajuste" ? "ajuste" : s.tipo,
         clasificacion: esSueldo ? "sueldo_personal" : s.clasificacion,
         esSueldo,
+        sueldoLock: esSueldo,
         cuenta_origen_id: s.cuenta_origen_id || "",
         categoria_id: s.categoria_id || "",
         descripcion: t,
@@ -531,8 +535,12 @@ export default function FinanzasClient() {
     // viejos). Se excluye "ajuste" (los ajustes de saldo no usan este selector),
     // salvo que sea la categoría ya asignada al movimiento en edición.
     const actual = movForm.categoria_id || "";
+    // En "Gasto de sueldo", "Mi sueldo" es el tipo padre: no se ofrece como
+    // categoría elegible (sí las subcategorías: Comida, Nafta, Tarjeta…).
+    const ocultarMiSueldo = Boolean(movForm.sueldoLock);
     return categorias
       .filter((c) => c.tipo !== "ajuste" || c.id === actual)
+      .filter((c) => !(ocultarMiSueldo && c.nombre.trim().toLowerCase() === "mi sueldo" && c.id !== actual))
       .sort((a, b) => {
         const ta = ORDEN_TIPO_CAT[a.tipo] ?? 99;
         const tb = ORDEN_TIPO_CAT[b.tipo] ?? 99;
@@ -545,9 +553,14 @@ export default function FinanzasClient() {
   const aplicarCategoria = (catId: string) => {
     setMovForm((f) => {
       if (!f) return f;
-      if (!catId) return { ...f, categoria_id: "" };
+      if (!catId) return { ...f, categoria_id: catId };
       const cat = categoriasPorId[catId];
       if (!cat) return { ...f, categoria_id: catId };
+      // En "Gasto de sueldo" la categoría NO cambia el tipo: sigue siendo
+      // sueldo_personal (F1TV/Comida/Nafta son subcategorías del sueldo).
+      if (f.sueldoLock) {
+        return { ...f, categoria_id: catId, tipo: "egreso", clasificacion: "sueldo_personal", esSueldo: true };
+      }
       const m = movDesdeCategoria(cat.tipo);
       return { ...f, categoria_id: catId, tipo: m.tipo, clasificacion: m.clasificacion, esSueldo: m.esSueldo };
     });
@@ -555,7 +568,7 @@ export default function FinanzasClient() {
 
   const abrirGasto = () => setMovForm(movFormVacio({ tipo: "egreso", clasificacion: "gasto" }));
   const abrirIngreso = () => setMovForm(movFormVacio({ tipo: "ingreso", clasificacion: "ingreso" }));
-  const abrirSueldo = () => setMovForm(movFormVacio({ tipo: "egreso", clasificacion: "sueldo_personal", esSueldo: true }));
+  const abrirSueldo = () => setMovForm(movFormVacio({ tipo: "egreso", clasificacion: "sueldo_personal", esSueldo: true, sueldoLock: true }));
   const abrirTransf = () => setTransfForm({ fecha: fechaHoy(), cuenta_origen_id: "", cuenta_destino_id: "", monto: "", descripcion: "" });
 
   const inputCls = "w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500";
@@ -625,6 +638,7 @@ export default function FinanzasClient() {
                   clasificacion: m.clasificacion, cuenta_origen_id: m.cuenta_origen_id || "", cuenta_destino_id: m.cuenta_destino_id || "",
                   categoria_id: m.categoria_id || "", descripcion: m.descripcion, monto: String(m.monto), observaciones: m.observaciones || "",
                   esSueldo: m.clasificacion === "sueldo_personal" || m.clasificacion === "retiro",
+                  sueldoLock: m.clasificacion === "sueldo_personal" || m.clasificacion === "retiro",
                 })}
                 onEliminar={eliminarMovimiento} />
             )}

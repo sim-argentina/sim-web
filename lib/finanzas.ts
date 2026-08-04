@@ -914,26 +914,36 @@ export async function clasificarTexto(texto: string): Promise<ClasificacionSuger
   // (con espacio) es un egreso clasificado como sueldo_personal. "sueldo"/"sueldos"
   // solos (p. ej. "sueldo fede", "sueldos chicos", "adelanto sueldo") NO disparan
   // esto: son gasto/costo común del stand según su categoría.
-  // Si además el texto nombra otra categoría (de cualquier tipo activo, ej. F1TV,
-  // comida, nafta…), se usa esa; si no, cae en la categoría "Mi sueldo".
+  // "Mi sueldo" es el TIPO del movimiento, no una categoría: la categoría final es
+  // la OTRA categoría detectada en el texto (F1TV, Comida, Nafta…); si no hay
+  // ninguna, queda "Sin categoría" (nunca la categoría "Mi sueldo").
   if (/\bmi\s+sueldo\b/.test(t)) {
     tipo = "egreso";
     clasificacion = "sueldo_personal";
     confianza += 0.2;
+    // Quita "mi sueldo" del texto antes de buscar la categoría secundaria.
+    const sinMiSueldo = ` ${t.replace(/\bmi\s+sueldo\b/g, " ").replace(/\s+/g, " ").trim()} `;
     const activas = categorias.filter((c) => c.activa);
-    const esMiSueldo = (c: FinCategoria) => /mi\s*sueldo/.test(normalizar(c.nombre));
-    const miSueldo = activas.find((c) => c.tipo === "sueldo_personal" && esMiSueldo(c));
-    // Otra categoría mencionada en el texto (cualquier tipo), distinta de "Mi sueldo".
-    const otra = activas.find((c) => {
-      if (esMiSueldo(c)) return false;
-      const token = normalizar(c.nombre.split("/")[0].trim());
-      return token.length >= 3 && t.includes(token);
-    });
-    const cat = otra || miSueldo || activas.find((c) => c.tipo === "sueldo_personal") || null;
-    if (cat) {
-      categoriaId = cat.id;
-      categoriaNombre = cat.nombre;
+    const esMiSueldo = (c: FinCategoria) => normalizar(c.nombre).trim() === "mi sueldo";
+    // Categoría secundaria = categoría activa (distinta de "Mi sueldo") cuyo nombre
+    // normalizado aparece en el texto. Prioriza el match más largo (longest match)
+    // y, a igualdad, la categoría de tipo sueldo_personal (subcategoría del sueldo).
+    let mejor: FinCategoria | null = null;
+    let mejorLen = 0;
+    for (const c of activas) {
+      if (esMiSueldo(c)) continue;
+      const nombreNorm = normalizar(c.nombre.split("/")[0].trim());
+      if (nombreNorm.length < 3) continue;
+      if (!sinMiSueldo.includes(nombreNorm)) continue;
+      const mejorEsSueldo = mejor?.tipo === "sueldo_personal";
+      const esSueldoCat = c.tipo === "sueldo_personal";
+      if (nombreNorm.length > mejorLen || (nombreNorm.length === mejorLen && esSueldoCat && !mejorEsSueldo)) {
+        mejor = c;
+        mejorLen = nombreNorm.length;
+      }
     }
+    categoriaId = mejor ? mejor.id : null;
+    categoriaNombre = mejor ? mejor.nombre : null;
   }
 
   let cuentaOrigen: string | null = null;
