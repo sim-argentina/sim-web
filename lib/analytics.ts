@@ -18,14 +18,39 @@ declare global {
   }
 }
 
+// Dominios productivos reales de SIM. Analytics del CÓDIGO solo mide la web
+// pública en estos hosts (evita contaminar GA4 con localhost, Vercel Preview y
+// deployments temporales).
+const HOSTS_PRODUCCION = new Set(["simexperience.com.ar", "www.simexperience.com.ar"]);
+
+// Política pura y testeable: permitido solo si el hostname es productivo y el
+// pathname NO es exactamente "/admin" ni empieza con "/admin/". No se apoya en
+// NODE_ENV porque un Vercel Preview también corre en modo production: el límite
+// efectivo es el hostname productivo. "/administracion" NO se bloquea.
+export function analyticsAllowedFor(hostname: string, pathname: string): boolean {
+  if (!HOSTS_PRODUCCION.has(hostname)) return false;
+  if (pathname === "/admin" || pathname.startsWith("/admin/")) return false;
+  return true;
+}
+
+// ¿Puede el código enviar eventos de Analytics en este contexto?
+// 1) navegador, 2) hostname productivo, 3) fuera de /admin(/*).
+export function isAnalyticsAllowed(): boolean {
+  if (typeof window === "undefined") return false;
+  return analyticsAllowedFor(window.location.hostname, window.location.pathname);
+}
+
 export function pushDataLayer(obj: DL): void {
   if (typeof window === "undefined") return;
   window.dataLayer = window.dataLayer || [];
   window.dataLayer.push(obj);
 }
 
-// Evento GA4 (se envía a GA4 a través del contenedor de GTM).
+// Evento GA4 (se envía a GA4 a través del contenedor de GTM). Guard central: en
+// admin/dev/preview/otros dominios NO se emite ningún evento del código. No afecta
+// a Consent Mode (gtag('consent',...) se maneja aparte y sigue funcionando).
 export function gaEvent(event: string, params: DL = {}): void {
+  if (!isAnalyticsAllowed()) return;
   pushDataLayer({ event, ...params });
 }
 
