@@ -2,9 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { isValidDateStr } from "@/lib/security";
-
-const MAX_DESC = 1000;
+import { validarTitulo, normalizarDescripcion, parseFechaLimite } from "@/lib/pendientes";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -13,7 +11,7 @@ function parseId(id: string): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-// PATCH: solo descripcion / fecha_limite / completado (anti mass-assignment).
+// PATCH: solo titulo / descripcion / fecha_limite / completado (anti mass-assignment).
 export async function PATCH(req: Request, { params }: RouteContext) {
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
@@ -31,18 +29,22 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
   const updates: Record<string, unknown> = {};
 
+  if ("titulo" in body) {
+    const t = validarTitulo(body.titulo);
+    if (!t.ok) return NextResponse.json({ error: t.error }, { status: 400 });
+    updates.titulo = t.value;
+  }
+
   if ("descripcion" in body) {
-    const desc = String(body.descripcion ?? "").trim();
-    if (!desc) return NextResponse.json({ error: "La descripción es obligatoria" }, { status: 400 });
-    if (desc.length > MAX_DESC) return NextResponse.json({ error: "La descripción es demasiado larga" }, { status: 400 });
-    updates.descripcion = desc;
+    const d = normalizarDescripcion(body.descripcion);
+    if (!d.ok) return NextResponse.json({ error: d.error }, { status: 400 });
+    updates.descripcion = d.value; // "" o espacios → null
   }
 
   if ("fecha_limite" in body) {
-    const v = body.fecha_limite;
-    if (v === null || v === "" || v === undefined) updates.fecha_limite = null;
-    else if (typeof v === "string" && isValidDateStr(v.trim())) updates.fecha_limite = v.trim();
-    else return NextResponse.json({ error: "Fecha límite inválida (YYYY-MM-DD)" }, { status: 400 });
+    const f = parseFechaLimite(body.fecha_limite);
+    if (!f.ok) return NextResponse.json({ error: "Fecha límite inválida (YYYY-MM-DD)" }, { status: 400 });
+    updates.fecha_limite = f.value;
   }
 
   if (typeof body.completado === "boolean") {

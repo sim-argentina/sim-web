@@ -2,20 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { isValidDateStr } from "@/lib/security";
+import { validarTitulo, normalizarDescripcion, parseFechaLimite } from "@/lib/pendientes";
 
-// Tareas pendientes internas de SIM. Solo admin/staff, vía service_role
-// (la tabla es RLS deny-all: nunca se expone al cliente público).
-
-const MAX_DESC = 1000;
-
-// Valida una fecha límite opcional. Devuelve { ok, value } con string 'YYYY-MM-DD'
-// o null. Cadena vacía / null / undefined → null.
-function parseFecha(v: unknown): { ok: true; value: string | null } | { ok: false } {
-  if (v === undefined || v === null || v === "") return { ok: true, value: null };
-  if (typeof v === "string" && isValidDateStr(v.trim())) return { ok: true, value: v.trim() };
-  return { ok: false };
-}
+// Tareas pendientes internas de SIM. SOLO admin, vía service_role (la tabla es RLS
+// deny-all: nunca se expone al cliente público). Modelo: titulo (obligatorio) +
+// descripcion (opcional) + fecha_limite (opcional).
 
 export async function GET() {
   const auth = await requireAdmin();
@@ -41,16 +32,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Body inválido" }, { status: 400 });
   }
 
-  const descripcion = String(body.descripcion ?? "").trim();
-  if (!descripcion) return NextResponse.json({ error: "La descripción es obligatoria" }, { status: 400 });
-  if (descripcion.length > MAX_DESC) return NextResponse.json({ error: "La descripción es demasiado larga" }, { status: 400 });
+  const titulo = validarTitulo(body.titulo);
+  if (!titulo.ok) return NextResponse.json({ error: titulo.error }, { status: 400 });
 
-  const fecha = parseFecha(body.fecha_limite);
+  const descripcion = normalizarDescripcion(body.descripcion);
+  if (!descripcion.ok) return NextResponse.json({ error: descripcion.error }, { status: 400 });
+
+  const fecha = parseFechaLimite(body.fecha_limite);
   if (!fecha.ok) return NextResponse.json({ error: "Fecha límite inválida (YYYY-MM-DD)" }, { status: 400 });
 
+  // Solo campos permitidos (anti mass-assignment).
   const { data, error } = await supabaseAdmin
     .from("pendientes")
-    .insert([{ descripcion, fecha_limite: fecha.value }])
+    .insert([{ titulo: titulo.value, descripcion: descripcion.value, fecha_limite: fecha.value }])
     .select()
     .single();
 
