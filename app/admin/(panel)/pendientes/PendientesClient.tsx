@@ -62,7 +62,7 @@ function BadgeFecha({ estado, fecha }: { estado: EstadoFecha; fecha: string | nu
 function MenuAcciones({ onEditar, onEliminar }: { onEditar: () => void; onEliminar: () => void }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="relative shrink-0">
+    <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
       <button
         onClick={() => setOpen((o) => !o)}
         aria-label="Acciones"
@@ -94,15 +94,19 @@ function MenuAcciones({ onEditar, onEliminar }: { onEditar: () => void; onElimin
 }
 
 function Fila({
-  p, hoy, onToggle, onEditar, onEliminar, disabled,
+  p, hoy, onToggle, onEditar, onEliminar, onAbrir, disabled,
 }: {
-  p: Pendiente; hoy: string; onToggle: () => void; onEditar: () => void; onEliminar: () => void; disabled: boolean;
+  p: Pendiente; hoy: string; onToggle: () => void; onEditar: () => void; onEliminar: () => void; onAbrir: () => void; disabled: boolean;
 }) {
   const est = estadoFecha(p.fecha_limite, hoy);
   const completado = p.completado;
   return (
-    <div className={`flex items-center gap-3 rounded-2xl border border-white/10 px-3 py-3 sm:px-4 ${completado ? "bg-white/[0.02] opacity-70" : "bg-white/[0.03]"}`}>
-      <label className="flex shrink-0 cursor-pointer items-center">
+    <div
+      onClick={onAbrir}
+      className={`flex cursor-pointer items-center gap-3 rounded-2xl border border-white/10 px-3 py-3 transition hover:border-white/20 hover:bg-white/[0.06] sm:px-4 ${completado ? "bg-white/[0.02] opacity-70" : "bg-white/[0.03]"}`}
+    >
+      {/* stopPropagation: completar/restaurar no debe abrir la lectura. */}
+      <label className="flex shrink-0 cursor-pointer items-center" onClick={(e) => e.stopPropagation()}>
         <input
           type="checkbox"
           checked={completado}
@@ -152,6 +156,7 @@ export default function PendientesClient() {
   const [aEliminar, setAEliminar] = useState<Pendiente | null>(null);
   const [eliminando, setEliminando] = useState(false);
   const [toggling, setToggling] = useState<number | null>(null);
+  const [verLectura, setVerLectura] = useState<Pendiente | null>(null);
 
   const hoy = hoyAR();
 
@@ -176,6 +181,14 @@ export default function PendientesClient() {
   }, []);
 
   useEffect(() => { cargar(); }, [cargar]);
+
+  // Cerrar la vista de lectura con Escape (no afecta a los otros modales).
+  useEffect(() => {
+    if (!verLectura) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setVerLectura(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [verLectura]);
 
   const { vencidos, proximos, sinfecha } = useMemo(() => agruparAbiertos(items, hoy), [items, hoy]);
   const completados = useMemo(() => ordenarCompletados(items), [items]);
@@ -267,6 +280,7 @@ export default function PendientesClient() {
     onToggle: () => toggleCompletado(p),
     onEditar: () => abrirEdicion(p),
     onEliminar: () => setAEliminar(p),
+    onAbrir: () => setVerLectura(p),
     disabled: toggling === p.id,
   });
 
@@ -360,6 +374,46 @@ export default function PendientesClient() {
               <div className="space-y-2">{completados.map((p) => <Fila key={p.id} {...filaProps(p)} />)}</div>
             )
           )}
+        </div>
+      )}
+
+      {/* Modal de LECTURA (click en la fila) */}
+      {verLectura && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/80 p-4" onClick={() => setVerLectura(null)}>
+          <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-zinc-950 p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <h2 className="break-words text-xl font-black text-white">{verLectura.titulo}</h2>
+              <button onClick={() => setVerLectura(null)} aria-label="Cerrar" className="shrink-0 text-2xl leading-none text-zinc-500 hover:text-white">×</button>
+            </div>
+
+            {verLectura.descripcion && (
+              <div className="mb-4 max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-relaxed text-zinc-200">
+                {verLectura.descripcion}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="mb-1.5 text-[10px] font-black uppercase tracking-wider text-zinc-500">Fecha límite</p>
+                <BadgeFecha estado={estadoFecha(verLectura.fecha_limite, hoy)} fecha={verLectura.fecha_limite} />
+              </div>
+              <div>
+                <p className="mb-1.5 text-[10px] font-black uppercase tracking-wider text-zinc-500">Estado</p>
+                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${verLectura.completado ? "border border-green-500/30 bg-green-500/15 text-green-400" : "border border-white/15 bg-white/[0.04] text-white/70"}`}>
+                  {verLectura.completado ? "Completado" : "Pendiente"}
+                </span>
+              </div>
+            </div>
+
+            {verLectura.completado && verLectura.completado_at && (
+              <p className="mt-3 text-xs text-zinc-500">Completado el {fechaHora(verLectura.completado_at).replace(", ", " a las ")}</p>
+            )}
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setVerLectura(null)} className="rounded-xl border border-white/10 px-5 py-2 text-sm font-bold text-zinc-300 hover:text-white">Cerrar</button>
+              <button onClick={() => { const q = verLectura; setVerLectura(null); abrirEdicion(q); }} className="rounded-xl bg-red-600 px-6 py-2 text-sm font-black text-white hover:bg-red-500">Editar</button>
+            </div>
+          </div>
         </div>
       )}
 
