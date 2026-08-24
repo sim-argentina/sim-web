@@ -29,26 +29,42 @@ export async function GET(req: Request) {
     const desde = searchParams.get("desde");
     const hasta = searchParams.get("hasta");
 
-    let query = supabaseAdmin
-      .from("turnos_stand")
-      .select("*")
-      .order("fecha", { ascending: true })
-      .order("hora", { ascending: true });
+    // Paginación interna: PostgREST corta en 1000 filas por request. Sin este
+    // bucle, las métricas veían solo las primeras 1000 (ordenadas por fecha),
+    // subestimando ventas/facturación de los meses más recientes. Traemos todas
+    // las filas que matchean el filtro en lotes de 1000.
+    const pageSize = 1000;
+    let from = 0;
+    const turnos: unknown[] = [];
 
-    if (fecha && FECHA_RE.test(fecha)) {
-      query = query.eq("fecha", fecha);
-    } else {
-      if (desde && FECHA_RE.test(desde)) query = query.gte("fecha", desde);
-      if (hasta && FECHA_RE.test(hasta)) query = query.lte("fecha", hasta);
+    while (true) {
+      let query = supabaseAdmin
+        .from("turnos_stand")
+        .select("*")
+        .order("fecha", { ascending: true })
+        .order("hora", { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (fecha && FECHA_RE.test(fecha)) {
+        query = query.eq("fecha", fecha);
+      } else {
+        if (desde && FECHA_RE.test(desde)) query = query.gte("fecha", desde);
+        if (hasta && FECHA_RE.test(hasta)) query = query.lte("fecha", hasta);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-stand", error });
+      }
+
+      const lote = data ?? [];
+      turnos.push(...lote);
+      if (lote.length < pageSize) break;
+      from += pageSize;
     }
 
-    const { data, error } = await query;
-
-    if (error) {
-      return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-stand", error });
-    }
-
-    return NextResponse.json({ turnos: data });
+    return NextResponse.json({ turnos });
   } catch {
     return NextResponse.json(
       { error: "Error cargando turnos" },

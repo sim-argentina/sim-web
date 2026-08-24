@@ -65,7 +65,7 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin"],
     },
     {
-      label: "Reservas / Gestión",
+      label: "Métricas",
       href: "/admin",
       roles: ["admin"],
     },

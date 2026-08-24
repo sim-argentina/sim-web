@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import { agregarStand, personasDeFila } from "@/lib/metricasStand";
 
 type Vista = "reservas" | "stand" | "campeonatos";
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
@@ -44,6 +45,7 @@ type TurnoStand = {
   simuladores?: string[] | unknown;
   personas?: number | string;
   cantidad_personas?: number | string;
+  estado?: string;
   archivo_nombre?: string;
   archivo_key?: string;
   hash_unico?: string;
@@ -381,6 +383,13 @@ function crearArchivoKey(fileName: string) {
 }
 
 function crearHashTurno(t: TurnoStand, archivoKey = "") {
+  // Filas en vivo del turnero (no Excel) tienen id único (PK): se deduplican por
+  // ese id. Los campos hora_tomado/duracion/escuderia están vacíos en vivo, así
+  // que el hash por contenido colapsaba ventas distintas que coincidían en
+  // fecha/monto/turnos (mismo importe, mismo día). El id evita ese falso duplicado.
+  if (t.origen !== "excel" && t.id != null) {
+    return `stand-id:${t.id}`;
+  }
   return [
     archivoKey || t.archivo_key || "",
     t.fecha || "",
@@ -1123,6 +1132,10 @@ export default function AdminMetricasPage() {
     });
 
     return filtrarPorFecha(dataSinDuplicados).filter((t) => {
+      // Excluye ventas anuladas/canceladas de la facturación. Filas en vivo traen
+      // estado (hoy todas "activo"); las de Excel no tienen estado → se conservan.
+      const estado = normalizeText(t.estado);
+      if (estado === "anulado" || estado === "cancelado") return false;
       const texto = `${t.fecha} ${t.hora_bajada} ${t.hora_subida} ${t.simulador} ${t.escuderia} ${t.metodo_pago}`.toLowerCase();
       return texto.includes(busqueda.toLowerCase());
     });
@@ -1237,37 +1250,21 @@ export default function AdminMetricasPage() {
   }, [reservasFiltradas]);
 
   const metricasStand = useMemo(() => {
-    const ventasRegistradas = standFiltrado.length;
-    const facturacion = sumBy(standFiltrado, (t) => numberValue(t.total ?? t.monto));
-
-    const totalTurnos = sumBy(standFiltrado, (t) => {
-      const cantTurnos = numberValue(t.cantidad_turnos);
-      if (cantTurnos > 0) return cantTurnos;
-
-      const sims = numberValue(t.cantidad_simuladores);
-      if (sims > 0) return sims;
-
-      return numberValue(t.personas) || 1;
-    });
-
-    const ticketPromedio = ventasRegistradas ? facturacion / ventasRegistradas : 0;
-
-    const totalPersonas = sumBy(standFiltrado, (t) => {
-  return numberValue(t.cantidad_simuladores) || numberValue(t.personas) || 1;
-});
-
-    const promedioPersonas = ventasRegistradas ? totalPersonas / ventasRegistradas : 0;
-
-    const totalMinutos = sumBy(standFiltrado, (t) => {
-      const duracion = numberValue(t.duracion);
-      const cantTurnos = numberValue(t.cantidad_turnos) || 1;
-      return duracion > 0 ? duracion * cantTurnos : 0;
-    });
-
-    const horasVendidas = totalMinutos / 60;
-    const ingresoPorMinuto = totalMinutos ? facturacion / totalMinutos : 0;
-    const ingresoPorPersona = totalPersonas ? facturacion / totalPersonas : 0;
-    const ingresoPromedioPorSimulador = facturacion / 4;
+    // KPIs numéricos centralizados en lib/metricasStand (mismo código que testea
+    // el suite). ventas = filas; turnos = Σ cantidad_turnos; personas = Σ
+    // cantidad_personas; minutos = turnos × 15; horas = minutos / 60.
+    const agg = agregarStand(standFiltrado);
+    const ventasRegistradas = agg.ventas;
+    const facturacion = agg.facturacion;
+    const totalTurnos = agg.turnos;
+    const ticketPromedio = agg.ticketPromedio;
+    const totalPersonas = agg.personas;
+    const promedioPersonas = agg.promedioPersonas;
+    const totalMinutos = agg.minutos;
+    const horasVendidas = agg.horas;
+    const ingresoPorMinuto = agg.ingresoPorMinuto;
+    const ingresoPorPersona = agg.ingresoPorPersona;
+    const ingresoPromedioPorSimulador = agg.ingresoPromedioPorSimulador;
 
     const porMetodoPago: Record<string, number> = {};
     const porSimulador: Record<string, number> = {};
@@ -1295,8 +1292,8 @@ export default function AdminMetricasPage() {
       const monto = numberValue(t.total ?? t.monto);
       const metodo = normalizarMetodoPago(t.metodo_pago);
       const duracion = numberValue(t.duracion);
-      const sims = numberValue(t.cantidad_simuladores) || numberValue(t.personas) || 1;
-      const cantTurnos = numberValue(t.cantidad_turnos) || sims || 1;
+      const personasTurno = personasDeFila(t);
+      const cantTurnos = numberValue(t.cantidad_turnos) || personasTurno || 1;
       const hora = obtenerHoraAgrupada(t.hora_subida || t.hora_bajada || t.hora_tomado);
       const diaSemana = nombreDia(t.fecha);
       const escuderiaRaw = t.escuderia || t.simulador || "";
@@ -1333,16 +1330,28 @@ export default function AdminMetricasPage() {
 
       // Solo duraciones válidas (múltiplos de 15) y 1–4 personas (4 simuladores).
       if (duracion > 0 && duracion % 15 === 0) addToRecord(porDuracion, `${duracion} min`, 1);
-      if (sims >= 1 && sims <= 4) addToRecord(porPersonas, `${sims} persona/s`, 1);
+      if (personasTurno >= 1 && personasTurno <= 4)
+        addToRecord(porPersonas, `${personasTurno} persona/s`, 1);
 
       // Comparativo 15 vs 30 min (si no hay dato, se asume 15 min).
       const durNorm = (duracion || numberValue(t.cantidad_minutos)) === 30 ? 30 : 15;
       if (durNorm === 30) standTurnos30 += cantTurnos;
       else standTurnos15 += cantTurnos;
 
-      obtenerEscuderias(escuderiaRaw).forEach((escuderia) => {
-        addToRecord(porSimulador, escuderia, 1);
-      });
+      // Simulador: en vivo viene en el array `simuladores`; en Excel, en el texto
+      // escuderia/simulador. Si no se registró, la fila no aporta al desglose.
+      const simsEnVivo = Array.isArray(t.simuladores)
+        ? (t.simuladores as unknown[]).filter(
+            (s): s is string => typeof s === "string" && s.trim() !== "",
+          )
+        : [];
+      if (simsEnVivo.length) {
+        simsEnVivo.forEach((sim) => addToRecord(porSimulador, sim, 1));
+      } else {
+        obtenerEscuderias(escuderiaRaw).forEach((escuderia) => {
+          addToRecord(porSimulador, escuderia, 1);
+        });
+      }
     });
 
     const horaPico = Object.entries(porHora).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
