@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { formatPenalizacion, pilotoKey, msToTiempo, tiempoToMs, ESCUDERIAS_2026 } from "@/lib/campeonatos";
 import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer";
+import TabBracket from "./TabBracket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -439,8 +440,13 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  // Modalidad del campeonato seleccionado: en eliminación no se usan categorías
+  // (Oro/Plata/Bronce) — el cuadro se gestiona en la pestaña Bracket (§42).
+  const campActualResult = campeonatos.find((c) => c.id === form.campeonato_id);
+  const esEliminacion = campActualResult?.modalidad === "eliminacion";
+
   const submit = async () => {
-    if (!form.nombre.trim() || !form.apellido.trim() || !form.telefono.trim() || !form.fecha || !form.categoria) {
+    if (!form.nombre.trim() || !form.apellido.trim() || !form.telefono.trim() || !form.fecha || (!esEliminacion && !form.categoria)) {
       setMsg("Nombre, apellido, teléfono, fecha y categoría son obligatorios."); return;
     }
     if (fechaCerrada) {
@@ -596,11 +602,17 @@ function TabResultados({ campeonatos, registros, rangoModo, setRangoModo, rangoD
               {campeonatos.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
           </Field>
-          <Field label="Categoría *">
-            <select className={sel} value={form.categoria} onChange={(e) => set("categoria", e.target.value)}>
-              {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
-            </select>
-          </Field>
+          {esEliminacion ? (
+            <Field label="Categoría">
+              <p className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-zinc-400">No aplica en modalidad eliminación. Gestioná la clasificación y el cuadro en la pestaña <b className="text-white">Bracket</b>.</p>
+            </Field>
+          ) : (
+            <Field label="Categoría *">
+              <select className={sel} value={form.categoria} onChange={(e) => set("categoria", e.target.value)}>
+                {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+              </select>
+            </Field>
+          )}
           <Field label="Tiempo (ej: 1:23.456)">
             <input className={inp} placeholder="1:23.456" value={form.tiempo} onChange={(e) => set("tiempo", e.target.value)} />
           </Field>
@@ -2123,9 +2135,10 @@ function TabFechas({ campeonatos, role }: { campeonatos: Campeonato[]; role: str
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-type Tab = "resultados" | "fechas" | "campeonatos" | "sorteos" | "inscripciones";
+type Tab = "resultados" | "bracket" | "fechas" | "campeonatos" | "sorteos" | "inscripciones";
 const ALL_TABS: { id: Tab; label: string; adminOnly: boolean }[] = [
   { id: "resultados", label: "Resultados", adminOnly: false },
+  { id: "bracket", label: "Bracket", adminOnly: false },
   { id: "fechas", label: "Fechas", adminOnly: true },
   { id: "campeonatos", label: "Campeonatos", adminOnly: true },
   { id: "sorteos", label: "Sorteos", adminOnly: true },
@@ -2193,6 +2206,7 @@ export default function AdminCampeonatosPage() {
       ) : (
         <>
           {tab === "resultados" && <TabResultados campeonatos={campeonatos} registros={registros} rangoModo={rangoModo} setRangoModo={setRangoModo} rangoDesde={rangoDesde} setRangoDesde={setRangoDesde} rangoHasta={rangoHasta} setRangoHasta={setRangoHasta} onRefresh={fetchAll} />}
+          {tab === "bracket" && <TabBracket campeonatos={campeonatos} role={role} />}
           {tab === "fechas" && role === "admin" && <TabFechas campeonatos={campeonatos} role={role} />}
           {tab === "campeonatos" && role === "admin" && <TabCampeonatos campeonatos={campeonatos} onRefresh={fetchAll} />}
           {tab === "sorteos" && role === "admin" && <TabSorteos sorteos={sorteos} onRefresh={fetchAll} />}
