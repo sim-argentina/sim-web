@@ -66,13 +66,14 @@ export async function POST(req: Request) {
     // Un campeonato archivado (deleted_at) no acepta nuevas inscripciones.
     const { data: campActivo } = await supabaseAdmin
       .from("campeonatos")
-      .select("id")
+      .select("id, permite_pago_stand")
       .eq("id", campeonato_id)
       .is("deleted_at", null)
       .maybeSingle();
     if (!campActivo) {
       return NextResponse.json({ error: "El campeonato no existe o fue eliminado" }, { status: 400 });
     }
+    const permiteStand = campActivo.permite_pago_stand !== false;
 
     // Pagos múltiples (opcional). Si vienen, definen el total y el estado.
     const pagos = limpiarPagos(pagos_detalle);
@@ -112,7 +113,9 @@ export async function POST(req: Request) {
       estadoFinal = "pagado";
     } else {
       metodoFinal = null;
-      estadoFinal = "pendiente_pago_stand";
+      // Sin método: queda pendiente. Si el campeonato no permite pago en el stand,
+      // el pendiente es online (no se crea un pendiente_pago_stand).
+      estadoFinal = permiteStand ? "pendiente_pago_stand" : "pendiente_pago_online";
     }
 
     const nombre_completo = `${nombre.trim()} ${apellido.trim()}`.trim();

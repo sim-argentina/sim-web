@@ -76,7 +76,18 @@ export async function GET(req: Request) {
       (r: { campeonato_fecha_id?: string | null }) => !(r.campeonato_fecha_id != null && fecha0Ids.has(r.campeonato_fecha_id))
     );
 
-    const campeonatosConCupos = campeonatos.map((c) => ({ ...c }));
+    // Inscriptos pagados por campeonato (para mostrar cupos ocupados/restantes en
+    // la web pública). No es el conteo de enforcement (ese incluye pendientes
+    // vigentes y vive en /preference); acá alcanza con las inscripciones pagadas.
+    const inscriptosPorCamp: Record<string, number> = {};
+    for (const ins of inscripciones as { campeonato_id?: string | null }[]) {
+      const k = ins.campeonato_id ?? "";
+      if (k) inscriptosPorCamp[k] = (inscriptosPorCamp[k] || 0) + 1;
+    }
+    const campeonatosConCupos = campeonatos.map((c) => ({
+      ...c,
+      inscriptos: inscriptosPorCamp[c.id] ?? 0,
+    }));
 
     // Rankings: mejor tiempo por piloto por categoría
     const rankings: Record<string, unknown[]> = { oro: [], plata: [], bronce: [] };

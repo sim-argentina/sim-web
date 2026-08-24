@@ -17,6 +17,10 @@ const CAMPOS = [
   "inscripcion_habilitada",
   "categorias",
   "imagen_url",
+  "modalidad",
+  "permite_pago_stand",
+  "usa_ronda_preliminar",
+  "config",
 ] as const;
 
 export async function PATCH(req: Request, { params }: RouteContext) {

@@ -3,9 +3,33 @@
 import { useState, useEffect, useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { formatPenalizacion, msToTiempo, ESCUDERIAS_2026 } from "@/lib/campeonatos";
+import {
+  esEliminacion,
+  requiereEscuderia,
+  metodosPagoPublicos,
+  normalizarCupoMaximo,
+} from "@/lib/campeonatosConfig";
 import { gaEvent, setPendingPurchase } from "@/lib/analytics";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+// Configuración por modalidad (jsonb `config`). Todos los campos son opcionales:
+// la UI se adapta a lo que haya configurado el admin.
+type PremioItem = { puesto: number; monto: number; trofeo?: boolean };
+type CampeonatoConfig = {
+  hora?: string;
+  circuito?: string;
+  juego?: string;
+  requiere_escuderia?: boolean;
+  presentacion?: { hora_inicio?: string; tolerancia_min?: number; hora_limite?: string; nota?: string };
+  clasificacion?: { vueltas?: number; tipo?: string; criterio?: string; descripcion?: string };
+  eliminatoria?: { pilotos_por_carrera?: number; vueltas?: number; avanzan?: number; final_pilotos?: number; descripcion?: string };
+  premios?: { total?: number; moneda?: string; detalle?: PremioItem[] };
+  reglamento_carrera?: Record<string, unknown>;
+  requisitos?: { altura_min_m?: number; peso_max_kg?: number; acepta?: string[] };
+  inscripcion?: { sin_devolucion?: boolean; transferible?: boolean; aviso_previo?: boolean; nota?: string };
+  entrenamiento_previo?: { habilitado?: boolean; texto?: string };
+};
 
 type Campeonato = {
   id: string;
@@ -20,6 +44,11 @@ type Campeonato = {
   inscripcion_habilitada: boolean;
   imagen_url: string | null;
   categorias: string[];
+  // Config por campeonato (aditiva; los históricos no la traen → defaults).
+  modalidad?: string | null;
+  permite_pago_stand?: boolean | null;
+  usa_ronda_preliminar?: boolean | null;
+  config?: CampeonatoConfig | null;
 };
 
 type Constructor = {
@@ -208,7 +237,7 @@ function ConfirmacionScreen({ data, onClose }: { data: ConfirmacionData; onClose
           ["DNI", data.dni],
           ["Escudería", data.escuderia_favorita],
           ["Campeonato", data.campeonato],
-        ] as [string, string][]).map(([label, value]) => (
+        ] as [string, string][]).filter(([, value]) => Boolean(value)).map(([label, value]) => (
           <div key={label} className="flex justify-between text-sm">
             <span className="text-zinc-500">{label}</span>
             <span className="font-bold text-white">{value}</span>
@@ -270,6 +299,165 @@ function ConfirmacionScreen({ data, onClose }: { data: ConfirmacionData; onClose
   );
 }
 
+// ─── Eliminación: contenido público (config-driven) ───────────────────────────
+
+const REGLA_LABELS: Record<string, string> = {
+  clima: "Clima",
+  igualdad_rendimiento: "Igualdad de rendimiento",
+  autos: "Autos",
+  ayudas: "Ayudas",
+  reglaje: "Reglaje",
+  colisiones: "Colisiones",
+  reglas_banderas: "Reglas y banderas",
+  safety_car: "Safety Car",
+  daños: "Daños",
+  flashbacks: "Flashbacks",
+};
+function reglaTexto(k: string, v: unknown): string {
+  const label = REGLA_LABELS[k] ?? k;
+  if (typeof v === "boolean") return `${label}: ${v ? "activado" : "desactivado"}`;
+  return `${label}: ${String(v)}`;
+}
+const money = (n: number) => `$${Number(n || 0).toLocaleString("es-AR")}`;
+
+function Bloque({ titulo, children }: { titulo: string; children: ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+      <p className="mb-2 text-xs font-black uppercase tracking-[0.25em] text-red-500">{titulo}</p>
+      {children}
+    </div>
+  );
+}
+
+// Presentación pública de un campeonato de eliminación. Todo sale de `config`
+// (jsonb) del campeonato: no hay nada atado a un torneo puntual.
+function DetalleEliminacion({ campeonato }: { campeonato: Campeonato }) {
+  const cfg: CampeonatoConfig = campeonato.config ?? {};
+  const cupo = normalizarCupoMaximo(campeonato.cupos_maximos);
+  const premios = cfg.premios?.detalle ?? [];
+  const reglas = cfg.reglamento_carrera ? Object.entries(cfg.reglamento_carrera) : [];
+
+  return (
+    <div className="space-y-3">
+      {/* Hero: datos clave */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {campeonato.fecha_inicio && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Fecha</p>
+            <p className="text-sm font-bold text-white">{campeonato.fecha_inicio}</p>
+          </div>
+        )}
+        {cfg.hora && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Hora</p>
+            <p className="text-sm font-bold text-white">{cfg.hora}</p>
+          </div>
+        )}
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+          <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Inscripción</p>
+          <p className="text-sm font-bold text-white">{money(campeonato.precio_inscripcion)}</p>
+        </div>
+        {cupo > 0 && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Cupos</p>
+            <p className="text-sm font-bold text-white">{cupo}</p>
+          </div>
+        )}
+        {cfg.circuito && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Circuito</p>
+            <p className="text-sm font-bold text-white">{cfg.circuito}</p>
+          </div>
+        )}
+        {cfg.premios?.total != null && (
+          <div className="rounded-xl border border-red-500/30 bg-red-600/10 px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Premios</p>
+            <p className="text-sm font-bold text-white">{money(cfg.premios.total)}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Cómo funciona */}
+      <Bloque titulo="Cómo funciona">
+        <ul className="space-y-1.5 text-sm text-zinc-300">
+          {cfg.clasificacion?.descripcion && <li>• {cfg.clasificacion.descripcion}</li>}
+          {cfg.eliminatoria?.descripcion && <li>• {cfg.eliminatoria.descripcion}</li>}
+          {!cfg.clasificacion?.descripcion && !cfg.eliminatoria?.descripcion && (
+            <li className="text-zinc-500">Clasificación inicial y cuadro eliminatorio.</li>
+          )}
+        </ul>
+      </Bloque>
+
+      {(cfg.circuito || cfg.juego) && (
+        <Bloque titulo="Circuito">
+          <p className="text-sm text-zinc-300">
+            {cfg.circuito}
+            {cfg.juego ? <span className="text-zinc-500"> · {cfg.juego}</span> : null}
+          </p>
+        </Bloque>
+      )}
+
+      {premios.length > 0 && (
+        <Bloque titulo="Premios">
+          <ul className="space-y-1 text-sm text-zinc-300">
+            {premios.map((p) => (
+              <li key={p.puesto} className="flex justify-between">
+                <span>{p.puesto}.º puesto{p.trofeo ? " + Trofeo" : ""}</span>
+                <span className="font-bold text-white">{money(p.monto)}</span>
+              </li>
+            ))}
+          </ul>
+        </Bloque>
+      )}
+
+      {cfg.requisitos && (
+        <Bloque titulo="Requisitos">
+          <ul className="space-y-1 text-sm text-zinc-300">
+            {cfg.requisitos.altura_min_m != null && <li>• Altura mínima: {cfg.requisitos.altura_min_m} m</li>}
+            {cfg.requisitos.peso_max_kg != null && <li>• Peso máximo: {cfg.requisitos.peso_max_kg} kg</li>}
+            {cfg.requisitos.acepta && cfg.requisitos.acepta.length > 0 && (
+              <li>• La inscripción implica aceptar: {cfg.requisitos.acepta.join(", ")}.</li>
+            )}
+          </ul>
+        </Bloque>
+      )}
+
+      {reglas.length > 0 && (
+        <Bloque titulo="Reglamento de carrera">
+          <ul className="grid grid-cols-1 gap-1 text-sm text-zinc-300 sm:grid-cols-2">
+            {reglas.map(([k, v]) => (
+              <li key={k}>• {reglaTexto(k, v)}</li>
+            ))}
+          </ul>
+        </Bloque>
+      )}
+
+      {cfg.presentacion && (
+        <Bloque titulo="Presentación">
+          <p className="text-sm text-zinc-300">
+            {cfg.presentacion.hora_inicio && <>Presentación {cfg.presentacion.hora_inicio}</>}
+            {cfg.presentacion.tolerancia_min != null && <> · Tolerancia {cfg.presentacion.tolerancia_min} min</>}
+            {cfg.presentacion.hora_limite && <> · Hora límite {cfg.presentacion.hora_limite}</>}
+          </p>
+          {cfg.presentacion.nota && <p className="mt-1 text-xs text-amber-400">{cfg.presentacion.nota}</p>}
+        </Bloque>
+      )}
+
+      {cfg.inscripcion?.nota && (
+        <Bloque titulo="Inscripción">
+          <p className="text-sm text-zinc-300">{cfg.inscripcion.nota}</p>
+        </Bloque>
+      )}
+
+      {cfg.entrenamiento_previo?.habilitado && cfg.entrenamiento_previo.texto && (
+        <Bloque titulo="¿Querés llegar preparado?">
+          <p className="text-sm text-zinc-300">{cfg.entrenamiento_previo.texto}</p>
+        </Bloque>
+      )}
+    </div>
+  );
+}
+
 // ─── Inscription modal ────────────────────────────────────────────────────────
 
 function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onClose: () => void }) {
@@ -285,8 +473,18 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
 
   const set = (k: string, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
+  // Todo se deriva de la configuración del campeonato (no del nombre).
+  const eliminacion = esEliminacion(campeonato.modalidad);
+  const pideEscuderia = requiereEscuderia(campeonato);
+  const metodos = metodosPagoPublicos(campeonato); // ["mercadopago"] o [..., "stand"]
+  const ofrecePagoStand = metodos.includes("stand");
+
   const submit = async () => {
-    if (!form.nombre.trim() || !form.apellido.trim() || !form.telefono.trim() || !form.dni.trim() || !form.escuderia_favorita) {
+    if (
+      !form.nombre.trim() || !form.apellido.trim() ||
+      !form.telefono.trim() || !form.dni.trim() ||
+      (pideEscuderia && !form.escuderia_favorita)
+    ) {
       setError("Completá todos los campos obligatorios."); return;
     }
     if (!form.acepto_condiciones) { setError("Debés aceptar los términos y condiciones."); return; }
@@ -300,7 +498,8 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
           telefono: form.telefono, dni: form.dni,
           instagram: form.instagram, escuderia_favorita: form.escuderia_favorita,
           acepto_condiciones: form.acepto_condiciones,
-          metodo_pago_inscripcion: form.metodo_pago_inscripcion,
+          // Si el campeonato no ofrece pago en stand, siempre Mercado Pago.
+          metodo_pago_inscripcion: ofrecePagoStand ? form.metodo_pago_inscripcion : "mercadopago",
           campeonato_id: campeonato.id, monto: campeonato.precio_inscripcion,
         }),
       });
@@ -349,6 +548,12 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
               Precio: <strong className="text-white">${campeonato.precio_inscripcion.toLocaleString()}</strong>
             </p>
 
+            {eliminacion && (
+              <div className="mb-6">
+                <DetalleEliminacion campeonato={campeonato} />
+              </div>
+            )}
+
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -368,42 +573,52 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
                 <label className="mb-1 block text-xs font-bold text-zinc-400">DNI *</label>
                 <input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} />
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-bold text-zinc-400">Escudería favorita de F1 *</label>
-                <select className={inp} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
-                  <option value="">Seleccioná una escudería</option>
-                  {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
-                </select>
-              </div>
+              {pideEscuderia && (
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-zinc-400">Escudería favorita de F1 *</label>
+                  <select className={inp} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
+                    <option value="">Seleccioná una escudería</option>
+                    {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="mb-1 block text-xs font-bold text-zinc-400">Instagram (opcional)</label>
                 <input className={inp} placeholder="@usuario" value={form.instagram} onChange={(e) => set("instagram", e.target.value)} />
               </div>
 
-              <div>
-                <label className="mb-2 block text-xs font-bold text-zinc-400 uppercase tracking-widest">Método de pago *</label>
-                <div className="space-y-2">
-                  {[
-                    { value: "mercadopago", label: "Pagar ahora con Mercado Pago", desc: "Pago online seguro" },
-                    { value: "stand",       label: "Pagar en el stand",             desc: "Abonás cuando venís a SIM Argentina" },
-                  ].map((opt) => (
-                    <label key={opt.value}
-                      className={`flex items-center gap-3 rounded-xl border p-4 cursor-pointer transition-all ${
-                        form.metodo_pago_inscripcion === opt.value ? "border-red-500 bg-red-600/10" : "border-zinc-700 hover:border-zinc-500"
-                      }`}
-                    >
-                      <input type="radio" name="metodo_pago" value={opt.value}
-                        checked={form.metodo_pago_inscripcion === opt.value}
-                        onChange={() => set("metodo_pago_inscripcion", opt.value)}
-                        className="accent-red-500" />
-                      <div>
-                        <p className="text-sm font-bold text-white">{opt.label}</p>
-                        <p className="text-xs text-zinc-500">{opt.desc}</p>
-                      </div>
-                    </label>
-                  ))}
+              {/* Métodos según la config del campeonato: sin pago en stand → solo MP. */}
+              {ofrecePagoStand ? (
+                <div>
+                  <label className="mb-2 block text-xs font-bold text-zinc-400 uppercase tracking-widest">Método de pago *</label>
+                  <div className="space-y-2">
+                    {[
+                      { value: "mercadopago", label: "Pagar ahora con Mercado Pago", desc: "Pago online seguro" },
+                      { value: "stand",       label: "Pagar en el stand",             desc: "Abonás cuando venís a SIM Argentina" },
+                    ].map((opt) => (
+                      <label key={opt.value}
+                        className={`flex items-center gap-3 rounded-xl border p-4 cursor-pointer transition-all ${
+                          form.metodo_pago_inscripcion === opt.value ? "border-red-500 bg-red-600/10" : "border-zinc-700 hover:border-zinc-500"
+                        }`}
+                      >
+                        <input type="radio" name="metodo_pago" value={opt.value}
+                          checked={form.metodo_pago_inscripcion === opt.value}
+                          onChange={() => set("metodo_pago_inscripcion", opt.value)}
+                          className="accent-red-500" />
+                        <div>
+                          <p className="text-sm font-bold text-white">{opt.label}</p>
+                          <p className="text-xs text-zinc-500">{opt.desc}</p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-xl border border-red-500/30 bg-red-600/10 p-4">
+                  <p className="text-sm font-bold text-white">Pago online con Mercado Pago</p>
+                  <p className="text-xs text-zinc-400">La inscripción de este campeonato se abona únicamente online.</p>
+                </div>
+              )}
 
               <label className="flex items-start gap-3 cursor-pointer">
                 <input type="checkbox" checked={form.acepto_condiciones}
@@ -462,8 +677,17 @@ function SecCampeonatos({ campeonatos, onInscribir }: { campeonatos: Campeonato[
           </div>
           {c.descripcion && <p className="text-sm text-zinc-400 mb-4 leading-relaxed">{c.descripcion}</p>}
           <div className="space-y-2 text-sm text-zinc-400 mb-6 flex-1">
-            {c.fecha_inicio && <p>📅 {c.fecha_inicio}{c.fecha_fin && ` → ${c.fecha_fin}`}</p>}
+            {c.fecha_inicio && (
+              <p>📅 {c.fecha_inicio}{c.fecha_fin && c.fecha_fin !== c.fecha_inicio && ` → ${c.fecha_fin}`}</p>
+            )}
             <p>💰 ${c.precio_inscripcion.toLocaleString()} / inscripción</p>
+            {/* Cupos dinámicos: NUNCA hardcodeados. Se leen de cupos_maximos. */}
+            {normalizarCupoMaximo(c.cupos_maximos) > 0 && (
+              <p>🎟️ {c.inscriptos ?? 0}/{normalizarCupoMaximo(c.cupos_maximos)} cupos</p>
+            )}
+            {esEliminacion(c.modalidad) && c.config?.premios?.total != null && (
+              <p>🏆 ${Number(c.config.premios.total).toLocaleString("es-AR")} en premios</p>
+            )}
           </div>
           <div className="flex gap-2 mt-auto">
             <a

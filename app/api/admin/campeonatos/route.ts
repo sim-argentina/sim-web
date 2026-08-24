@@ -48,6 +48,11 @@ export async function POST(req: Request) {
           inscripcion_habilitada: body.inscripcion_habilitada !== false,
           categorias: body.categorias || ["oro", "plata", "bronce"],
           imagen_url: body.imagen_url || null,
+          // Config por campeonato (defaults compatibles con históricos).
+          modalidad: body.modalidad === "eliminacion" ? "eliminacion" : "liga",
+          permite_pago_stand: body.permite_pago_stand !== false,
+          usa_ronda_preliminar: body.usa_ronda_preliminar === true,
+          config: body.config && typeof body.config === "object" ? body.config : {},
         },
       ])
       .select()

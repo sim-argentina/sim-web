@@ -34,6 +34,10 @@ type Campeonato = {
   inscripcion_habilitada: boolean;
   categorias: string[];
   imagen_url: string | null;
+  modalidad?: string | null;
+  permite_pago_stand?: boolean | null;
+  usa_ronda_preliminar?: boolean | null;
+  config?: Record<string, unknown> | null;
 };
 
 type Registro = {
@@ -862,6 +866,9 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
     fecha_inicio: "", fecha_fin: "", precio_inscripcion: "0",
     cupos_maximos: "0", inscripcion_habilitada: true,
     categorias: ["oro", "plata", "bronce"], imagen_url: "",
+    // Config por campeonato (defaults compatibles con históricos).
+    modalidad: "liga", permite_pago_stand: true, usa_ronda_preliminar: false,
+    config: {} as Record<string, unknown>,
   };
   const [form, setForm] = useState(blank);
   const [editId, setEditId] = useState<string | null>(null);
@@ -919,6 +926,10 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
   };
 
   const set = (k: string, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
+  // Merge sobre `config` (jsonb) sin pisar otras claves ya cargadas (premios,
+  // reglamento, etc. que se hayan seteado por fuera del admin).
+  const setConfig = (k: string, v: unknown) =>
+    setForm((f) => ({ ...f, config: { ...f.config, [k]: v } }));
   const startEdit = (c: Campeonato) => {
     setEditId(c.id);
     setForm({
@@ -927,6 +938,10 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
       precio_inscripcion: String(c.precio_inscripcion), cupos_maximos: String(c.cupos_maximos),
       inscripcion_habilitada: c.inscripcion_habilitada,
       categorias: c.categorias || ["oro", "plata", "bronce"], imagen_url: c.imagen_url || "",
+      modalidad: c.modalidad || "liga",
+      permite_pago_stand: c.permite_pago_stand !== false,
+      usa_ronda_preliminar: c.usa_ronda_preliminar === true,
+      config: c.config && typeof c.config === "object" ? c.config : {},
     });
     setShowForm(true);
   };
@@ -990,6 +1005,14 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
                 )}
               </div>
             </Field>
+            <Field label="Modalidad">
+              <select className={sel} value={form.modalidad} onChange={(e) => set("modalidad", e.target.value)}>
+                <option value="liga">Liga (tradicional)</option>
+                <option value="eliminacion">Eliminación</option>
+              </select>
+            </Field>
+            <Field label="Hora"><input type="time" className={inp} value={(form.config.hora as string) || ""} onChange={(e) => setConfig("hora", e.target.value)} /></Field>
+            <Field label="Circuito"><input className={inp} value={(form.config.circuito as string) || ""} onChange={(e) => setConfig("circuito", e.target.value)} placeholder="Ej: Singapur" /></Field>
             <Field label="Descripción"><input className={inp} value={form.descripcion} onChange={(e) => set("descripcion", e.target.value)} /></Field>
             <Field label="Imagen">
               <div className="space-y-2">
@@ -1008,18 +1031,31 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
               </div>
             </Field>
           </div>
-          <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-            <input type="checkbox" checked={form.inscripcion_habilitada} onChange={(e) => set("inscripcion_habilitada", e.target.checked)} className="accent-red-500" />
-            Inscripción habilitada
-          </label>
-          <div className="flex gap-4">
-            {CATEGORIAS.map((c) => (
-              <label key={c} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
-                <input type="checkbox" checked={form.categorias.includes(c)} onChange={() => toggleCat(c)} className="accent-red-500" />
-                {c.charAt(0).toUpperCase() + c.slice(1)}
-              </label>
-            ))}
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+              <input type="checkbox" checked={form.inscripcion_habilitada} onChange={(e) => set("inscripcion_habilitada", e.target.checked)} className="accent-red-500" />
+              Inscripción habilitada
+            </label>
+            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+              <input type="checkbox" checked={form.permite_pago_stand} onChange={(e) => set("permite_pago_stand", e.target.checked)} className="accent-red-500" />
+              Pago en el stand permitido
+            </label>
+            <label className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+              <input type="checkbox" checked={form.usa_ronda_preliminar} onChange={(e) => set("usa_ronda_preliminar", e.target.checked)} className="accent-red-500" />
+              Ronda preliminar
+            </label>
           </div>
+          {/* Categorías Oro/Plata/Bronce: solo aplican a modalidad liga. */}
+          {form.modalidad !== "eliminacion" && (
+            <div className="flex gap-4">
+              {CATEGORIAS.map((c) => (
+                <label key={c} className="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer">
+                  <input type="checkbox" checked={form.categorias.includes(c)} onChange={() => toggleCat(c)} className="accent-red-500" />
+                  {c.charAt(0).toUpperCase() + c.slice(1)}
+                </label>
+              ))}
+            </div>
+          )}
           {msg && <p className="text-sm font-bold text-red-400">{msg}</p>}
           <div className="flex gap-3">
             <button onClick={submit} disabled={saving} className="rounded-xl bg-red-600 px-6 py-2 font-bold text-white hover:bg-red-500 disabled:opacity-50">{saving ? "Guardando..." : editId ? "Actualizar" : "Crear"}</button>
@@ -1037,7 +1073,7 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
                 <Badge v={c.estado} />
                 {c.inscripcion_habilitada && <span className="text-xs text-green-400 font-bold">Inscripción abierta</span>}
               </div>
-              <p className="text-sm text-zinc-500 mt-1">{c.fecha_inicio && `${c.fecha_inicio} → ${c.fecha_fin}`} · ${c.precio_inscripcion.toLocaleString()} · {Number(c.cupos_maximos) > 0 ? `${c.cupos_maximos} cupos` : "Cupos ilimitados"}</p>
+              <p className="text-sm text-zinc-500 mt-1">{c.fecha_inicio && `${c.fecha_inicio} → ${c.fecha_fin}`} · ${c.precio_inscripcion.toLocaleString()} · {Number(c.cupos_maximos) > 0 ? `${c.cupos_maximos} cupos` : "Cupos ilimitados"} · {c.modalidad === "eliminacion" ? "Eliminación" : "Liga"}{c.permite_pago_stand === false ? " · Sin pago en stand" : ""}</p>
             </div>
             <div className="flex gap-2 shrink-0">
               <button onClick={() => startEdit(c)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">Editar</button>

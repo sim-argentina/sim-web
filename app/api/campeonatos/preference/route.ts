@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
+import { permitePagoStand, requiereEscuderia } from "@/lib/campeonatosConfig";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
@@ -34,12 +35,13 @@ export async function POST(req: Request) {
     const acepto_condiciones = body?.acepto_condiciones;
     const metodo_pago_inscripcion = body?.metodo_pago_inscripcion; // "mercadopago" | "stand"
 
+    // La escudería NO se valida acá: depende de la modalidad del campeonato
+    // (se chequea abajo, tras leer su configuración).
     if (
       !nombre ||
       nombre.length > 60 ||
       !apellido ||
       apellido.length > 60 ||
-      !escuderia_favorita ||
       !campeonato_id ||
       acepto_condiciones !== true
     ) {
@@ -60,7 +62,7 @@ export async function POST(req: Request) {
     // filtro lo excluye y el chequeo `!campeonato` devuelve 404.
     const { data: campeonato } = await supabaseAdmin
       .from("campeonatos")
-      .select("id, nombre, inscripcion_habilitada, cupos_maximos, precio_inscripcion")
+      .select("id, nombre, inscripcion_habilitada, cupos_maximos, precio_inscripcion, modalidad, permite_pago_stand, config")
       .eq("id", campeonato_id)
       .is("deleted_at", null)
       .single();
@@ -74,6 +76,22 @@ export async function POST(req: Request) {
     if (!campeonato.inscripcion_habilitada) {
       return NextResponse.json(
         { error: "La inscripción no está habilitada para este campeonato" },
+        { status: 400 }
+      );
+    }
+
+    // Escudería: obligatoria solo si el campeonato la requiere (liga). En
+    // eliminación (autos aleatorios) es opcional.
+    if (requiereEscuderia(campeonato) && !escuderia_favorita) {
+      return NextResponse.json({ error: "Falta la escudería favorita" }, { status: 400 });
+    }
+
+    // Gate de pago en stand: si el campeonato NO lo permite, se rechaza el intento
+    // server-side (no alcanza con ocultar el radio en el front). No se crea la
+    // inscripción: no queda ningún pendiente_pago_stand.
+    if (metodo_pago_inscripcion === "stand" && !permitePagoStand(campeonato)) {
+      return NextResponse.json(
+        { error: "Este campeonato no permite el pago en el stand. Pagá online con Mercado Pago." },
         { status: 400 }
       );
     }
@@ -134,7 +152,7 @@ export async function POST(req: Request) {
           telefono: telefono.trim(),
           dni: dni.trim(),
           instagram: instagram?.trim() || null,
-          escuderia_favorita,
+          escuderia_favorita: escuderia_favorita || null,
           categoria: null, // asignada por el staff
           monto: montoFinal,
           estado_pago: esPagoStand ? "pendiente_pago_stand" : "pendiente_pago_online",
