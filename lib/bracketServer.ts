@@ -8,7 +8,6 @@ import {
   configEliminacion,
   validarConfigEliminacion,
   calcularSeeds,
-  mejorTiempoMs,
   armarPrimeraRonda,
   armarSiguienteRonda,
   clasificadosDeCarrera,
@@ -17,7 +16,6 @@ import {
   esGranFinal,
   type ConfigEliminacion,
   type ParticipanteQuali,
-  type VueltaQuali,
   type Clasificado,
   type PlanRonda,
   type ResultadoParticipante,
@@ -207,12 +205,12 @@ export async function obtenerEstado(campeonatoId: string): Promise<Resultado<unk
 
 // ── Clasificación (staff) ─────────────────────────────────────────────────────
 
-// Guarda quali de un participante: presente, vueltas [{tiempo_ms,valida}], incluido.
-// Solo con la clasificación abierta. Recalcula mejor_ms.
+// Guarda quali de un participante: presente, mejor tiempo (único) e incluido.
+// Solo con la clasificación abierta.
 export async function guardarQuali(
   campeonatoId: string,
   participanteId: string,
-  patch: { presente?: boolean; incluido?: boolean; vueltas?: VueltaQuali[] },
+  patch: { presente?: boolean; incluido?: boolean; mejor_ms?: number | null },
 ): Promise<Resultado<unknown>> {
   const camp = await cargarCampeonatoEliminacion(campeonatoId);
   if (!camp.ok) return camp;
@@ -230,13 +228,8 @@ export async function guardarQuali(
     updates.estado = patch.presente ? "activo" : "ausente";
   }
   if (typeof patch.incluido === "boolean") updates.incluido = patch.incluido;
-  if (Array.isArray(patch.vueltas)) {
-    const vueltas: VueltaQuali[] = patch.vueltas.map((v) => ({
-      tiempo_ms: v.tiempo_ms != null && Number.isFinite(Number(v.tiempo_ms)) ? Math.round(Number(v.tiempo_ms)) : null,
-      valida: v.valida !== false,
-    }));
-    updates.vueltas = vueltas;
-    updates.mejor_ms = mejorTiempoMs({ vueltas });
+  if ("mejor_ms" in patch) {
+    updates.mejor_ms = patch.mejor_ms != null && Number.isFinite(Number(patch.mejor_ms)) ? Math.round(Number(patch.mejor_ms)) : null;
   }
   const { data, error } = await supabaseAdmin
     .from("campeonato_bracket_participantes").update(updates).eq("id", participanteId).select("*").single();
@@ -273,7 +266,7 @@ export async function cerrarClasificacion(campeonatoId: string): Promise<Resulta
     inscripcion_id: p.inscripcion_id,
     presente: p.presente,
     incluido: p.incluido,
-    vueltas: Array.isArray(p.vueltas) ? (p.vueltas as VueltaQuali[]) : [],
+    mejor_ms: p.mejor_ms != null ? Number(p.mejor_ms) : null,
     orden_inscripcion: p.orden_inscripcion ?? 0,
   }));
   const seeds = calcularSeeds(quali);

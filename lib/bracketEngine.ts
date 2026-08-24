@@ -65,14 +65,15 @@ export function validarConfigEliminacion(cfg: ConfigEliminacion): ValidacionConf
 
 // ── Clasificación / qualifying ────────────────────────────────────────────────
 
-export type VueltaQuali = { tiempo_ms: number | null; valida: boolean };
-
+// La clasificación opera con UN ÚNICO mejor tiempo por piloto (no vueltas
+// individuales). Las "vueltas" configuradas del campeonato son solo reglamento
+// (cuántos intentos tiene el piloto); el operador carga únicamente el mejor tiempo.
 export type ParticipanteQuali = {
   inscripcion_id: string;
   presente: boolean;
   incluido: boolean; // decisión admin para "sin tiempo": incluir al final o excluir
-  vueltas: VueltaQuali[];
-  orden_inscripcion: number; // desempate determinista final
+  mejor_ms: number | null; // único mejor tiempo (ms); null = sin tiempo
+  orden_inscripcion: number; // desempate determinista
 };
 
 export type ParticipanteSeed = {
@@ -81,51 +82,25 @@ export type ParticipanteSeed = {
   mejor_ms: number | null;
 };
 
-// Vueltas válidas (con ms) ordenadas ascendente. La primera es la mejor vuelta.
-export function tiemposValidosOrdenados(p: { vueltas: VueltaQuali[] }): number[] {
-  return p.vueltas
-    .filter((v) => v.valida && v.tiempo_ms != null && Number.isFinite(v.tiempo_ms))
-    .map((v) => v.tiempo_ms as number)
-    .sort((a, b) => a - b);
-}
-
-// Mejor tiempo válido en ms, o null si no tiene ninguna vuelta válida.
-export function mejorTiempoMs(p: { vueltas: VueltaQuali[] }): number | null {
-  const t = tiemposValidosOrdenados(p);
-  return t.length ? t[0] : null;
-}
-
-// Comparador de clasificación entre dos pilotos CON tiempo. Desempate:
-// 1) mejor vuelta; 2) 2.ª mejor; 3) 3.ª…; 4) orden de inscripción (determinista).
-export function compararClasificacion(a: ParticipanteQuali, b: ParticipanteQuali): number {
-  const ta = tiemposValidosOrdenados(a);
-  const tb = tiemposValidosOrdenados(b);
-  const n = Math.min(ta.length, tb.length);
-  for (let i = 0; i < n; i++) {
-    if (ta[i] !== tb[i]) return ta[i] - tb[i];
-  }
-  if (ta.length !== tb.length) return tb.length - ta.length; // más vueltas válidas primero
-  return a.orden_inscripcion - b.orden_inscripcion;
-}
-
 // Calcula el seeding a partir de la clasificación. Reglas:
 // - ausentes (presente=false) → excluidos.
-// - presentes con tiempo válido → ordenados por compararClasificacion.
-// - presentes SIN tiempo válido → sólo si incluido=true, van al final por orden de
+// - presentes con mejor tiempo → ordenados por mejor_ms ascendente
+//   (desempate: orden de inscripción, determinista).
+// - presentes SIN tiempo → sólo si incluido=true, van al final por orden de
 //   inscripción (§9). Si incluido=false → excluidos.
 // El seed queda 1..N y debe CONGELARSE (no recalcular tras generar el bracket).
 export function calcularSeeds(participantes: ParticipanteQuali[]): ParticipanteSeed[] {
   const presentes = participantes.filter((p) => p.presente);
-  const conTiempo = presentes.filter((p) => mejorTiempoMs(p) != null);
-  const sinTiempo = presentes.filter((p) => mejorTiempoMs(p) == null && p.incluido);
+  const conTiempo = presentes.filter((p) => p.mejor_ms != null);
+  const sinTiempo = presentes.filter((p) => p.mejor_ms == null && p.incluido);
 
-  conTiempo.sort(compararClasificacion);
+  conTiempo.sort((a, b) => (a.mejor_ms as number) - (b.mejor_ms as number) || a.orden_inscripcion - b.orden_inscripcion);
   sinTiempo.sort((a, b) => a.orden_inscripcion - b.orden_inscripcion);
 
   return [...conTiempo, ...sinTiempo].map((p, i) => ({
     inscripcion_id: p.inscripcion_id,
     seed: i + 1,
-    mejor_ms: mejorTiempoMs(p),
+    mejor_ms: p.mejor_ms,
   }));
 }
 

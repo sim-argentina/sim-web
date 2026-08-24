@@ -140,25 +140,16 @@ async function main() {
     assert.equal(st0.bracket.estado, "clasificacion");
     assert.equal((st0.configValida as { ok: boolean }).ok, true);
 
-    // Cada piloto: mejor tiempo = 90000 + i*100 (menor tiempo = mejor seed).
+    // Cada piloto: un único mejor tiempo = 90000 + i*100 (menor = mejor seed).
     // Los 2 primeros vía la API guardarQuali (cobertura); el resto en bloque
     // (mismo efecto en DB) para acotar round-trips.
     for (let i = 0; i < 2; i++) {
-      const base = 90000 + i * 100;
-      const r = await guardarQuali(camp32, st0.participantes[i].id as string, {
-        presente: true,
-        vueltas: [
-          { tiempo_ms: base + 500, valida: true },
-          { tiempo_ms: base, valida: true },
-          { tiempo_ms: base - 50, valida: false }, // inválida: no cuenta
-        ],
-      });
+      const r = await guardarQuali(camp32, st0.participantes[i].id as string, { presente: true, mejor_ms: 90000 + i * 100 });
       assert.ok(r.ok);
     }
     for (let i = 2; i < st0.participantes.length; i++) {
-      const base = 90000 + i * 100;
       await supabaseAdmin.from("campeonato_bracket_participantes")
-        .update({ presente: true, vueltas: [{ tiempo_ms: base, valida: true }], mejor_ms: base })
+        .update({ presente: true, mejor_ms: 90000 + i * 100 })
         .eq("id", st0.participantes[i].id as string);
     }
 
@@ -209,7 +200,7 @@ async function main() {
 
     // Corre el de 8 (8 → 4 → final) para confirmar otra config de tamaño.
     for (let i = 0; i < st8a.participantes.length; i++) {
-      await guardarQuali(camp8, st8a.participantes[i].id as string, { presente: true, vueltas: [{ tiempo_ms: 90000 + i * 100, valida: true }] });
+      await guardarQuali(camp8, st8a.participantes[i].id as string, { presente: true, mejor_ms: 90000 + i * 100 });
     }
     await cerrarClasificacion(camp8);
     await generarBracket(camp8);

@@ -2,8 +2,6 @@ import { strict as assert } from "node:assert";
 import {
   configEliminacion,
   validarConfigEliminacion,
-  mejorTiempoMs,
-  compararClasificacion,
   calcularSeeds,
   serpentina,
   numCarreras,
@@ -53,37 +51,29 @@ assert.equal(bad({ vueltas: 0 }).ok, false);
 assert.equal(bad({ finalPilotos: 1 }).ok, false); // < 2
 assert.equal(bad({ finalPilotos: 6 }).ok, false); // final > pilotos_por_carrera
 
-// ── Quali: mejor tiempo, válidas/ inválidas, desempates ──────────────────────
-const P = (id: string, laps: Array<[number | null, boolean]>, orden: number, presente = true, incluido = true): ParticipanteQuali => ({
+// ── Clasificación: UN único mejor tiempo (no vueltas individuales) ───────────
+const P = (id: string, mejor_ms: number | null, orden: number, presente = true, incluido = true): ParticipanteQuali => ({
   inscripcion_id: id,
   presente,
   incluido,
+  mejor_ms,
   orden_inscripcion: orden,
-  vueltas: laps.map(([tiempo_ms, valida]) => ({ tiempo_ms, valida })),
 });
-// 3 vueltas: mejor válida = 90850 (la inválida 89900 no cuenta).
-assert.equal(mejorTiempoMs(P("a", [[91220, true], [90850, true], [89900, false]], 1)), 90850);
-// Todas inválidas → sin tiempo.
-assert.equal(mejorTiempoMs(P("b", [[88000, false], [87000, false]], 2)), null);
-// Sin vueltas → sin tiempo.
-assert.equal(mejorTiempoMs(P("c", [], 3)), null);
-// Empate en mejor vuelta → desempata por 2.ª mejor.
-const e1 = P("e1", [[90000, true], [91000, true]], 1);
-const e2 = P("e2", [[90000, true], [90500, true]], 2);
-assert.ok(compararClasificacion(e2, e1) < 0); // e2 tiene mejor 2.ª vuelta
-// Empate total en tiempos → desempata por orden de inscripción.
-const f1 = P("f1", [[90000, true]], 5);
-const f2 = P("f2", [[90000, true]], 3);
-assert.ok(compararClasificacion(f2, f1) < 0); // f2 se inscribió antes
+// Menor mejor tiempo = mejor seed.
+const ordenTiempo = calcularSeeds([P("lento", 92000, 1), P("rapido", 90000, 2)]);
+assert.deepEqual(ordenTiempo.map((s) => s.inscripcion_id), ["rapido", "lento"]);
+// Empate en mejor tiempo → desempata por orden de inscripción (determinista).
+const empate = calcularSeeds([P("f1", 90000, 5), P("f2", 90000, 3)]);
+assert.deepEqual(empate.map((s) => s.inscripcion_id), ["f2", "f1"]);
 
 // ── Seeding: con tiempo primero, sin tiempo al final, ausentes/excluidos fuera ─
 const seeds = calcularSeeds([
-  P("rapido", [[90000, true]], 1),
-  P("medio", [[91000, true]], 2),
-  P("lento", [[92000, true]], 3),
-  P("sinTiempo", [[93000, false]], 4), // presente, sin válida, incluido → al final
-  P("ausente", [[80000, true]], 5, false), // ausente → excluido
-  P("excluido", [], 6, true, false), // sin tiempo + no incluido → excluido
+  P("rapido", 90000, 1),
+  P("medio", 91000, 2),
+  P("lento", 92000, 3),
+  P("sinTiempo", null, 4), // presente, sin tiempo, incluido → al final
+  P("ausente", 80000, 5, false), // ausente → excluido
+  P("excluido", null, 6, true, false), // sin tiempo + no incluido → excluido
 ]);
 assert.deepEqual(seeds.map((s) => s.inscripcion_id), ["rapido", "medio", "lento", "sinTiempo"]);
 assert.deepEqual(seeds.map((s) => s.seed), [1, 2, 3, 4]);
@@ -248,7 +238,7 @@ assert.deepEqual(
 );
 
 console.log(
-  "OK — motor de brackets: config/validación, quali (mejor vuelta, válidas, desempates), " +
+  "OK — motor de brackets: config/validación, quali (único mejor tiempo, desempate por inscripción), " +
     "seeding, serpentina Duelo 1/16/17/32, torneo 32→16→8→4→podio sin rematches, " +
     "31/27/16/8/4, fixtures A/B/C/D, resultados/avance/podio e invariantes de error.",
 );

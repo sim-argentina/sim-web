@@ -1,13 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { tiempoToMs, msToTiempo } from "@/lib/campeonatos";
+import { msToTiempo } from "@/lib/campeonatos";
 
 // ── Tipos del DTO que devuelve /api/admin/campeonatos/[id]/bracket ────────────
-type Vuelta = { tiempo_ms: number | null; valida: boolean };
 type Participante = {
   id: string; inscripcion_id: string; nombre: string; presente: boolean; incluido: boolean;
-  estado: string; vueltas: Vuelta[]; mejor_ms: number | null; seed: number | null;
+  estado: string; mejor_ms: number | null; seed: number | null;
 };
 type CarreraPart = {
   id: string; inscripcion_id: string; nombre: string; seed: number | null;
@@ -36,68 +35,48 @@ type CampLite = { id: string; nombre: string; modalidad?: string | null };
 const money = (n: number) => `$${Number(n || 0).toLocaleString("es-AR")}`;
 
 // ── Fila de clasificación (quali) ─────────────────────────────────────────────
-function QualiRow({ p, vueltasN, cerrada, onGuardar }: {
-  p: Participante; vueltasN: number; cerrada: boolean;
-  onGuardar: (id: string, patch: { presente?: boolean; incluido?: boolean; vueltas?: Vuelta[] }) => Promise<void>;
+// Un único campo: MEJOR TIEMPO. No se cargan vueltas individuales.
+function QualiRow({ p, onGuardar }: {
+  p: Participante;
+  onGuardar: (id: string, patch: Record<string, unknown>) => Promise<void>;
 }) {
-  // Estado local inicializado desde props; el padre remonta la fila (key con
-  // mejor_ms/vueltas) cuando cambian, así no hace falta un efecto que setee estado.
-  const [laps, setLaps] = useState(() =>
-    Array.from({ length: vueltasN }, (_, i) => {
-      const v = p.vueltas[i];
-      return { txt: v?.tiempo_ms != null ? msToTiempo(v.tiempo_ms) : "", valida: v ? v.valida : true };
-    }),
-  );
+  // Estado local desde props; el padre remonta la fila (key con mejor_ms) al cambiar.
+  const [tiempo, setTiempo] = useState(() => (p.mejor_ms != null ? msToTiempo(p.mejor_ms) : ""));
   const [saving, setSaving] = useState(false);
 
-  const guardarLaps = async () => {
+  const guardar = async () => {
     setSaving(true);
-    const vueltas: Vuelta[] = laps
-      .filter((l) => l.txt.trim())
-      .map((l) => ({ tiempo_ms: tiempoToMs(l.txt), valida: l.valida }));
-    await onGuardar(p.id, { vueltas });
+    await onGuardar(p.id, { mejor_tiempo: tiempo });
     setSaving(false);
   };
 
-  const inp = "w-24 rounded-lg bg-black/40 border border-white/10 px-2 py-1 text-sm text-white font-mono focus:border-red-500 outline-none";
+  const inp = "w-28 rounded-lg bg-black/40 border border-white/10 px-2 py-1 text-sm text-white font-mono focus:border-red-500 outline-none";
   return (
     <tr className="border-t border-white/5">
       <td className="px-2 py-2 text-center font-black text-red-400">{p.seed ?? "—"}</td>
       <td className="px-2 py-2 font-bold text-white">{p.nombre}</td>
       <td className="px-2 py-2">
         <label className="flex items-center gap-1 text-xs text-zinc-300">
-          <input type="checkbox" checked={p.presente} disabled={cerrada}
+          <input type="checkbox" checked={p.presente}
             onChange={(e) => onGuardar(p.id, { presente: e.target.checked })} className="accent-red-500" />
           Presente
         </label>
       </td>
       <td className="px-2 py-2">
-        {!cerrada ? (
-          <div className="flex flex-wrap items-center gap-1">
-            {laps.map((l, i) => (
-              <span key={i} className="flex items-center gap-0.5">
-                <input className={inp} placeholder="1:30.850" value={l.txt}
-                  onChange={(e) => setLaps((ls) => ls.map((x, k) => k === i ? { ...x, txt: e.target.value } : x))} />
-                <button title="válida/inválida" onClick={() => setLaps((ls) => ls.map((x, k) => k === i ? { ...x, valida: !x.valida } : x))}
-                  className={`rounded px-1 text-[10px] font-black ${l.valida ? "text-green-400" : "text-zinc-600 line-through"}`}>
-                  {l.valida ? "✓" : "✕"}
-                </button>
-              </span>
-            ))}
-            <button onClick={guardarLaps} disabled={saving}
-              className="rounded-lg bg-zinc-700 px-2 py-1 text-xs font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
-              {saving ? "…" : "Guardar"}
-            </button>
-          </div>
-        ) : (
-          <span className="font-mono text-sm text-green-400">{p.mejor_ms != null ? msToTiempo(p.mejor_ms) : "Sin tiempo"}</span>
-        )}
+        <div className="flex items-center gap-1">
+          <input className={inp} placeholder="1:30.850" value={tiempo}
+            onChange={(e) => setTiempo(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") guardar(); }} />
+          <button onClick={guardar} disabled={saving}
+            className="rounded-lg bg-zinc-700 px-2 py-1 text-xs font-bold text-white hover:bg-zinc-600 disabled:opacity-50">
+            {saving ? "…" : "Guardar"}
+          </button>
+        </div>
       </td>
-      <td className="px-2 py-2 font-mono text-sm text-green-400">{p.mejor_ms != null ? msToTiempo(p.mejor_ms) : "—"}</td>
       <td className="px-2 py-2">
         {p.mejor_ms == null && p.presente && (
           <label className="flex items-center gap-1 text-xs text-amber-300">
-            <input type="checkbox" checked={p.incluido} disabled={cerrada}
+            <input type="checkbox" checked={p.incluido}
               onChange={(e) => onGuardar(p.id, { incluido: e.target.checked })} className="accent-red-500" />
             Incluir sin tiempo
           </label>
@@ -281,11 +260,11 @@ export default function TabBracket({ campeonatos, role }: { campeonatos: CampLit
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left">
               <thead className="text-[10px] uppercase tracking-wider text-zinc-500">
-                <tr>{["Seed", "Piloto", "Presencia", `Vueltas`, "Mejor", "Sin tiempo"].map((h) => <th key={h} className="px-2 py-2">{h}</th>)}</tr>
+                <tr>{["Seed", "Piloto", "Presencia", "Mejor tiempo", "Sin tiempo"].map((h) => <th key={h} className="px-2 py-2">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {data.participantes.map((p) => (
-                  <QualiRow key={`${p.id}-${p.mejor_ms}-${p.vueltas.length}`} p={p} vueltasN={Math.max(1, data.cfg.clasificacion.vueltas)} cerrada={false} onGuardar={guardarQuali} />
+                  <QualiRow key={`${p.id}-${p.mejor_ms}`} p={p} onGuardar={guardarQuali} />
                 ))}
               </tbody>
             </table>
