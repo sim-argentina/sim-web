@@ -5,8 +5,8 @@ import { msToTiempo } from "@/lib/campeonatos";
 
 // ── Tipos del DTO que devuelve /api/admin/campeonatos/[id]/bracket ────────────
 type Participante = {
-  id: string; inscripcion_id: string; nombre: string; presente: boolean; incluido: boolean;
-  estado: string; mejor_ms: number | null; seed: number | null;
+  id: string | null; inscripcion_id: string; nombre: string; presente: boolean; incluido: boolean;
+  estado: string; mejor_ms: number | null; seed: number | null; persistido?: boolean;
 };
 type CarreraPart = {
   id: string; inscripcion_id: string; nombre: string; seed: number | null;
@@ -24,7 +24,7 @@ type EstadoBracket = {
   };
   configValida: { ok: boolean; error?: string };
   premios: { total?: number; detalle?: PremioItem[] } | null;
-  bracket: { id: string; estado: string; seeding_modo: string; clasificacion_habilitada: boolean;
+  bracket: { id: string | null; estado: string; seeding_modo: string; clasificacion_habilitada: boolean;
     podio: Array<{ puesto: number; inscripcion_id: string; nombre: string }> | null };
   participantes: Participante[];
   rondas: Ronda[];
@@ -46,7 +46,7 @@ function QualiRow({ p, onGuardar }: {
 
   const guardar = async () => {
     setSaving(true);
-    await onGuardar(p.id, { mejor_tiempo: tiempo });
+    await onGuardar(p.inscripcion_id, { mejor_tiempo: tiempo });
     setSaving(false);
   };
 
@@ -58,7 +58,7 @@ function QualiRow({ p, onGuardar }: {
       <td className="px-2 py-2">
         <label className="flex items-center gap-1 text-xs text-zinc-300">
           <input type="checkbox" checked={p.presente}
-            onChange={(e) => onGuardar(p.id, { presente: e.target.checked })} className="accent-red-500" />
+            onChange={(e) => onGuardar(p.inscripcion_id, { presente: e.target.checked })} className="accent-red-500" />
           Presente
         </label>
       </td>
@@ -77,7 +77,7 @@ function QualiRow({ p, onGuardar }: {
         {p.mejor_ms == null && p.presente && (
           <label className="flex items-center gap-1 text-xs text-amber-300">
             <input type="checkbox" checked={p.incluido}
-              onChange={(e) => onGuardar(p.id, { incluido: e.target.checked })} className="accent-red-500" />
+              onChange={(e) => onGuardar(p.inscripcion_id, { incluido: e.target.checked })} className="accent-red-500" />
             Incluir sin tiempo
           </label>
         )}
@@ -217,8 +217,8 @@ export default function TabBracket({ campeonatos, role }: { campeonatos: CampLit
   };
   const accion = (body: Record<string, unknown>) => post(`/api/admin/campeonatos/${campSel}/bracket/acciones`, body);
   const onCarrera = async (body: Record<string, unknown>) => { await post(`/api/admin/campeonatos/${campSel}/bracket/carrera`, body); };
-  const guardarQuali = async (participante_id: string, patch: Record<string, unknown>) => {
-    await post(`/api/admin/campeonatos/${campSel}/bracket/clasificacion`, { participante_id, ...patch });
+  const guardarQuali = async (inscripcion_id: string, patch: Record<string, unknown>) => {
+    await post(`/api/admin/campeonatos/${campSel}/bracket/clasificacion`, { inscripcion_id, ...patch });
   };
 
   const sel = "rounded-xl bg-black/40 border border-white/10 px-4 py-2 text-sm text-white outline-none focus:border-red-500";
@@ -264,7 +264,7 @@ export default function TabBracket({ campeonatos, role }: { campeonatos: CampLit
               </thead>
               <tbody>
                 {data.participantes.map((p) => (
-                  <QualiRow key={`${p.id}-${p.mejor_ms}`} p={p} onGuardar={guardarQuali} />
+                  <QualiRow key={`${p.inscripcion_id}-${p.mejor_ms}`} p={p} onGuardar={guardarQuali} />
                 ))}
               </tbody>
             </table>

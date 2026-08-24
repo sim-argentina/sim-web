@@ -91,77 +91,90 @@ async function ensureBracket(camp: CampeonatoRow) {
   return creado;
 }
 
-// Mientras la clasificación está abierta, asegura una fila de participante por cada
-// inscripción válida (nuevas inscripciones aparecen hasta cerrar). No auto-agrega
-// tras el cierre (§41).
-async function sincronizarParticipantes(bracketId: string, campeonatoId: string) {
-  const inscripciones = await inscripcionesValidas(campeonatoId);
-  const { data: existentes } = await supabaseAdmin
-    .from("campeonato_bracket_participantes")
-    .select("inscripcion_id")
-    .eq("bracket_id", bracketId);
-  const yaHay = new Set((existentes ?? []).map((e) => e.inscripcion_id));
-  const nuevos = inscripciones
-    .filter((i) => !yaHay.has(i.id))
-    .map((i, idx) => ({
-      bracket_id: bracketId,
-      inscripcion_id: i.id,
-      orden_inscripcion: yaHay.size + idx,
-    }));
-  if (nuevos.length) {
-    await supabaseAdmin.from("campeonato_bracket_participantes").insert(nuevos);
-  }
+// Orden determinista de una inscripción (índice por created_at entre las válidas).
+// Solo para desempate del seeding; se calcula al persistir/cerrar (no en el GET).
+async function rankInscripcion(campeonatoId: string, inscripcionId: string): Promise<number> {
+  const list = await inscripcionesValidas(campeonatoId);
+  const idx = list.findIndex((i) => i.id === inscripcionId);
+  return idx >= 0 ? idx : 0;
 }
 
 // ── Estado completo (para la UI) ──────────────────────────────────────────────
 
+// READ-ONLY: solo lee. NO crea el bracket, NO sincroniza ni persiste nada. Los
+// pilotos sin fila persistida se muestran DERIVADOS de campeonato_inscripciones.
 export async function obtenerEstado(campeonatoId: string): Promise<Resultado<unknown>> {
   const camp = await cargarCampeonatoEliminacion(campeonatoId);
   if (!camp.ok) return camp;
   const cfg = configEliminacion(camp.data);
   const configValida = validarConfigEliminacion(cfg);
 
-  const bracket = await ensureBracket(camp.data);
-  if (!bracket) return fail(500, "No se pudo inicializar el bracket.");
+  const { data: bracket } = await supabaseAdmin
+    .from("campeonato_bracket").select("*").eq("campeonato_id", campeonatoId).maybeSingle();
 
-  if (bracket.estado === "clasificacion") {
-    await sincronizarParticipantes(bracket.id, campeonatoId);
-  }
-
+  const inscripciones = await inscripcionesValidas(campeonatoId); // válidas, orden created_at
   const nombres = new Map<string, string>();
-  (await inscripcionesValidas(campeonatoId)).forEach((i) => nombres.set(i.id, i.nombre_completo));
-  // Nombres también de inscripciones ya no "válidas" pero presentes en el bracket.
-  const [{ data: participantes }, { data: rondas }, { data: carreras }, { data: cps }] =
-    await Promise.all([
-      supabaseAdmin.from("campeonato_bracket_participantes").select("*").eq("bracket_id", bracket.id),
-      supabaseAdmin.from("campeonato_bracket_rondas").select("*").eq("bracket_id", bracket.id).order("numero"),
-      supabaseAdmin.from("campeonato_bracket_carreras").select("*").eq("bracket_id", bracket.id).order("numero"),
-      supabaseAdmin.from("campeonato_bracket_carrera_participantes").select("*").eq("bracket_id", bracket.id),
-    ]);
+  inscripciones.forEach((i) => nombres.set(i.id, i.nombre_completo));
 
+  const estadoBracket: string = bracket?.estado ?? "clasificacion";
+
+  // Datos persistidos (solo si el bracket ya existe). Sin bracket → todo vacío.
+  const datos = bracket
+    ? await (async () => {
+        const [pr, rr, cr, cpr] = await Promise.all([
+          supabaseAdmin.from("campeonato_bracket_participantes").select("*").eq("bracket_id", bracket.id),
+          supabaseAdmin.from("campeonato_bracket_rondas").select("*").eq("bracket_id", bracket.id).order("numero"),
+          supabaseAdmin.from("campeonato_bracket_carreras").select("*").eq("bracket_id", bracket.id).order("numero"),
+          supabaseAdmin.from("campeonato_bracket_carrera_participantes").select("*").eq("bracket_id", bracket.id),
+        ]);
+        return { participantes: pr.data ?? [], rondas: rr.data ?? [], carreras: cr.data ?? [], cps: cpr.data ?? [] };
+      })()
+    : { participantes: [], rondas: [], carreras: [], cps: [] };
+  const { participantes: persistidos, rondas, carreras, cps } = datos;
+
+  // Nombres de inscripciones ya no válidas pero presentes en filas persistidas.
   const faltantes = new Set<string>();
-  (participantes ?? []).forEach((p) => { if (!nombres.has(p.inscripcion_id)) faltantes.add(p.inscripcion_id); });
-  (cps ?? []).forEach((p) => { if (!nombres.has(p.inscripcion_id)) faltantes.add(p.inscripcion_id); });
+  persistidos.forEach((p) => { if (!nombres.has(p.inscripcion_id)) faltantes.add(p.inscripcion_id); });
+  cps.forEach((p) => { if (!nombres.has(p.inscripcion_id)) faltantes.add(p.inscripcion_id); });
   if (faltantes.size) {
     const { data: extra } = await supabaseAdmin
       .from("campeonato_inscripciones").select("id, nombre_completo").in("id", Array.from(faltantes));
     (extra ?? []).forEach((i) => nombres.set(i.id, i.nombre_completo));
   }
 
-  const cpsPorCarrera = new Map<string, typeof cps>();
-  (cps ?? []).forEach((cp) => {
-    const arr = cpsPorCarrera.get(cp.carrera_id) ?? [];
-    arr.push(cp);
-    cpsPorCarrera.set(cp.carrera_id, arr);
+  // Participantes para la UI:
+  // - clasificación abierta (o sin bracket): unión de inscripciones válidas + datos
+  //   persistidos si existen; los no persistidos se muestran DERIVADOS (sin escribir).
+  // - cerrada/en curso/finalizado: solo los persistidos (congelados; no se mezclan
+  //   nuevas inscripciones).
+  const persistById = new Map(persistidos.map((p) => [p.inscripcion_id, p]));
+  const derivar = (p: (typeof persistidos)[number] | undefined, inscripcionId: string) => ({
+    id: p?.id ?? null,
+    inscripcion_id: inscripcionId,
+    nombre: nombres.get(inscripcionId) ?? "—",
+    presente: p ? p.presente : true,
+    incluido: p ? p.incluido : true,
+    mejor_ms: p && p.mejor_ms != null ? Number(p.mejor_ms) : null,
+    seed: p?.seed ?? null,
+    estado: p?.estado ?? "activo",
+    persistido: Boolean(p),
   });
-  const carrerasPorRonda = new Map<string, typeof carreras>();
-  (carreras ?? []).forEach((c) => {
-    const arr = carrerasPorRonda.get(c.ronda_id) ?? [];
-    arr.push(c);
-    carrerasPorRonda.set(c.ronda_id, arr);
+  const participantesDto = (estadoBracket === "clasificacion"
+    ? inscripciones.map((insc) => derivar(persistById.get(insc.id), insc.id))
+    : persistidos.map((p) => derivar(p, p.inscripcion_id))
+  ).sort((a, b) => {
+    if (a.seed != null && b.seed != null) return a.seed - b.seed;
+    if (a.seed != null) return -1;
+    if (b.seed != null) return 1;
+    return (a.mejor_ms ?? Infinity) - (b.mejor_ms ?? Infinity);
   });
 
-  const rondasDto = (rondas ?? []).map((r) => ({
+  const cpsPorCarrera = new Map<string, typeof cps>();
+  cps.forEach((cp) => { const arr = cpsPorCarrera.get(cp.carrera_id) ?? []; arr.push(cp); cpsPorCarrera.set(cp.carrera_id, arr); });
+  const carrerasPorRonda = new Map<string, typeof carreras>();
+  carreras.forEach((c) => { const arr = carrerasPorRonda.get(c.ronda_id) ?? []; arr.push(c); carrerasPorRonda.set(c.ronda_id, arr); });
+
+  const rondasDto = rondas.map((r) => ({
     ...r,
     carreras: (carrerasPorRonda.get(r.id) ?? [])
       .sort((a, b) => a.numero - b.numero)
@@ -173,17 +186,8 @@ export async function obtenerEstado(campeonatoId: string): Promise<Resultado<unk
       })),
   }));
 
-  const participantesDto = (participantes ?? [])
-    .map((p) => ({ ...p, nombre: nombres.get(p.inscripcion_id) ?? "—" }))
-    .sort((a, b) => {
-      if (a.seed != null && b.seed != null) return a.seed - b.seed;
-      if (a.seed != null) return -1;
-      if (b.seed != null) return 1;
-      return (a.mejor_ms ?? Infinity) - (b.mejor_ms ?? Infinity);
-    });
-
   const premios = (camp.data.config as { premios?: unknown })?.premios ?? null;
-  const podioNombres = Array.isArray(bracket.podio)
+  const podioNombres = bracket && Array.isArray(bracket.podio)
     ? (bracket.podio as Array<{ puesto: number; inscripcion_id: string }>).map((p) => ({
         ...p, nombre: nombres.get(p.inscripcion_id) ?? "—",
       }))
@@ -195,8 +199,11 @@ export async function obtenerEstado(campeonatoId: string): Promise<Resultado<unk
     configValida,
     premios,
     bracket: {
-      id: bracket.id, estado: bracket.estado, seeding_modo: bracket.seeding_modo,
-      clasificacion_habilitada: bracket.clasificacion_habilitada, podio: podioNombres,
+      id: bracket?.id ?? null,
+      estado: estadoBracket,
+      seeding_modo: bracket?.seeding_modo ?? (cfg.clasificacion.habilitada ? "clasificacion" : "manual"),
+      clasificacion_habilitada: bracket?.clasificacion_habilitada ?? cfg.clasificacion.habilitada,
+      podio: podioNombres,
     },
     participantes: participantesDto,
     rondas: rondasDto,
@@ -205,80 +212,131 @@ export async function obtenerEstado(campeonatoId: string): Promise<Resultado<unk
 
 // ── Clasificación (staff) ─────────────────────────────────────────────────────
 
-// Guarda quali de un participante: presente, mejor tiempo (único) e incluido.
-// Solo con la clasificación abierta.
+// Guarda quali de un piloto (acción explícita del operador): presente, mejor tiempo
+// e incluido. Se identifica por INSCRIPCIÓN (no por fila persistida). Persiste con
+// UPSERT: crea el bracket y/o la fila de participante recién en este momento.
 export async function guardarQuali(
   campeonatoId: string,
-  participanteId: string,
+  inscripcionId: string,
   patch: { presente?: boolean; incluido?: boolean; mejor_ms?: number | null },
 ): Promise<Resultado<unknown>> {
   const camp = await cargarCampeonatoEliminacion(campeonatoId);
   if (!camp.ok) return camp;
-  const { data: br } = await supabaseAdmin.from("campeonato_bracket").select("id,estado").eq("campeonato_id", campeonatoId).maybeSingle();
-  if (!br) return fail(404, "Bracket no inicializado.");
+  // La inscripción debe ser válida y de este campeonato.
+  const { data: insc } = await supabaseAdmin
+    .from("campeonato_inscripciones").select("id")
+    .eq("id", inscripcionId).eq("campeonato_id", campeonatoId).eq("estado_pago", "pagado").is("eliminada_at", null).maybeSingle();
+  if (!insc) return fail(404, "Inscripción no válida para este campeonato.");
+
+  const br = await ensureBracket(camp.data); // creación explícita (por la acción)
+  if (!br) return fail(500, "No se pudo inicializar el bracket.");
   if (br.estado !== "clasificacion") return fail(409, "La clasificación ya fue cerrada.");
 
-  const { data: part } = await supabaseAdmin
-    .from("campeonato_bracket_participantes").select("*").eq("id", participanteId).eq("bracket_id", br.id).maybeSingle();
-  if (!part) return fail(404, "Participante no encontrado.");
+  const campos: Record<string, unknown> = {};
+  if (typeof patch.presente === "boolean") { campos.presente = patch.presente; campos.estado = patch.presente ? "activo" : "ausente"; }
+  if (typeof patch.incluido === "boolean") campos.incluido = patch.incluido;
+  if ("mejor_ms" in patch) campos.mejor_ms = patch.mejor_ms != null && Number.isFinite(Number(patch.mejor_ms)) ? Math.round(Number(patch.mejor_ms)) : null;
 
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (typeof patch.presente === "boolean") {
-    updates.presente = patch.presente;
-    updates.estado = patch.presente ? "activo" : "ausente";
+  const { data: existente } = await supabaseAdmin
+    .from("campeonato_bracket_participantes").select("id").eq("bracket_id", br.id).eq("inscripcion_id", inscripcionId).maybeSingle();
+
+  if (existente) {
+    const { data, error } = await supabaseAdmin
+      .from("campeonato_bracket_participantes").update({ ...campos, updated_at: new Date().toISOString() }).eq("id", existente.id).select("*").single();
+    if (error) return fail(500, "No se pudo guardar la clasificación.");
+    return ok(data);
   }
-  if (typeof patch.incluido === "boolean") updates.incluido = patch.incluido;
-  if ("mejor_ms" in patch) {
-    updates.mejor_ms = patch.mejor_ms != null && Number.isFinite(Number(patch.mejor_ms)) ? Math.round(Number(patch.mejor_ms)) : null;
-  }
+  const orden = await rankInscripcion(campeonatoId, inscripcionId);
   const { data, error } = await supabaseAdmin
-    .from("campeonato_bracket_participantes").update(updates).eq("id", participanteId).select("*").single();
+    .from("campeonato_bracket_participantes")
+    .insert({ bracket_id: br.id, inscripcion_id: inscripcionId, orden_inscripcion: orden, ...campos })
+    .select("*").single();
   if (error) return fail(500, "No se pudo guardar la clasificación.");
   return ok(data);
 }
 
-// Seeding manual (admin): asigna seeds según el orden recibido (array de participante ids).
-export async function seedManual(campeonatoId: string, ordenParticipanteIds: string[]): Promise<Resultado<unknown>> {
-  const { data: br } = await supabaseAdmin.from("campeonato_bracket").select("id,estado").eq("campeonato_id", campeonatoId).maybeSingle();
-  if (!br) return fail(404, "Bracket no inicializado.");
+// Seeding manual (admin): asigna seeds según el orden recibido (array de
+// inscripcion_ids). Acción explícita: hace UPSERT de las filas necesarias.
+export async function seedManual(campeonatoId: string, ordenInscripcionIds: string[]): Promise<Resultado<unknown>> {
+  const camp = await cargarCampeonatoEliminacion(campeonatoId);
+  if (!camp.ok) return camp;
+  const br = await ensureBracket(camp.data);
+  if (!br) return fail(500, "No se pudo inicializar el bracket.");
   if (br.estado !== "clasificacion") return fail(409, "La clasificación ya fue cerrada.");
+
+  const validos = new Set((await inscripcionesValidas(campeonatoId)).map((i) => i.id));
+  const { data: parts } = await supabaseAdmin.from("campeonato_bracket_participantes").select("id, inscripcion_id").eq("bracket_id", br.id);
+  const byInsc = new Map((parts ?? []).map((p) => [p.inscripcion_id, p.id]));
+
   let seed = 1;
-  for (const pid of ordenParticipanteIds) {
-    await supabaseAdmin.from("campeonato_bracket_participantes")
-      .update({ seed: seed++, updated_at: new Date().toISOString() })
-      .eq("id", pid).eq("bracket_id", br.id).eq("presente", true);
+  for (const iid of ordenInscripcionIds) {
+    if (!validos.has(iid)) continue;
+    const existenteId = byInsc.get(iid);
+    if (existenteId) {
+      await supabaseAdmin.from("campeonato_bracket_participantes").update({ seed, updated_at: new Date().toISOString() }).eq("id", existenteId);
+    } else {
+      await supabaseAdmin.from("campeonato_bracket_participantes")
+        .insert({ bracket_id: br.id, inscripcion_id: iid, seed, orden_inscripcion: await rankInscripcion(campeonatoId, iid) });
+    }
+    seed++;
   }
   await supabaseAdmin.from("campeonato_bracket").update({ seeding_modo: "manual", updated_at: new Date().toISOString() }).eq("id", br.id);
-  return ok({ seeds: ordenParticipanteIds.length });
+  return ok({ seeds: seed - 1 });
 }
 
-// Cerrar clasificación (admin): congela seeds y bloquea cambios. Idempotente.
+// Cerrar clasificación (admin): acción estructural explícita. Persiste/congela a
+// TODOS los que forman el seeding — incluidos los pilotos aún no persistidos
+// (visibles pero sin Guardar), usando sus datos derivados. Idempotente.
 export async function cerrarClasificacion(campeonatoId: string): Promise<Resultado<unknown>> {
   const camp = await cargarCampeonatoEliminacion(campeonatoId);
   if (!camp.ok) return camp;
-  const { data: br } = await supabaseAdmin.from("campeonato_bracket").select("*").eq("campeonato_id", campeonatoId).maybeSingle();
-  if (!br) return fail(404, "Bracket no inicializado.");
+  const br = await ensureBracket(camp.data); // creación explícita (por la acción)
+  if (!br) return fail(500, "No se pudo inicializar el bracket.");
   if (br.estado !== "clasificacion") return ok({ estado: br.estado }); // idempotente
 
-  const { data: parts } = await supabaseAdmin
-    .from("campeonato_bracket_participantes").select("*").eq("bracket_id", br.id);
-  const quali: ParticipanteQuali[] = (parts ?? []).map((p) => ({
-    inscripcion_id: p.inscripcion_id,
-    presente: p.presente,
-    incluido: p.incluido,
-    mejor_ms: p.mejor_ms != null ? Number(p.mejor_ms) : null,
-    orden_inscripcion: p.orden_inscripcion ?? 0,
-  }));
+  const inscripciones = await inscripcionesValidas(campeonatoId); // orden created_at
+  const { data: parts } = await supabaseAdmin.from("campeonato_bracket_participantes").select("*").eq("bracket_id", br.id);
+  const persistById = new Map((parts ?? []).map((p) => [p.inscripcion_id, p]));
+
+  // Quali del set COMPLETO (persistido o derivado por default), orden por inscripción.
+  const quali: ParticipanteQuali[] = inscripciones.map((insc, idx) => {
+    const p = persistById.get(insc.id);
+    return {
+      inscripcion_id: insc.id,
+      presente: p ? p.presente : true,
+      incluido: p ? p.incluido : true,
+      mejor_ms: p && p.mejor_ms != null ? Number(p.mejor_ms) : null,
+      orden_inscripcion: idx,
+    };
+  });
   const seeds = calcularSeeds(quali);
   const seedById = new Map(seeds.map((s) => [s.inscripcion_id, s.seed]));
 
-  // Congelar seed en cada participante; excluidos/ausentes → seed null.
-  for (const p of parts ?? []) {
-    const s = seedById.get(p.inscripcion_id) ?? null;
-    await supabaseAdmin.from("campeonato_bracket_participantes")
-      .update({ seed: s, estado: s == null ? (p.presente ? "excluido" : "ausente") : "activo", updated_at: new Date().toISOString() })
-      .eq("id", p.id);
+  // Persistir/congelar cada inscripción válida (update si existe, insert si no).
+  for (let idx = 0; idx < inscripciones.length; idx++) {
+    const insc = inscripciones[idx];
+    const p = persistById.get(insc.id);
+    const q = quali[idx];
+    const s = seedById.get(insc.id) ?? null;
+    const estado = s == null ? (q.presente ? "excluido" : "ausente") : "activo";
+    if (p) {
+      await supabaseAdmin.from("campeonato_bracket_participantes")
+        .update({ seed: s, estado, orden_inscripcion: idx, updated_at: new Date().toISOString() }).eq("id", p.id);
+    } else {
+      await supabaseAdmin.from("campeonato_bracket_participantes")
+        .insert({ bracket_id: br.id, inscripcion_id: insc.id, presente: q.presente, incluido: q.incluido, mejor_ms: q.mejor_ms, seed: s, estado, orden_inscripcion: idx });
+    }
   }
+  // Filas persistidas cuya inscripción ya NO es válida (cancelada tras cargar): se
+  // excluyen del seeding (seed null) sin borrar sus datos históricos.
+  const validos = new Set(inscripciones.map((i) => i.id));
+  for (const p of parts ?? []) {
+    if (!validos.has(p.inscripcion_id)) {
+      await supabaseAdmin.from("campeonato_bracket_participantes")
+        .update({ seed: null, estado: "excluido", updated_at: new Date().toISOString() }).eq("id", p.id);
+    }
+  }
+
   await supabaseAdmin.from("campeonato_bracket")
     .update({ estado: "cerrada", cerrada_at: new Date().toISOString(), config_snapshot: configEliminacion(camp.data), updated_at: new Date().toISOString() })
     .eq("id", br.id);

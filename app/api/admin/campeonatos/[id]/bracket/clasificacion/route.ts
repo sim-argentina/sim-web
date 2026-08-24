@@ -17,8 +17,8 @@ export async function POST(req: Request, { params }: RouteContext) {
   let body: Record<string, unknown> = {};
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Body inválido" }, { status: 400 }); }
 
-  const participanteId = String(body.participante_id ?? "");
-  if (!isValidUuid(participanteId)) return NextResponse.json({ error: "Participante inválido" }, { status: 400 });
+  const inscripcionId = String(body.inscripcion_id ?? "");
+  if (!isValidUuid(inscripcionId)) return NextResponse.json({ error: "Inscripción inválida" }, { status: 400 });
 
   const patch: { presente?: boolean; incluido?: boolean; mejor_ms?: number | null } = {};
   if (typeof body.presente === "boolean") patch.presente = body.presente;
@@ -33,7 +33,7 @@ export async function POST(req: Request, { params }: RouteContext) {
     }
   }
 
-  const res = await guardarQuali(id, participanteId, patch);
+  const res = await guardarQuali(id, inscripcionId, patch);
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status });
   return NextResponse.json(res.data);
 }

@@ -9,16 +9,35 @@ import {
 // ELIMINA al final (§63: nunca se genera el bracket real de Duelo). Ejecutar con:
 //   node --env-file=.env.local --import tsx lib/bracketServer.integration.ts
 //
-// Verifica: creación de bracket, sincronización de participantes, quali+seeds,
-// cierre, generación, corrida completa 32→16→8→4→podio, idempotencia, aislamiento
-// entre campeonatos y el invariante "ningún piloto dos veces en una ronda".
+// Verifica: GET read-only (no persiste), pilotos derivados, persistencia solo por
+// acción explícita, quali+seeds, cierre, corrida 32→16→8→4→podio, idempotencia,
+// aislamiento, invariante "ningún piloto dos veces en una ronda", nuevas/canceladas.
 
 type Estado = {
-  bracket: { estado: string; podio: Array<{ puesto: number; nombre: string }> | null };
+  bracket: { id: string | null; estado: string; podio: Array<{ puesto: number; nombre: string }> | null };
   configValida: { ok: boolean };
-  participantes: Array<{ id: string; seed: number | null; nombre: string; mejor_ms: number | null }>;
+  participantes: Array<{ id: string | null; inscripcion_id: string; seed: number | null; nombre: string; mejor_ms: number | null }>;
   rondas: Array<{ id: string; numero: number; tipo: string; carreras: Array<{ id: string; estado: string; participantes: Array<{ id: string; seed: number | null }> }> }>;
 };
+
+// Cuenta filas persistidas en el bracket de un campeonato (0 si no hay bracket).
+async function contarParticipantes(campId: string): Promise<number> {
+  const { data: br } = await supabaseAdmin.from("campeonato_bracket").select("id").eq("campeonato_id", campId).maybeSingle();
+  if (!br) return 0;
+  const { count } = await supabaseAdmin.from("campeonato_bracket_participantes").select("id", { count: "exact", head: true }).eq("bracket_id", br.id);
+  return count ?? 0;
+}
+async function contarBracketRows(campId: string): Promise<number> {
+  const { count } = await supabaseAdmin.from("campeonato_bracket").select("id", { count: "exact", head: true }).eq("campeonato_id", campId);
+  return count ?? 0;
+}
+async function crearInscripcion(campId: string, nombre: string): Promise<string> {
+  const { data } = await supabaseAdmin.from("campeonato_inscripciones").insert({
+    campeonato_id: campId, nombre, apellido: "Test", nombre_completo: `${nombre} Test`,
+    telefono: "000", dni: nombre, escuderia_favorita: null, monto: 1, estado_pago: "pagado",
+  }).select("id").single();
+  return data!.id as string;
+}
 
 async function crearCampeonatoTemp(nombre: string, n: number) {
   const { data: camp, error } = await supabaseAdmin
@@ -132,26 +151,75 @@ async function main() {
   const marca = `__TEST_BRACKET_${Date.now()}`;
   const camp32 = await crearCampeonatoTemp(`${marca}_32`, 32);
   const camp8 = await crearCampeonatoTemp(`${marca}_8`, 8);
+  const camp5 = await crearCampeonatoTemp(`${marca}_5`, 5);
 
   try {
-    // ── Sincronización + quali + seeds ─────────────────────────────────────────
+    // ── READ-ONLY explícito: 5 inscriptos, 0 filas; guardar 1 → 1 fila; nueva/cancelada
+    {
+      let st = await estado(camp5);
+      assert.equal(st.participantes.length, 5, "GET muestra 5 pilotos");
+      assert.equal(await contarParticipantes(camp5), 0, "DB sigue con 0 filas tras GET");
+      assert.equal(await contarBracketRows(camp5), 0, "GET no crea bracket");
+
+      // Guardar mejor tiempo de 1 piloto → 1 fila persistida.
+      const r = await guardarQuali(camp5, st.participantes[0].inscripcion_id, { presente: true, mejor_ms: 91000 });
+      assert.ok(r.ok);
+      assert.equal(await contarParticipantes(camp5), 1, "tras guardar 1 → 1 fila");
+      st = await estado(camp5);
+      assert.equal(st.participantes.length, 5, "sigue mostrando 5 (1 persistido, 4 derivados)");
+      assert.equal(st.participantes.filter((p) => p.id != null).length, 1, "1 persistido");
+      assert.equal(await contarParticipantes(camp5), 1, "GET no persiste los derivados");
+
+      // Nueva inscripción válida (clasificación abierta) → aparece sin INSERT en bracket.
+      const nueva = await crearInscripcion(camp5, "Nuevo");
+      st = await estado(camp5);
+      assert.equal(st.participantes.length, 6, "nueva inscripción aparece (6)");
+      assert.equal(await contarParticipantes(camp5), 1, "no se creó fila para el nuevo por GET");
+
+      // Cancelar esa inscripción antes de persistir → deja de aparecer, sin fila creada.
+      await supabaseAdmin.from("campeonato_inscripciones").update({ estado_pago: "cancelado" }).eq("id", nueva);
+      st = await estado(camp5);
+      assert.equal(st.participantes.length, 5, "cancelada deja de aparecer (5)");
+      assert.equal(await contarParticipantes(camp5), 1, "nunca se creó fila para la cancelada");
+
+      // Cerrar clasificación → persiste/congela a los 5 válidos con seeds.
+      const c = await cerrarClasificacion(camp5);
+      assert.ok(c.ok);
+      assert.equal(await contarParticipantes(camp5), 5, "al cerrar se persisten los 5 del seeding");
+      st = await estado(camp5);
+      assert.equal(st.bracket.estado, "cerrada");
+      assert.equal(st.participantes.filter((p) => p.seed != null).length, 5, "5 seeds congelados");
+    }
+
+    // ── READ-ONLY: abrir/consultar NO persiste nada ───────────────────────────
     const st0 = await estado(camp32);
-    assert.equal(st0.participantes.length, 32, "deben sincronizarse 32 participantes");
+    assert.equal(st0.participantes.length, 32, "GET debe mostrar 32 pilotos (derivados)");
     assert.equal(st0.bracket.estado, "clasificacion");
+    assert.equal(st0.bracket.id, null, "GET no debe crear el bracket");
     assert.equal((st0.configValida as { ok: boolean }).ok, true);
+    assert.equal(await contarBracketRows(camp32), 0, "GET no crea fila de bracket");
+    assert.equal(await contarParticipantes(camp32), 0, "GET no crea filas de participantes");
+    assert.ok(st0.participantes.every((p) => p.id === null && p.inscripcion_id), "todos derivados (sin fila persistida)");
 
     // Cada piloto: un único mejor tiempo = 90000 + i*100 (menor = mejor seed).
-    // Los 2 primeros vía la API guardarQuali (cobertura); el resto en bloque
-    // (mismo efecto en DB) para acotar round-trips.
+    // Los 2 primeros vía la API guardarQuali (acción explícita → persiste); el resto
+    // se insertan en bloque por inscripcion_id (mismo efecto) para acotar round-trips.
     for (let i = 0; i < 2; i++) {
-      const r = await guardarQuali(camp32, st0.participantes[i].id as string, { presente: true, mejor_ms: 90000 + i * 100 });
+      const r = await guardarQuali(camp32, st0.participantes[i].inscripcion_id, { presente: true, mejor_ms: 90000 + i * 100 });
       assert.ok(r.ok);
     }
+    assert.equal(await contarParticipantes(camp32), 2, "tras guardar 2 → 2 filas persistidas");
+    // GET vuelve a mostrar 32 (2 persistidos, 30 derivados) y la DB sigue con 2 filas.
+    const stMix = await estado(camp32);
+    assert.equal(stMix.participantes.length, 32);
+    assert.equal(await contarParticipantes(camp32), 2, "GET no persiste los derivados");
+
+    const { data: br32 } = await supabaseAdmin.from("campeonato_bracket").select("id").eq("campeonato_id", camp32).single();
+    const filas32 = [];
     for (let i = 2; i < st0.participantes.length; i++) {
-      await supabaseAdmin.from("campeonato_bracket_participantes")
-        .update({ presente: true, mejor_ms: 90000 + i * 100 })
-        .eq("id", st0.participantes[i].id as string);
+      filas32.push({ bracket_id: br32!.id, inscripcion_id: st0.participantes[i].inscripcion_id, presente: true, mejor_ms: 90000 + i * 100, orden_inscripcion: i });
     }
+    await supabaseAdmin.from("campeonato_bracket_participantes").insert(filas32);
 
     // ── Cierre (idempotente) ───────────────────────────────────────────────────
     const cerrar1 = await cerrarClasificacion(camp32);
@@ -200,7 +268,7 @@ async function main() {
 
     // Corre el de 8 (8 → 4 → final) para confirmar otra config de tamaño.
     for (let i = 0; i < st8a.participantes.length; i++) {
-      await guardarQuali(camp8, st8a.participantes[i].id as string, { presente: true, mejor_ms: 90000 + i * 100 });
+      await guardarQuali(camp8, st8a.participantes[i].inscripcion_id, { presente: true, mejor_ms: 90000 + i * 100 });
     }
     await cerrarClasificacion(camp8);
     await generarBracket(camp8);
@@ -212,11 +280,14 @@ async function main() {
     // camp32 sigue finalizado e intacto tras operar camp8 (aislamiento).
     assert.equal((await estado(camp32)).bracket.estado, "finalizado");
 
-    console.log("OK — integración bracket: sync, quali+seeds, cierre idempotente, generación idempotente, " +
-      "serpentina 1/16/17/32, torneo 32→16→8→4→podio(P1/P2/P3), 8→4→final, aislamiento e invariante de ronda.");
+    console.log("OK — integración bracket: GET read-only (no persiste, pilotos derivados), " +
+      "persistencia por acción explícita (guardar/cerrar), nuevas/canceladas antes de persistir, " +
+      "quali+seeds, cierre idempotente, generación idempotente, serpentina 1/16/17/32, " +
+      "torneo 32→16→8→4→podio, 8→4→final, aislamiento e invariante de ronda.");
   } finally {
     await limpiar(camp32);
     await limpiar(camp8);
+    await limpiar(camp5);
     // Barrido de seguridad: elimina cualquier campeonato de prueba que haya quedado.
     await supabaseAdmin.from("campeonatos").delete().like("nombre", "__TEST_BRACKET_%");
   }
