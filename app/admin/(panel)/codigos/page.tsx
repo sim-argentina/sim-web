@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import EmpresasTab from "./EmpresasTab";
 
 type CodigoDescuento = {
   id: number;
@@ -89,6 +90,9 @@ export default function AdminCodigosPage() {
   const [fechasBloqueadas, setFechasBloqueadas] = useState<string[]>([]);
   const [fechaBloqueadaInput, setFechaBloqueadaInput] = useState("");
   const [duracionesPermitidas, setDuracionesPermitidas] = useState<number[]>([]);
+  // Vista Promocionales | Empresas. Empresas es admin-only (UI + backend).
+  const [role, setRole] = useState<string | null>(null);
+  const [vista, setVista] = useState<"promocionales" | "empresas">("promocionales");
 
   async function cargarCodigos() {
     try {
@@ -116,6 +120,7 @@ export default function AdminCodigosPage() {
 
   useEffect(() => {
     cargarCodigos();
+    fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
   }, []);
 
   const codigosActivos = useMemo(
@@ -247,6 +252,18 @@ export default function AdminCodigosPage() {
           </p>
         </div>
 
+        {/* Tab switcher: Promocionales | Empresas (Empresas solo admin). */}
+        <div className="mb-6 flex w-fit gap-1 rounded-2xl bg-white/[0.04] p-1">
+          <button onClick={() => setVista("promocionales")} className={`rounded-xl px-5 py-2 text-sm font-black uppercase ${vista === "promocionales" ? "bg-red-600 text-white" : "text-zinc-400 hover:text-white"}`}>Promocionales</button>
+          {role === "admin" && (
+            <button onClick={() => setVista("empresas")} className={`rounded-xl px-5 py-2 text-sm font-black uppercase ${vista === "empresas" ? "bg-red-600 text-white" : "text-zinc-400 hover:text-white"}`}>Empresas</button>
+          )}
+        </div>
+
+        {vista === "empresas" && role === "admin" ? (
+          <EmpresasTab />
+        ) : (
+        <>
         <div className="mb-6 grid gap-3 md:grid-cols-3">
           <CardResumen titulo="Códigos creados" valor={codigos.length} />
           <CardResumen titulo="Activos" valor={codigosActivos} />
@@ -562,6 +579,8 @@ export default function AdminCodigosPage() {
             </div>
           )}
         </div>
+        </>
+        )}
       </section>
     </main>
   );
