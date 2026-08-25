@@ -164,6 +164,14 @@ export async function POST(req: Request) {
           { status: 409 }
         );
       }
+      // 23514 = el trigger rechazó el slot por un bloqueo administrativo activo
+      // (creado concurrentemente). Rollback ya hecho; el turno no queda reservado.
+      if ((slotErr as { code?: string }).code === "23514") {
+        return NextResponse.json(
+          { error: "Ese horario no está disponible." },
+          { status: 409 }
+        );
+      }
       return failResponse(500, "Error al reservar el turno", {
         logContext: "reservas POST slots",
         error: slotErr,

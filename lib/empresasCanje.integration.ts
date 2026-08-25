@@ -44,13 +44,15 @@ async function limpiar() {
   const ids = (camps ?? []).map((c) => c.id);
   // Reservas temporales (por vínculo o por beneficiario de test) + sus slots.
   const { data: r1 } = ids.length ? await supabaseAdmin.from("reservas").select("id").in("empresa_campania_id", ids) : { data: [] };
-  const { data: r2 } = await supabaseAdmin.from("reservas").select("id").eq("origen", "empresa").eq("nombre", "ZZTEST");
+  const { data: r2 } = await supabaseAdmin.from("reservas").select("id").eq("nombre", "ZZTEST");
   const rids = Array.from(new Set([...(r1 ?? []), ...(r2 ?? [])].map((r) => r.id)));
   if (rids.length) {
     await supabaseAdmin.from("reserva_slots").delete().in("reserva_id", rids);
     await supabaseAdmin.from("reservas").delete().in("id", rids);
   }
   if (ids.length) await supabaseAdmin.from("empresa_campanias").delete().in("id", ids); // cascade codigos/usos
+  // Bloqueos de prueba (motivo marcado) creados por los casos de concurrencia.
+  await supabaseAdmin.from("bloqueos_reservas").delete().eq("motivo", "ZZTEST_BLOQUEO");
 }
 
 async function main() {
@@ -164,22 +166,53 @@ async function main() {
     const { data: rRep } = await supabaseAdmin.from("reservas").select("hora").eq("id", idemResv).single();
     assert.equal(rRep!.hora, "16:00", "reserva reprogramada");
 
-    // ── FINANZAS: fuente empresas por fecha_pago, idempotente, canjes = 0 ──────
-    // Campaña con pago e inicio en 2030-06 (mes aislado, sin datos reales).
+    // ── BLOQUEO · Caso B: bloqueo existente impide la reserva; código intacto ──
+    const bexist = await crearActiva({ cantidad_contratada: 2 });
+    await generarCodigos(bexist.id);
+    const codsBex = await codigos(bexist.id);
+    await supabaseAdmin.rpc("crear_bloqueo_reserva", { p_fecha: T_FECHA, p_todo_el_dia: false, p_hora_inicio: "18:00", p_hora_fin: "18:40", p_simulador: SIM_A, p_motivo: "ZZTEST_BLOQUEO" });
+    const rBloqB = await reservarConCodigo(codsBex[0].codigo, BENEF, T_FECHA, "18:00", [SIM_A]);
+    assert.equal(rBloqB.ok, false, "Caso B: bloqueo existente impide la reserva empresarial");
+    assert.deepEqual(await codEstado(codsBex[0].codigo), { estado: "disponible", usos_actuales: 0 }, "Caso B: código intacto, 0 usos");
+    const { count: slotsB } = await supabaseAdmin.from("reserva_slots").select("id", { count: "exact", head: true }).eq("fecha", T_FECHA).eq("hora", "18:00").eq("simulador", SIM_A);
+    assert.equal(slotsB ?? 0, 0, "Caso B: no se creó ningún slot");
+    assert.ok((await reservarConCodigo(codsBex[1].codigo, BENEF, T_FECHA, "18:00", [SIM_B])).ok, "Caso B: bloqueo puntual no afecta a otro simulador");
+
+    // ── BLOQUEO · Caso D: el trigger rechaza CUALQUIER reserva (no sólo empresa) ─
+    const { data: dummyR } = await supabaseAdmin.from("reservas").insert({ nombre: "ZZTEST", telefono: "0", fecha: T_FECHA, hora: "18:20", simuladores: [SIM_A], cantidad_turnos: 1, total: 0, estado: "activa", acepto_condiciones: true, duracion_minutos: 15, origen: "web" }).select("id").single();
+    const { error: eDummySlot } = await supabaseAdmin.from("reserva_slots").insert({ reserva_id: dummyR!.id, fecha: T_FECHA, hora: "18:20", simulador: SIM_A, estado: "activa" });
+    assert.equal((eDummySlot as { code?: string } | null)?.code, "23514", "Caso D: el trigger rechaza el slot de una reserva normal sobre un bloqueo");
+
+    // ── BLOQUEO · Caso A: reservar y bloquear en paralelo → estado coherente ────
+    const bconc = await crearActiva({ cantidad_contratada: 1 });
+    await generarCodigos(bconc.id);
+    const codConc = (await codigos(bconc.id))[0].codigo;
+    const [rConc] = await Promise.all([
+      reservarConCodigo(codConc, BENEF, T_FECHA, "19:00", [SIM_A]),
+      supabaseAdmin.rpc("crear_bloqueo_reserva", { p_fecha: T_FECHA, p_todo_el_dia: false, p_hora_inicio: "19:00", p_hora_fin: "19:40", p_simulador: SIM_A, p_motivo: "ZZTEST_BLOQUEO" }),
+    ]);
+    // Invariante: el código se consume SI y SÓLO SI la reserva quedó confirmada.
+    assert.equal((await codEstado(codConc)).usos_actuales, rConc.ok ? 1 : 0, "Caso A: estado coherente (nunca reserva sobre bloqueo previo, nunca consumo sin reserva)");
+    const { count: slotsA } = await supabaseAdmin.from("reserva_slots").select("id", { count: "exact", head: true }).eq("fecha", T_FECHA).eq("hora", "19:00").eq("simulador", SIM_A).eq("estado", "activa");
+    assert.equal(slotsA ?? 0, rConc.ok ? 1 : 0, "Caso A: slots coherentes con el resultado de la reserva");
+
+    // ── BLOQUEO · Caso C: bloquear un slot YA reservado (semántica permitida) ───
+    const bC = await crearActiva({ cantidad_contratada: 1 });
+    await generarCodigos(bC.id);
+    const rC = await reservarConCodigo((await codigos(bC.id))[0].codigo, BENEF, T_FECHA, "20:00", [SIM_A]);
+    assert.ok(rC.ok, "Caso C: reserva previa creada");
+    const { data: blkC } = await supabaseAdmin.rpc("crear_bloqueo_reserva", { p_fecha: T_FECHA, p_todo_el_dia: false, p_hora_inicio: "20:00", p_hora_fin: "20:40", p_simulador: SIM_A, p_motivo: "ZZTEST_BLOQUEO" });
+    assert.ok(Array.isArray(blkC) ? blkC.length === 1 : Boolean(blkC), "Caso C: se permite bloquear un slot ya reservado (sólo evita NUEVAS reservas)");
+    const { data: rCstate } = await supabaseAdmin.from("reservas").select("estado").eq("id", (rC.data as { reserva_id: number }).reserva_id).single();
+    assert.equal(rCstate!.estado, "activa", "Caso C: la reserva previa sigue activa (no se toca)");
+
+    // ── FINANZAS (revertido): Empresas NO alimenta Finanzas automáticamente ────
+    // El pago de una campaña es dato comercial; el owner registra el ingreso a mano.
     const fin = await crearActiva({ fecha_pago: "2030-06-10", fecha_inicio: "2030-06-10", precio_neto: 100000, iva_porcentaje: 21 });
-    const totalEmpresas = async () => {
-      const { data } = await supabaseAdmin.rpc("fin_ingresos_por_mes", { p_mes: "2030-06" });
-      const row = ((data ?? []) as Array<{ fuente: string; total: number }>).find((r) => r.fuente === "empresas");
-      return Number(row?.total ?? 0);
-    };
-    assert.equal(await totalEmpresas(), 121000, "un ingreso = precio_total (neto+IVA)");
-    // Marcar pagada de nuevo (idempotente) → mismo ingreso (deriva de la campaña).
     await marcarPagada(fin.id, "2030-06-10", "transferencia");
-    assert.equal(await totalEmpresas(), 121000, "marcar pagada dos veces no duplica");
-    // Generar códigos (uso operativo) NO altera el ingreso; los canjes tampoco (el
-    // ingreso deriva de precio_total de la campaña, no de usos/reservas).
     await generarCodigos(fin.id);
-    assert.equal(await totalEmpresas(), 121000, "generar/usar códigos no genera ingreso nuevo");
+    const { data: finRows } = await supabaseAdmin.rpc("fin_ingresos_por_mes", { p_mes: "2030-06" });
+    assert.ok(!((finRows ?? []) as Array<{ fuente: string }>).some((r) => r.fuente === "empresas"), "Finanzas NO tiene fuente 'empresas' (0 ingresos automáticos por pago/canje)");
 
     // ── INFORME con datos reales ──────────────────────────────────────────────
     const det = await getCampania(a.id);
@@ -193,11 +226,11 @@ async function main() {
     assert.ok(Array.isArray(infd.simuladores));
     assert.ok(Array.isArray(infd.evolucion));
 
-    console.log("OK — empresas Fase 2: reserva+canje atómico (reserva/slots/consumo/uso), " +
+    console.log("OK — empresas: reserva+canje atómico (reserva/slots/consumo/uso), " +
       "fallo de slot sin consumo, idempotencia (misma reserva), concurrencia mismo código y mismo slot, " +
       "guards (programada/vencida/no-pagada/bloqueado), cancelación (libera código+slots), " +
-      "reprogramación (sin segundo uso), Finanzas (fuente empresas por fecha_pago, idempotente, canjes=0), " +
-      "informe con reservas reales. Sin turnos_stand ni Mercado Pago.");
+      "reprogramación (sin segundo uso), bloqueos atómicos (Casos A/B/C/D: reserva vs bloqueo bajo concurrencia), " +
+      "Finanzas SIN integración automática de Empresas, informe con reservas reales. Sin turnos_stand ni Mercado Pago.");
   } finally {
     await limpiar();
   }

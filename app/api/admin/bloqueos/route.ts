@@ -74,13 +74,19 @@ export async function POST(req: Request) {
     activo: true,
   };
 
-  const { data, error } = await supabaseAdmin
-    .from("bloqueos_reservas")
-    .insert([nuevo])
-    .select()
-    .single();
+  // Vía RPC: toma el advisory lock por fecha (mismo que el trigger de reserva_slots),
+  // serializando la creación del bloqueo con la confirmación de reservas concurrentes.
+  const { data: rows, error } = await supabaseAdmin.rpc("crear_bloqueo_reserva", {
+    p_fecha: fecha,
+    p_todo_el_dia: nuevo.todo_el_dia,
+    p_hora_inicio: nuevo.hora_inicio,
+    p_hora_fin: nuevo.hora_fin,
+    p_simulador: nuevo.simulador,
+    p_motivo: nuevo.motivo,
+  });
+  const data = Array.isArray(rows) ? rows[0] : rows;
 
-  if (error) {
+  if (error || !data) {
     return failResponse(500, "Error creando bloqueo", {
       logContext: "bloqueos POST",
       error,

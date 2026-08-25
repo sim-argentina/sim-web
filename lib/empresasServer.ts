@@ -15,13 +15,14 @@ const fail = (status: number, error: string): Resultado<never> => ({ ok: false, 
 const ok = <T>(data: T): Resultado<T> => ({ ok: true, data });
 const hoyIso = () => new Date().toISOString().slice(0, 10);
 
-// El estado NO es manual: se deriva (borrador→activa al pagar; programada/vencida por
-// fechas; finalizada/cancelada por acción explícita). estado_pago/fecha_pago cambian
-// solo vía "Marcar pagada". Por eso no están entre los campos editables del formulario.
+// El admin/owner puede corregir TODOS los datos de la campaña, incluso pagada/activa
+// (sin inmutabilidad). El estado de lifecycle (borrador/finalizada/cancelada) sí es
+// por acción; pero estado_pago/fecha_pago/medio_pago son datos comerciales editables.
 const CAMPOS_EDITABLES = [
   "empresa", "nombre_campania", "contacto_nombre", "contacto_telefono", "contacto_email",
   "cuit", "modalidad", "cantidad_contratada", "duracion_minutos", "usos_por_codigo",
   "precio_neto", "iva_porcentaje", "fecha_inicio", "observaciones",
+  "estado_pago", "fecha_pago", "medio_pago",
 ] as const;
 
 function limpiarCampania(body: Record<string, unknown>): Record<string, unknown> {
@@ -103,8 +104,11 @@ export async function actualizarCampania(id: string, body: Record<string, unknow
   const err = validarCampania(merged);
   if (err) return fail(400, err);
   const conVen = conVencimiento(row, (merged.modalidad as string) ?? "unica", (merged.fecha_inicio as string) ?? null);
+  const patch: Record<string, unknown> = { ...conVen, updated_at: new Date().toISOString() };
+  // Si al editar queda pagada y todavía era borrador, se confirma (activa).
+  if (merged.estado_pago === "pagado" && actual.estado === "borrador") patch.estado = "activa";
   const { data, error } = await supabaseAdmin
-    .from("empresa_campanias").update({ ...conVen, updated_at: new Date().toISOString() }).eq("id", id).select("*").single();
+    .from("empresa_campanias").update(patch).eq("id", id).select("*").single();
   if (error) return fail(500, "No se pudo actualizar la campaña.");
   return ok(data);
 }
@@ -294,9 +298,8 @@ export async function reservarConCodigo(
 
 // ── Acciones admin (Fase 2) ───────────────────────────────────────────────────
 
-// Marcar campaña como pagada: exige fecha de pago + medio. Idempotente (el ingreso
-// de Finanzas se DERIVA de la campaña, no se inserta una fila → marcar dos veces no
-// duplica). No permite activa con pago pendiente (se deriva por estado_pago).
+// Marcar campaña como pagada: exige fecha de pago + medio. Dato COMERCIAL de Empresas:
+// NO genera ningún ingreso en Finanzas (el owner lo registra a mano). Idempotente.
 export async function marcarPagada(id: string, fechaPago: string, medioPago: string): Promise<Resultado<unknown>> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fechaPago || ""))) return fail(400, "La fecha de pago es obligatoria.");
   if (!["efectivo", "mercadopago", "transferencia"].includes(medioPago)) return fail(400, "Medio de pago inválido.");

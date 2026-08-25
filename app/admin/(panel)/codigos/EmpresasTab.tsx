@@ -25,6 +25,7 @@ const BLANK = {
   empresa: "", nombre_campania: "", contacto_nombre: "", contacto_telefono: "", contacto_email: "", cuit: "",
   modalidad: "unica", cantidad_contratada: "25", duracion_minutos: "15", usos_por_codigo: "1",
   precio_neto: "0", iva_porcentaje: "21", fecha_inicio: "", observaciones: "",
+  estado_pago: "pendiente", fecha_pago: "", medio_pago: "transferencia",
 };
 
 function badge(estado: string) {
@@ -73,7 +74,15 @@ function CampaniaFormModal({ form, set, editId, msg, busy, onGuardar, onClose }:
           <label className="text-sm text-zinc-300">Precio neto de la campaña<input type="number" className={inp} value={form.precio_neto} onChange={(e) => set("precio_neto", e.target.value)} /></label>
           <label className="text-sm text-zinc-300">IVA %<input type="number" className={inp} value={form.iva_porcentaje} onChange={(e) => set("iva_porcentaje", e.target.value)} /></label>
           <label className="text-sm text-zinc-300">Fecha de inicio<input type="date" className={inp} value={form.fecha_inicio} onChange={(e) => set("fecha_inicio", e.target.value)} /></label>
+          <label className="text-sm text-zinc-300">Estado de pago
+            <select className={inp} value={form.estado_pago} onChange={(e) => set("estado_pago", e.target.value)}><option value="pendiente">Pendiente</option><option value="pagado">Pagado</option></select>
+          </label>
+          <label className="text-sm text-zinc-300">Fecha de pago<input type="date" className={inp} value={form.fecha_pago} onChange={(e) => set("fecha_pago", e.target.value)} /></label>
+          <label className="text-sm text-zinc-300">Medio de pago
+            <select className={inp} value={form.medio_pago} onChange={(e) => set("medio_pago", e.target.value)}><option value="transferencia">Transferencia</option><option value="mercadopago">Mercado Pago</option><option value="efectivo">Efectivo</option></select>
+          </label>
         </div>
+        {editId && <p className="mt-2 text-xs text-amber-400">El pago no impacta Finanzas automáticamente: registrá el ingreso a mano cuando lo cobres.</p>}
         <details className="mt-2">
           <summary className="cursor-pointer text-xs font-bold text-zinc-400">Opciones avanzadas</summary>
           <label className="mt-2 block text-sm text-zinc-300">Usos por código (default 1)<input type="number" className={inp} value={form.usos_por_codigo} onChange={(e) => set("usos_por_codigo", e.target.value)} /></label>
@@ -105,6 +114,7 @@ export default function EmpresasTab() {
   const [form, setForm] = useState(BLANK);
   const [busy, setBusy] = useState(false);
   const [pago, setPago] = useState<{ fecha_pago: string; medio_pago: string } | null>(null);
+  const [editWarn, setEditWarn] = useState(false);
 
   const cargar = useCallback(async () => {
     setLoading(true); setMsg("");
@@ -129,7 +139,7 @@ export default function EmpresasTab() {
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
-  const abrirNueva = () => { setEditId(null); setForm(BLANK); setShowForm(true); };
+  const abrirNueva = () => { setEditId(null); setForm(BLANK); setEditWarn(false); setShowForm(true); };
   const abrirEditar = (c: Campania) => {
     setEditId(c.id);
     setForm({
@@ -138,7 +148,9 @@ export default function EmpresasTab() {
       modalidad: c.modalidad, cantidad_contratada: String(c.cantidad_contratada), duracion_minutos: String(c.duracion_minutos),
       usos_por_codigo: String(c.usos_por_codigo), precio_neto: String(c.precio_neto), iva_porcentaje: String(c.iva_porcentaje),
       fecha_inicio: c.fecha_inicio || "", observaciones: c.observaciones || "",
+      estado_pago: c.estado_pago || "pendiente", fecha_pago: c.fecha_pago || "", medio_pago: (c as { medio_pago?: string }).medio_pago || "transferencia",
     });
+    setEditWarn(Boolean(c.codigos_generados));
     setShowForm(true);
   };
 
@@ -158,6 +170,7 @@ export default function EmpresasTab() {
   };
 
   const guardar = async () => {
+    if (editId && editWarn && !confirm("Esta campaña ya tiene códigos generados. Cambiar fechas, modalidad, precio o cantidad puede afectar la vigencia de los códigos y las reservas existentes (no se borra ninguna reserva ya realizada). ¿Continuar?")) return;
     setBusy(true); setMsg("");
     try {
       const url = editId ? `/api/admin/empresas/campanias/${editId}` : "/api/admin/empresas/campanias";
@@ -167,7 +180,7 @@ export default function EmpresasTab() {
           ...form,
           cantidad_contratada: Number(form.cantidad_contratada), duracion_minutos: Number(form.duracion_minutos),
           usos_por_codigo: Number(form.usos_por_codigo), precio_neto: Number(form.precio_neto), iva_porcentaje: Number(form.iva_porcentaje),
-          fecha_inicio: form.fecha_inicio || null,
+          fecha_inicio: form.fecha_inicio || null, fecha_pago: form.fecha_pago || null,
         }),
       });
       const d = await res.json();
