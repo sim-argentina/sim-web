@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { generarInformePDF, generarInformeExcel, exportarCodigosExcel, type InformeData } from "./empresasInforme";
 
 type Campania = {
-  id: string; empresa: string; nombre_campania: string; modalidad: string;
+  id: string; empresa: string; nombre_campania: string | null; modalidad: string;
   cantidad_contratada: number; duracion_minutos: number; usos_por_codigo: number;
   precio_neto: number; iva_porcentaje: number; precio_total?: number; neto?: number; iva?: number; total?: number;
   fecha_pago: string | null; estado_pago: string; fecha_inicio: string | null; fecha_vencimiento: string | null;
@@ -19,6 +19,7 @@ type Detalle = { campania: Campania; metricas: Record<string, number | string>; 
 
 const money = (n: number) => `$${Number(n || 0).toLocaleString("es-AR")}`;
 const inp = "w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm text-white outline-none focus:border-red-500";
+const secc = "mt-4 mb-2 border-t border-white/10 pt-3 text-xs font-bold uppercase tracking-wide text-zinc-500";
 
 // El estado y el pago NO se editan acá: se derivan / se marcan con acciones explícitas.
 const BLANK = {
@@ -57,13 +58,20 @@ function CampaniaFormModal({ form, set, editId, msg, busy, onGuardar, onClose }:
           <h3 className="text-lg font-black text-white">{editId ? "Editar" : "Nueva"} campaña</h3>
           <button onClick={onClose} className="text-2xl leading-none text-zinc-500 hover:text-white">×</button>
         </div>
+        <p className="mb-3 text-xs text-zinc-500">Solo <b className="text-zinc-300">Empresa</b> es obligatoria. El nombre de campaña es opcional.</p>
+
+        <div className={secc}>Empresa y contacto</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="text-sm text-zinc-300">Empresa *<input className={inp} value={form.empresa} onChange={(e) => set("empresa", e.target.value)} /></label>
-          <label className="text-sm text-zinc-300">Campaña *<input className={inp} value={form.nombre_campania} onChange={(e) => set("nombre_campania", e.target.value)} /></label>
+          <label className="text-sm text-zinc-300">Campaña (opcional)<input className={inp} value={form.nombre_campania} onChange={(e) => set("nombre_campania", e.target.value)} placeholder="Beneficio empresarial" /></label>
           <label className="text-sm text-zinc-300">Contacto<input className={inp} value={form.contacto_nombre} onChange={(e) => set("contacto_nombre", e.target.value)} /></label>
           <label className="text-sm text-zinc-300">Teléfono<input className={inp} value={form.contacto_telefono} onChange={(e) => set("contacto_telefono", e.target.value)} /></label>
           <label className="text-sm text-zinc-300">Email<input className={inp} value={form.contacto_email} onChange={(e) => set("contacto_email", e.target.value)} /></label>
           <label className="text-sm text-zinc-300">CUIT<input className={inp} value={form.cuit} onChange={(e) => set("cuit", e.target.value)} /></label>
+        </div>
+
+        <div className={secc}>Beneficio</div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="text-sm text-zinc-300">Modalidad
             <select className={inp} value={form.modalidad} onChange={(e) => set("modalidad", e.target.value)}>
               <option value="unica">Compra única (60 días)</option><option value="mensual">Pack mensual (30 días)</option>
@@ -71,8 +79,16 @@ function CampaniaFormModal({ form, set, editId, msg, busy, onGuardar, onClose }:
           </label>
           <label className="text-sm text-zinc-300">Cantidad contratada<input type="number" className={inp} value={form.cantidad_contratada} onChange={(e) => set("cantidad_contratada", e.target.value)} /></label>
           <label className="text-sm text-zinc-300">Duración por experiencia (min)<input type="number" className={inp} value={form.duracion_minutos} onChange={(e) => set("duracion_minutos", e.target.value)} /></label>
+        </div>
+
+        <div className={secc}>Económico</div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="text-sm text-zinc-300">Precio neto de la campaña<input type="number" className={inp} value={form.precio_neto} onChange={(e) => set("precio_neto", e.target.value)} /></label>
           <label className="text-sm text-zinc-300">IVA %<input type="number" className={inp} value={form.iva_porcentaje} onChange={(e) => set("iva_porcentaje", e.target.value)} /></label>
+        </div>
+
+        <div className={secc}>Pago y activación</div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="text-sm text-zinc-300">Fecha de inicio<input type="date" className={inp} value={form.fecha_inicio} onChange={(e) => set("fecha_inicio", e.target.value)} /></label>
           <label className="text-sm text-zinc-300">Estado de pago
             <select className={inp} value={form.estado_pago} onChange={(e) => set("estado_pago", e.target.value)}><option value="pendiente">Pendiente</option><option value="pagado">Pagado</option></select>
@@ -143,7 +159,7 @@ export default function EmpresasTab() {
   const abrirEditar = (c: Campania) => {
     setEditId(c.id);
     setForm({
-      empresa: c.empresa, nombre_campania: c.nombre_campania, contacto_nombre: c.contacto_nombre || "",
+      empresa: c.empresa, nombre_campania: c.nombre_campania || "", contacto_nombre: c.contacto_nombre || "",
       contacto_telefono: c.contacto_telefono || "", contacto_email: c.contacto_email || "", cuit: c.cuit || "",
       modalidad: c.modalidad, cantidad_contratada: String(c.cantidad_contratada), duracion_minutos: String(c.duracion_minutos),
       usos_por_codigo: String(c.usos_por_codigo), precio_neto: String(c.precio_neto), iva_porcentaje: String(c.iva_porcentaje),
@@ -220,7 +236,7 @@ export default function EmpresasTab() {
         {msg && <p className="rounded-xl border border-red-500/30 bg-red-900/20 px-4 py-2 text-sm text-red-300">{msg}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-lg font-black text-white">{c.empresa} — {c.nombre_campania}</h3>
+            <h3 className="text-lg font-black text-white">{c.empresa}{c.nombre_campania ? ` — ${c.nombre_campania}` : ""}</h3>
             <p className="text-xs text-zinc-500">{c.modalidad === "mensual" ? "Pack mensual" : "Compra única"} · {c.fecha_inicio || "—"} → {c.fecha_vencimiento || "—"} · {badge(String(m.estado))}</p>
           </div>
           <button onClick={() => abrirEditar(c)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">Editar</button>
@@ -409,7 +425,7 @@ export default function EmpresasTab() {
               {campanias.map((c) => (
                 <tr key={c.id} className="hover:bg-white/[0.02]">
                   <td className="px-3 py-2 font-bold text-white">{c.empresa}</td>
-                  <td className="px-3 py-2 text-zinc-300">{c.nombre_campania}</td>
+                  <td className="px-3 py-2 text-zinc-300">{c.nombre_campania || "—"}</td>
                   <td className="px-3 py-2">{badge(c.estado_efectivo || c.estado)}</td>
                   <td className="px-3 py-2 text-zinc-400">{c.modalidad === "mensual" ? "Mensual" : "Única"}</td>
                   <td className="px-3 py-2 text-zinc-400">{c.fecha_inicio || "—"}</td>

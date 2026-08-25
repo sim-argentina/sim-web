@@ -35,6 +35,8 @@ function limpiarCampania(body: Record<string, unknown>): Record<string, unknown>
     if (n in out) out[n] = Number(out[n]) || 0;
   }
   if ("modalidad" in out && out.modalidad !== "mensual") out.modalidad = "unica";
+  // Campaña opcional: string vacío/espacios se normaliza a null de forma consistente.
+  if ("nombre_campania" in out) out.nombre_campania = String(out.nombre_campania ?? "").trim() || null;
   return out;
 }
 
@@ -76,7 +78,7 @@ export async function listarCampanias(opts: { q?: string | null; estado?: string
 
 function validarCampania(row: Record<string, unknown>): string | null {
   if (!String(row.empresa ?? "").trim()) return "La empresa es obligatoria.";
-  if (!String(row.nombre_campania ?? "").trim()) return "El nombre de la campaña es obligatorio.";
+  // El nombre de campaña es OPCIONAL: solo la empresa es obligatoria.
   const inicio = (row.fecha_inicio as string) || null;
   const pago = (row.fecha_pago as string) || null;
   if (inicio && !inicioValido(pago, inicio)) return "La fecha de inicio debe estar entre el pago y 30 días después.";
