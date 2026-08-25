@@ -243,12 +243,11 @@ export default function AdminCodigosPage() {
           </p>
 
           <h1 className="text-3xl font-black uppercase md:text-5xl">
-            Códigos de descuento
+            Códigos
           </h1>
 
           <p className="mt-2 max-w-2xl text-sm text-white/60">
-            Generá códigos únicos para reservas online, empresas, sorteos,
-            clientes especiales o campañas.
+            Gestioná códigos promocionales y beneficios prepagados para empresas.
           </p>
         </div>
 

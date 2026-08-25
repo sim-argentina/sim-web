@@ -17,9 +17,11 @@ type CampaniaInf = {
 };
 type MetricasInf = { [k: string]: number | string | undefined };
 type CodigoInf = { id?: string; codigo?: string; estado?: string; estado_efectivo?: string; usos_actuales?: number; usos_maximos?: number; created_at?: string };
+type ReservaInf = { fecha?: string; hora?: string; duracion_minutos?: number; simuladores?: string[]; estado?: string; no_show?: boolean } | null;
 type UsoInf = {
   codigo_id?: string; beneficiario_nombre?: string | null; beneficiario_apellido?: string | null;
   beneficiario_telefono?: string | null; beneficiario_email?: string | null; reserva_id?: number | null; estado?: string; created_at?: string;
+  reserva?: ReservaInf;
 };
 export type InformeData = {
   tipo: "parcial" | "definitivo";
@@ -28,8 +30,18 @@ export type InformeData = {
   metricas: MetricasInf;
   codigos: CodigoInf[];
   usos: UsoInf[];
+  simuladores?: Array<{ nombre: string; usos: number }>;
   evolucion: Array<{ fecha: string; canjes: number }>;
 };
+
+// Estado legible de la reserva de un uso (para informes).
+function estadoUso(u: UsoInf): string {
+  const r = u.reserva;
+  if (r) return r.no_show ? "No-show" : r.estado === "cancelada" ? "Cancelada" : r.estado === "activa" ? "Reservada" : String(r.estado || "");
+  return u.estado === "cancelado" ? "Cancelado" : "Sin reserva";
+}
+const simsDe = (u: UsoInf) => Array.isArray(u.reserva?.simuladores) ? u.reserva!.simuladores!.join(", ") : "—";
+const reservaTxt = (u: UsoInf) => u.reserva ? `${u.reserva.fecha ?? ""} ${u.reserva.hora ?? ""}`.trim() || "—" : "—";
 
 function nombreArchivo(d: InformeData, ext: string) {
   const emp = String(d.campania.empresa || "empresa").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
@@ -104,13 +116,26 @@ export function generarInformePDF(d: InformeData) {
     theme: "grid", headStyles: { fillColor: ROJO, textColor: 255 }, styles: { fontSize: 9 },
   });
 
-  // Detalle por persona (sin DNI ni datos de pago). Reserva/simulador: Fase 2.
+  // Distribución por simulador (de reservas reales).
+  if (d.simuladores && d.simuladores.length) {
+    autoTable(doc, {
+      head: [["Simulador", "Usos", "%"]],
+      body: d.simuladores.map((s) => {
+        const totalUsos = d.usos.filter((u) => u.reserva).length || 1;
+        return [s.nombre, String(s.usos), `${Math.round((s.usos / totalUsos) * 100)}%`];
+      }),
+      theme: "grid", headStyles: { fillColor: ROJO, textColor: 255 }, styles: { fontSize: 9 },
+    });
+  }
+
+  // Detalle por persona (sin DNI, teléfono, email ni datos de pago — informe externo).
   if (d.usos.length) {
     autoTable(doc, {
-      head: [["Nombre", "Apellido", "Código", "Fecha de uso", "Estado"]],
+      head: [["Nombre", "Apellido", "Código", "Reserva", "Duración", "Simuladores", "Estado"]],
       body: d.usos.map((u) => [
         u.beneficiario_nombre || "—", u.beneficiario_apellido || "—",
-        codigoDeUso(d, u), String(u.created_at || "").slice(0, 10), u.estado || "consumido",
+        codigoDeUso(d, u), reservaTxt(u), u.reserva?.duracion_minutos ? `${u.reserva.duracion_minutos}m` : "—",
+        simsDe(u), estadoUso(u),
       ]),
       theme: "striped", headStyles: { fillColor: ROJO, textColor: 255 }, styles: { fontSize: 8 },
     });
@@ -153,11 +178,14 @@ export function generarInformeExcel(d: InformeData) {
 
   const uso = d.usos.map((u) => ({
     Nombre: u.beneficiario_nombre || "", Apellido: u.beneficiario_apellido || "",
-    Teléfono: u.beneficiario_telefono || "", Email: u.beneficiario_email || "",
-    Código: codigoDeUso(d, u), "Fecha de uso": String(u.created_at || "").slice(0, 10),
-    Estado: u.estado || "consumido", Reserva: u.reserva_id ?? "",
+    Código: codigoDeUso(d, u),
+    Fecha: u.reserva?.fecha || "", Hora: u.reserva?.hora || "",
+    "Duración (min)": u.reserva?.duracion_minutos ?? "",
+    Simuladores: Array.isArray(u.reserva?.simuladores) ? u.reserva!.simuladores!.join(", ") : "",
+    Estado: estadoUso(u),
+    "No-show": u.reserva?.no_show ? "sí" : "",
   }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(uso.length ? uso : [{ Nombre: "" }]), "Uso");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(uso.length ? uso : [{ Nombre: "" }]), "Uso / Reservas");
 
   XLSX.writeFile(wb, nombreArchivo(d, "xlsx"));
 }

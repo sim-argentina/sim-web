@@ -1312,6 +1312,10 @@ export default function ReservasPage() {
                     El descuento se valida antes de ir a Mercado Pago.
                   </p>
                 )}
+                <p className="mt-3 text-xs text-zinc-500">
+                  ¿Tenés un <b className="text-zinc-300">código empresarial</b> (EMP-…)?{" "}
+                  <a href="/reservas-empresa" className="font-semibold text-red-400 underline">Usalo acá</a>.
+                </p>
               </div>
 
               <div className="mt-5 space-y-4">
