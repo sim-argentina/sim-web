@@ -6,7 +6,7 @@ import { msToTiempo } from "@/lib/campeonatos";
 // ── Tipos del DTO que devuelve /api/admin/campeonatos/[id]/bracket ────────────
 type Participante = {
   id: string | null; inscripcion_id: string; nombre: string; presente: boolean; incluido: boolean;
-  estado: string; mejor_ms: number | null; seed: number | null; persistido?: boolean;
+  estado: string; mejor_ms: number | null; seed: number | null; posicion_provisional?: number | null; persistido?: boolean;
 };
 type CarreraPart = {
   id: string; inscripcion_id: string; nombre: string; seed: number | null;
@@ -36,8 +36,9 @@ const money = (n: number) => `$${Number(n || 0).toLocaleString("es-AR")}`;
 
 // ── Fila de clasificación (quali) ─────────────────────────────────────────────
 // Un único campo: MEJOR TIEMPO. No se cargan vueltas individuales.
-function QualiRow({ p, onGuardar }: {
+function QualiRow({ p, provisional, onGuardar }: {
   p: Participante;
+  provisional: boolean; // true: clasificación abierta → se muestra POS. provisional, no seed
   onGuardar: (id: string, patch: Record<string, unknown>) => Promise<void>;
 }) {
   // Estado local desde props; el padre remonta la fila (key con mejor_ms) al cambiar.
@@ -53,7 +54,7 @@ function QualiRow({ p, onGuardar }: {
   const inp = "w-28 rounded-lg bg-black/40 border border-white/10 px-2 py-1 text-sm text-white font-mono focus:border-red-500 outline-none";
   return (
     <tr className="border-t border-white/5">
-      <td className="px-2 py-2 text-center font-black text-red-400">{p.seed ?? "—"}</td>
+      <td className="px-2 py-2 text-center font-black text-red-400">{(provisional ? p.posicion_provisional : p.seed) ?? "—"}</td>
       <td className="px-2 py-2 font-bold text-white">{p.nombre}</td>
       <td className="px-2 py-2">
         <label className="flex items-center gap-1 text-xs text-zinc-300">
@@ -257,14 +258,17 @@ export default function TabBracket({ campeonatos, role }: { campeonatos: CampLit
               <span>Con tiempo: <b className="text-white">{data.participantes.filter((p) => p.mejor_ms != null).length}</b></span>
             </div>
           </div>
+          {data.bracket.clasificacion_habilitada && (
+            <p className="mb-3 text-[11px] text-zinc-500">La columna <b className="text-zinc-300">Pos.</b> es el orden provisional por mejor tiempo. Los <b className="text-zinc-300">seeds</b> se definen y congelan al cerrar la clasificación.</p>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-left">
               <thead className="text-[10px] uppercase tracking-wider text-zinc-500">
-                <tr>{["Seed", "Piloto", "Presencia", "Mejor tiempo", "Sin tiempo"].map((h) => <th key={h} className="px-2 py-2">{h}</th>)}</tr>
+                <tr>{[data.bracket.clasificacion_habilitada ? "Pos." : "Seed", "Piloto", "Presencia", "Mejor tiempo", "Sin tiempo"].map((h) => <th key={h} className="px-2 py-2">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {data.participantes.map((p) => (
-                  <QualiRow key={`${p.inscripcion_id}-${p.mejor_ms}`} p={p} onGuardar={guardarQuali} />
+                  <QualiRow key={`${p.inscripcion_id}-${p.mejor_ms}`} p={p} provisional={data.bracket.clasificacion_habilitada} onGuardar={guardarQuali} />
                 ))}
               </tbody>
             </table>
@@ -291,6 +295,29 @@ export default function TabBracket({ campeonatos, role }: { campeonatos: CampLit
                 className="rounded-xl border border-white/15 px-4 py-2 text-sm font-bold text-zinc-300 hover:text-white">Reabrir clasificación</button>
             )}
           </div>
+
+          {/* Seeding DEFINITIVO (clasificación ya cerrada, bracket aún no generado) */}
+          {data.rondas.length === 0 && data.participantes.some((p) => p.seed != null) && (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <h3 className="mb-3 font-black text-white">Seeding definitivo</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] text-left">
+                  <thead className="text-[10px] uppercase tracking-wider text-zinc-500">
+                    <tr>{["Seed", "Piloto", "Mejor tiempo"].map((h) => <th key={h} className="px-2 py-2">{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {data.participantes.filter((p) => p.seed != null).map((p) => (
+                      <tr key={p.inscripcion_id} className="border-t border-white/5">
+                        <td className="px-2 py-2 text-center font-black text-red-400">{p.seed}</td>
+                        <td className="px-2 py-2 font-bold text-white">{p.nombre}</td>
+                        <td className="px-2 py-2 font-mono text-zinc-300">{p.mejor_ms != null ? msToTiempo(p.mejor_ms) : "Sin tiempo"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Rondas como columnas (desktop) / stack (mobile) */}
           <div className="flex gap-4 overflow-x-auto pb-2">

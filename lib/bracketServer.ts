@@ -148,6 +148,13 @@ export async function obtenerEstado(campeonatoId: string): Promise<Resultado<unk
   // - cerrada/en curso/finalizado: solo los persistidos (congelados; no se mezclan
   //   nuevas inscripciones).
   const persistById = new Map(persistidos.map((p) => [p.inscripcion_id, p]));
+  // Mientras la clasificación esté ABIERTA y el torneo use qualifying, los seeds
+  // persistidos NO son definitivos (pueden ser residuales de un flujo anterior): se
+  // ocultan (seed=null) y en su lugar se expone una POSICIÓN PROVISIONAL por mejor
+  // tiempo. Con seeding manual (clasificacion_habilitada=false) los seeds SÍ son la
+  // herramienta y se muestran como hasta ahora. El seed definitivo nace al cerrar.
+  const usaClasificacion = bracket?.clasificacion_habilitada ?? cfg.clasificacion.habilitada;
+  const clasifAbierta = estadoBracket === "clasificacion" && usaClasificacion;
   const derivar = (p: (typeof persistidos)[number] | undefined, inscripcionId: string) => ({
     id: p?.id ?? null,
     inscripcion_id: inscripcionId,
@@ -155,19 +162,38 @@ export async function obtenerEstado(campeonatoId: string): Promise<Resultado<unk
     presente: p ? p.presente : true,
     incluido: p ? p.incluido : true,
     mejor_ms: p && p.mejor_ms != null ? Number(p.mejor_ms) : null,
-    seed: p?.seed ?? null,
+    seed: clasifAbierta ? null : (p?.seed ?? null),
+    posicion_provisional: null as number | null,
     estado: p?.estado ?? "activo",
     persistido: Boolean(p),
   });
-  const participantesDto = (estadoBracket === "clasificacion"
+  const participantesDto = estadoBracket === "clasificacion"
     ? inscripciones.map((insc) => derivar(persistById.get(insc.id), insc.id))
-    : persistidos.map((p) => derivar(p, p.inscripcion_id))
-  ).sort((a, b) => {
-    if (a.seed != null && b.seed != null) return a.seed - b.seed;
-    if (a.seed != null) return -1;
-    if (b.seed != null) return 1;
-    return (a.mejor_ms ?? Infinity) - (b.mejor_ms ?? Infinity);
-  });
+    : persistidos.map((p) => derivar(p, p.inscripcion_id));
+
+  if (clasifAbierta) {
+    // Ranking provisional: presentes con mejor tiempo, orden ascendente (empate
+    // estable por orden de inscripción). Ausentes / sin tiempo → sin posición (—).
+    const conTiempo = participantesDto
+      .filter((p) => p.presente && p.mejor_ms != null)
+      .sort((a, b) => (a.mejor_ms as number) - (b.mejor_ms as number));
+    const posById = new Map<string, number>();
+    conTiempo.forEach((p, i) => posById.set(p.inscripcion_id, i + 1));
+    participantesDto.forEach((p) => { p.posicion_provisional = posById.get(p.inscripcion_id) ?? null; });
+    participantesDto.sort((a, b) => {
+      const pa = a.posicion_provisional ?? Infinity, pb = b.posicion_provisional ?? Infinity;
+      if (pa !== pb) return pa - pb;
+      const ma = a.mejor_ms ?? Infinity, mb = b.mejor_ms ?? Infinity;
+      return ma === mb ? 0 : ma - mb;
+    });
+  } else {
+    participantesDto.sort((a, b) => {
+      if (a.seed != null && b.seed != null) return a.seed - b.seed;
+      if (a.seed != null) return -1;
+      if (b.seed != null) return 1;
+      return (a.mejor_ms ?? Infinity) - (b.mejor_ms ?? Infinity);
+    });
+  }
 
   const cpsPorCarrera = new Map<string, typeof cps>();
   cps.forEach((cp) => { const arr = cpsPorCarrera.get(cp.carrera_id) ?? []; arr.push(cp); cpsPorCarrera.set(cp.carrera_id, arr); });
