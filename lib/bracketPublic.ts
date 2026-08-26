@@ -28,6 +28,9 @@ export type BracketPublico = {
   clasificacion: {
     abierta: boolean;
     pilotos: number;
+    // Nombres de los pilotos EN clasificación mientras está abierta (orden alfabético,
+    // sin seed/posición/tiempo → no insinúa ranking). null cuando ya cerró (usar oficial).
+    nombres: string[] | null;
     // Clasificación OFICIAL (seed + nombre + mejor tiempo) solo cuando está cerrada y el
     // torneo usa qualifying. Mientras está abierta NO se publican seeds ni tiempos.
     oficial: Array<{ seed: number; nombre: string; mejor_tiempo: string | null }> | null;
@@ -85,6 +88,10 @@ export async function estadoPublicoBracket(campeonatoId: string): Promise<Result
   // Clasificación oficial: seeds definitivos (seed != null) ordenados; tiempos solo si
   // el torneo usa qualifying. Mientras la clasificación está abierta → null (no oficial).
   const abierta = estado === "clasificacion";
+  // Mientras está abierta: solo NOMBRES (orden alfabético, sin ranking). No seeds/tiempos.
+  const nombres = abierta && usaClasificacion
+    ? a.participantes.map((p) => p.nombre).sort((x, y) => x.localeCompare(y, "es"))
+    : null;
   const oficial = !abierta && estado !== "no_iniciado" && usaClasificacion
     ? a.participantes
         .filter((p) => p.seed != null)
@@ -127,7 +134,7 @@ export async function estadoPublicoBracket(campeonatoId: string): Promise<Result
     campeonato: { id: a.campeonato.id, nombre: a.campeonato.nombre, modalidad: "eliminacion", estado_deportivo: estado },
     estado,
     usa_clasificacion: usaClasificacion,
-    clasificacion: { abierta, pilotos: a.participantes.length, oficial },
+    clasificacion: { abierta, pilotos: a.participantes.length, nombres, oficial },
     rondas,
     final: rondas.find((r) => r.tipo === "final") ?? null,
     podio,

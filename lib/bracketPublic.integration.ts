@@ -103,6 +103,10 @@ async function main() {
       assert.equal(d.clasificacion.abierta, true, "B: abierta");
       assert.equal(d.clasificacion.oficial, null, "B: sin clasificación oficial mientras está abierta");
       assert.equal(d.clasificacion.pilotos, 8, "B: 8 pilotos");
+      // Nombres SÍ (para el resumen contextual), en orden alfabético y sin seeds/tiempos.
+      assert.ok(Array.isArray(d.clasificacion.nombres) && d.clasificacion.nombres.length === 8, "B: 8 nombres");
+      const ordenado = [...d.clasificacion.nombres!].sort((x, y) => x.localeCompare(y, "es"));
+      assert.deepEqual(d.clasificacion.nombres, ordenado, "B: nombres en orden alfabético (no insinúa ranking)");
       assert.deepEqual(d.rondas, [], "B: sin cuadro todavía");
     }
 
@@ -111,6 +115,7 @@ async function main() {
     {
       const d = await pub(camp8);
       assert.equal(d.estado, "clasificacion_cerrada", "C: cerrada");
+      assert.equal(d.clasificacion.nombres, null, "C: nombres null al cerrar (usa oficial)");
       assert.ok(d.clasificacion.oficial && d.clasificacion.oficial.length === 8, "C: 8 seeds oficiales");
       assert.equal(d.clasificacion.oficial![0].seed, 1, "C: seed 1 primero");
       assert.ok(/^\d+:\d{2}\.\d{3}$/.test(d.clasificacion.oficial![0].mejor_tiempo ?? ""), "C: mejor tiempo formateado M:SS.mmm");

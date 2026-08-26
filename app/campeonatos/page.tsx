@@ -1034,9 +1034,17 @@ function SecClasificacion({ resultados, campeonatos, fechas, clasificacion }: { 
           </StatCard>
         </div>
 
-        {/* ── Clasificación previa (Fecha 0) ── */}
-        {(() => {
-          const clasFiltrada = clasificacion.filter((c) => !filtros.campeonato_id || c.campeonato_id === filtros.campeonato_id);
+        {/* ── Clasificación CONTEXTUAL al campeonato elegido ── */}
+        {/* Sin campeonato específico ("Todos") → no se muestra ninguna clasificación. */}
+        {filtros.campeonato_id && (() => {
+          const campSel = campeonatos.find((c) => c.id === filtros.campeonato_id);
+          // Eliminación con clasificación → resumen del bracket público (nuevo motor),
+          // reutilizando su DTO read-only. Duelo NO usa "Fecha 0".
+          if (campSel && esEliminacion(campSel.modalidad)) {
+            return <ClasificacionBracketResumen key={filtros.campeonato_id} campeonatoId={filtros.campeonato_id} />;
+          }
+          // Liga (u otra) con Fecha 0 → bloque histórico, SOLO para ese campeonato.
+          const clasFiltrada = clasificacion.filter((c) => c.campeonato_id === filtros.campeonato_id);
           if (clasFiltrada.length === 0) return null;
           const orden: Record<string, number> = { oro: 0, plata: 1, bronce: 2, sin_clasificar: 3 };
           const sorted = [...clasFiltrada].sort(
@@ -1250,7 +1258,7 @@ type BracketData =
       campeonato: { id: string; nombre: string; modalidad: string; estado_deportivo: string };
       estado: "no_iniciado" | "clasificacion" | "clasificacion_cerrada" | "en_curso" | "finalizado";
       usa_clasificacion: boolean;
-      clasificacion: { abierta: boolean; pilotos: number; oficial: Array<{ seed: number; nombre: string; mejor_tiempo: string | null }> | null };
+      clasificacion: { abierta: boolean; pilotos: number; nombres: string[] | null; oficial: Array<{ seed: number; nombre: string; mejor_tiempo: string | null }> | null };
       rondas: BRonda[];
       final: BRonda | null;
       podio: Array<{ puesto: number; nombre: string; premio: { monto: number; trofeo: boolean } | null }> | null;
@@ -1335,6 +1343,60 @@ function PodioPub({ podio }: { podio: Array<{ puesto: number; nombre: string; pr
       </div>
     </div>
   );
+}
+
+// Resumen contextual de la clasificación de un campeonato de ELIMINACIÓN, dentro de la
+// pestaña Clasificación. Reutiliza el MISMO endpoint/DTO público del bracket (no duplica
+// fuente de verdad). Solo aparece si el torneo usa clasificación y ya arrancó.
+function ClasificacionBracketResumen({ campeonatoId }: { campeonatoId: string }) {
+  const [d, setD] = useState<BracketData | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/campeonatos/${campeonatoId}/bracket`, { cache: "no-store" });
+        if (!r.ok) return;
+        const j: BracketData = await r.json();
+        if (cancelled) return;
+        setD(j);
+        const activo = j.aplica && (j.estado === "clasificacion" || j.estado === "clasificacion_cerrada" || j.estado === "en_curso");
+        if (activo) t = setTimeout(tick, document.hidden ? 40000 : 15000);
+      } catch { /* reintenta en el próximo cambio de foco */ }
+    };
+    tick();
+    const onVis = () => { if (!document.hidden && !cancelled) { if (t) clearTimeout(t); tick(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; if (t) clearTimeout(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [campeonatoId]);
+
+  // Sin datos, no aplica (liga), sin clasificación (manual/no_iniciado) → no se muestra bloque.
+  if (!d || !d.aplica || !d.usa_clasificacion || d.estado === "no_iniciado") return null;
+
+  if (d.estado === "clasificacion") {
+    const nombres = d.clasificacion.nombres ?? [];
+    return (
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+        <p className="mb-1 text-xs font-black uppercase tracking-[0.3em] text-red-400">Clasificación</p>
+        <p className="mb-3 text-sm text-zinc-400">Clasificación en curso — {d.clasificacion.pilotos} piloto{d.clasificacion.pilotos === 1 ? "" : "s"}. Los seeds y tiempos se publican al cerrarla.</p>
+        {nombres.length > 0 && (
+          <ul className="grid gap-1 sm:grid-cols-2">
+            {nombres.map((n, i) => <li key={i} className="text-sm text-zinc-200">• {n}</li>)}
+          </ul>
+        )}
+      </div>
+    );
+  }
+  // Cerrada / en curso / finalizado → clasificación OFICIAL (seed · piloto · mejor tiempo).
+  if (d.clasificacion.oficial && d.clasificacion.oficial.length > 0) {
+    return (
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4">
+        <p className="mb-3 text-xs font-black uppercase tracking-[0.3em] text-zinc-500">Clasificación oficial</p>
+        <ClasificacionOficialPub oficial={d.clasificacion.oficial} />
+      </div>
+    );
+  }
+  return null;
 }
 
 function BracketPublicoModal({ campeonato, onClose }: { campeonato: Campeonato; onClose: () => void }) {
