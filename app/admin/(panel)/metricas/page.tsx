@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { agregarStand, personasDeFila } from "@/lib/metricasStand";
+import WebTab from "./WebTab";
 
-type Vista = "reservas" | "stand" | "campeonatos";
+type Vista = "reservas" | "stand" | "campeonatos" | "web";
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
 type Agrupacion = "dia" | "semana" | "mes";
 
@@ -1573,8 +1574,18 @@ export default function AdminMetricasPage() {
           >
             Campeonatos
           </button>
+
+          <button
+            onClick={() => setVista("web")}
+            className={`rounded-xl px-6 py-3 text-sm font-bold ${
+              vista === "web" ? "bg-red-600 text-white" : "text-white/50 hover:text-white"
+            }`}
+          >
+            Web
+          </button>
         </div>
 
+        {vista !== "web" && (
         <div className="mb-6 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
           <div className="grid gap-4 lg:grid-cols-5">
             <div>
@@ -1716,8 +1727,11 @@ export default function AdminMetricasPage() {
             <p className="mt-1 text-lg font-semibold text-white">{rangoTexto}</p>
           </div>
         </div>
+        )}
 
-        {loading ? (
+        {vista === "web" ? (
+          <WebTab />
+        ) : loading ? (
           <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-10 text-center text-white/60">
             Cargando métricas...
           </div>
