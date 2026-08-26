@@ -674,7 +674,7 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
 
 // ─── Section: Campeonatos ─────────────────────────────────────────────────────
 
-function SecCampeonatos({ campeonatos, onInscribir }: { campeonatos: Campeonato[]; onInscribir: (c: Campeonato) => void }) {
+function SecCampeonatos({ campeonatos, onInscribir, onVerCuadro }: { campeonatos: Campeonato[]; onInscribir: (c: Campeonato) => void; onVerCuadro: (c: Campeonato) => void }) {
   const orden = ["activo", "proximo", "finalizado"];
   const sorted = [...campeonatos].sort((a, b) => orden.indexOf(a.estado) - orden.indexOf(b.estado));
   if (sorted.length === 0) {
@@ -719,6 +719,15 @@ function SecCampeonatos({ campeonatos, onInscribir }: { campeonatos: Campeonato[
               {c.estado === "finalizado" ? "Finalizado" : !c.inscripcion_habilitada ? "Inscripción cerrada" : "Inscribirme →"}
             </button>
           </div>
+          {/* Cuadro en vivo: solo eliminación, cuando ya arrancó o finalizó. */}
+          {esEliminacion(c.modalidad) && (c.estado === "activo" || c.estado === "finalizado") && (
+            <button
+              onClick={() => onVerCuadro(c)}
+              className="mt-2 w-full rounded-2xl border border-red-500/40 py-2.5 text-sm font-black text-red-300 transition-all hover:border-red-500 hover:text-white"
+            >
+              Ver cuadro en vivo →
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -1230,12 +1239,199 @@ function SecClasificacion({ resultados, campeonatos, fechas, clasificacion }: { 
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+// ─── Bracket público en vivo (solo lectura, con polling) ──────────────────────
+type BParticipante = { seed: number | null; nombre: string; posicion_final: number | null; estado: string; clasifica: boolean | null };
+type BCarrera = { numero: number; estado: string; es_bye: boolean; participantes: BParticipante[] };
+type BRonda = { numero: number; nombre: string; tipo: string; estado: string; carreras: BCarrera[] };
+type BracketData =
+  | { aplica: false; modalidad: string }
+  | {
+      aplica: true;
+      campeonato: { id: string; nombre: string; modalidad: string; estado_deportivo: string };
+      estado: "no_iniciado" | "clasificacion" | "clasificacion_cerrada" | "en_curso" | "finalizado";
+      usa_clasificacion: boolean;
+      clasificacion: { abierta: boolean; pilotos: number; oficial: Array<{ seed: number; nombre: string; mejor_tiempo: string | null }> | null };
+      rondas: BRonda[];
+      final: BRonda | null;
+      podio: Array<{ puesto: number; nombre: string; premio: { monto: number; trofeo: boolean } | null }> | null;
+      premios: { total: number | null; detalle: Array<{ puesto: number; monto: number; trofeo: boolean }> } | null;
+    };
+
+const money2 = (n: number) => `$${Number(n || 0).toLocaleString("es-AR")}`;
+
+function CarreraCardPub({ c }: { c: BCarrera }) {
+  const enCurso = c.estado === "en_curso";
+  const finalizada = c.estado === "finalizada";
+  const parts = [...c.participantes].sort((a, b) =>
+    finalizada ? (a.posicion_final ?? 99) - (b.posicion_final ?? 99) : (a.seed ?? 999) - (b.seed ?? 999));
+  return (
+    <div className={`rounded-xl border p-3 ${enCurso ? "border-red-500/60 bg-red-950/20" : finalizada ? "border-zinc-700 bg-zinc-900/50" : "border-zinc-800 bg-zinc-900/30"}`}>
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-black uppercase tracking-wider text-white">{c.es_bye ? "Pase directo" : `Carrera ${c.numero}`}</span>
+        {enCurso ? (
+          <span className="flex items-center gap-1 text-[10px] font-black uppercase text-red-400"><span className="h-2 w-2 rounded-full bg-red-500 motion-safe:animate-pulse" />En curso</span>
+        ) : (
+          <span className="text-[10px] font-black uppercase text-zinc-500">{finalizada ? "Finalizada" : "Próximamente"}</span>
+        )}
+      </div>
+      <ul className="space-y-1">
+        {parts.map((p, i) => {
+          const clasif = finalizada && p.clasifica === true;
+          const elim = finalizada && p.clasifica === false;
+          const extra = p.estado === "dnf" ? "DNF" : p.estado === "dsq" ? "Descalificado" : null;
+          return (
+            <li key={i} className="flex items-center justify-between gap-2 text-sm">
+              <span className={`truncate ${clasif ? "font-black text-white" : elim ? "text-zinc-500" : "text-zinc-300"}`}>
+                {c.es_bye ? p.nombre : finalizada ? `${p.posicion_final ?? "—"}.º ${p.nombre}` : p.seed != null ? `Seed ${p.seed} — ${p.nombre}` : p.nombre}
+              </span>
+              <span className="flex shrink-0 items-center gap-1">
+                {extra && <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-black uppercase text-zinc-300">{extra}</span>}
+                {c.es_bye && <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-black uppercase text-white">Pase directo</span>}
+                {clasif && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-black uppercase text-white">Clasificado</span>}
+                {elim && <span className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] font-black uppercase text-zinc-500">Eliminado</span>}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function ClasificacionOficialPub({ oficial }: { oficial: Array<{ seed: number; nombre: string; mejor_tiempo: string | null }> }) {
+  const conTiempo = oficial.some((o) => o.mejor_tiempo);
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-white/10">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-zinc-900/80 text-[10px] uppercase tracking-wider text-zinc-500">
+          <tr><th className="px-3 py-2">Seed</th><th className="px-3 py-2">Piloto</th>{conTiempo && <th className="px-3 py-2">Mejor tiempo</th>}</tr>
+        </thead>
+        <tbody>
+          {oficial.map((o) => (
+            <tr key={o.seed} className="border-t border-white/5">
+              <td className="px-3 py-2 font-black text-red-400">{o.seed}</td>
+              <td className="px-3 py-2 font-bold text-white">{o.nombre}</td>
+              {conTiempo && <td className="px-3 py-2 font-mono text-zinc-300">{o.mejor_tiempo ?? "—"}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PodioPub({ podio }: { podio: Array<{ puesto: number; nombre: string; premio: { monto: number; trofeo: boolean } | null }> }) {
+  const medalla = (p: number) => (p === 1 ? "🥇" : p === 2 ? "🥈" : p === 3 ? "🥉" : `${p}.º`);
+  return (
+    <div className="rounded-2xl border border-red-500/30 bg-red-600/5 p-5">
+      <h3 className="mb-3 font-black text-white">🏆 Podio</h3>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {podio.slice(0, 3).map((p) => (
+          <div key={p.puesto} className="rounded-xl border border-white/10 bg-black/30 p-3">
+            <p className="text-lg font-black text-white">{medalla(p.puesto)} {p.nombre}</p>
+            {p.premio && <p className="text-sm text-red-300">{money2(p.premio.monto)}{p.premio.trofeo ? " + Trofeo" : ""}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BracketPublicoModal({ campeonato, onClose }: { campeonato: Campeonato; onClose: () => void }) {
+  const [data, setData] = useState<BracketData | null>(null);
+  const [err, setErr] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/campeonatos/${campeonato.id}/bracket`, { cache: "no-store" });
+        if (!r.ok) { if (!cancelled) setErr(true); return; }
+        const d: BracketData = await r.json();
+        if (cancelled) return;
+        setData(d); setErr(false);
+        // Polling solo mientras el torneo está activo; se detiene al finalizar o si no
+        // arrancó. Más lento en background. No refresca la página, solo estos datos.
+        const activo = d.aplica && d.estado !== "finalizado" && d.estado !== "no_iniciado";
+        if (activo) timeout = setTimeout(tick, document.hidden ? 30000 : 12000);
+      } catch {
+        if (!cancelled) timeout = setTimeout(tick, 20000);
+      }
+    };
+    tick();
+    const onVis = () => { if (!document.hidden && !cancelled) { if (timeout) clearTimeout(timeout); tick(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { cancelled = true; if (timeout) clearTimeout(timeout); document.removeEventListener("visibilitychange", onVis); };
+  }, [campeonato.id]);
+
+  const d = data && data.aplica ? data : null;
+  const finalizado = d?.estado === "finalizado";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4">
+      <div className="relative max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-3xl border border-zinc-800 bg-zinc-950 p-6">
+        <button onClick={onClose} className="absolute right-4 top-4 text-2xl leading-none text-zinc-500 hover:text-white">×</button>
+        <p className="mb-1 text-xs font-black uppercase tracking-[0.3em] text-red-500">Cuadro en vivo</p>
+        <h2 className="mb-4 text-xl font-black text-white">{campeonato.nombre}</h2>
+
+        {!data && !err && <p className="py-16 text-center text-zinc-500">Cargando cuadro…</p>}
+        {err && !data && <p className="py-16 text-center text-zinc-500">No se pudo cargar el cuadro. Reintentando…</p>}
+        {data && !data.aplica && <p className="py-16 text-center text-zinc-500">Este campeonato no usa cuadro de eliminación.</p>}
+
+        {d && d.estado === "no_iniciado" && (
+          <p className="py-12 text-center text-zinc-400">El cuadro del torneo se publicará cuando comience la competencia.</p>
+        )}
+        {d && d.estado === "clasificacion" && (
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center">
+            <p className="text-xs font-black uppercase tracking-widest text-red-400">Clasificación en curso</p>
+            <p className="mt-2 text-sm text-zinc-400">{d.clasificacion.pilotos} piloto{d.clasificacion.pilotos === 1 ? "" : "s"} en clasificación. El cuadro se publica al cerrar la clasificación.</p>
+          </div>
+        )}
+        {d && d.estado === "clasificacion_cerrada" && (
+          <>
+            <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-center">
+              <p className="text-xs font-black uppercase tracking-widest text-white">Clasificación finalizada</p>
+              <p className="mt-2 text-sm text-zinc-400">El cuadro se publicará próximamente.</p>
+            </div>
+            {d.clasificacion.oficial && <ClasificacionOficialPub oficial={d.clasificacion.oficial} />}
+          </>
+        )}
+        {d && (d.estado === "en_curso" || d.estado === "finalizado") && (
+          <div className="space-y-6">
+            {finalizado && <p className="rounded-2xl border border-red-500/30 bg-red-600/10 px-4 py-3 text-center text-sm font-black uppercase tracking-widest text-red-300">Torneo finalizado</p>}
+            {d.podio && d.podio.length > 0 && <PodioPub podio={d.podio} />}
+            <div className="flex flex-col gap-4 md:flex-row md:overflow-x-auto md:pb-2">
+              {d.rondas.map((r) => (
+                <div key={r.numero} className="space-y-2 md:min-w-[260px] md:shrink-0">
+                  <h3 className={`font-black ${r.tipo === "final" ? "text-red-400" : "text-white"}`}>
+                    {r.tipo === "final" ? "🏁 Gran Final" : r.nombre}
+                    <span className="ml-2 text-[10px] font-bold uppercase text-zinc-500">{r.estado === "finalizada" ? "· Finalizada" : r.estado === "en_curso" ? "· En curso" : ""}</span>
+                  </h3>
+                  {r.carreras.map((c) => <CarreraCardPub key={c.numero} c={c} />)}
+                </div>
+              ))}
+            </div>
+            {d.clasificacion.oficial && (
+              <details className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                <summary className="cursor-pointer text-xs font-black uppercase tracking-widest text-zinc-400">Clasificación oficial</summary>
+                <div className="mt-3"><ClasificacionOficialPub oficial={d.clasificacion.oficial} /></div>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function CampeonatosPage() {
   const [data, setData] = useState<PublicData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<SecTab>("campeonatos");
   const [inscripcionCamp, setInscripcionCamp] = useState<Campeonato | null>(null);
+  const [verCuadroCamp, setVerCuadroCamp] = useState<Campeonato | null>(null);
 
   useEffect(() => {
     fetch("/api/campeonatos/public")
@@ -1302,7 +1498,7 @@ export default function CampeonatosPage() {
         {error && <p className="text-center py-16 text-red-400">{error}</p>}
         {data && (
           <>
-            {tab === "campeonatos"   && <SecCampeonatos campeonatos={data.campeonatos} onInscribir={setInscripcionCamp} />}
+            {tab === "campeonatos"   && <SecCampeonatos campeonatos={data.campeonatos} onInscribir={setInscripcionCamp} onVerCuadro={setVerCuadroCamp} />}
             {tab === "clasificacion" && <SecClasificacion resultados={data.resultados_por_fecha} campeonatos={data.campeonatos} fechas={data.fechas ?? []} clasificacion={data.clasificacion ?? []} />}
             {tab === "constructores" && <SecConstructores constructores={data.constructores} />}
             {tab === "sorteos"       && <SecSorteos sorteos={data.sorteos} />}
@@ -1313,6 +1509,11 @@ export default function CampeonatosPage() {
       {/* Inscription modal */}
       {inscripcionCamp && (
         <InscripcionModal campeonato={inscripcionCamp} onClose={() => setInscripcionCamp(null)} />
+      )}
+
+      {/* Bracket público en vivo */}
+      {verCuadroCamp && (
+        <BracketPublicoModal campeonato={verCuadroCamp} onClose={() => setVerCuadroCamp(null)} />
       )}
 
       {/* Footer */}
