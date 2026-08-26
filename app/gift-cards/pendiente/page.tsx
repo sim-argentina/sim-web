@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { Clock, ArrowRight } from "lucide-react";
+import PaymentResultTracker from "@/components/analytics/PaymentResultTracker";
 
 export default function GiftCardPendientePage() {
   return (
     <main className="min-h-screen bg-black px-4 py-24 text-white">
+      <PaymentResultTracker funnel="gift_card" status="pending" />
       <section className="mx-auto flex max-w-2xl flex-col items-center text-center">
         <div className="mb-6 rounded-full border border-yellow-500/30 bg-yellow-500/10 p-5 text-yellow-400">
           <Clock className="h-12 w-12" />

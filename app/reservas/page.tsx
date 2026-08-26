@@ -11,7 +11,11 @@ import {
   CircleAlert,
 } from "lucide-react";
 import TeamCard from "@/components/TeamCard";
-import { gaEvent, setPendingPurchase } from "@/lib/analytics";
+import {
+  gaEvent, setPendingPurchase,
+  trackSelectDate, trackSelectTime, trackApplyPromotion,
+  trackCheckoutError, trackPaymentRedirect, trackFreePurchase,
+} from "@/lib/analytics";
 import {
   getOccupiedSlots,
   getNextSlot,
@@ -353,7 +357,7 @@ export default function ReservasPage() {
 
   // Analytics: vista del "producto" reserva (una vez al montar la página).
   useEffect(() => {
-    gaEvent("view_item", { currency: "ARS", items: [{ item_name: "Turno simulador" }] });
+    gaEvent("view_item", { currency: "ARS", items: [{ item_id: "reserva", item_name: "Turno simulador", item_category: "reserva" }] });
   }, []);
 
   useEffect(() => {
@@ -406,7 +410,11 @@ export default function ReservasPage() {
         ? prev.filter((item) => item !== teamKey)
         : [...prev, teamKey];
       if (!prev.includes(teamKey)) {
-        gaEvent("select_item", { item_list_name: "Simuladores", items: [{ item_id: teamKey, item_name: "Turno simulador" }] });
+        gaEvent("select_item", {
+          item_list_name: "Simuladores",
+          duration_minutes: duracion,
+          items: [{ item_id: teamKey, item_name: "Turno simulador", item_category: "reserva" }],
+        });
       }
       return next;
     });
@@ -416,12 +424,16 @@ export default function ReservasPage() {
     if (isSubmitting || isLoadingReservations) return;
     setSelectedDate(nextDate);
     setSelectedTeams([]);
+    // Funnel: alcanzó la etapa "eligió fecha" (sin enviar la fecha concreta).
+    if (nextDate) trackSelectDate("reserva");
   }
 
   function handleChangeTime(nextTime: string) {
     if (isSubmitting || isLoadingReservations) return;
     setSelectedTime(nextTime);
     setSelectedTeams([]);
+    // Funnel: alcanzó la etapa "eligió horario" (sin enviar la hora concreta).
+    if (nextTime) trackSelectTime("reserva");
   }
 
   async function aplicarCodigo() {
@@ -482,6 +494,7 @@ export default function ReservasPage() {
         });
 
         setCodigoInput(result.codigo);
+        trackApplyPromotion("reserva", Number(result.descuento || totalOriginal));
 
         openFeedbackModal(
           "success",
@@ -500,6 +513,7 @@ export default function ReservasPage() {
       });
 
       setCodigoInput(result.codigo);
+      trackApplyPromotion("reserva", Number(result.descuento || 0));
 
       openFeedbackModal(
         "success",
@@ -747,6 +761,15 @@ export default function ReservasPage() {
       duracion_minutos: duracion,
     };
 
+    // Funnel: configuración válida + decisión de iniciar la compra (vale para ambas
+    // ramas: pago con Mercado Pago y reserva 100% bonificada).
+    gaEvent("begin_checkout", {
+      currency: "ARS",
+      value: totalFinal,
+      duration_minutes: duracion,
+      items: [{ item_name: "Turno simulador", item_category: "reserva", quantity: selectedTeams.length }],
+    });
+
     if (totalFinal <= 0) {
       try {
         const response = await fetch("/api/reservas", {
@@ -769,6 +792,12 @@ export default function ReservasPage() {
             result?.error || "Ocurrió un problema al guardar la reserva bonificada."
           );
           return;
+        }
+
+        // Conversión de la reserva 100% bonificada: purchase value 0, id estable
+        // (reserva_<id>) y dedupe. No pasa por /exito, así que se emite acá una vez.
+        if (result?.id) {
+          trackFreePurchase({ kind: "reserva", transactionId: `reserva_${result.id}`, coupon: codigoAplicado?.codigo });
         }
 
         openFeedbackModal(
@@ -811,6 +840,8 @@ export default function ReservasPage() {
       const result = await response.json().catch(() => null);
 
       if (!response.ok) {
+        // Error técnico del checkout (no se pudo crear la preferencia).
+        trackCheckoutError("reserva");
         openFeedbackModal(
           "error",
           "No se pudo iniciar el pago",
@@ -822,6 +853,7 @@ export default function ReservasPage() {
       const paymentUrl = result?.init_point;
 
       if (!paymentUrl) {
+        trackCheckoutError("reserva");
         openFeedbackModal(
           "error",
           "Link de pago no disponible",
@@ -830,10 +862,13 @@ export default function ReservasPage() {
         return;
       }
 
-      gaEvent("begin_checkout", {
-        currency: "ARS",
+      // Preferencia OK + init_point válido → redirección efectiva a Mercado Pago.
+      trackPaymentRedirect({
+        funnel: "reserva",
         value: totalFinal,
-        items: [{ item_name: "Turno simulador", quantity: selectedTeams.length }],
+        duration_minutes: duracion,
+        quantity: selectedTeams.length,
+        transaction_id: result?.reserva_id ? `reserva_${result.reserva_id}` : null,
       });
       setPendingPurchase({ value: totalFinal, currency: "ARS", type: "reserva" });
 

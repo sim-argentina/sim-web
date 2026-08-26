@@ -136,6 +136,80 @@ export function trackPurchase(kind: "reserva" | "gift_card" | "campeonato", tran
   }
 }
 
+export type Funnel = "reserva" | "gift_card";
+
+// ── Funnel comercial (Reservas / Gift Cards) ─────────────────────────────────
+// Todos estos helpers pasan por gaEvent() (guard de producción pública) y NO envían
+// PII: nunca fecha/hora concretas, nombre, teléfono, etc. Solo etapas y magnitudes.
+
+// Alcanzó la etapa "eligió fecha" (sin enviar la fecha concreta).
+export function trackSelectDate(funnel: Funnel): void {
+  gaEvent("select_date", { funnel });
+}
+
+// Alcanzó la etapa "eligió horario" (sin enviar la hora concreta).
+export function trackSelectTime(funnel: Funnel): void {
+  gaEvent("select_time", { funnel });
+}
+
+// Aplicó un código de descuento válido. NO se envía el código literal (evita alta
+// cardinalidad y códigos empresariales); el cruce código→venta se hace en Supabase.
+export function trackApplyPromotion(funnel: Funnel, discountValue: number): void {
+  gaEvent("apply_promotion", {
+    funnel,
+    promotion_type: "discount_code",
+    discount_value: Math.round(Number(discountValue) || 0),
+    currency: "ARS",
+  });
+}
+
+// Error TÉCNICO del checkout (falla al crear la preferencia / respuesta inválida /
+// sin init_point). No se usa para validaciones normales del formulario ni se envían
+// mensajes de excepción (podrían contener datos).
+export function trackCheckoutError(funnel: Funnel): void {
+  gaEvent("checkout_error", { funnel, error_stage: "preference" });
+}
+
+// Redirección efectiva a Mercado Pago (preferencia creada + init_point válido).
+export function trackPaymentRedirect(params: {
+  funnel: Funnel;
+  value: number;
+  duration_minutes?: number;
+  quantity?: number;
+  transaction_id?: string | null;
+}): void {
+  const p: DL = {
+    funnel: params.funnel,
+    currency: "ARS",
+    value: Math.round(Number(params.value) || 0),
+  };
+  if (params.duration_minutes != null) p.duration_minutes = params.duration_minutes;
+  if (params.quantity != null) p.quantity = params.quantity;
+  if (params.transaction_id) p.transaction_id = params.transaction_id;
+  gaEvent("payment_redirect", p);
+}
+
+// Resultado de pago no-exitoso, medido en las páginas reales /error y /pendiente.
+export function trackPaymentResult(funnel: Funnel, status: "failed" | "pending"): void {
+  gaEvent("payment_result", { funnel, status });
+}
+
+// Conversión de una operación 100% BONIFICADA (sin Mercado Pago), tras confirmarse la
+// creación real. value 0. Dedupe por transaction_id estable (mismo set que /exito):
+// si más tarde /exito recibiera el mismo external_reference, NO se duplica.
+export function trackFreePurchase(params: {
+  kind: "reserva" | "gift_card";
+  transactionId: string;
+  coupon?: string | null;
+}): void {
+  const id = (params.transactionId || "").trim();
+  if (!id || alreadyFired(id)) return;
+  const base: DL = { transaction_id: id, value: 0, currency: "ARS" };
+  if (params.coupon) base.coupon = params.coupon;
+  gaEvent("purchase", base);
+  if (params.kind === "gift_card") gaEvent("gift_card_purchase", base);
+}
+
 // generate_lead una sola vez por sesión (primer contacto por WhatsApp).
 export function trackLeadOnce(method: string): void {
   try {

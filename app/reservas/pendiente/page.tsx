@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { Clock3, AlertCircle, ArrowRight } from "lucide-react";
+import PaymentResultTracker from "@/components/analytics/PaymentResultTracker";
 
 export default function PendientePage() {
   return (
     <main className="min-h-screen bg-black px-4 py-24 text-white">
+      <PaymentResultTracker funnel="reserva" status="pending" />
       <section className="mx-auto flex max-w-3xl flex-col items-center text-center">
         <div className="mb-6 rounded-full border border-yellow-500/30 bg-yellow-500/10 p-5 text-yellow-400">
           <Clock3 className="h-14 w-14" />

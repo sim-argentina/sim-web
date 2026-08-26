@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { XCircle, RefreshCcw, ArrowLeft } from "lucide-react";
+import PaymentResultTracker from "@/components/analytics/PaymentResultTracker";
 
 export default function ErrorPage() {
   return (
     <main className="min-h-screen bg-black px-4 py-24 text-white">
+      <PaymentResultTracker funnel="reserva" status="failed" />
       <section className="mx-auto flex max-w-3xl flex-col items-center text-center">
         <div className="mb-6 rounded-full border border-red-500/30 bg-red-500/10 p-5 text-red-400">
           <XCircle className="h-14 w-14" />

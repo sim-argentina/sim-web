@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Gift, ArrowLeft, ShieldCheck, CircleAlert } from "lucide-react";
 import { GIFT_CARD_PRODUCTOS, GIFT_CARD_CONDICIONES, GIFT_CARD_MAX_CANTIDAD } from "@/lib/giftCards";
-import { gaEvent, setPendingPurchase } from "@/lib/analytics";
+import {
+  gaEvent, setPendingPurchase,
+  trackApplyPromotion, trackCheckoutError, trackPaymentRedirect,
+} from "@/lib/analytics";
 
 function formatPrice(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -49,9 +52,20 @@ export default function GiftCardsPage() {
   const telefonoValido = telefonoDigits.length >= 10;
   const puedePagar = compradorNombre.trim() && telefonoValido && acepto && !loading;
 
+  // Analytics: vista del "producto" gift card (una vez al montar).
+  useEffect(() => {
+    gaEvent("view_item", { currency: "ARS", items: [{ item_id: "gift_card", item_name: "Gift Card", item_category: "gift_card" }] });
+  }, []);
+
   function elegirDuracion(d: number) {
     setDuracion(d);
     setCodigoAplicado(null); // el monto cambia: hay que revalidar el código
+    // Funnel: selección de producto/duración (id estable, sin PII).
+    gaEvent("select_item", {
+      item_list_name: "Gift Cards",
+      duration_minutes: d,
+      items: [{ item_id: `gift_card_${d}`, item_name: `Gift Card ${d} min`, item_category: "gift_card" }],
+    });
   }
 
   function cambiarCantidad(n: number) {
@@ -87,6 +101,7 @@ export default function GiftCardsPage() {
         totalFinal: Number(data.totalFinal || totalOriginal),
       });
       setCodigoInput(data.codigo);
+      trackApplyPromotion("gift_card", Number(data.descuento || 0));
     } catch {
       setError("Error al validar el código.");
     } finally {
@@ -115,6 +130,13 @@ export default function GiftCardsPage() {
     }
 
     setLoading(true);
+    // Funnel: configuración válida + decisión de iniciar la compra (ambas ramas).
+    gaEvent("begin_checkout", {
+      currency: "ARS",
+      value: totalFinal,
+      duration_minutes: duracion,
+      items: [{ item_id: `gift_card_${duracion}`, item_name: "Gift Card", item_category: "gift_card", quantity: cantidad }],
+    });
     try {
       const res = await fetch("/api/gift-cards/preference", {
         method: "POST",
@@ -131,10 +153,13 @@ export default function GiftCardsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
+        // Error técnico del checkout (no se pudo crear la preferencia).
+        trackCheckoutError("gift_card");
         setError(data.error || "No se pudo iniciar el pago.");
         return;
       }
-      // Gift Card 100% bonificada: salta Mercado Pago
+      // Gift Card 100% bonificada: salta Mercado Pago. La conversión (purchase value 0)
+      // se emite en /gift-cards/exito con external_reference estable (dedupe).
       if (data.free && data.grupo_compra_id) {
         setPendingPurchase({ value: 0, currency: "ARS", type: "gift_card" });
         window.location.href = `/gift-cards/exito?external_reference=gift_card_${data.grupo_compra_id}`;
@@ -142,13 +167,17 @@ export default function GiftCardsPage() {
       }
       const url = data.init_point || data.sandbox_init_point;
       if (!url) {
+        trackCheckoutError("gift_card");
         setError("Mercado Pago no devolvió un enlace de pago.");
         return;
       }
-      gaEvent("begin_checkout", {
-        currency: "ARS",
+      // Preferencia OK + init_point válido → redirección efectiva a Mercado Pago.
+      trackPaymentRedirect({
+        funnel: "gift_card",
         value: totalFinal,
-        items: [{ item_name: "Gift Card", quantity: cantidad }],
+        duration_minutes: duracion,
+        quantity: cantidad,
+        transaction_id: data.grupo_compra_id ? `gift_card_${data.grupo_compra_id}` : null,
       });
       setPendingPurchase({ value: totalFinal, currency: "ARS", type: "gift_card" });
       window.location.href = url;
