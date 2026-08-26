@@ -5,6 +5,7 @@ import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { sanitizeSearchTerm } from "@/lib/security";
 import { tiempoToMs, msToTiempo, inscripcionEstaLista } from "@/lib/campeonatos";
 import { recalcularCategorias, getOrCreateFecha0 } from "@/lib/campeonatosCategorias";
+import { getInscripcionCampos, campoVisible, faltantesRequeridos, estadoPendientePago, type CampoInscripcion } from "@/lib/campeonatosInscripcionConfig";
 
 // Métodos de pago aceptados en el stand (mismos que el Turnero). "online" y
 // "mercadopago" representan un pago online ya realizado (no requiere stand).
@@ -53,20 +54,14 @@ export async function POST(req: Request) {
       pagos_detalle, observaciones,
     } = body;
 
-    // Únicos obligatorios: nombre, apellido, DNI, teléfono y campeonato.
-    // Categoría, escudería, monto y método de pago son opcionales: el piloto
-    // puede inscribirse primero y correr / pagar después.
-    if (!nombre?.trim() || !apellido?.trim() || !telefono?.trim() || !dni?.trim() || !campeonato_id) {
-      return NextResponse.json(
-        { error: "Faltan datos obligatorios (nombre, apellido, DNI, teléfono y campeonato)" },
-        { status: 400 }
-      );
+    if (!campeonato_id) {
+      return NextResponse.json({ error: "Falta el campeonato" }, { status: 400 });
     }
 
     // Un campeonato archivado (deleted_at) no acepta nuevas inscripciones.
     const { data: campActivo } = await supabaseAdmin
       .from("campeonatos")
-      .select("id, permite_pago_stand")
+      .select("id, permite_pago_stand, modalidad, config, precio_inscripcion")
       .eq("id", campeonato_id)
       .is("deleted_at", null)
       .maybeSingle();
@@ -75,31 +70,42 @@ export async function POST(req: Request) {
     }
     const permiteStand = campActivo.permite_pago_stand !== false;
 
+    // Configuración del formulario de ESTE campeonato (misma fuente que admin/público).
+    // Valida required/optional/hidden de forma DINÁMICA y no confía en inputs ocultos.
+    const campos = getInscripcionCampos(campActivo);
+    const vis = (k: CampoInscripcion) => campoVisible(campos, k);
+    const faltan = faltantesRequeridos(campos, body);
+    if (faltan.length > 0) {
+      return NextResponse.json({ error: `Faltan datos obligatorios: ${faltan.join(", ")}` }, { status: 400 });
+    }
+    const nombreT = String(nombre ?? "").trim();
+    const apellidoT = String(apellido ?? "").trim();
+
+    // Forma de pago / monto: si el campo está OCULTO por config, se ignora lo entrante.
+    const metodoPagoIn = vis("forma_pago") ? metodo_pago : undefined;
+    const pagosIn = vis("forma_pago") ? pagos_detalle : undefined;
+    const montoIn = vis("monto") ? monto : undefined;
+
     // Pagos múltiples (opcional). Si vienen, definen el total y el estado.
-    const pagos = limpiarPagos(pagos_detalle);
+    const pagos = limpiarPagos(pagosIn);
     const totalPagos = pagos.reduce((s, p) => s + p.monto, 0);
 
-    // Monto: explícito > suma de pagos > precio del campeonato > 0.
+    // Monto: explícito (si el campo es visible) > suma de pagos > precio del campeonato.
     let montoFinal = 0;
-    if (monto !== undefined && monto !== null && monto !== "" && Number.isFinite(Number(monto))) {
-      montoFinal = Math.round(Number(monto));
+    if (montoIn !== undefined && montoIn !== null && montoIn !== "" && Number.isFinite(Number(montoIn))) {
+      montoFinal = Math.round(Number(montoIn));
     } else if (totalPagos > 0) {
       montoFinal = totalPagos;
     } else {
-      const { data: camp } = await supabaseAdmin
-        .from("campeonatos")
-        .select("precio_inscripcion")
-        .eq("id", campeonato_id)
-        .maybeSingle();
-      montoFinal = Math.round(Number(camp?.precio_inscripcion) || 0);
+      montoFinal = Math.round(Number(campActivo.precio_inscripcion) || 0);
     }
     if (!Number.isFinite(montoFinal) || montoFinal < 0) montoFinal = 0;
 
     // Método + estado de pago:
     // - pagos múltiples o método de stand → pagado en el stand.
     // - online / mercadopago → pagado online (no requiere cobro en el stand).
-    // - sin método → queda inscripto con pago pendiente en stand.
-    const esOnline = metodo_pago === "online" || metodo_pago === "mercadopago";
+    // - sin método → queda pendiente; sin pago en stand, el pendiente es ONLINE.
+    const esOnline = metodoPagoIn === "online" || metodoPagoIn === "mercadopago";
     let metodoFinal: string | null;
     let estadoFinal: string;
     if (pagos.length > 0) {
@@ -108,45 +114,45 @@ export async function POST(req: Request) {
     } else if (esOnline) {
       metodoFinal = "mercadopago";
       estadoFinal = "pagado";
-    } else if (metodo_pago && METODOS_STAND.includes(String(metodo_pago).trim())) {
-      metodoFinal = String(metodo_pago).trim();
+    } else if (metodoPagoIn && METODOS_STAND.includes(String(metodoPagoIn).trim())) {
+      metodoFinal = String(metodoPagoIn).trim();
       estadoFinal = "pagado";
     } else {
       metodoFinal = null;
-      // Sin método: queda pendiente. Si el campeonato no permite pago en el stand,
-      // el pendiente es online (no se crea un pendiente_pago_stand).
-      estadoFinal = permiteStand ? "pendiente_pago_stand" : "pendiente_pago_online";
+      // Gate server-side: sin pago en stand NUNCA queda "pendiente de cobro en stand".
+      estadoFinal = estadoPendientePago(permiteStand);
     }
 
-    const nombre_completo = `${nombre.trim()} ${apellido.trim()}`.trim();
-    const categoriaTrim = txt(categoria);
-    const minutos = Number.isFinite(Number(cantidad_minutos)) && Number(cantidad_minutos) > 0
+    const nombre_completo = `${nombreT} ${apellidoT}`.trim();
+    // Campos gateados por visibilidad: si están ocultos, no se persiste valor entrante.
+    const categoriaVal = vis("categoria") ? txt(categoria) : null;
+    const minutos = vis("cantidad_minutos") && Number.isFinite(Number(cantidad_minutos)) && Number(cantidad_minutos) > 0
       ? Math.round(Number(cantidad_minutos)) : null;
 
     const insertRow: Record<string, unknown> = {
       campeonato_id,
-      nombre: nombre.trim(),
-      apellido: apellido.trim(),
+      nombre: nombreT,
+      apellido: apellidoT,
       nombre_completo,
-      telefono: telefono.trim(),
-      dni: dni.trim(),
-      instagram: txt(instagram),
-      // La columna es NOT NULL; escudería opcional se guarda como cadena vacía.
-      escuderia_favorita: txt(escuderia_favorita) ?? "",
-      categoria: categoriaTrim,
+      // Columnas NOT NULL: si el campo se oculta, se guarda cadena vacía (no rompe).
+      telefono: vis("telefono") ? String(telefono ?? "").trim() : "",
+      dni: vis("dni") ? String(dni ?? "").trim() : "",
+      instagram: vis("instagram") ? txt(instagram) : null,
+      escuderia_favorita: vis("escuderia") ? (txt(escuderia_favorita) ?? "") : "",
+      categoria: categoriaVal,
       // Si el staff asigna categoría a mano, se marca manual para que la
       // auto-clasificación por tiempo no la pise. Si queda vacía, la define el tiempo.
-      categoria_manual: Boolean(categoriaTrim),
+      categoria_manual: Boolean(categoriaVal),
       monto: montoFinal,
       estado_pago: estadoFinal,
       metodo_pago: metodoFinal,
       pagos_detalle: pagos.length > 0 ? pagos : null,
       observaciones: txt(observaciones),
       // Datos operativos del turno (opcionales), igual que el Turnero.
-      hora_toma: txt(hora_toma),
-      hora_estimada_subida: txt(hora_estimada_subida),
-      hora_subida: txt(hora_subida),
-      hora_bajada: txt(hora_bajada),
+      hora_toma: vis("hora_toma") ? txt(hora_toma) : null,
+      hora_estimada_subida: vis("hora_estimada_subida") ? txt(hora_estimada_subida) : null,
+      hora_subida: vis("hora_subida") ? txt(hora_subida) : null,
+      hora_bajada: vis("hora_bajada") ? txt(hora_bajada) : null,
       cantidad_minutos: minutos,
     };
 
@@ -172,7 +178,9 @@ export async function POST(req: Request) {
     // Tiempo de clasificación opcional (Fecha 0): si se carga, crea el registro
     // vinculado a la inscripción en la Fecha 0 (sin penalización, sin puntos) y
     // recalcula las categorías. Si no, la inscripción queda "Sin clasificar".
-    const tiempoClasif = txt(body.tiempo_clasificacion);
+    // Mejor tiempo: SOLO si el campo está visible por config. En modalidad eliminación
+    // (Duelo) está oculto y el tiempo se carga después en Bracket → Clasificación.
+    const tiempoClasif = vis("mejor_tiempo") ? txt(body.tiempo_clasificacion) : null;
     if (tiempoClasif) {
       const crudoMs = tiempoToMs(tiempoClasif);
       const fecha0 = await getOrCreateFecha0(campeonato_id);
@@ -182,11 +190,11 @@ export async function POST(req: Request) {
           campeonato_fecha_id: fecha0.id,
           inscripcion_id: data.id,
           categoria: "sin_clasificar",
-          nombre: nombre.trim(),
-          apellido: apellido.trim(),
+          nombre: nombreT,
+          apellido: apellidoT,
           nombre_completo,
-          telefono: telefono.trim(),
-          escuderia_favorita: txt(escuderia_favorita),
+          telefono: String(telefono ?? "").trim(),
+          escuderia_favorita: vis("escuderia") ? txt(escuderia_favorita) : null,
           circuito: fecha0.circuito || null,
           tiempo: tiempoClasif,
           tiempo_crudo_ms: crudoMs,

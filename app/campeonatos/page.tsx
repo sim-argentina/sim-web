@@ -9,6 +9,7 @@ import {
   metodosPagoPublicos,
   normalizarCupoMaximo,
 } from "@/lib/campeonatosConfig";
+import { getInscripcionCampos, campoVisible, campoRequerido } from "@/lib/campeonatosInscripcionConfig";
 import { gaEvent, setPendingPurchase } from "@/lib/analytics";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -475,17 +476,24 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
 
   // Todo se deriva de la configuración del campeonato (no del nombre).
   const eliminacion = esEliminacion(campeonato.modalidad);
-  const pideEscuderia = requiereEscuderia(campeonato);
+  const campos = getInscripcionCampos(campeonato); // misma fuente que admin/backend
+  const vis = (k: Parameters<typeof campoVisible>[1]) => campoVisible(campos, k);
+  const req = (k: Parameters<typeof campoRequerido>[1]) => campoRequerido(campos, k);
+  // Escudería obligatoria si la config la marca required o si la modalidad la exige
+  // (liga → ranking de constructores) y el campo está visible.
+  const escuderiaObligatoria = req("escuderia") || (requiereEscuderia(campeonato) && vis("escuderia"));
   const metodos = metodosPagoPublicos(campeonato); // ["mercadopago"] o [..., "stand"]
   const ofrecePagoStand = metodos.includes("stand");
 
   const submit = async () => {
-    if (
-      !form.nombre.trim() || !form.apellido.trim() ||
-      !form.telefono.trim() || !form.dni.trim() ||
-      (pideEscuderia && !form.escuderia_favorita)
-    ) {
-      setError("Completá todos los campos obligatorios."); return;
+    const faltan: string[] = [];
+    if (!form.nombre.trim()) faltan.push("Nombre");
+    if (!form.apellido.trim()) faltan.push("Apellido");
+    if (req("telefono") && !form.telefono.trim()) faltan.push("Teléfono");
+    if (req("dni") && !form.dni.trim()) faltan.push("DNI");
+    if (escuderiaObligatoria && !form.escuderia_favorita) faltan.push("Escudería");
+    if (faltan.length > 0) {
+      setError(`Completá los campos obligatorios: ${faltan.join(", ")}.`); return;
     }
     if (!form.acepto_condiciones) { setError("Debés aceptar los términos y condiciones."); return; }
     setLoading(true); setError("");
@@ -565,27 +573,33 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
                   <input className={inp} value={form.apellido} onChange={(e) => set("apellido", e.target.value)} />
                 </div>
               </div>
-              <div>
-                <label className="mb-1 block text-xs font-bold text-zinc-400">Teléfono *</label>
-                <input className={inp} type="tel" value={form.telefono} onChange={(e) => set("telefono", e.target.value)} />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-bold text-zinc-400">DNI *</label>
-                <input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} />
-              </div>
-              {pideEscuderia && (
+              {vis("telefono") && (
                 <div>
-                  <label className="mb-1 block text-xs font-bold text-zinc-400">Escudería favorita de F1 *</label>
+                  <label className="mb-1 block text-xs font-bold text-zinc-400">Teléfono{req("telefono") ? " *" : ""}</label>
+                  <input className={inp} type="tel" value={form.telefono} onChange={(e) => set("telefono", e.target.value)} />
+                </div>
+              )}
+              {vis("dni") && (
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-zinc-400">DNI{req("dni") ? " *" : ""}</label>
+                  <input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} />
+                </div>
+              )}
+              {vis("escuderia") && (
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-zinc-400">Escudería favorita de F1{escuderiaObligatoria ? " *" : ""}</label>
                   <select className={inp} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
                     <option value="">Seleccioná una escudería</option>
                     {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
                   </select>
                 </div>
               )}
-              <div>
-                <label className="mb-1 block text-xs font-bold text-zinc-400">Instagram (opcional)</label>
-                <input className={inp} placeholder="@usuario" value={form.instagram} onChange={(e) => set("instagram", e.target.value)} />
-              </div>
+              {vis("instagram") && (
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-zinc-400">Instagram (opcional)</label>
+                  <input className={inp} placeholder="@usuario" value={form.instagram} onChange={(e) => set("instagram", e.target.value)} />
+                </div>
+              )}
 
               {/* Métodos según la config del campeonato: sin pago en stand → solo MP. */}
               {ofrecePagoStand ? (

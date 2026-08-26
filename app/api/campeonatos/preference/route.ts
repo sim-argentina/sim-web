@@ -5,6 +5,7 @@ import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 import { permitePagoStand, requiereEscuderia } from "@/lib/campeonatosConfig";
+import { getInscripcionCampos, campoVisible, campoRequerido } from "@/lib/campeonatosInscripcionConfig";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
@@ -50,12 +51,8 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (!/^[0-9+()\s-]{6,30}$/.test(telefono)) {
-      return NextResponse.json({ error: "Teléfono inválido" }, { status: 400 });
-    }
-    if (!/^[0-9.\s-]{6,15}$/.test(dni)) {
-      return NextResponse.json({ error: "DNI inválido" }, { status: 400 });
-    }
+    // Teléfono y DNI se validan MÁS ABAJO según la configuración del campeonato
+    // (mismos estados required/optional/hidden que usan el admin y el backend).
 
     // Verificar campeonato y usar SU precio (nunca el monto enviado por el cliente)
     // Un campeonato archivado (deleted_at) no acepta nuevas inscripciones: el
@@ -80,9 +77,28 @@ export async function POST(req: Request) {
       );
     }
 
-    // Escudería: obligatoria solo si el campeonato la requiere (liga). En
-    // eliminación (autos aleatorios) es opcional.
-    if (requiereEscuderia(campeonato) && !escuderia_favorita) {
+    // Configuración del formulario de ESTE campeonato (misma fuente que admin/backend).
+    const campos = getInscripcionCampos(campeonato);
+    // Teléfono: requerido según config; formato solo si es visible y se cargó.
+    if (campoRequerido(campos, "telefono") && !telefono) {
+      return NextResponse.json({ error: "Falta el teléfono" }, { status: 400 });
+    }
+    if (campoVisible(campos, "telefono") && telefono && !/^[0-9+()\s-]{6,30}$/.test(telefono)) {
+      return NextResponse.json({ error: "Teléfono inválido" }, { status: 400 });
+    }
+    // DNI: requerido según config; formato solo si es visible y se cargó. Oculto en
+    // eliminación (Duelo) → no se exige.
+    if (campoRequerido(campos, "dni") && !dni) {
+      return NextResponse.json({ error: "Falta el DNI" }, { status: 400 });
+    }
+    if (campoVisible(campos, "dni") && dni && !/^[0-9.\s-]{6,15}$/.test(dni)) {
+      return NextResponse.json({ error: "DNI inválido" }, { status: 400 });
+    }
+    // Escudería: obligatoria si la config la marca required, o si la modalidad la
+    // requiere (liga → ranking de constructores) y el campo está visible.
+    const escuderiaObligatoria = campoRequerido(campos, "escuderia")
+      || (requiereEscuderia(campeonato) && campoVisible(campos, "escuderia"));
+    if (escuderiaObligatoria && !escuderia_favorita) {
       return NextResponse.json({ error: "Falta la escudería favorita" }, { status: 400 });
     }
 
@@ -149,10 +165,11 @@ export async function POST(req: Request) {
           nombre: nombre.trim(),
           apellido: apellido.trim(),
           nombre_completo,
-          telefono: telefono.trim(),
-          dni: dni.trim(),
-          instagram: instagram?.trim() || null,
-          escuderia_favorita: escuderia_favorita || null,
+          // Columnas NOT NULL: si el campo se oculta por config, se guarda "".
+          telefono: campoVisible(campos, "telefono") ? telefono.trim() : "",
+          dni: campoVisible(campos, "dni") ? dni.trim() : "",
+          instagram: campoVisible(campos, "instagram") ? (instagram?.trim() || null) : null,
+          escuderia_favorita: campoVisible(campos, "escuderia") ? (escuderia_favorita || null) : null,
           categoria: null, // asignada por el staff
           monto: montoFinal,
           estado_pago: esPagoStand ? "pendiente_pago_stand" : "pendiente_pago_online",

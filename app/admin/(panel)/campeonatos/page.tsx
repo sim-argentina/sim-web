@@ -3,6 +3,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { formatPenalizacion, pilotoKey, msToTiempo, tiempoToMs, ESCUDERIAS_2026 } from "@/lib/campeonatos";
 import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer";
+import {
+  getInscripcionCampos, campoVisible, campoRequerido, faltantesRequeridos,
+  presetInscripcion, CAMPOS_INSCRIPCION,
+  type CampoInscripcion, type EstadoCampo,
+} from "@/lib/campeonatosInscripcionConfig";
 import TabBracket from "./TabBracket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -942,6 +947,20 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
   // reglamento, etc. que se hayan seteado por fuera del admin).
   const setConfig = (k: string, v: unknown) =>
     setForm((f) => ({ ...f, config: { ...f.config, [k]: v } }));
+  // Estado de un campo del formulario de inscripción (merge en config.inscripcion.campos
+  // sin pisar otras claves de config.inscripcion como notas/transferible).
+  const setCampoInscripcion = (key: CampoInscripcion, estado: EstadoCampo) =>
+    setForm((f) => {
+      const insc = (f.config.inscripcion && typeof f.config.inscripcion === "object" ? f.config.inscripcion : {}) as Record<string, unknown>;
+      const prev = (insc.campos && typeof insc.campos === "object" ? insc.campos : {}) as Record<string, unknown>;
+      return { ...f, config: { ...f.config, inscripcion: { ...insc, campos: { ...prev, [key]: estado } } } };
+    });
+  // Al cambiar modalidad se re-inicializa el preset recomendado (el admin luego ajusta).
+  const cambiarModalidad = (m: string) =>
+    setForm((f) => {
+      const insc = (f.config.inscripcion && typeof f.config.inscripcion === "object" ? f.config.inscripcion : {}) as Record<string, unknown>;
+      return { ...f, modalidad: m, config: { ...f.config, inscripcion: { ...insc, campos: presetInscripcion(m) } } };
+    });
   const startEdit = (c: Campeonato) => {
     setEditId(c.id);
     setForm({
@@ -1018,7 +1037,7 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
               </div>
             </Field>
             <Field label="Modalidad">
-              <select className={sel} value={form.modalidad} onChange={(e) => set("modalidad", e.target.value)}>
+              <select className={sel} value={form.modalidad} onChange={(e) => cambiarModalidad(e.target.value)}>
                 <option value="liga">Liga (tradicional)</option>
                 <option value="eliminacion">Eliminación</option>
               </select>
@@ -1057,6 +1076,36 @@ function TabCampeonatos({ campeonatos, onRefresh }: { campeonatos: Campeonato[];
               Ronda preliminar
             </label>
           </div>
+
+          {/* ── Formulario de inscripción (configurable por campeonato) ── */}
+          {(() => {
+            const camposForm = getInscripcionCampos({ modalidad: form.modalidad, config: form.config });
+            return (
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-[0.15em] text-zinc-400">Formulario de inscripción</p>
+                <p className="text-xs text-zinc-500">Qué campos aparecen al inscribir pilotos y cuáles son obligatorios. Aplica al admin y al formulario público. Nombre y apellido son siempre obligatorios.</p>
+                <div className="divide-y divide-white/5">
+                  {CAMPOS_INSCRIPCION.map((def, idx) => {
+                    const header = idx === 0 || CAMPOS_INSCRIPCION[idx - 1].grupo !== def.grupo ? def.grupo : null;
+                    return (
+                      <div key={def.key}>
+                        {header && <p className="pt-2 text-[10px] font-black uppercase tracking-wider text-zinc-500">{header}</p>}
+                        <div className="flex items-center justify-between gap-3 py-1.5">
+                          <span className="text-sm text-zinc-300">{def.label}</span>
+                          <select className={`${sel} w-36`} value={camposForm[def.key]} disabled={def.estructural}
+                            onChange={(e) => setCampoInscripcion(def.key, e.target.value as EstadoCampo)}>
+                            <option value="required">Obligatorio</option>
+                            <option value="optional">Opcional</option>
+                            <option value="hidden">Oculto</option>
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
           {/* Categorías Oro/Plata/Bronce: solo aplican a modalidad liga. */}
           {form.modalidad !== "eliminacion" && (
             <div className="flex gap-4">
@@ -1457,6 +1506,33 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  // Configuración del formulario según el campeonato elegido (fuente única con backend).
+  const campSelNueva = campeonatos.find((c) => c.id === form.campeonato_id) || null;
+  const camposNueva = getInscripcionCampos(campSelNueva || undefined);
+  const visN = (k: CampoInscripcion) => campoVisible(camposNueva, k);
+  const reqN = (k: CampoInscripcion) => campoRequerido(camposNueva, k);
+  const permiteStandNueva = campSelNueva?.permite_pago_stand !== false;
+  // Al cambiar de campeonato: setear monto por defecto y LIMPIAR los campos que
+  // pasan a ocultos (no arrastrar valores ocultos accidentalmente en el payload).
+  const cambiarCampeonatoNueva = (cid: string) => {
+    const camp = campeonatos.find((c) => c.id === cid) || null;
+    const campos = getInscripcionCampos(camp || undefined);
+    setForm((f) => {
+      const next = { ...f, campeonato_id: cid };
+      if (!campoVisible(campos, "monto")) next.monto = "";
+      else if (!f.monto && camp?.precio_inscripcion) next.monto = String(camp.precio_inscripcion);
+      for (const def of CAMPOS_INSCRIPCION) {
+        if (!campoVisible(campos, def.key) && def.bodyKey in next) {
+          (next as Record<string, string>)[def.bodyKey] = def.key === "cantidad_minutos" ? "15" : "";
+        }
+      }
+      return next;
+    });
+    if (!campoVisible(campos, "forma_pago") || camp?.permite_pago_stand === false) {
+      setFormaPago((p) => (p === "stand" && camp?.permite_pago_stand === false ? "pendiente" : p));
+    }
+  };
+
   const filtered = inscripciones.filter((i) => {
     if (filters.campeonato_id && i.campeonato_id !== filters.campeonato_id) return false;
     if (filters.categoria && i.categoria !== filters.categoria) return false;
@@ -1470,10 +1546,10 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   const totalRecaudado = filtered.filter((i) => i.estado_pago === "pagado").reduce((s, i) => s + (i.monto || 0), 0);
 
   const submitNueva = async () => {
-    // Únicos obligatorios: nombre, apellido, DNI, teléfono y campeonato.
-    if (!form.nombre.trim() || !form.apellido.trim() || !form.telefono.trim() || !form.dni.trim() || !form.campeonato_id) {
-      setMsg("Obligatorios: nombre, apellido, DNI, teléfono y campeonato."); return;
-    }
+    // Obligatorios DINÁMICOS según la config del campeonato (misma fuente que el backend).
+    if (!form.campeonato_id) { setMsg("Seleccioná un campeonato."); return; }
+    const faltan = faltantesRequeridos(camposNueva, form as unknown as Record<string, unknown>);
+    if (faltan.length > 0) { setMsg(`Faltan datos obligatorios: ${faltan.join(", ")}`); return; }
     setSaving(true); setMsg("");
     try {
       const payload = {
@@ -1536,6 +1612,14 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
   const [editTiempo, setEditTiempo] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editMsg, setEditMsg] = useState("");
+
+  // Config del campeonato de la inscripción en edición. En edición se PRESERVA el dato
+  // histórico: un campo oculto por config sigue visible si ya tiene valor cargado (para
+  // verlo/editarlo). editForm conserva los valores; el backend actualiza solo lo enviado.
+  const insEdit = editId ? inscripciones.find((i) => i.id === editId) : null;
+  const camposEdit = getInscripcionCampos(campeonatos.find((c) => c.id === insEdit?.campeonato_id) || undefined);
+  const showE = (k: CampoInscripcion, val: unknown) =>
+    campoVisible(camposEdit, k) || (val != null && String(val).trim() !== "");
 
   const horaBajadaEdit = sumarMinutosAHora(editForm.hora_subida || "", Number(editForm.cantidad_minutos) || 0);
   const timerEdit = editForm.hora_subida
@@ -1616,51 +1700,47 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
       {showForm && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4" onKeyDown={handleArrowNav}>
           <h3 className="font-black text-white">Nueva inscripción</h3>
-          <p className="text-xs text-zinc-400">Obligatorios: nombre, apellido, DNI, teléfono y campeonato. El resto es opcional: podés inscribir primero y cargar tiempo / pago después. Usá las flechas ←/→ para moverte entre campos.</p>
+          <p className="text-xs text-zinc-400">Los campos y su obligatoriedad dependen del campeonato elegido (se configuran en Crear/Editar campeonato → Formulario de inscripción). Usá las flechas ←/→ para moverte entre campos.</p>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Nombre *"><input className={inp} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} /></Field>
-            <Field label="Apellido *"><input className={inp} value={form.apellido} onChange={(e) => set("apellido", e.target.value)} /></Field>
-            <Field label="Teléfono *"><input className={inp} value={form.telefono} onChange={(e) => set("telefono", e.target.value)} /></Field>
-            <Field label="DNI *"><input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} /></Field>
-            <Field label="Instagram"><input className={inp} value={form.instagram} onChange={(e) => set("instagram", e.target.value)} placeholder="@usuario" /></Field>
-            <Field label="Escudería">
-              <select className={sel} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
-                <option value="">Sin especificar</option>
-                {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
-              </select>
-            </Field>
-            <Field label="Categoría (opcional — la define el tiempo)">
-              <select className={sel} value={form.categoria} onChange={(e) => set("categoria", e.target.value)}>
-                <option value="">Sin asignar</option>
-                {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
-              </select>
-            </Field>
             <Field label="Campeonato *">
-              <select className={sel} value={form.campeonato_id} onChange={(e) => {
-                const cid = e.target.value;
-                const camp = campeonatos.find((c) => c.id === cid);
-                setForm((f) => ({ ...f, campeonato_id: cid, monto: f.monto || (camp?.precio_inscripcion ? String(camp.precio_inscripcion) : "") }));
-              }}>
+              <select className={sel} value={form.campeonato_id} onChange={(e) => cambiarCampeonatoNueva(e.target.value)}>
                 <option value="">Seleccionar...</option>
                 {campeonatos.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
             </Field>
-            <Field label="Monto (opcional — usa el precio del campeonato)"><input type="number" className={inp} value={form.monto} onChange={(e) => set("monto", e.target.value)} placeholder="Automático" /></Field>
-            <Field label="Forma de pago">
-              <select className={sel} value={formaPago} onChange={(e) => setFormaPago(e.target.value as "pendiente" | "online" | "stand")}>
-                <option value="pendiente">Pendiente (cobrar en stand)</option>
-                <option value="online">Pagado online (Mercado Pago)</option>
-                <option value="stand">Cobrar ahora en stand (detallar)</option>
+            <Field label={`Nombre${reqN("nombre") ? " *" : ""}`}><input className={inp} value={form.nombre} onChange={(e) => set("nombre", e.target.value)} /></Field>
+            <Field label={`Apellido${reqN("apellido") ? " *" : ""}`}><input className={inp} value={form.apellido} onChange={(e) => set("apellido", e.target.value)} /></Field>
+            {visN("telefono") && <Field label={`Teléfono${reqN("telefono") ? " *" : ""}`}><input className={inp} value={form.telefono} onChange={(e) => set("telefono", e.target.value)} /></Field>}
+            {visN("dni") && <Field label={`DNI${reqN("dni") ? " *" : ""}`}><input className={inp} value={form.dni} onChange={(e) => set("dni", e.target.value)} /></Field>}
+            {visN("instagram") && <Field label={`Instagram${reqN("instagram") ? " *" : ""}`}><input className={inp} value={form.instagram} onChange={(e) => set("instagram", e.target.value)} placeholder="@usuario" /></Field>}
+            {visN("escuderia") && <Field label={`Escudería${reqN("escuderia") ? " *" : ""}`}>
+              <select className={sel} value={form.escuderia_favorita} onChange={(e) => set("escuderia_favorita", e.target.value)}>
+                <option value="">Sin especificar</option>
+                {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
               </select>
-            </Field>
-            <Field label="Mejor tiempo (opcional — define la categoría)">
+            </Field>}
+            {visN("categoria") && <Field label={`Categoría${reqN("categoria") ? " *" : " (opcional — la define el tiempo)"}`}>
+              <select className={sel} value={form.categoria} onChange={(e) => set("categoria", e.target.value)}>
+                <option value="">Sin asignar</option>
+                {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+              </select>
+            </Field>}
+            {visN("monto") && <Field label="Monto (opcional — usa el precio del campeonato)"><input type="number" className={inp} value={form.monto} onChange={(e) => set("monto", e.target.value)} placeholder="Automático" /></Field>}
+            {visN("forma_pago") && <Field label="Forma de pago">
+              <select className={sel} value={formaPago} onChange={(e) => setFormaPago(e.target.value as "pendiente" | "online" | "stand")}>
+                <option value="pendiente">{permiteStandNueva ? "Pendiente (cobrar en stand)" : "Pendiente (pago online)"}</option>
+                <option value="online">Pagado online (Mercado Pago)</option>
+                {permiteStandNueva && <option value="stand">Cobrar ahora en stand (detallar)</option>}
+              </select>
+            </Field>}
+            {visN("mejor_tiempo") && <Field label={`Mejor tiempo${reqN("mejor_tiempo") ? " *" : " (opcional — define la categoría)"}`}>
               <input className={inp} value={form.tiempo_clasificacion} onChange={(e) => set("tiempo_clasificacion", e.target.value)} placeholder="1:23.456" />
-            </Field>
-            <Field label="Hora de toma"><input type="time" className={inp} value={form.hora_toma} onChange={(e) => set("hora_toma", e.target.value)} /></Field>
-            <Field label="Hora estimada de subida"><input type="time" className={inp} value={form.hora_estimada_subida} onChange={(e) => set("hora_estimada_subida", e.target.value)} /></Field>
-            <Field label="Hora de subida (inicia el temporizador)"><input type="time" className={inp} value={form.hora_subida} onChange={(e) => set("hora_subida", e.target.value)} /></Field>
-            <Field label="Minutos del turno"><input type="number" min={0} className={inp} value={form.cantidad_minutos} onChange={(e) => set("cantidad_minutos", e.target.value)} /></Field>
-            <Field label="Hora de bajada (automática)"><input type="time" readOnly className={`${inp} opacity-70`} value={horaBajadaNueva} /></Field>
+            </Field>}
+            {visN("hora_toma") && <Field label="Hora de toma"><input type="time" className={inp} value={form.hora_toma} onChange={(e) => set("hora_toma", e.target.value)} /></Field>}
+            {visN("hora_estimada_subida") && <Field label="Hora estimada de subida"><input type="time" className={inp} value={form.hora_estimada_subida} onChange={(e) => set("hora_estimada_subida", e.target.value)} /></Field>}
+            {visN("hora_subida") && <Field label="Hora de subida (inicia el temporizador)"><input type="time" className={inp} value={form.hora_subida} onChange={(e) => set("hora_subida", e.target.value)} /></Field>}
+            {visN("cantidad_minutos") && <Field label="Minutos del turno"><input type="number" min={0} className={inp} value={form.cantidad_minutos} onChange={(e) => set("cantidad_minutos", e.target.value)} /></Field>}
+            {visN("hora_bajada") && <Field label="Hora de bajada (automática)"><input type="time" readOnly className={`${inp} opacity-70`} value={horaBajadaNueva} /></Field>}
           </div>
           {formaPago === "stand" && (
             <div className="space-y-2">
@@ -1689,21 +1769,21 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field label="Nombre"><input className={inp} value={editForm.nombre || ""} onChange={(e) => setEditForm((f) => ({ ...f, nombre: e.target.value }))} /></Field>
             <Field label="Apellido"><input className={inp} value={editForm.apellido || ""} onChange={(e) => setEditForm((f) => ({ ...f, apellido: e.target.value }))} /></Field>
-            <Field label="Teléfono"><input className={inp} value={editForm.telefono || ""} onChange={(e) => setEditForm((f) => ({ ...f, telefono: e.target.value }))} /></Field>
-            <Field label="DNI"><input className={inp} value={editForm.dni || ""} onChange={(e) => setEditForm((f) => ({ ...f, dni: e.target.value }))} /></Field>
-            <Field label="Instagram"><input className={inp} value={editForm.instagram || ""} onChange={(e) => setEditForm((f) => ({ ...f, instagram: e.target.value }))} placeholder="@usuario" /></Field>
-            <Field label="Escudería">
+            {showE("telefono", editForm.telefono) && <Field label="Teléfono"><input className={inp} value={editForm.telefono || ""} onChange={(e) => setEditForm((f) => ({ ...f, telefono: e.target.value }))} /></Field>}
+            {showE("dni", editForm.dni) && <Field label="DNI"><input className={inp} value={editForm.dni || ""} onChange={(e) => setEditForm((f) => ({ ...f, dni: e.target.value }))} /></Field>}
+            {showE("instagram", editForm.instagram) && <Field label="Instagram"><input className={inp} value={editForm.instagram || ""} onChange={(e) => setEditForm((f) => ({ ...f, instagram: e.target.value }))} placeholder="@usuario" /></Field>}
+            {showE("escuderia", editForm.escuderia_favorita) && <Field label="Escudería">
               <select className={sel} value={editForm.escuderia_favorita || ""} onChange={(e) => setEditForm((f) => ({ ...f, escuderia_favorita: e.target.value }))}>
                 <option value="">Sin especificar</option>
                 {ESCUDERIAS.map((e) => <option key={e} value={e}>{e}</option>)}
               </select>
-            </Field>
-            <Field label="Categoría">
+            </Field>}
+            {showE("categoria", editForm.categoria) && <Field label="Categoría">
               <select className={sel} value={editForm.categoria || ""} onChange={(e) => setEditForm((f) => ({ ...f, categoria: e.target.value }))}>
                 <option value="">Sin asignar</option>
                 {CATEGORIAS.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
               </select>
-            </Field>
+            </Field>}
             <Field label="Estado">
               <select
                 className={sel}
@@ -1724,14 +1804,14 @@ function TabInscripciones({ inscripciones, campeonatos, role, onRefresh }: {
                 <option value="cancelado">Cancelado</option>
               </select>
             </Field>
-            <Field label="Mejor tiempo (cargar / mejorar — recalcula categoría)">
+            {campoVisible(camposEdit, "mejor_tiempo") && <Field label="Mejor tiempo (cargar / mejorar — recalcula categoría)">
               <input className={inp} value={editTiempo} onChange={(e) => setEditTiempo(e.target.value)} placeholder="1:23.456" />
-            </Field>
-            <Field label="Hora de toma"><input type="time" className={inp} value={editForm.hora_toma || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_toma: e.target.value }))} /></Field>
-            <Field label="Hora estimada de subida"><input type="time" className={inp} value={editForm.hora_estimada_subida || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_estimada_subida: e.target.value }))} /></Field>
-            <Field label="Hora de subida (inicia el temporizador)"><input type="time" className={inp} value={editForm.hora_subida || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_subida: e.target.value }))} /></Field>
-            <Field label="Minutos del turno"><input type="number" min={0} className={inp} value={editForm.cantidad_minutos || ""} onChange={(e) => setEditForm((f) => ({ ...f, cantidad_minutos: e.target.value }))} /></Field>
-            <Field label="Hora de bajada (automática)"><input type="time" readOnly className={`${inp} opacity-70`} value={horaBajadaEdit} /></Field>
+            </Field>}
+            {showE("hora_toma", editForm.hora_toma) && <Field label="Hora de toma"><input type="time" className={inp} value={editForm.hora_toma || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_toma: e.target.value }))} /></Field>}
+            {showE("hora_estimada_subida", editForm.hora_estimada_subida) && <Field label="Hora estimada de subida"><input type="time" className={inp} value={editForm.hora_estimada_subida || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_estimada_subida: e.target.value }))} /></Field>}
+            {showE("hora_subida", editForm.hora_subida) && <Field label="Hora de subida (inicia el temporizador)"><input type="time" className={inp} value={editForm.hora_subida || ""} onChange={(e) => setEditForm((f) => ({ ...f, hora_subida: e.target.value }))} /></Field>}
+            {showE("cantidad_minutos", editForm.cantidad_minutos) && <Field label="Minutos del turno"><input type="number" min={0} className={inp} value={editForm.cantidad_minutos || ""} onChange={(e) => setEditForm((f) => ({ ...f, cantidad_minutos: e.target.value }))} /></Field>}
+            {showE("hora_subida", editForm.hora_subida) && <Field label="Hora de bajada (automática)"><input type="time" readOnly className={`${inp} opacity-70`} value={horaBajadaEdit} /></Field>}
           </div>
 
           {/* Pago: simple (monto + método) o pagos parciales múltiples. */}
