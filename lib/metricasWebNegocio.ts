@@ -1,8 +1,13 @@
 // Datos REALES de negocio atribuibles a la web (Supabase). Fuente financiera real,
 // separada de GA4. Solo se cuentan operaciones que con CERTEZA provienen de la web:
-//  - Reservas con origen 'web' (o null legacy = web) y estado 'activa' (confirmadas).
-//    Las de origen 'empresa' NO son web y se excluyen.
-//  - Gift Cards pagadas: sólo se venden por la web pública → atribuibles.
+//
+//  - Reserva Web = origen EXPLÍCITO 'web' y estado 'activa' (confirmada). La columna
+//    reservas.origen es NOT NULL con default 'web': los flujos públicos (pago MP y
+//    reserva bonificada) no setean origen → queda 'web'; el módulo Empresas setea
+//    'empresa'. NO existe (ni puede existir) origen NULL, así que no se asume nada:
+//    se filtra estrictamente por 'web' y se excluye 'empresa' o cualquier otro origen.
+//  - Gift Cards pagadas: su ÚNICO punto de creación es el flujo público
+//    /api/gift-cards/preference (admin y webhook solo actualizan) → web-exclusivas.
 // No duplica reglas de Finanzas: son conteos/sumas directas del período.
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { DateRange } from "@/lib/metricasWebRange";
@@ -28,13 +33,13 @@ export async function negocioWeb(range: DateRange): Promise<NegocioReal> {
 
   const { data: reservas } = await supabaseAdmin
     .from("reservas")
-    .select("total, origen, estado, created_at")
+    .select("total")
     .eq("estado", "activa")
+    .eq("origen", "web") // Reserva Web = origen explícito 'web' (excluye 'empresa' y cualquier otro).
     .gte("created_at", desde)
     .lte("created_at", hasta);
-  const web = (reservas ?? []).filter((r) => r.origen == null || r.origen === "web");
-  const reservasWeb = web.length;
-  const ingresosReservas = web.reduce((s, r) => s + (Number(r.total) || 0), 0);
+  const reservasWeb = (reservas ?? []).length;
+  const ingresosReservas = (reservas ?? []).reduce((s, r) => s + (Number(r.total) || 0), 0);
 
   const { data: gcs } = await supabaseAdmin
     .from("gift_cards")
