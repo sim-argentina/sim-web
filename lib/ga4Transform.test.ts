@@ -98,6 +98,22 @@ assert.equal(err.checkout[0].value, 7);
 assert.equal(err.pago.failed, 5);
 assert.equal(err.pago.pending, 3);
 
+// ── Reconciliación GA4: buildResumen NO altera los totales válidos ──────────────
+{
+  const r = buildResumen([{ dims: [], mets: [76, 62, 347, 1412, 5000] }], [{ dims: [], mets: [0, 0, 0, 0, 0] }], 0, 0);
+  assert.equal(r.usuarios.value, 76, "totalUsers intacto");
+  assert.equal(r.usuariosNuevos.value, 62, "newUsers intacto");
+  assert.equal(r.sesiones.value, 347, "sessions intacto");
+  assert.equal(r.vistas.value, 1412, "screenPageViews intacto");
+}
+// ── Consistencia: negativos → 0, nunca NaN ──────────────────────────────────────
+{
+  const neg = buildResumen([{ dims: [], mets: [-5, -2, -1, -3, -100] }], [{ dims: [], mets: [10, 5, 4, 3, 20] }], 0, 0);
+  assert.equal(neg.usuarios.value, 0, "usuarios negativos → 0");
+  assert.ok(Number.isFinite(neg.sesiones.value) && Number.isFinite(neg.engagementSeg.value), "nunca NaN");
+  assert.equal(buildList([{ dims: ["x"], mets: [-9] }], 0)[0].value, 0, "lista: valor negativo → 0");
+}
+
 // ── Estados por bloque: 0 filas ≠ error; custom pending vs error; AISLAMIENTO ────
 assert.equal(clasificarEstado(null, 5, false), "ok");
 assert.equal(clasificarEstado(null, 0, false), "empty", "query OK con 0 filas = 'sin datos', NO error");

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nearestIndex } from "@/lib/chartNearest";
+import { consolidarFuentes } from "@/lib/fuentesConsolidadas";
 
 // ── Tipos del DTO que devuelve /api/admin/metricas/web ────────────────────────
 type Metric = { value: number; pct: number | null };
@@ -102,15 +103,19 @@ function Delta({ pct }: { pct: number | null }) {
   );
 }
 
-function StatCard({ title, value, delta, hint }: { title: string; value: string; delta?: Metric; hint?: string }) {
+function StatCard({ title, value, delta, hint, tip }: { title: string; value: string; delta?: Metric; hint?: string; tip?: string }) {
   return (
-    <div className={CARD}>
+    <div className={CARD} title={tip}>
       <p className="text-xs uppercase tracking-[0.2em] text-white/45">{title}</p>
       <p className="mt-2 text-3xl font-bold text-white">{value}</p>
       <div className="mt-2">{delta ? <Delta pct={delta.pct} /> : hint ? <span className="text-xs text-white/45">{hint}</span> : null}</div>
     </div>
   );
 }
+
+// Traducción de labels de dispositivos (solo presentación; valores GA4 intactos).
+const DEVICE_LABEL: Record<string, string> = { mobile: "Móvil", desktop: "Escritorio", tablet: "Tablet", smart_tv: "Smart TV" };
+const traducirDispositivos = (items: Item[]): Item[] => items.map((d) => ({ ...d, label: DEVICE_LABEL[d.label] ?? d.label }));
 
 function BarList({ title, data, format, empty }: { title: string; data: Item[]; format?: (n: number) => string; empty?: string }) {
   const max = Math.max(...data.map((d) => d.value), 1);
@@ -221,7 +226,7 @@ function FunnelView({ title, stages }: { title: string; stages: Stage[] }) {
         {totalConv != null && <span className="text-xs text-white/55">Conversión total: <b className="text-white">{totalConv}%</b></span>}
       </div>
       {base === 0 ? (
-        <p className="text-sm text-white/45">Sin datos para este período. (Las dimensiones nuevas pueden tardar 24-48 h.)</p>
+        <p className="text-sm text-white/45">Sin datos para este período.</p>
       ) : (
         <div className="space-y-3">
           {stages.map((s, i) => (
@@ -366,13 +371,13 @@ export default function WebTab() {
         <>
           <SectionTitle>Resumen</SectionTitle>
           <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-            <StatCard title="Usuarios" value={num(ok.resumen.usuarios.value)} delta={ok.resumen.usuarios} />
-            <StatCard title="Usuarios nuevos" value={num(ok.resumen.usuariosNuevos.value)} delta={ok.resumen.usuariosNuevos} />
-            <StatCard title="Sesiones" value={num(ok.resumen.sesiones.value)} delta={ok.resumen.sesiones} />
-            <StatCard title="Vistas de página" value={num(ok.resumen.vistas.value)} delta={ok.resumen.vistas} />
-            <StatCard title="Engagement medio/sesión" value={segLegible(ok.resumen.engagementSeg.value)} delta={ok.resumen.engagementSeg} />
+            <StatCard title="Usuarios totales" value={num(ok.resumen.usuarios.value)} delta={ok.resumen.usuarios} tip="GA4: totalUsers" />
+            <StatCard title="Usuarios nuevos" value={num(ok.resumen.usuariosNuevos.value)} delta={ok.resumen.usuariosNuevos} tip="GA4: newUsers" />
+            <StatCard title="Sesiones" value={num(ok.resumen.sesiones.value)} delta={ok.resumen.sesiones} tip="GA4: sessions" />
+            <StatCard title="Vistas de página" value={num(ok.resumen.vistas.value)} delta={ok.resumen.vistas} tip="GA4: screenPageViews" />
+            <StatCard title="Engagement medio/sesión" value={segLegible(ok.resumen.engagementSeg.value)} delta={ok.resumen.engagementSeg} tip="GA4: userEngagementDuration / sessions" />
             {ok.conversionDisponible
-              ? <StatCard title="Conversión (Analytics)" value={`${ok.resumen.conversion.value}%`} delta={ok.resumen.conversion} />
+              ? <StatCard title="Conversión (Analytics)" value={`${ok.resumen.conversion.value}%`} delta={ok.resumen.conversion} tip="(purchase / sessions) × 100. Conversión de comportamiento GA4, no la de negocio." />
               : <StatCard title="Conversión (Analytics)" value="—" hint="Requiere el funnel (dimensiones nuevas, 24-48 h)" />}
           </div>
 
@@ -384,15 +389,41 @@ export default function WebTab() {
           <SectionTitle>Adquisición</SectionTitle>
           <div className="grid gap-6 xl:grid-cols-2">
             <Bloque title="Canales" status={ok.estados.canales}><BarList title="Canales" data={ok.canales} /></Bloque>
-            <Bloque title="Fuente / Medio" status={ok.estados.fuentes}><BarList title="Fuente / Medio" data={ok.fuentes} /></Bloque>
+            <Bloque title="Fuente / Medio" status={ok.estados.fuentes}><BarList title="Fuente / Medio (crudo GA4)" data={ok.fuentes} /></Bloque>
           </div>
+          {(() => {
+            const consolidadas = consolidarFuentes(ok.fuentes);
+            const agrupa = consolidadas.length < ok.fuentes.length;
+            const mpPresente = ok.fuentes.some((f) => /mercadopago/i.test(f.label));
+            const noAsignada = [...ok.fuentes, ...ok.canales].some((f) => /\(not set\)|unassigned/i.test(f.label));
+            return (
+              <>
+                {mensajeEstado(ok.estados.fuentes) === null && agrupa && (
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <BarList title="Fuentes consolidadas" data={consolidadas} />
+                    <div />
+                  </div>
+                )}
+                {mpPresente && (
+                  <p className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-white/45">
+                    Mercado Pago puede aparecer como <b className="text-white/70">referral de retorno</b> hasta completar la exclusión de referrals no deseados en GA4.
+                  </p>
+                )}
+                {noAsignada && (
+                  <p className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-white/45">
+                    <b className="text-white/70">(not set) / Unassigned</b>: GA4 no pudo clasificar la fuente/canal de esas sesiones. No se reasignan artificialmente.
+                  </p>
+                )}
+              </>
+            );
+          })()}
 
           {/* 4) CONTENIDO / AUDIENCIA */}
           <SectionTitle>Contenido y audiencia</SectionTitle>
           <div className="grid gap-6 xl:grid-cols-2">
             <Bloque title="Páginas más vistas" status={ok.estados.paginas}><BarList title="Páginas más vistas" data={ok.paginas} /></Bloque>
             <div className="grid gap-6">
-              <Bloque title="Dispositivos" status={ok.estados.dispositivos}><BarList title="Dispositivos" data={ok.dispositivos} /></Bloque>
+              <Bloque title="Dispositivos" status={ok.estados.dispositivos}><BarList title="Dispositivos" data={traducirDispositivos(ok.dispositivos)} /></Bloque>
               <Bloque title="Ciudades" status={ok.estados.ciudades}><BarList title="Ciudades" data={ok.ciudades} /></Bloque>
             </div>
           </div>

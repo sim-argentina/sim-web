@@ -45,6 +45,15 @@ assert.equal(hoyAR(NOW), "2026-03-15", "hoy AR");
   const { current } = resolveRange("custom", { start: "no-fecha" }, NOW);
   assert.ok(validDate(current.start) && validDate(current.end), "custom inválido produce rango válido");
 }
+// Duración EQUIVALENTE actual vs período anterior (obligatorio para comparación).
+{
+  const dias = (a: string, b: string) => (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000 + 1;
+  for (const key of ["today", "7d", "30d", "this_month", "prev_month"] as const) {
+    const { current, previous } = resolveRange(key, undefined, NOW);
+    assert.equal(dias(previous.start, previous.end), dias(current.start, current.end), `${key}: períodos de igual duración`);
+  }
+}
+
 assert.equal(esRangeKey("7d"), true);
 assert.equal(esRangeKey("nope"), false);
 assert.equal(validDate("2026-03-01"), true);

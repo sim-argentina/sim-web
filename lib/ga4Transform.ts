@@ -74,7 +74,9 @@ export function buildResumen(
 ) {
   const a = actual[0]?.mets ?? [];
   const p = previo[0]?.mets ?? [];
-  const g = (arr: number[], i: number) => safeNum(arr[i]);
+  // Conteos/duraciones nunca son negativos: se clampan por consistencia (defensivo;
+  // GA4 no devuelve negativos, pero evita mostrar un valor absurdo si algo falla).
+  const g = (arr: number[], i: number) => Math.max(0, safeNum(arr[i]));
   const sesionesA = g(a, 2), sesionesP = g(p, 2);
   // Engagement medio por sesión (segundos). Evita dividir por cero.
   const engA = sesionesA > 0 ? g(a, 4) / sesionesA : 0;
@@ -109,8 +111,8 @@ export type Item = { label: string; value: number; extra?: number };
 // Lista simple dim[0]=label, met[metIdx]=value (+ opcional met[extraIdx]).
 export function buildList(rows: Ga4Row[], metIdx = 0, extraIdx?: number, opts?: { excludePrefix?: string; limit?: number }): Item[] {
   let out = rows.map((r) => {
-    const item: Item = { label: r.dims[0] ?? "(desconocido)", value: safeNum(r.mets[metIdx]) };
-    if (extraIdx != null) item.extra = safeNum(r.mets[extraIdx]);
+    const item: Item = { label: r.dims[0] ?? "(desconocido)", value: Math.max(0, safeNum(r.mets[metIdx])) };
+    if (extraIdx != null) item.extra = Math.max(0, safeNum(r.mets[extraIdx]));
     return item;
   });
   if (opts?.excludePrefix) out = out.filter((i) => !i.label.startsWith(opts.excludePrefix!));
