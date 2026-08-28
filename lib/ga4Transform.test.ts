@@ -3,6 +3,7 @@ import {
   safeNum, pct, normalizeRows, buildResumen, buildSerie, buildList,
   indexarConteos, funnelReservas, funnelGiftCards, totalPurchases,
   buildPromociones, buildErrores, buildFunnel,
+  esErrorDeCampoGa4, clasificarEstado,
 } from "@/lib/ga4Transform";
 
 // Ejecutar: npx tsx lib/ga4Transform.test.ts
@@ -96,6 +97,29 @@ const err = buildErrores([{ dims: ["reserva", "preference"], mets: [7] }], [{ di
 assert.equal(err.checkout[0].value, 7);
 assert.equal(err.pago.failed, 5);
 assert.equal(err.pago.pending, 3);
+
+// ── Estados por bloque: 0 filas ≠ error; custom pending vs error; AISLAMIENTO ────
+assert.equal(clasificarEstado(null, 5, false), "ok");
+assert.equal(clasificarEstado(null, 0, false), "empty", "query OK con 0 filas = 'sin datos', NO error");
+assert.equal(clasificarEstado({ esFieldError: true }, 0, true), "pending", "custom dim aún no disponible = pending");
+assert.equal(clasificarEstado({ esFieldError: false }, 0, true), "error", "custom con error real = error");
+assert.equal(clasificarEstado({ esFieldError: true }, 0, false), "error", "un bloque estándar nunca es 'pending'");
+// Aislamiento: un bloque custom que falla NO afecta el estado de un estándar que cargó.
+{
+  const audiencia = clasificarEstado(null, 3, false);     // Audience/Source-Medium cargó
+  const funnels = clasificarEstado({ esFieldError: true }, 0, true); // Funnel falló (custom)
+  assert.equal(audiencia, "ok", "Audience carga aunque Funnel falle");
+  assert.equal(funnels, "pending", "Funnel degrada por su cuenta");
+  const devices = clasificarEstado(null, 2, false);
+  const city = clasificarEstado({ esFieldError: false }, 0, false); // City error real
+  assert.equal(devices, "ok", "Dispositivos carga aunque City falle");
+  assert.equal(city, "error");
+}
+// Clasificación de error de campo (custom recién creada) vs error real.
+assert.equal(esErrorDeCampoGa4("Field customEvent:funnel is not a valid dimension for this property."), true);
+assert.equal(esErrorDeCampoGa4("dimensionValue did not match the regular expression"), true);
+assert.equal(esErrorDeCampoGa4("PERMISSION_DENIED: caller does not have permission"), false);
+assert.equal(esErrorDeCampoGa4("RESOURCE_EXHAUSTED: quota exceeded"), false);
 
 console.log("OK — ga4Transform: safeNum, pct (div0=null), normalizeRows (nulls/vacío), resumen+comparación, " +
   "serie, buildList (excluye /admin), funnel conv/caída, separación reserva/gift, promociones (con/sin descuento), errores.");

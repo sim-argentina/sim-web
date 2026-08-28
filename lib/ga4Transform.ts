@@ -17,6 +17,25 @@ export function safeNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+// ── Estado por bloque (para no confundir "sin datos" con "consulta fallida") ────
+export type BlockStatus = "ok" | "empty" | "pending" | "error";
+
+// ¿El error de GA4 es por un CAMPO no válido/aún no disponible (típico de custom
+// dimensions/metrics recién creadas), en oposición a un error real (permisos, cuota)?
+export function esErrorDeCampoGa4(message: string): boolean {
+  return /customEvent:|customMetric:|not a valid|did not match|is not compatible|incompatible|invalid.*(dimension|metric)|(dimension|metric).*(not valid|not found|not available)/i.test(String(message ?? ""));
+}
+
+// Clasifica el estado de un bloque:
+//  - consulta OK con filas → "ok"; OK con 0 filas → "empty" (sin datos, válido).
+//  - consulta fallida por campo custom aún no disponible → "pending" (24-48 h).
+//  - cualquier otra falla → "error" (real). NUNCA se transforma en 0/"sin datos".
+export function clasificarEstado(fallo: { esFieldError: boolean } | null, filas: number, custom: boolean): BlockStatus {
+  if (!fallo) return filas > 0 ? "ok" : "empty";
+  if (custom && fallo.esFieldError) return "pending";
+  return "error";
+}
+
 // Normaliza un report del SDK a filas simples {dims,mets}. Tolera nulls/vacíos.
 export function normalizeRows(report: RawReport): Ga4Row[] {
   const rows = report?.rows ?? [];
@@ -38,7 +57,17 @@ export type Metric = { value: number; pct: number | null };
 const metric = (cur: number, prev: number): Metric => ({ value: cur, pct: pct(cur, prev) });
 
 // ── Resumen (dos reports de una sola fila: actual y anterior) ─────────────────
-// Métricas en orden: [totalUsers, newUsers, sessions, screenPageViews, userEngagementDuration].
+// Correspondencia EXACTA Dashboard → GA4 Data API (metrics del report, en orden):
+//   Usuarios          → totalUsers        (headline "Users" de GA4; no activeUsers)
+//   Usuarios nuevos    → newUsers
+//   Sesiones           → sessions
+//   Vistas de página   → screenPageViews
+//   Engagement medio/sesión → userEngagementDuration / sessions (segundos). Es el tiempo
+//     de INTERACCIÓN medio por sesión, no "duración media de sesión" (averageSessionDuration).
+//   Conversión (Analytics) → (purchases / sessions) × 100. purchases = eventos `purchase`
+//     (reserva + gift), tomados del report de funnel. Es una conversión de comportamiento
+//     de GA4, NO la conversión real de negocio (esa sale de Supabase). Si el funnel no se
+//     pudo consultar, la conversión NO es 0 sino "no disponible" (lo marca el caller).
 // purchasesActual/Previo se pasan aparte (vienen del report de funnel).
 export function buildResumen(
   actual: Ga4Row[], previo: Ga4Row[], purchasesActual: number, purchasesPrevio: number,

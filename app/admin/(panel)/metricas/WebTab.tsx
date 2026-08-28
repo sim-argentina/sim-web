@@ -1,11 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { nearestIndex } from "@/lib/chartNearest";
 
 // ── Tipos del DTO que devuelve /api/admin/metricas/web ────────────────────────
 type Metric = { value: number; pct: number | null };
 type Item = { label: string; value: number; extra?: number };
 type Stage = { key: string; label: string; count: number; convPrev: number | null; dropPrev: number | null };
+type BlockStatus = "ok" | "empty" | "pending" | "error";
+type Estados = {
+  resumen: BlockStatus; evolucion: BlockStatus; canales: BlockStatus; paginas: BlockStatus;
+  fuentes: BlockStatus; dispositivos: BlockStatus; ciudades: BlockStatus;
+  funnels: BlockStatus; promociones: BlockStatus; errores: BlockStatus;
+};
 type Negocio = {
   atribuible: true;
   reservasWeb: number; ingresosReservas: number; ticketReservas: number | null;
@@ -17,12 +24,13 @@ type WebOk = {
   range: { start: string; end: string };
   previous: { start: string; end: string };
   resumen: { usuarios: Metric; usuariosNuevos: Metric; sesiones: Metric; vistas: Metric; engagementSeg: Metric; conversion: Metric };
+  conversionDisponible: boolean;
   serie: Array<{ fecha: string; usuarios: number; sesiones: number; vistas: number }>;
   canales: Item[]; fuentes: Item[]; paginas: Item[]; dispositivos: Item[]; ciudades: Item[];
   funnelReservas: Stage[]; funnelGiftCards: Stage[];
   promociones: { total: number; porFunnel: Item[]; descuentoTotal: number | null; descuentoPromedio: number | null } | null;
   errores: { checkout: Item[]; pago: { failed: number; pending: number; porFunnel: Item[] } } | null;
-  partial: string[];
+  estados: Estados;
   negocio: Negocio;
 };
 type WebOff = { configured: false; range: { start: string; end: string }; negocio: Negocio };
@@ -38,6 +46,11 @@ const RANGOS: Array<{ key: string; label: string }> = [
   { key: "custom", label: "Personalizado" },
 ];
 
+// La exclusión defensiva de tráfico /admin en el tracking se implementó en agosto de
+// 2026. Los datos de GA4 ANTERIORES pueden contener tráfico administrativo histórico:
+// NO se presentan como "100% público". No se alteran datos históricos; solo se avisa.
+const EXCLUSION_ADMIN_DESDE = "2026-08-01";
+
 const nf = new Intl.NumberFormat("es-AR");
 const money = (n: number) => `$${nf.format(Math.round(n || 0))}`;
 const num = (n: number) => nf.format(Math.round(n || 0));
@@ -45,6 +58,39 @@ const segLegible = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s`
 
 // ── Bloques UI reutilizando la estética de Métricas ───────────────────────────
 const CARD = "rounded-2xl border border-white/10 bg-white/[0.04] p-5";
+
+const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+function fechaCorta(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${Number(d)} ${MESES[Number(m) - 1] ?? m} ${y}`;
+}
+
+const ETIQUETA_BLOQUE: Record<keyof Estados, string> = {
+  resumen: "Resumen", evolucion: "Evolución", canales: "Canales", paginas: "Páginas",
+  fuentes: "Fuente / Medio", dispositivos: "Dispositivos", ciudades: "Ciudades",
+  funnels: "Funnels", promociones: "Promociones", errores: "Errores",
+};
+
+// Mensaje según estado: pending (custom aún propagándose) vs error real. ok/empty → null
+// (el bloque se renderiza normal; "empty" lo resuelve cada componente con "Sin datos").
+function mensajeEstado(status: BlockStatus): string | null {
+  if (status === "pending") return "Todavía no hay datos. Las dimensiones nuevas de Analytics pueden tardar 24-48 h.";
+  if (status === "error") return "No se pudo cargar este bloque.";
+  return null;
+}
+
+// Envuelve un bloque: si está pending/error muestra el estado; si no, su contenido.
+function Bloque({ title, status, children }: { title: string; status: BlockStatus; children: React.ReactNode }) {
+  const msg = mensajeEstado(status);
+  if (!msg) return <>{children}</>;
+  return (
+    <div className={CARD}>
+      <h3 className="mb-3 text-lg font-semibold text-white">{title}</h3>
+      <p className={`text-sm ${status === "error" ? "text-red-300/80" : "text-white/45"}`}>{msg}</p>
+    </div>
+  );
+}
 
 function Delta({ pct }: { pct: number | null }) {
   if (pct == null) return <span className="text-xs text-white/40">— sin comparación</span>;
@@ -92,30 +138,73 @@ function BarList({ title, data, format, empty }: { title: string; data: Item[]; 
   );
 }
 
-// Línea temporal simple en SVG (usuarios + vistas), sin dependencias extra.
-function MiniLine({ serie }: { serie: WebOk["serie"] }) {
+// Línea temporal INTERACTIVA (usuarios + vistas) en SVG, sin dependencias extra:
+// hover/tap → guía vertical + puntos resaltados + tooltip con valores reales del día;
+// leyenda para activar/desactivar cada serie; touch (pan-y) sin romper el scroll.
+function MiniLine({ serie, estado }: { serie: WebOk["serie"]; estado: BlockStatus }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const [showU, setShowU] = useState(true);
+  const [showV, setShowV] = useState(true);
   const W = 720, H = 200, P = 8;
-  const puntos = serie.length;
+  const n = serie.length;
   const maxU = Math.max(...serie.map((s) => s.usuarios), 1);
   const maxV = Math.max(...serie.map((s) => s.vistas), 1);
-  const path = (vals: number[], max: number) =>
-    vals.map((v, i) => `${i === 0 ? "M" : "L"} ${P + (i * (W - 2 * P)) / Math.max(1, puntos - 1)} ${H - P - (v / max) * (H - 2 * P)}`).join(" ");
+  const xOf = (i: number) => P + (n <= 1 ? (W - 2 * P) / 2 : (i * (W - 2 * P)) / (n - 1));
+  const yOf = (v: number, max: number) => H - P - (v / max) * (H - 2 * P);
+  const path = (key: "usuarios" | "vistas", max: number) =>
+    serie.map((s, i) => `${i === 0 ? "M" : "L"} ${xOf(i)} ${yOf(s[key], max)}`).join(" ");
+  const step = Math.max(1, Math.ceil(n / 6));
+  const ticks = serie.map((s, i) => ({ i, s })).filter(({ i }) => i % step === 0 || i === n - 1);
+
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setHover(nearestIndex(n, (e.clientX - rect.left) / rect.width));
+  };
+  const pt = hover != null && hover >= 0 ? serie[hover] : null;
+  const guidePct = hover != null && hover >= 0 ? (xOf(hover) / W) * 100 : 0;
+  const msg = mensajeEstado(estado);
+
   return (
     <div className={CARD}>
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-lg font-semibold text-white">Evolución del tráfico</h3>
-        <div className="flex gap-4 text-xs">
-          <span className="text-red-400">● Usuarios</span>
-          <span className="text-blue-400">● Vistas</span>
+        <div className="flex gap-2 text-xs">
+          <button type="button" aria-pressed={showU} onClick={() => setShowU((v) => !v)} className={`rounded-lg px-2 py-1 font-semibold ${showU ? "text-red-400" : "text-white/30 line-through"}`}>● Usuarios</button>
+          <button type="button" aria-pressed={showV} onClick={() => setShowV((v) => !v)} className={`rounded-lg px-2 py-1 font-semibold ${showV ? "text-blue-400" : "text-white/30 line-through"}`}>● Vistas</button>
         </div>
       </div>
-      {serie.length === 0 ? (
+      {msg ? (
+        <p className={`text-sm ${estado === "error" ? "text-red-300/80" : "text-white/45"}`}>{msg}</p>
+      ) : n === 0 ? (
         <p className="text-sm text-white/45">Sin datos para este período.</p>
       ) : (
-        <svg viewBox={`0 0 ${W} ${H}`} className="h-52 w-full" preserveAspectRatio="none">
-          <path d={path(serie.map((s) => s.usuarios), maxU)} fill="none" stroke="#ef4444" strokeWidth={2} />
-          <path d={path(serie.map((s) => s.vistas), maxV)} fill="none" stroke="#3b82f6" strokeWidth={2} />
-        </svg>
+        <div
+          className="relative select-none"
+          style={{ touchAction: "pan-y" }}
+          onPointerMove={onMove}
+          onPointerDown={onMove}
+          onPointerLeave={() => setHover(null)}
+          role="img"
+          aria-label={`Evolución del tráfico entre ${fechaCorta(serie[0].fecha)} y ${fechaCorta(serie[n - 1].fecha)}: ${num(serie.reduce((a, s) => a + s.usuarios, 0))} usuarios y ${num(serie.reduce((a, s) => a + s.vistas, 0))} vistas en total.`}
+        >
+          <svg viewBox={`0 0 ${W} ${H}`} className="h-52 w-full" preserveAspectRatio="none">
+            {pt && <line x1={xOf(hover as number)} y1={P} x2={xOf(hover as number)} y2={H - P} stroke="rgba(255,255,255,0.25)" strokeWidth={1} />}
+            {showU && <path d={path("usuarios", maxU)} fill="none" stroke="#ef4444" strokeWidth={2} />}
+            {showV && <path d={path("vistas", maxV)} fill="none" stroke="#3b82f6" strokeWidth={2} />}
+            {pt && showU && <circle cx={xOf(hover as number)} cy={yOf(pt.usuarios, maxU)} r={3.5} fill="#ef4444" />}
+            {pt && showV && <circle cx={xOf(hover as number)} cy={yOf(pt.vistas, maxV)} r={3.5} fill="#3b82f6" />}
+          </svg>
+          <div className="mt-1 flex justify-between text-[10px] text-white/35">
+            {ticks.map(({ i, s }) => <span key={i}>{fechaCorta(s.fecha).replace(/ \d{4}$/, "")}</span>)}
+          </div>
+          {pt && (
+            <div className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-lg border border-white/15 bg-black/90 px-3 py-2 text-xs shadow-lg" style={{ left: `${Math.max(12, Math.min(88, guidePct))}%` }}>
+              <p className="font-bold text-white">{fechaCorta(pt.fecha)}</p>
+              {showU && <p className="text-red-400">Usuarios: {num(pt.usuarios)}</p>}
+              {showV && <p className="text-blue-400">Vistas: {num(pt.vistas)}</p>}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -249,6 +338,12 @@ export default function WebTab() {
         {rangoTexto && <p className="mt-3 text-xs text-white/45">Rango activo: <b className="text-white/70">{rangoTexto}</b></p>}
       </div>
 
+      {data && data.range.start < EXCLUSION_ADMIN_DESDE && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-2 text-xs text-white/45">
+          Nota: la exclusión de tráfico <b className="text-white/70">/admin</b> se aplicó en agosto de 2026. Períodos anteriores pueden incluir tráfico administrativo histórico y no representan tráfico 100% público.
+        </div>
+      )}
+
       {error && <div className="rounded-2xl border border-red-500/30 bg-red-900/20 px-4 py-3 text-sm text-red-300">No se pudo cargar la analítica web. Reintentá con &quot;Actualizar&quot;.</div>}
       {loading && !data && <div className={`${CARD} text-center text-white/60`}>Cargando analítica…</div>}
 
@@ -257,11 +352,14 @@ export default function WebTab() {
           <b>Analytics no configurado.</b> Falta el acceso a la GA4 Data API (Property ID + service account). Los datos de comportamiento aparecerán una vez configurado. Abajo se muestran igualmente los <b>resultados reales</b> del período.
         </div>
       )}
-      {ok && ok.partial.length > 0 && (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-900/15 px-4 py-3 text-sm text-amber-200">
-          Algunos bloques no se pudieron cargar (se muestran vacíos): {ok.partial.join(", ")}.
-        </div>
-      )}
+      {ok && (() => {
+        const fallidos = (Object.keys(ok.estados) as Array<keyof Estados>).filter((k) => ok.estados[k] === "error");
+        return fallidos.length > 0 ? (
+          <div className="rounded-2xl border border-red-500/30 bg-red-900/20 px-4 py-3 text-sm text-red-300">
+            No se pudieron cargar estos bloques: {fallidos.map((k) => ETIQUETA_BLOQUE[k]).join(", ")}.
+          </div>
+        ) : null;
+      })()}
 
       {/* 1) RESUMEN */}
       {ok && (
@@ -272,28 +370,30 @@ export default function WebTab() {
             <StatCard title="Usuarios nuevos" value={num(ok.resumen.usuariosNuevos.value)} delta={ok.resumen.usuariosNuevos} />
             <StatCard title="Sesiones" value={num(ok.resumen.sesiones.value)} delta={ok.resumen.sesiones} />
             <StatCard title="Vistas de página" value={num(ok.resumen.vistas.value)} delta={ok.resumen.vistas} />
-            <StatCard title="Engagement medio" value={segLegible(ok.resumen.engagementSeg.value)} delta={ok.resumen.engagementSeg} />
-            <StatCard title="Conversión (Analytics)" value={`${ok.resumen.conversion.value}%`} delta={ok.resumen.conversion} />
+            <StatCard title="Engagement medio/sesión" value={segLegible(ok.resumen.engagementSeg.value)} delta={ok.resumen.engagementSeg} />
+            {ok.conversionDisponible
+              ? <StatCard title="Conversión (Analytics)" value={`${ok.resumen.conversion.value}%`} delta={ok.resumen.conversion} />
+              : <StatCard title="Conversión (Analytics)" value="—" hint="Requiere el funnel (dimensiones nuevas, 24-48 h)" />}
           </div>
 
           {/* 2) EVOLUCIÓN */}
           <SectionTitle>Evolución</SectionTitle>
-          <MiniLine serie={ok.serie} />
+          <MiniLine serie={ok.serie} estado={ok.estados.evolucion} />
 
           {/* 3) ADQUISICIÓN */}
           <SectionTitle>Adquisición</SectionTitle>
           <div className="grid gap-6 xl:grid-cols-2">
-            <BarList title="Canales" data={ok.canales} />
-            <BarList title="Fuente / Medio" data={ok.fuentes} />
+            <Bloque title="Canales" status={ok.estados.canales}><BarList title="Canales" data={ok.canales} /></Bloque>
+            <Bloque title="Fuente / Medio" status={ok.estados.fuentes}><BarList title="Fuente / Medio" data={ok.fuentes} /></Bloque>
           </div>
 
           {/* 4) CONTENIDO / AUDIENCIA */}
           <SectionTitle>Contenido y audiencia</SectionTitle>
           <div className="grid gap-6 xl:grid-cols-2">
-            <BarList title="Páginas más vistas" data={ok.paginas} />
+            <Bloque title="Páginas más vistas" status={ok.estados.paginas}><BarList title="Páginas más vistas" data={ok.paginas} /></Bloque>
             <div className="grid gap-6">
-              <BarList title="Dispositivos" data={ok.dispositivos} />
-              <BarList title="Ciudades" data={ok.ciudades} />
+              <Bloque title="Dispositivos" status={ok.estados.dispositivos}><BarList title="Dispositivos" data={ok.dispositivos} /></Bloque>
+              <Bloque title="Ciudades" status={ok.estados.ciudades}><BarList title="Ciudades" data={ok.ciudades} /></Bloque>
             </div>
           </div>
 
@@ -326,43 +426,51 @@ export default function WebTab() {
 
           {/* 6-7) FUNNELS */}
           <SectionTitle>Funnels</SectionTitle>
-          <div className="grid gap-6 xl:grid-cols-2">
-            <FunnelView title="Funnel Reservas" stages={ok.funnelReservas} />
-            <FunnelView title="Funnel Gift Cards" stages={ok.funnelGiftCards} />
-          </div>
+          <Bloque title="Funnels" status={ok.estados.funnels}>
+            <div className="grid gap-6 xl:grid-cols-2">
+              <FunnelView title="Funnel Reservas" stages={ok.funnelReservas} />
+              <FunnelView title="Funnel Gift Cards" stages={ok.funnelGiftCards} />
+            </div>
+          </Bloque>
 
           {/* 8) PROMOCIONES / ERRORES */}
           <SectionTitle>Promociones y errores</SectionTitle>
           <div className="grid gap-6 xl:grid-cols-3">
-            <div className={CARD}>
-              <h3 className="mb-4 text-lg font-semibold text-white">Promociones</h3>
-              {!ok.promociones || ok.promociones.total === 0 ? (
-                <p className="text-sm text-white/45">Sin aplicaciones en el período (o dimensiones aún sin datos, 24-48 h).</p>
-              ) : (
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-white/60">Aplicaciones</span><b className="text-white">{num(ok.promociones.total)}</b></div>
-                  {ok.promociones.descuentoTotal != null && <div className="flex justify-between"><span className="text-white/60">Descuento total</span><b className="text-white">{money(ok.promociones.descuentoTotal)}</b></div>}
-                  {ok.promociones.descuentoPromedio != null && <div className="flex justify-between"><span className="text-white/60">Descuento promedio</span><b className="text-white">{money(ok.promociones.descuentoPromedio)}</b></div>}
-                  <div className="pt-2">{ok.promociones.porFunnel.map((f) => <div key={f.label} className="flex justify-between text-white/70"><span>{f.label}</span><span>{num(f.value)}</span></div>)}</div>
-                </div>
-              )}
-            </div>
-            <div className={CARD}>
-              <h3 className="mb-4 text-lg font-semibold text-white">Errores de checkout</h3>
-              {!ok.errores || ok.errores.checkout.length === 0 ? <p className="text-sm text-white/45">Sin errores técnicos en el período.</p> : (
-                <ul className="space-y-1 text-sm">{ok.errores.checkout.map((e) => <li key={e.label} className="flex justify-between gap-3"><span className="text-white/70">{e.label}</span><b className="text-red-300">{num(e.value)}</b></li>)}</ul>
-              )}
-            </div>
-            <div className={CARD}>
-              <h3 className="mb-4 text-lg font-semibold text-white">Resultados de pago</h3>
-              {!ok.errores ? <p className="text-sm text-white/45">Sin datos.</p> : (
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-white/60">Rechazados / fallidos</span><b className="text-red-300">{num(ok.errores.pago.failed)}</b></div>
-                  <div className="flex justify-between"><span className="text-white/60">Pendientes</span><b className="text-amber-300">{num(ok.errores.pago.pending)}</b></div>
-                  <p className="pt-1 text-[11px] text-white/35">&quot;Pendiente&quot; no es un error.</p>
-                </div>
-              )}
-            </div>
+            <Bloque title="Promociones" status={ok.estados.promociones}>
+              <div className={CARD}>
+                <h3 className="mb-4 text-lg font-semibold text-white">Promociones</h3>
+                {!ok.promociones || ok.promociones.total === 0 ? (
+                  <p className="text-sm text-white/45">Sin aplicaciones en el período.</p>
+                ) : (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-white/60">Aplicaciones</span><b className="text-white">{num(ok.promociones.total)}</b></div>
+                    {ok.promociones.descuentoTotal != null && <div className="flex justify-between"><span className="text-white/60">Descuento total</span><b className="text-white">{money(ok.promociones.descuentoTotal)}</b></div>}
+                    {ok.promociones.descuentoPromedio != null && <div className="flex justify-between"><span className="text-white/60">Descuento promedio</span><b className="text-white">{money(ok.promociones.descuentoPromedio)}</b></div>}
+                    <div className="pt-2">{ok.promociones.porFunnel.map((f) => <div key={f.label} className="flex justify-between text-white/70"><span>{f.label}</span><span>{num(f.value)}</span></div>)}</div>
+                  </div>
+                )}
+              </div>
+            </Bloque>
+            <Bloque title="Errores de checkout" status={ok.estados.errores}>
+              <div className={CARD}>
+                <h3 className="mb-4 text-lg font-semibold text-white">Errores de checkout</h3>
+                {!ok.errores || ok.errores.checkout.length === 0 ? <p className="text-sm text-white/45">Sin errores técnicos en el período.</p> : (
+                  <ul className="space-y-1 text-sm">{ok.errores.checkout.map((e) => <li key={e.label} className="flex justify-between gap-3"><span className="text-white/70">{e.label}</span><b className="text-red-300">{num(e.value)}</b></li>)}</ul>
+                )}
+              </div>
+            </Bloque>
+            <Bloque title="Resultados de pago" status={ok.estados.errores}>
+              <div className={CARD}>
+                <h3 className="mb-4 text-lg font-semibold text-white">Resultados de pago</h3>
+                {!ok.errores ? <p className="text-sm text-white/45">Sin datos.</p> : (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-white/60">Rechazados / fallidos</span><b className="text-red-300">{num(ok.errores.pago.failed)}</b></div>
+                    <div className="flex justify-between"><span className="text-white/60">Pendientes</span><b className="text-amber-300">{num(ok.errores.pago.pending)}</b></div>
+                    <p className="pt-1 text-[11px] text-white/35">&quot;Pendiente&quot; no es un error.</p>
+                  </div>
+                )}
+              </div>
+            </Bloque>
           </div>
         </>
       )}
