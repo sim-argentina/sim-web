@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getOccupiedSlots, precioPorSimulador } from "@/lib/reservasSlots";
+import { getOccupiedSlots } from "@/lib/reservasSlots";
+import { getPrecioReserva } from "@/lib/reservasPricing";
 import {
   validarCodigoDescuento,
   consumirCodigoDescuento,
@@ -88,8 +89,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // ── Precio recalculado server-side (nunca se confía en el cliente) ──
-    const precioUnitario = precioPorSimulador(fecha, duracion);
+    // ── Precio recalculado server-side (precio especial de la fecha si existe;
+    // nunca se confía en el cliente) ──
+    const precioUnitario = await getPrecioReserva(fecha, duracion);
     const totalOriginal = precioUnitario * simuladores.length;
 
     let descuento = 0;

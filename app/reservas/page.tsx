@@ -344,9 +344,23 @@ export default function ReservasPage() {
   }, [reservedForCurrentSelection, selectedTeams]);
 
   const availableCount = availableTeams.filter((team) => !team.reserved).length;
+
+  // Precio EFECTIVO de la fecha (especial si el admin cargó uno; si no, el normal).
+  // El servidor lo recalcula al crear la preferencia/reserva: acá es solo para mostrar.
+  const [precioEfectivo, setPrecioEfectivo] = useState<{ precio_15: number; precio_30: number } | null>(null);
+  useEffect(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) { setPrecioEfectivo(null); return; }
+    let cancel = false;
+    fetch(`/api/reservas/precio?fecha=${selectedDate}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancel && d && typeof d.precio_15 === "number" && typeof d.precio_30 === "number") setPrecioEfectivo(d); })
+      .catch(() => { /* al fallar, se usa el precio normal local como fallback */ });
+    return () => { cancel = true; };
+  }, [selectedDate]);
+
   const pricePerSim = useMemo(
-    () => precioPorSimulador(selectedDate, duracion),
-    [selectedDate, duracion]
+    () => (precioEfectivo ? (Number(duracion) >= 30 ? precioEfectivo.precio_30 : precioEfectivo.precio_15) : precioPorSimulador(selectedDate, duracion)),
+    [precioEfectivo, selectedDate, duracion]
   );
   const totalOriginal = selectedTeams.length * pricePerSim;
   const descuentoAplicado = codigoAplicado?.descuento || 0;

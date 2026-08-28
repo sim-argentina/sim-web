@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { estadoBloqueoEfectivo, type EstadoBloqueo } from "@/lib/bloqueosEstado";
 
 type Bloqueo = {
   id: number;
@@ -14,7 +15,25 @@ type Bloqueo = {
   created_at: string;
 };
 
+type PrecioEspecial = {
+  id: string;
+  fecha: string;
+  precio_15: number | null;
+  precio_30: number | null;
+};
+
 const SIMULADORES = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
+
+const fmtMoney = (n: number | null) => (n == null ? "—" : `$${n.toLocaleString("es-AR")}`);
+// "Hoy" en Argentina (YYYY-MM-DD).
+const hoyAR = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date());
+
+const ESTADO_CHIP: Record<EstadoBloqueo, string> = {
+  activo: "bg-green-600 text-white",
+  programado: "bg-blue-600 text-white",
+  inactivo: "bg-zinc-800 text-zinc-400",
+};
+const ESTADO_LABEL: Record<EstadoBloqueo, string> = { activo: "Activo", programado: "Programado", inactivo: "Inactivo" };
 
 export default function AdminBloqueosPage() {
   const [bloqueos, setBloqueos] = useState<Bloqueo[]>([]);
@@ -27,6 +46,13 @@ export default function AdminBloqueosPage() {
   const [horaFin, setHoraFin] = useState("");
   const [simulador, setSimulador] = useState(""); // "" = todos
   const [motivo, setMotivo] = useState("");
+
+  // Precios especiales (independientes de los bloqueos).
+  const [precios, setPrecios] = useState<PrecioEspecial[]>([]);
+  const [pFecha, setPFecha] = useState("");
+  const [p15, setP15] = useState("");
+  const [p30, setP30] = useState("");
+  const [guardandoPrecio, setGuardandoPrecio] = useState(false);
 
   async function cargarBloqueos() {
     try {
@@ -47,7 +73,51 @@ export default function AdminBloqueosPage() {
 
   useEffect(() => {
     cargarBloqueos();
+    cargarPrecios();
   }, []);
+
+  async function cargarPrecios() {
+    try {
+      const res = await fetch("/api/admin/bloqueos/precios", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok) setPrecios(data.precios || []);
+    } catch { /* noop */ }
+  }
+
+  async function guardarPrecio(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pFecha) { alert("Elegí una fecha."); return; }
+    if (!p15 && !p30) { alert("Cargá al menos un precio (15 o 30 min)."); return; }
+    setGuardandoPrecio(true);
+    try {
+      const res = await fetch("/api/admin/bloqueos/precios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fecha: pFecha, precio_15: p15 === "" ? null : Number(p15), precio_30: p30 === "" ? null : Number(p30) }),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error || "Error guardando el precio especial"); return; }
+      setPFecha(""); setP15(""); setP30("");
+      await cargarPrecios();
+    } catch {
+      alert("Error guardando el precio especial");
+    } finally {
+      setGuardandoPrecio(false);
+    }
+  }
+
+  function editarPrecio(p: PrecioEspecial) {
+    setPFecha(p.fecha);
+    setP15(p.precio_15 != null ? String(p.precio_15) : "");
+    setP30(p.precio_30 != null ? String(p.precio_30) : "");
+  }
+
+  async function eliminarPrecio(p: PrecioEspecial) {
+    if (!confirm(`¿Eliminar el precio especial del ${p.fecha}?\n\nLas nuevas reservas usarán el precio normal. No cambia reservas ya pagadas.`)) return;
+    const res = await fetch(`/api/admin/bloqueos/precios/${p.id}`, { method: "DELETE" });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || "Error eliminando el precio"); return; }
+    setPrecios((prev) => prev.filter((x) => x.id !== p.id));
+  }
 
   async function crearBloqueo(e: React.FormEvent) {
     e.preventDefault();
@@ -251,13 +321,15 @@ export default function AdminBloqueosPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {bloqueos.map((b) => (
+              {bloqueos.map((b) => {
+                const est = estadoBloqueoEfectivo(b);
+                return (
                 <div
                   key={b.id}
                   className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${
-                    b.activo
-                      ? "border-white/10 bg-black"
-                      : "border-white/5 bg-white/[0.02] opacity-50"
+                    est === "inactivo"
+                      ? "border-white/5 bg-white/[0.02] opacity-50"
+                      : "border-white/10 bg-black"
                   }`}
                 >
                   <div className="min-w-[180px]">
@@ -271,16 +343,16 @@ export default function AdminBloqueosPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    <span className={`rounded-xl px-3 py-2 text-xs font-black uppercase ${ESTADO_CHIP[est]}`} title="Estado efectivo según fecha/hora">
+                      {ESTADO_LABEL[est]}
+                    </span>
                     <button
                       type="button"
                       onClick={() => cambiarEstado(b)}
-                      className={`rounded-xl px-3 py-2 text-xs font-black uppercase transition ${
-                        b.activo
-                          ? "bg-green-600 text-white hover:bg-green-700"
-                          : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                      }`}
+                      title={b.activo ? "Desactivar manualmente" : "Reactivar"}
+                      className="rounded-xl border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/70 transition hover:bg-white/10"
                     >
-                      {b.activo ? "Activo" : "Inactivo"}
+                      {b.activo ? "Desactivar" : "Activar"}
                     </button>
                     <button
                       type="button"
@@ -291,7 +363,68 @@ export default function AdminBloqueosPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── PRECIOS ESPECIALES (independientes de los bloqueos) ── */}
+        <form onSubmit={guardarPrecio} className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+          <h2 className="mb-1 text-xl font-black uppercase text-red-500">Precios especiales</h2>
+          <p className="mb-4 text-xs text-white/50">
+            Precio excepcional de reserva online para una fecha concreta. Vacío = usar el precio normal para esa duración. No bloquea horarios ni cambia la disponibilidad.
+          </p>
+          <div className="grid gap-3 md:grid-cols-4">
+            <Campo label="Fecha">
+              <input type="date" value={pFecha} onChange={(e) => setPFecha(e.target.value)}
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500" />
+            </Campo>
+            <Campo label="Precio 15 min">
+              <input type="number" min={0} value={p15} onChange={(e) => setP15(e.target.value)} placeholder="Normal"
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500" />
+            </Campo>
+            <Campo label="Precio 30 min">
+              <input type="number" min={0} value={p30} onChange={(e) => setP30(e.target.value)} placeholder="Normal"
+                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none placeholder:text-white/30 focus:border-red-500" />
+            </Campo>
+            <div className="flex items-end">
+              <button type="submit" disabled={guardandoPrecio}
+                className="w-full rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase transition hover:bg-red-700 disabled:bg-white/10 disabled:text-white/30">
+                {guardandoPrecio ? "Guardando..." : "Guardar precio"}
+              </button>
+            </div>
+          </div>
+        </form>
+
+        <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+          <h2 className="mb-4 text-xl font-black uppercase text-red-500">Precios especiales creados</h2>
+          {precios.length === 0 ? (
+            <div className="rounded-2xl border border-white/10 bg-black p-5">
+              <p className="text-white/60">Todavía no hay precios especiales.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {precios.map((p) => {
+                const activo = p.fecha >= hoyAR();
+                return (
+                  <div key={p.id} className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${activo ? "border-white/10 bg-black" : "border-white/5 bg-white/[0.02] opacity-50"}`}>
+                    <div className="min-w-[220px]">
+                      <p className="font-black text-red-500">{p.fecha}</p>
+                      <p className="text-xs text-white/60">15 min: <b className="text-white">{fmtMoney(p.precio_15)}</b> · 30 min: <b className="text-white">{fmtMoney(p.precio_30)}</b></p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-xl px-3 py-2 text-xs font-black uppercase ${activo ? "bg-green-600 text-white" : "bg-zinc-800 text-zinc-400"}`}>
+                        {activo ? "Activo" : "Inactivo"}
+                      </span>
+                      <button type="button" onClick={() => editarPrecio(p)}
+                        className="rounded-xl border border-white/15 px-3 py-2 text-xs font-black uppercase text-white/70 transition hover:bg-white/10">Editar</button>
+                      <button type="button" onClick={() => eliminarPrecio(p)}
+                        className="rounded-xl border border-red-500/40 px-3 py-2 text-xs font-black uppercase text-red-400 transition hover:bg-red-600 hover:text-white">Eliminar</button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

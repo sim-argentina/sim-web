@@ -4,8 +4,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   getOccupiedSlots,
   construirOcupacion,
-  precioPorSimulador,
 } from "@/lib/reservasSlots";
+import { getPrecioReserva } from "@/lib/reservasPricing";
 import { validarCodigoDescuento } from "@/lib/codigosDescuento";
 import { reservaEstaBloqueada } from "@/lib/bloqueos";
 import { validarReservaInput } from "@/lib/reservasValidation";
@@ -63,8 +63,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // Precio recalculado server-side; se ignora cualquier total del cliente.
-    const totalOriginal = precioPorSimulador(fecha, duracion) * simuladores.length;
+    // Precio recalculado server-side (incluye precio especial de la fecha si existe);
+    // se ignora cualquier total enviado por el cliente.
+    const totalOriginal = (await getPrecioReserva(fecha, duracion)) * simuladores.length;
     if (!Number.isFinite(totalOriginal) || totalOriginal <= 0) {
       return NextResponse.json(
         { error: "No se pudo calcular el precio de la reserva" },

@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { bloqueoAplicable } from "@/lib/bloqueosEstado";
 
 // Bloqueos de reservas online configurados por el admin. Permiten cerrar fechas,
 // rangos horarios y/o simuladores puntuales sin tocar reservas existentes.
@@ -11,18 +12,23 @@ export type BloqueoReserva = {
   simulador: string | null;
 };
 
-// Bloqueos ACTIVOS de una fecha (YYYY-MM-DD).
+// Bloqueos APLICABLES de una fecha (YYYY-MM-DD): habilitados (activo=true) y NO
+// vencidos. Un bloqueo cuyo fin ya pasó (en hora Argentina) se ignora aunque su flag
+// activo haya quedado persistido — coherente con el trigger trg_reserva_slot_bloqueo.
 export async function getBloqueosActivos(
   fecha: string
 ): Promise<BloqueoReserva[]> {
   const { data, error } = await supabaseAdmin
     .from("bloqueos_reservas")
-    .select("fecha, todo_el_dia, hora_inicio, hora_fin, simulador")
+    .select("fecha, todo_el_dia, hora_inicio, hora_fin, simulador, activo")
     .eq("fecha", fecha)
     .eq("activo", true);
 
   if (error) throw new Error(error.message);
-  return (data as BloqueoReserva[]) ?? [];
+  const now = Date.now();
+  return ((data as Array<BloqueoReserva & { activo: boolean }>) ?? [])
+    .filter((b) => bloqueoAplicable(b, now))
+    .map(({ activo, ...b }) => { void activo; return b; });
 }
 
 // ¿El bloqueo cubre un slot "HH:MM"? Todo el día cubre cualquiera; si no, rango
