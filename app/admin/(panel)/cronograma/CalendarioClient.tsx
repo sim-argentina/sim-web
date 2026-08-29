@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cubreHorarioOperativo } from "@/lib/cronograma";
+import ImportadorPdf from "./ImportadorPdf";
 
 type Jornada = {
   empleado_id: string;
@@ -73,6 +74,9 @@ export default function CalendarioClient({ role }: { role: string }) {
   // Historial de día (solo admin).
   const [histFecha, setHistFecha] = useState<string | null>(null);
   const [histEventos, setHistEventos] = useState<HistEvento[]>([]);
+
+  // Importación PDF/Canva (solo admin).
+  const [importar, setImportar] = useState(false);
 
   const cargar = useCallback(async () => {
     try {
@@ -287,6 +291,9 @@ export default function CalendarioClient({ role }: { role: string }) {
         {/* Barra de acciones admin */}
         {esAdmin && data && (
           <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button onClick={() => setImportar(true)} className="rounded-xl border border-white/20 px-4 py-2 text-sm font-black uppercase text-white/80 hover:bg-white/10">
+              Importar PDF/Canva
+            </button>
             {data.estado === "inexistente" && (
               <button onClick={crearBorrador} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase hover:bg-red-700">
                 Crear borrador
@@ -449,6 +456,11 @@ export default function CalendarioClient({ role }: { role: string }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Importador PDF/Canva (admin) */}
+      {esAdmin && importar && (
+        <ImportadorPdf empleados={empleados} onAplicada={cargar} onCerrar={() => setImportar(false)} />
       )}
 
       {/* Historial del día (admin) */}

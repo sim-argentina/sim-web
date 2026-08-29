@@ -76,6 +76,9 @@ const SENSITIVE_API_SOURCES = [
 ];
 
 const nextConfig: NextConfig = {
+  // pdfjs-dist (parser de cronogramas PDF, Bloque 2B) se carga en runtime Node.js
+  // desde node_modules en vez de bundlearse, para evitar problemas en serverless.
+  serverExternalPackages: ["pdfjs-dist"],
   images: {
     // Next 16 exige declarar las calidades permitidas para next/image.
     // 90 para fotos de producto HD (Simulador F1 en la tienda); 75 es el default
