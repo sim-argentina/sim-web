@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cubreHorarioOperativo, formatHoras } from "@/lib/cronograma";
 import ImportadorPdf from "./ImportadorPdf";
+import CopiarModal from "./CopiarModal";
+import PlantillasModal from "./PlantillasModal";
 import { descargarCronogramaPdf } from "./cronogramaPdf";
 
 type HorasResumen = {
@@ -82,8 +84,10 @@ export default function CalendarioClient({ role }: { role: string }) {
   const [histFecha, setHistFecha] = useState<string | null>(null);
   const [histEventos, setHistEventos] = useState<HistEvento[]>([]);
 
-  // Importación PDF/Canva (solo admin).
+  // Importación PDF/Canva + Copiar + Plantillas (solo admin).
   const [importar, setImportar] = useState(false);
+  const [copiar, setCopiar] = useState(false);
+  const [plantillas, setPlantillas] = useState(false);
 
   // Resumen de horas (solo admin) y descarga de PDF.
   const [horas, setHoras] = useState<HorasResumen | null>(null);
@@ -419,6 +423,13 @@ export default function CalendarioClient({ role }: { role: string }) {
                 </button>
               </>
             )}
+            <span className="mx-1 hidden h-6 w-px bg-white/10 md:inline-block" />
+            <button onClick={() => setCopiar(true)} className="rounded-xl border border-white/20 px-4 py-2 text-sm font-black uppercase text-white/80 hover:bg-white/10">
+              Copiar
+            </button>
+            <button onClick={() => setPlantillas(true)} className="rounded-xl border border-white/20 px-4 py-2 text-sm font-black uppercase text-white/80 hover:bg-white/10">
+              Plantillas
+            </button>
           </div>
         )}
 
@@ -565,6 +576,16 @@ export default function CalendarioClient({ role }: { role: string }) {
       {/* Importador PDF/Canva (admin) */}
       {esAdmin && importar && (
         <ImportadorPdf empleados={empleados} onAplicada={cargar} onCerrar={() => setImportar(false)} />
+      )}
+
+      {/* Copiar semana/mes (admin) */}
+      {esAdmin && copiar && (
+        <CopiarModal empleados={empleados} onAplicada={cargar} onCerrar={() => setCopiar(false)} />
+      )}
+
+      {/* Plantillas (admin) */}
+      {esAdmin && plantillas && (
+        <PlantillasModal empleados={empleados} onAplicada={cargar} onCerrar={() => setPlantillas(false)} />
       )}
 
       {/* Historial del día (admin) */}

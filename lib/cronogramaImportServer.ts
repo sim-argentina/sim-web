@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizarAlias } from "@/lib/empleados";
 import { validarDia, type DiaInput } from "@/lib/cronograma";
+import { firmaDia as firmaCompartida } from "@/lib/cronogramaCopia";
 import { analizarBuffer } from "@/lib/cronogramaPdfExtract";
 import { getMesVista } from "@/lib/cronogramaServer";
 import type { Incidencia } from "@/lib/cronogramaPdf";
@@ -78,14 +79,16 @@ async function mapaAliases(): Promise<Map<string, { empleado_id: string; nombre:
 
 const hhmm = (t: string) => String(t).slice(0, 5);
 
-// Firma canónica de un día para comparar (conflictos).
+// Firma canónica de un día para comparar (conflictos). Reutiliza el comparador
+// compartido (lib/cronogramaCopia); clave = empleado_id o, si aún no se resolvió,
+// el alias de texto.
 function firmaDia(d: DiaProp): string {
-  if (d.cerrado) return "CERRADO";
-  const js = d.jornadas
-    .map((j) => `${j.empleado_id ?? j.alias_texto}:${hhmm(j.hora_inicio)}-${hhmm(j.hora_fin)}`)
-    .sort()
-    .join("|");
-  return `${hhmm(d.apertura)}-${hhmm(d.cierre)}#${js}`;
+  return firmaCompartida({
+    cerrado: d.cerrado,
+    apertura: d.apertura,
+    cierre: d.cierre,
+    jornadas: d.jornadas.map((j) => ({ key: j.empleado_id ?? j.alias_texto, hora_inicio: j.hora_inicio, hora_fin: j.hora_fin })),
+  });
 }
 
 function diaVistaToProp(d: { fecha: string; cerrado: boolean; apertura: string; cierre: string; jornadas: Array<{ empleado_id: string; nombre: string; hora_inicio: string; hora_fin: string }> }): DiaProp {
