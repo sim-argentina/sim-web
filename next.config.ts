@@ -77,8 +77,15 @@ const SENSITIVE_API_SOURCES = [
 
 const nextConfig: NextConfig = {
   // pdfjs-dist (parser de cronogramas PDF, Bloque 2B) se carga en runtime Node.js
-  // desde node_modules en vez de bundlearse, para evitar problemas en serverless.
+  // desde node_modules en vez de bundlearse (serverExternalPackages). Además,
+  // `getDocument` importa dinámicamente `pdf.worker.mjs` por un path computado que
+  // @vercel/nft NO detecta al trazar la función; sin esto, Vercel poda ese archivo
+  // y el análisis falla con "Setting up fake worker failed: Cannot find module
+  // pdf.worker.mjs". Forzamos incluir todo el paquete en la función de análisis.
   serverExternalPackages: ["pdfjs-dist"],
+  outputFileTracingIncludes: {
+    "/api/admin/cronograma/importar/analizar": ["./node_modules/pdfjs-dist/**/*"],
+  },
   images: {
     // Next 16 exige declarar las calidades permitidas para next/image.
     // 90 para fotos de producto HD (Simulador F1 en la tienda); 75 es el default
