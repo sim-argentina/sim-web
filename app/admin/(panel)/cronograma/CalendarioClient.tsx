@@ -1,8 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { cubreHorarioOperativo } from "@/lib/cronograma";
+import { cubreHorarioOperativo, formatHoras } from "@/lib/cronograma";
 import ImportadorPdf from "./ImportadorPdf";
+import { descargarCronogramaPdf } from "./cronogramaPdf";
+
+type HorasResumen = {
+  estado: "borrador" | "confirmado";
+  label: string;
+  integrantes: Array<{ empleado_id: string; nombre: string; minutos: number; archivado: boolean }>;
+};
 
 type Jornada = {
   empleado_id: string;
@@ -78,6 +85,10 @@ export default function CalendarioClient({ role }: { role: string }) {
   // Importación PDF/Canva (solo admin).
   const [importar, setImportar] = useState(false);
 
+  // Resumen de horas (solo admin) y descarga de PDF.
+  const [horas, setHoras] = useState<HorasResumen | null>(null);
+  const [descargando, setDescargando] = useState(false);
+
   const cargar = useCallback(async () => {
     try {
       setLoading(true);
@@ -98,6 +109,37 @@ export default function CalendarioClient({ role }: { role: string }) {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  // Horas (admin-only). Se recalcula desde el servidor cada vez que cambia `data`
+  // (carga, guardar/corregir día, importar, reabrir, confirmar, descartar, crear).
+  const cargarHoras = useCallback(async () => {
+    if (!esAdmin) { setHoras(null); return; }
+    try {
+      const res = await fetch(`/api/admin/cronograma/horas?anio=${anio}&mes=${mes}`, { cache: "no-store" });
+      const j = await res.json();
+      setHoras(res.ok ? ((j.horas as HorasResumen | null) ?? null) : null);
+    } catch {
+      setHoras(null);
+    }
+  }, [esAdmin, anio, mes]);
+
+  useEffect(() => {
+    cargarHoras();
+  }, [cargarHoras, data]);
+
+  async function descargarPdf() {
+    setDescargando(true);
+    try {
+      const res = await fetch(`/api/admin/cronograma/pdf-data?anio=${anio}&mes=${mes}`, { cache: "no-store" });
+      const j = await res.json();
+      if (!res.ok) { alert(j.error || "No se pudo generar el PDF"); return; }
+      descargarCronogramaPdf(j.pdf);
+    } catch {
+      alert("No se pudo generar el PDF");
+    } finally {
+      setDescargando(false);
+    }
+  }
 
   useEffect(() => {
     if (!esAdmin) return;
@@ -304,6 +346,15 @@ export default function CalendarioClient({ role }: { role: string }) {
             <button onClick={() => navegar(1)} className="rounded-xl border border-white/15 px-3 py-2 text-sm font-black hover:bg-white/10" aria-label="Mes siguiente">›</button>
           </div>
           <div className="flex items-center gap-2">
+            {data?.estado === "confirmado" && (
+              <button
+                onClick={descargarPdf}
+                disabled={descargando}
+                className="rounded-xl border border-white/20 px-4 py-2 text-xs font-black uppercase text-white/80 hover:bg-white/10 disabled:opacity-40"
+              >
+                {descargando ? "Generando…" : "Descargar PDF"}
+              </button>
+            )}
             {data && (
               <span className={`rounded-xl px-3 py-2 text-xs font-black uppercase ${ESTADO_CHIP[data.estado]}`}>
                 {ESTADO_LABEL[data.estado]}
@@ -311,6 +362,24 @@ export default function CalendarioClient({ role }: { role: string }) {
             )}
           </div>
         </div>
+
+        {/* HORAS DEL MES (solo admin; borrador o confirmado) */}
+        {esAdmin && horas && (data?.estado === "borrador" || data?.estado === "confirmado") && (
+          <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+            <p className="mb-1 text-xs font-black uppercase tracking-wide text-red-500">Horas del mes</p>
+            <p className="mb-3 text-[11px] text-white/50">{horas.label}</p>
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              {horas.integrantes.map((i) => (
+                <span key={i.empleado_id} className="text-sm">
+                  <b className="text-white">{i.nombre}</b>
+                  {i.archivado && <span className="ml-1 text-[10px] uppercase text-white/30">(archivado)</span>}
+                  <span className="text-white/50">: </span>
+                  <span className="font-black text-white">{formatHoras(i.minutos)}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Barra de acciones admin (según estado) */}
         {esAdmin && data && (

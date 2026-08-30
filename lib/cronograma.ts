@@ -206,6 +206,66 @@ export function cubreHorarioOperativo(
   return cursor >= ci;
 }
 
+// ── Horas efectivas por integrante (Bloque 2C) ────────────────────────────────
+export type JornadaHoras = { empleado_id: string; hora_inicio: string; hora_fin: string };
+export type DiaHoras = { cerrado: boolean; apertura: string; cierre: string; jornadas: JornadaHoras[] };
+
+// Minutos EFECTIVOS por integrante en el mes. Reglas (Bloque 2C):
+//  · Las horas NO se dividen: una jornada cuenta COMPLETA para su integrante,
+//    aunque se superponga con otros.
+//  · Los tramos del horario operativo [apertura, cierre) SIN ninguna jornada
+//    manual se asignan al fallback (Ramiro), sin doble conteo (los tramos ya
+//    cubiertos —incluidas jornadas manuales de Ramiro— no se recuentan).
+//  · Nada fuera del horario operativo; un día cerrado suma 0 para todos.
+//  · Todo en minutos ENTEROS (sin floats como fuente de verdad).
+// No hardcodea el UUID del fallback: se recibe por parámetro (desde la DB).
+export function calcularHorasMensuales(dias: DiaHoras[], fallbackEmpleadoId: string): Record<string, number> {
+  const total: Record<string, number> = {};
+  const add = (id: string, min: number) => {
+    if (id && min > 0) total[id] = (total[id] ?? 0) + min;
+  };
+
+  for (const d of dias) {
+    if (d.cerrado) continue;
+    const ap = horaAMinutos(d.apertura);
+    const ci = horaAMinutos(d.cierre);
+    if (ap === null || ci === null || ap >= ci) continue;
+
+    // Jornadas clampeadas al horario operativo. Cada una suma COMPLETA a su integrante.
+    const ivs: Array<[number, number]> = [];
+    for (const j of d.jornadas) {
+      const iniRaw = horaAMinutos(j.hora_inicio);
+      const finRaw = horaAMinutos(j.hora_fin);
+      if (iniRaw === null || finRaw === null) continue;
+      const ini = Math.max(iniRaw, ap);
+      const fin = Math.min(finRaw, ci);
+      if (fin <= ini) continue;
+      add(j.empleado_id, fin - ini);
+      ivs.push([ini, fin]);
+    }
+
+    // Huecos sin cobertura (unión de todas las jornadas) → fallback, una sola vez.
+    if (fallbackEmpleadoId) {
+      ivs.sort((a, b) => a[0] - b[0]);
+      let cursor = ap;
+      for (const [a, b] of ivs) {
+        if (a > cursor) add(fallbackEmpleadoId, a - cursor);
+        if (b > cursor) cursor = b;
+      }
+      if (cursor < ci) add(fallbackEmpleadoId, ci - cursor);
+    }
+  }
+  return total;
+}
+
+// Minutos → "X h" (horas exactas) o "X h Y min" (con minutos). Entero.
+export function formatHoras(minutos: number): string {
+  const m = Math.max(0, Math.round(minutos));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r === 0 ? `${h} h` : `${h} h ${r} min`;
+}
+
 // ── Validación de mes/fecha ───────────────────────────────────────────────────
 export function validarAnioMes(anio: unknown, mes: unknown): { ok: true; anio: number; mes: number } | { ok: false; error: string } {
   const a = Number(anio);

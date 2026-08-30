@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { EstadoMes, DiaInput } from "@/lib/cronograma";
-import { validarDia } from "@/lib/cronograma";
+import { validarDia, calcularHorasMensuales } from "@/lib/cronograma";
 
 // Acceso a datos del Cronograma (server-only, service_role). Crear borrador,
 // guardar día y confirmar son ATÓMICOS vía RPC (transacción en la DB). La
@@ -123,6 +123,88 @@ export async function getMesVista(anio: number, mes: number): Promise<MesVista> 
     confirmado_at: (mesRow.confirmado_at as string) ?? null,
     fallback,
     dias,
+  };
+}
+
+// ── Resumen de horas mensuales por integrante (ADMIN-only) ────────────────────
+export type HorasIntegrante = { empleado_id: string; nombre: string; minutos: number; archivado: boolean };
+export type HorasResumen = { estado: "borrador" | "confirmado"; label: string; integrantes: HorasIntegrante[] };
+
+// null si el mes no existe / está descartado (no hay resumen). El fallback (Ramiro)
+// no se hardcodea: se toma de la DB (getFallback vía getMesVista).
+export async function getHorasMensuales(anio: number, mes: number): Promise<HorasResumen | null> {
+  const vista = await getMesVista(anio, mes);
+  if (vista.estado !== "borrador" && vista.estado !== "confirmado") return null;
+
+  const map = calcularHorasMensuales(
+    vista.dias.map((d) => ({
+      cerrado: d.cerrado,
+      apertura: d.apertura,
+      cierre: d.cierre,
+      jornadas: d.jornadas.map((j) => ({ empleado_id: j.empleado_id, hora_inicio: j.hora_inicio, hora_fin: j.hora_fin })),
+    })),
+    vista.fallback?.id ?? "",
+  );
+
+  // Integrantes activos (incluye 0 h). Orden: fallback primero, luego por alta.
+  const { data: activos, error } = await supabaseAdmin
+    .from("empleados")
+    .select("id, nombre_formal")
+    .eq("activo", true)
+    .order("es_fallback", { ascending: false })
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+
+  const integrantes: HorasIntegrante[] = [];
+  const vistos = new Set<string>();
+  for (const e of (activos ?? []) as Array<{ id: string; nombre_formal: string }>) {
+    integrantes.push({ empleado_id: e.id, nombre: e.nombre_formal, minutos: map[e.id] ?? 0, archivado: false });
+    vistos.add(e.id);
+  }
+  // Archivados con horas históricas en el mes → incluidos y marcados como archivados.
+  const nombrePorId = new Map<string, string>();
+  for (const d of vista.dias) for (const j of d.jornadas) if (!j.empleado_activo) nombrePorId.set(j.empleado_id, j.nombre);
+  for (const [id, min] of Object.entries(map)) {
+    if (!vistos.has(id) && min > 0) integrantes.push({ empleado_id: id, nombre: nombrePorId.get(id) ?? "—", minutos: min, archivado: true });
+  }
+
+  const label =
+    vista.estado === "confirmado"
+      ? "Horas efectivas del cronograma confirmado"
+      : "Proyección de horas si confirmaras este borrador ahora";
+  return { estado: vista.estado, label, integrantes };
+}
+
+// ── Datos para el PDF del cronograma CONFIRMADO ───────────────────────────────
+export type PdfJornada = { nombre: string; hora_inicio: string; hora_fin: string };
+export type PdfDia = { fecha: string; cerrado: boolean; apertura: string; cierre: string; jornadas: PdfJornada[] };
+export type PdfData = {
+  anio: number;
+  mes: number;
+  generado_at: string;
+  apertura_default: string;
+  cierre_default: string;
+  dias: PdfDia[];
+};
+
+// Solo jornadas manuales del mes CONFIRMADO (sin cobertura de Ramiro, sin horas, sin
+// auditoría). Devuelve null si el mes NO está confirmado (el endpoint responde 409).
+export async function getDatosPdf(anio: number, mes: number): Promise<PdfData | null> {
+  const vista = await getMesVista(anio, mes);
+  if (vista.estado !== "confirmado") return null;
+  return {
+    anio: vista.anio,
+    mes: vista.mes,
+    generado_at: new Date().toISOString(),
+    apertura_default: vista.apertura_default,
+    cierre_default: vista.cierre_default,
+    dias: vista.dias.map((d) => ({
+      fecha: d.fecha,
+      cerrado: d.cerrado,
+      apertura: d.apertura,
+      cierre: d.cierre,
+      jornadas: d.jornadas.map((j) => ({ nombre: j.nombre, hora_inicio: j.hora_inicio, hora_fin: j.hora_fin })),
+    })),
   };
 }
 

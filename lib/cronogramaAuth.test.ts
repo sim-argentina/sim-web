@@ -24,6 +24,8 @@ const routeConfirmar = read("app/api/admin/cronograma/confirmar/route.ts");
 const routeHist = read("app/api/admin/cronograma/historial/route.ts");
 const routeReabrir = read("app/api/admin/cronograma/reabrir/route.ts");
 const routeDescartar = read("app/api/admin/cronograma/descartar/route.ts");
+const routeHoras = read("app/api/admin/cronograma/horas/route.ts");
+const routePdfData = read("app/api/admin/cronograma/pdf-data/route.ts");
 
 // GET mensual → staff + admin.
 const get = cuerpoHandler(routeMes, "GET");
@@ -53,9 +55,18 @@ assert.ok(/requireAdmin\(\)/.test(reabrir) && !/requireStaffOrAdmin/.test(reabri
 const descartar = cuerpoHandler(routeDescartar, "POST");
 assert.ok(/requireAdmin\(\)/.test(descartar) && !/requireStaffOrAdmin/.test(descartar), "POST descartar = admin");
 
+// GET horas → SOLO admin (no se expone a staff).
+const horas = cuerpoHandler(routeHoras, "GET");
+assert.ok(/requireAdmin\(\)/.test(horas) && !/requireStaffOrAdmin/.test(horas), "GET horas = admin");
+
+// GET pdf-data → staff + admin, pero solo confirmado (revalidado server-side).
+const pdfData = cuerpoHandler(routePdfData, "GET");
+assert.ok(/requireStaffOrAdmin\(\)/.test(pdfData), "GET pdf-data = staff+admin");
+assert.ok(/409/.test(pdfData) && /getDatosPdf/.test(pdfData), "GET pdf-data revalida confirmado (409 si no)");
+
 // Todos cortan si el guard falla.
-for (const [nombre, cuerpo] of [["GET", get], ["POST", post], ["PUT", put], ["confirmar", confirmar], ["historial", hist], ["reabrir", reabrir], ["descartar", descartar]] as const) {
+for (const [nombre, cuerpo] of [["GET", get], ["POST", post], ["PUT", put], ["confirmar", confirmar], ["historial", hist], ["reabrir", reabrir], ["descartar", descartar], ["horas", horas], ["pdf-data", pdfData]] as const) {
   assert.ok(/if \(!auth\.ok\) return auth\.response/.test(cuerpo), `${nombre} corta si el guard falla`);
 }
 
-console.log("OK — cronograma (auth wiring): GET mensual=staff+admin (borrador oculto a staff); POST/PUT/confirmar/historial/reabrir/descartar=admin.");
+console.log("OK — cronograma (auth wiring): GET mensual=staff+admin (borrador oculto); POST/PUT/confirmar/historial/reabrir/descartar/horas=admin; pdf-data=staff+admin (confirmado).");
