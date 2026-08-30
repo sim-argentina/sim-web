@@ -1,3 +1,4 @@
+import "@/lib/ensureWithResolvers"; // debe ir ANTES de pdfjs (polyfill Node <22)
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import { parseCronogramaPdf, type ParseResult, type TextItem } from "@/lib/cronogramaPdf";
 

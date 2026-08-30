@@ -63,7 +63,9 @@ export async function getMesVista(anio: number, mes: number): Promise<MesVista> 
     .maybeSingle();
   if (e1) throw e1;
 
-  if (!mesRow) {
+  // Un mes 'descartado' es equivalente a "Sin cronograma" para las consultas
+  // normales (la fila se conserva solo para auditoría/historial/unicidad).
+  if (!mesRow || mesRow.estado === "descartado") {
     return {
       estado: "inexistente",
       anio,
@@ -163,6 +165,7 @@ export type MutFail = { ok: false; status: number; error: string };
 function mapPgError(error: unknown): MutFail {
   const code = (error as { code?: string } | null)?.code;
   if (code === "P0002") return { ok: false, status: 404, error: "El mes no existe. Creá primero un borrador." };
+  if (code === "22023") return { ok: false, status: 409, error: "La transición de estado no está permitida para este mes." };
   if (code === "22007") return { ok: false, status: 400, error: "La fecha no pertenece al mes indicado." };
   if (code === "23514") return { ok: false, status: 409, error: "Solo se pueden asignar integrantes activos a una jornada." };
   if (code === "23P01") return { ok: false, status: 409, error: "Un integrante no puede tener jornadas superpuestas en el mismo día." };
@@ -205,6 +208,21 @@ export async function guardarDia(
 // Confirmar el mes (borrador → confirmado, atómico + historial). Idempotente.
 export async function confirmarMes(anio: number, mes: number): Promise<MutOk<MesVista> | MutFail> {
   const { error } = await supabaseAdmin.rpc("cronograma_confirmar", { p_anio: anio, p_mes: mes });
+  if (error) return mapPgError(error);
+  return { ok: true, data: await getMesVista(anio, mes) };
+}
+
+// Reabrir un mes confirmado como borrador (atómico + historial). Conserva datos.
+export async function reabrirMes(anio: number, mes: number): Promise<MutOk<MesVista> | MutFail> {
+  const { error } = await supabaseAdmin.rpc("cronograma_reabrir", { p_anio: anio, p_mes: mes });
+  if (error) return mapPgError(error);
+  return { ok: true, data: await getMesVista(anio, mes) };
+}
+
+// Descartar un borrador → "Sin cronograma" (atómico; desactiva días/jornadas y
+// descarta importaciones pendientes vinculadas; conserva auditoría).
+export async function descartarBorrador(anio: number, mes: number): Promise<MutOk<MesVista> | MutFail> {
+  const { error } = await supabaseAdmin.rpc("cronograma_descartar_borrador", { p_anio: anio, p_mes: mes });
   if (error) return mapPgError(error);
   return { ok: true, data: await getMesVista(anio, mes) };
 }

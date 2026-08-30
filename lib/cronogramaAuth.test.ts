@@ -22,6 +22,8 @@ const routeMes = read("app/api/admin/cronograma/route.ts");
 const routeDia = read("app/api/admin/cronograma/dia/route.ts");
 const routeConfirmar = read("app/api/admin/cronograma/confirmar/route.ts");
 const routeHist = read("app/api/admin/cronograma/historial/route.ts");
+const routeReabrir = read("app/api/admin/cronograma/reabrir/route.ts");
+const routeDescartar = read("app/api/admin/cronograma/descartar/route.ts");
 
 // GET mensual → staff + admin.
 const get = cuerpoHandler(routeMes, "GET");
@@ -45,9 +47,15 @@ assert.ok(/requireAdmin\(\)/.test(confirmar) && !/requireStaffOrAdmin/.test(conf
 const hist = cuerpoHandler(routeHist, "GET");
 assert.ok(/requireAdmin\(\)/.test(hist) && !/requireStaffOrAdmin/.test(hist), "GET historial = admin");
 
+// POST reabrir / descartar → admin.
+const reabrir = cuerpoHandler(routeReabrir, "POST");
+assert.ok(/requireAdmin\(\)/.test(reabrir) && !/requireStaffOrAdmin/.test(reabrir), "POST reabrir = admin");
+const descartar = cuerpoHandler(routeDescartar, "POST");
+assert.ok(/requireAdmin\(\)/.test(descartar) && !/requireStaffOrAdmin/.test(descartar), "POST descartar = admin");
+
 // Todos cortan si el guard falla.
-for (const [nombre, cuerpo] of [["GET", get], ["POST", post], ["PUT", put], ["confirmar", confirmar], ["historial", hist]] as const) {
+for (const [nombre, cuerpo] of [["GET", get], ["POST", post], ["PUT", put], ["confirmar", confirmar], ["historial", hist], ["reabrir", reabrir], ["descartar", descartar]] as const) {
   assert.ok(/if \(!auth\.ok\) return auth\.response/.test(cuerpo), `${nombre} corta si el guard falla`);
 }
 
-console.log("OK — cronograma (auth wiring): GET mensual=staff+admin (borrador oculto a staff); POST/PUT/confirmar/historial=admin.");
+console.log("OK — cronograma (auth wiring): GET mensual=staff+admin (borrador oculto a staff); POST/PUT/confirmar/historial/reabrir/descartar=admin.");

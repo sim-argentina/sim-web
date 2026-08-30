@@ -182,6 +182,30 @@ export default function CalendarioClient({ role }: { role: string }) {
     setData(j.mes as Mes);
   }
 
+  async function reabrirMes() {
+    if (!confirm(
+      `REABRIR ${MESES[mes - 1]} ${anio} COMO BORRADOR.\n\n` +
+      `El cronograma dejará de ser oficial. El personal ya no podrá verlo y este mes no podrá utilizarse para atribuir actividad hasta volver a confirmarlo.\n\n` +
+      `Se conservan los días, horarios y jornadas. ¿Continuar?`,
+    )) return;
+    const res = await fetch("/api/admin/cronograma/reabrir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ anio, mes }) });
+    const j = await res.json();
+    if (!res.ok) { alert(j.error || "No se pudo reabrir el mes"); return; }
+    setData(j.mes as Mes);
+  }
+
+  async function descartarBorrador() {
+    if (!confirm(
+      `DESCARTAR EL BORRADOR de ${MESES[mes - 1]} ${anio}.\n\n` +
+      `El borrador y todas sus jornadas dejarán de estar activos. El mes volverá a figurar como "Sin cronograma". El historial se conservará.\n\n` +
+      `Si hay importaciones pendientes vinculadas, también se descartarán. ¿Continuar?`,
+    )) return;
+    const res = await fetch("/api/admin/cronograma/descartar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ anio, mes }) });
+    const j = await res.json();
+    if (!res.ok) { alert(j.error || "No se pudo descartar el borrador"); return; }
+    setData(j.mes as Mes);
+  }
+
   function abrirEditor(fecha: string) {
     if (!esAdmin) return;
     const e = estadoDia(fecha);
@@ -288,16 +312,18 @@ export default function CalendarioClient({ role }: { role: string }) {
           </div>
         </div>
 
-        {/* Barra de acciones admin */}
+        {/* Barra de acciones admin (según estado) */}
         {esAdmin && data && (
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            <button onClick={() => setImportar(true)} className="rounded-xl border border-white/20 px-4 py-2 text-sm font-black uppercase text-white/80 hover:bg-white/10">
-              Importar PDF/Canva
-            </button>
             {data.estado === "inexistente" && (
-              <button onClick={crearBorrador} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase hover:bg-red-700">
-                Crear borrador
-              </button>
+              <>
+                <button onClick={crearBorrador} className="rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase hover:bg-red-700">
+                  Crear borrador
+                </button>
+                <button onClick={() => setImportar(true)} className="rounded-xl border border-white/20 px-4 py-2 text-sm font-black uppercase text-white/80 hover:bg-white/10">
+                  Importar PDF/Canva
+                </button>
+              </>
             )}
             {data.estado === "borrador" && (
               <>
@@ -305,15 +331,24 @@ export default function CalendarioClient({ role }: { role: string }) {
                   <input type="checkbox" checked={preview} onChange={(e) => setPreview(e.target.checked)} className="h-4 w-4 accent-red-600" />
                   Previsualizar cobertura de Ramiro (no oficial)
                 </label>
+                <button onClick={() => setImportar(true)} className="rounded-xl border border-white/20 px-4 py-2 text-sm font-black uppercase text-white/80 hover:bg-white/10">
+                  Importar PDF/Canva
+                </button>
                 <button onClick={confirmarMes} className="rounded-xl bg-green-600 px-4 py-2 text-sm font-black uppercase hover:bg-green-700">
                   Confirmar mes
+                </button>
+                <button onClick={descartarBorrador} className="rounded-xl border border-red-500/40 px-4 py-2 text-sm font-black uppercase text-red-400 hover:bg-red-600 hover:text-white">
+                  Descartar borrador
                 </button>
               </>
             )}
             {data.estado === "confirmado" && (
-              <span className="text-xs text-white/50">
-                Confirmado. Podés corregir días puntuales; cada corrección queda en el historial.
-              </span>
+              <>
+                <span className="text-xs text-white/50">Confirmado. Podés corregir días puntuales o reabrirlo como borrador.</span>
+                <button onClick={reabrirMes} className="rounded-xl border border-amber-500/50 px-4 py-2 text-sm font-black uppercase text-amber-300 hover:bg-amber-500 hover:text-black">
+                  Reabrir como borrador
+                </button>
+              </>
             )}
           </div>
         )}
