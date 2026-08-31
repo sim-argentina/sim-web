@@ -33,6 +33,8 @@ export default function IAChat() {
   const [consumo, setConsumo] = useState<{ mes: { tokens_total: number; costo_estimado_usd: number }; porcentaje: { tokens_mes: number } } | null>(null);
   const [fuentesAbiertas, setFuentesAbiertas] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const enfocar = () => setTimeout(() => textareaRef.current?.focus(), 0);
 
   const cargarConvs = useCallback(async () => {
     const r = await fetch("/api/admin/ia/conversaciones", { cache: "no-store" });
@@ -63,12 +65,13 @@ export default function IAChat() {
     if (!r.ok) return;
     const c = (await r.json()).conversacion as Conv;
     setConvs((prev) => [c, ...prev]);
-    setActiva(c.id); setMensajes([]); setError(null);
+    setActiva(c.id); setMensajes([]); setError(null); enfocar();
   }
   async function abrir(id: string) {
     setActiva(id); setError(null);
     const r = await fetch(`/api/admin/ia/conversaciones/${id}`, { cache: "no-store" });
     if (r.ok) setMensajes((await r.json()).mensajes ?? []);
+    enfocar();
   }
   async function eliminar(id: string) {
     await fetch(`/api/admin/ia/conversaciones/${id}`, { method: "DELETE" });
@@ -147,10 +150,12 @@ export default function IAChat() {
   }
 
   return (
-    <main className="min-h-screen bg-black text-white">
-      <div className="mx-auto flex max-w-7xl flex-col gap-0 md:h-screen md:flex-row">
+    <main className="bg-black text-white">
+      {/* Alto acotado al viewport MENOS el pt-20 (80px = 5rem) del layout del panel:
+          así el composer del final queda SIEMPRE dentro de la pantalla. */}
+      <div className="mx-auto flex h-[calc(100dvh-5rem)] max-w-7xl flex-col gap-0 md:flex-row">
         {/* Historial */}
-        <aside className="border-b border-white/10 p-4 md:w-72 md:shrink-0 md:overflow-y-auto md:border-b-0 md:border-r">
+        <aside className="max-h-[34vh] shrink-0 overflow-y-auto border-b border-white/10 p-4 md:max-h-none md:w-72 md:border-b-0 md:border-r">
           <button onClick={nueva} className="mb-3 w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black uppercase hover:bg-red-700">+ Nueva conversación</button>
           {consumo && (
             <div className="mb-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/50">
@@ -171,8 +176,8 @@ export default function IAChat() {
         </aside>
 
         {/* Chat */}
-        <section className="flex min-h-[70vh] flex-1 flex-col md:h-screen">
-          <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto p-5">
+        <section className="flex min-h-0 flex-1 flex-col">
+          <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
             <div className="mb-2">
               <p className="text-sm uppercase tracking-[0.3em] text-red-500">IA SIM</p>
               <h1 className="text-2xl font-black uppercase">Asistente analítico</h1>
@@ -234,18 +239,23 @@ export default function IAChat() {
 
           {error && <div className="mx-5 mb-2 rounded-xl border border-red-500/40 bg-red-950/30 px-4 py-2 text-sm font-bold text-red-300">{error}</div>}
 
-          <div className="border-t border-white/10 p-4">
+          {/* Composer: SIEMPRE visible cuando hay una conversación activa, incluso vacía. */}
+          <div className="shrink-0 border-t border-white/10 p-4">
             <div className="flex items-end gap-2">
+              <label htmlFor="ia-composer" className="sr-only">Escribí tu pregunta para IA SIM</label>
               <textarea
+                id="ia-composer"
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviar(); } }}
-                placeholder="Preguntá sobre SIM… (Enter para enviar)"
+                placeholder="Preguntale algo a IA SIM…"
+                aria-label="Escribí tu pregunta para IA SIM"
                 rows={2}
                 disabled={enviando}
                 className="flex-1 resize-none rounded-2xl border border-white/15 bg-black px-4 py-3 text-sm text-white outline-none placeholder:text-white/30 focus:border-red-500 disabled:opacity-50"
               />
-              <button onClick={() => enviar()} disabled={enviando || !input.trim()} className="rounded-2xl bg-red-600 px-5 py-3 text-sm font-black uppercase hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30">
+              <button onClick={() => enviar()} disabled={enviando || !input.trim()} aria-label="Enviar" className="rounded-2xl bg-red-600 px-5 py-3 text-sm font-black uppercase hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30">
                 {enviando ? "…" : "Enviar"}
               </button>
             </div>
