@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/admin/ia/purga", "schedule": "0 4 * * *" }
+  ]
+}

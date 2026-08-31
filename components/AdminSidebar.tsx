@@ -74,6 +74,11 @@ export default function AdminSidebar({ role }: Props) {
       href: "/admin",
       roles: ["admin"],
     },
+    {
+      label: "IA SIM",
+      href: "/admin/ia",
+      roles: ["admin"],
+    },
   ];
 
   const visibleLinks = links.filter((link) => link.roles.includes(role));
