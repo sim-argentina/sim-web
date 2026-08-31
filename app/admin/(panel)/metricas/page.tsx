@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { agregarStand, personasDeFila } from "@/lib/metricasStand";
 import WebTab from "./WebTab";
+import EquipoTab from "./EquipoTab";
 
-type Vista = "reservas" | "stand" | "campeonatos" | "web";
+type Vista = "reservas" | "stand" | "campeonatos" | "web" | "equipo";
 type QuickPeriod = "hoy" | "semana" | "mes" | "anio" | "todo" | "personalizado";
 type Agrupacion = "dia" | "semana" | "mes";
 
@@ -804,6 +805,12 @@ function LineChart({
 
 export default function AdminMetricasPage() {
   const [vista, setVista] = useState<Vista>("reservas");
+  // Rol para gatear la pestaña Equipo (admin-only). La API sigue siendo la autoridad.
+  const [role, setRole] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
+  }, []);
+  const esAdmin = role === "admin";
 
   const [reservas, setReservas] = useState<Reserva[]>([]);
   const [turnosStand, setTurnosStand] = useState<TurnoStand[]>([]);
@@ -1583,9 +1590,20 @@ export default function AdminMetricasPage() {
           >
             Web
           </button>
+
+          {esAdmin && (
+            <button
+              onClick={() => setVista("equipo")}
+              className={`rounded-xl px-6 py-3 text-sm font-bold ${
+                vista === "equipo" ? "bg-red-600 text-white" : "text-white/50 hover:text-white"
+              }`}
+            >
+              Equipo
+            </button>
+          )}
         </div>
 
-        {vista !== "web" && (
+        {vista !== "web" && vista !== "equipo" && (
         <div className="mb-6 rounded-2xl border border-white/10 bg-white/[0.04] p-5">
           <div className="grid gap-4 lg:grid-cols-5">
             <div>
@@ -1729,7 +1747,13 @@ export default function AdminMetricasPage() {
         </div>
         )}
 
-        {vista === "web" ? (
+        {vista === "equipo" ? (
+          esAdmin ? <EquipoTab /> : (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-10 text-center text-white/60">
+              Sección disponible solo para administradores.
+            </div>
+          )
+        ) : vista === "web" ? (
           <WebTab />
         ) : loading ? (
           <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-10 text-center text-white/60">
