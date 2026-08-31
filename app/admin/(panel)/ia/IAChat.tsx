@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import SafeMarkdown from "./SafeMarkdown";
+import Conocimiento from "./Conocimiento";
+
+type Adjunto = { id: string; nombre_original: string; estado_procesamiento: string; metodo_extraccion: string; advertencias?: string[] | null; promovido_documento_id?: string | null };
 
 // IA SIM · Bloque 4A — Interfaz del chat (admin-only). Estética SIM (negro/rojo/blanco).
 
@@ -33,6 +36,9 @@ export default function IAChat() {
   const [error, setError] = useState<string | null>(null);
   const [consumo, setConsumo] = useState<{ mes: { tokens_total: number; costo_estimado_usd: number }; porcentaje: { tokens_mes: number } } | null>(null);
   const [fuentesAbiertas, setFuentesAbiertas] = useState<Record<string, boolean>>({});
+  const [vista, setVista] = useState<"chat" | "conocimiento">("chat");
+  const [adjuntos, setAdjuntos] = useState<Adjunto[]>([]);
+  const [adjuntando, setAdjuntando] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const enfocar = () => setTimeout(() => textareaRef.current?.focus(), 0);
@@ -66,13 +72,58 @@ export default function IAChat() {
     if (!r.ok) return;
     const c = (await r.json()).conversacion as Conv;
     setConvs((prev) => [c, ...prev]);
-    setActiva(c.id); setMensajes([]); setError(null); enfocar();
+    setActiva(c.id); setMensajes([]); setAdjuntos([]); setError(null); enfocar();
   }
   async function abrir(id: string) {
     setActiva(id); setError(null);
     const r = await fetch(`/api/admin/ia/conversaciones/${id}`, { cache: "no-store" });
     if (r.ok) setMensajes((await r.json()).mensajes ?? []);
+    cargarAdjuntos(id);
     enfocar();
+  }
+
+  async function cargarAdjuntos(id: string) {
+    const r = await fetch(`/api/admin/ia/conversaciones/${id}/adjuntos`, { cache: "no-store" });
+    if (r.ok) setAdjuntos((await r.json()).adjuntos ?? []);
+    else setAdjuntos([]);
+  }
+
+  async function subirAdjuntos(files: FileList) {
+    let convId = activa;
+    if (!convId) {
+      const r = await fetch("/api/admin/ia/conversaciones", { method: "POST" });
+      if (!r.ok) { setError("No se pudo crear la conversación."); return; }
+      const c = (await r.json()).conversacion as Conv; setConvs((p) => [c, ...p]); convId = c.id; setActiva(c.id);
+    }
+    setAdjuntando(true); setError(null);
+    try {
+      const fd = new FormData();
+      for (const f of Array.from(files)) fd.append("archivos", f);
+      const r = await fetch(`/api/admin/ia/conversaciones/${convId}/adjuntos`, { method: "POST", body: fd });
+      const j = await r.json();
+      if (!r.ok) { setError(j.error || "No se pudo adjuntar."); return; }
+      const fallidos = (j.resultados || []).filter((x: { ok: boolean }) => !x.ok);
+      if (fallidos.length) setError(fallidos.map((x: { nombre: string; error: string }) => `${x.nombre}: ${x.error}`).join(" · "));
+      await cargarAdjuntos(convId!);
+    } finally { setAdjuntando(false); }
+  }
+
+  async function guardarComoConocimiento(adj: Adjunto) {
+    const det = await (await fetch(`/api/admin/ia/adjuntos/${adj.id}`, { cache: "no-store" })).json();
+    const titulo = window.prompt("Título del documento de conocimiento:", adj.nombre_original) ;
+    if (!titulo) return;
+    const contenido = window.prompt("Contenido a guardar (editá/confirmá):", det.contenido || "");
+    if (contenido === null) return;
+    const r = await fetch(`/api/admin/ia/adjuntos/${adj.id}/promover`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ titulo, contenido }) });
+    const j = await r.json();
+    if (!r.ok) { setError(j.error || "No se pudo guardar."); return; }
+    if (activa) cargarAdjuntos(activa);
+    alert("Guardado como conocimiento. Ya está disponible en todas las conversaciones.");
+  }
+
+  async function quitarAdjunto(id: string) {
+    await fetch(`/api/admin/ia/adjuntos/${id}`, { method: "DELETE" });
+    if (activa) cargarAdjuntos(activa);
   }
   async function eliminar(id: string) {
     await fetch(`/api/admin/ia/conversaciones/${id}`, { method: "DELETE" });
@@ -137,18 +188,17 @@ export default function IAChat() {
     alert(tipo === "util" ? "¡Gracias!" : "Registrado. Gracias por el feedback.");
   }
 
-  if (config && !config.configurada) {
-    return (
-      <main className="min-h-screen bg-black px-6 py-16 text-white">
-        <div className="mx-auto max-w-xl rounded-3xl border border-white/10 bg-white/[0.03] p-8 text-center">
-          <p className="text-sm uppercase tracking-[0.3em] text-red-500">IA SIM</p>
-          <h1 className="mt-3 text-2xl font-black uppercase">IA SIM todavía no está configurada</h1>
-          <p className="mt-4 text-white/70">Para activarla, configurá en el servidor: <span className="font-bold text-white">{config.faltantes.join(", ") || "el proveedor de IA"}</span>.</p>
-          <p className="mt-2 text-sm text-white/40">La clave se carga solo como variable de entorno; nunca se guarda en la base ni en el chat.</p>
-        </div>
-      </main>
-    );
-  }
+  const noConfig = !!(config && !config.configurada);
+  const cardNoConfig = (
+    <div className="p-6">
+      <div className="mx-auto max-w-xl rounded-3xl border border-white/10 bg-white/[0.03] p-8 text-center">
+        <p className="text-sm uppercase tracking-[0.3em] text-red-500">IA SIM</p>
+        <h1 className="mt-3 text-2xl font-black uppercase">IA SIM todavía no está configurada</h1>
+        <p className="mt-4 text-white/70">Para activar el chat, configurá en el servidor: <span className="font-bold text-white">{config?.faltantes.join(", ") || "el proveedor de IA"}</span>.</p>
+        <p className="mt-2 text-sm text-white/40">La clave se carga solo como variable de entorno; nunca se guarda en la base ni en el chat. La sección Conocimiento funciona igual.</p>
+      </div>
+    </div>
+  );
 
   return (
     <main className="bg-black text-white">
@@ -157,6 +207,10 @@ export default function IAChat() {
       <div className="mx-auto flex h-[calc(100dvh-5rem)] max-w-7xl flex-col gap-0 md:flex-row">
         {/* Historial */}
         <aside className="max-h-[34vh] shrink-0 overflow-y-auto border-b border-white/10 p-4 md:max-h-none md:w-72 md:border-b-0 md:border-r">
+          <div className="mb-3 flex rounded-xl border border-white/10 bg-black/40 p-1">
+            <button onClick={() => setVista("chat")} className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-black uppercase ${vista === "chat" ? "bg-red-600 text-white" : "text-white/50 hover:text-white"}`}>Chat</button>
+            <button onClick={() => setVista("conocimiento")} className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-black uppercase ${vista === "conocimiento" ? "bg-red-600 text-white" : "text-white/50 hover:text-white"}`}>Conocimiento</button>
+          </div>
           <button onClick={nueva} className="mb-3 w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black uppercase hover:bg-red-700">+ Nueva conversación</button>
           {consumo && (
             <div className="mb-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/50">
@@ -178,6 +232,12 @@ export default function IAChat() {
 
         {/* Chat */}
         <section className="flex min-h-0 flex-1 flex-col">
+          {vista === "conocimiento" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto"><Conocimiento /></div>
+          ) : noConfig ? (
+            <div className="min-h-0 flex-1 overflow-y-auto">{cardNoConfig}</div>
+          ) : (
+          <>
           <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
             <div className="mb-2">
               <p className="text-sm uppercase tracking-[0.3em] text-red-500">IA SIM</p>
@@ -244,7 +304,23 @@ export default function IAChat() {
 
           {/* Composer: SIEMPRE visible cuando hay una conversación activa, incluso vacía. */}
           <div className="shrink-0 border-t border-white/10 p-4">
+            {adjuntos.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {adjuntos.map((a) => (
+                  <span key={a.id} className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-3 py-1 text-xs text-white/80">
+                    📎 {a.nombre_original}
+                    <span className={`text-[10px] uppercase ${a.estado_procesamiento === "listo" ? "text-green-400" : a.estado_procesamiento === "error" ? "text-red-400" : "text-amber-400"}`}>{a.estado_procesamiento === "sin_extractor" ? "sin extractor" : a.estado_procesamiento}</span>
+                    {a.promovido_documento_id ? <span className="text-[10px] text-white/40">· en conocimiento</span> : <button onClick={() => guardarComoConocimiento(a)} className="text-red-400 hover:text-red-300">guardar</button>}
+                    <button onClick={() => quitarAdjunto(a.id)} className="text-white/40 hover:text-white">✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex items-end gap-2">
+              <label className={`cursor-pointer rounded-2xl border border-white/15 px-3 py-3 text-sm text-white/60 hover:text-white ${adjuntando ? "opacity-50" : ""}`} title="Adjuntar archivos">
+                {adjuntando ? "…" : "📎"}
+                <input type="file" multiple className="hidden" disabled={adjuntando} onChange={(e) => { if (e.target.files?.length) subirAdjuntos(e.target.files); e.target.value = ""; }} />
+              </label>
               <label htmlFor="ia-composer" className="sr-only">Escribí tu pregunta para IA SIM</label>
               <textarea
                 id="ia-composer"
@@ -263,6 +339,8 @@ export default function IAChat() {
               </button>
             </div>
           </div>
+          </>
+          )}
         </section>
       </div>
 

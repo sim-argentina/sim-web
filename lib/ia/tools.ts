@@ -5,6 +5,7 @@ import { getMesVista, getHorasMensuales } from "@/lib/cronogramaServer";
 import { calcularMes, getCierreMes } from "@/lib/finanzas";
 import { agregarStand } from "@/lib/metricasStand";
 import { idsReembolsadas } from "@/lib/reservasReembolsos";
+import { HERRAMIENTAS_CONOCIMIENTO } from "@/lib/ia/docs/conocimientoTools";
 
 // IA SIM · Bloque 4A — REGISTRO CERRADO de herramientas de SOLO LECTURA.
 // El modelo NUNCA elige tablas/columnas ni genera SQL: solo puede invocar estas
@@ -266,6 +267,8 @@ export const HERRAMIENTAS: Record<string, ToolDef> = {
   consultar_metricas_stand_reservas,
   consultar_empleados,
   consultar_colectivo,
+  // Bloque 4B — recuperación de conocimiento (documentos permanentes).
+  ...HERRAMIENTAS_CONOCIMIENTO,
 };
 
 export function defsParaProveedor() {

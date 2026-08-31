@@ -33,6 +33,7 @@ export type EjecutarChatParams = {
   limites: IALimites;
   historialPrevio: HistorialTurno[];
   pregunta: string;
+  sistemaExtra?: string; // contexto adicional (ej: adjuntos de la conversación), como DATO
 };
 
 export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResultado> {
@@ -42,6 +43,7 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
   let modelo = p.modelos[clase];
   let escalado = false;
 
+  const system = SYSTEM_PROMPT + (p.sistemaExtra ? "\n\n" + p.sistemaExtra : "");
   const historial: HistorialTurno[] = [...p.historialPrevio, { rol: "user", texto: p.pregunta }];
   const herramientasEjecutadas: HerramientaEjecutada[] = [];
   const fuentes: ToolFuente[] = [];
@@ -58,7 +60,7 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
       if (restante() <= 0) return fin({ estado: "error", texto: "", error: "Se agotó el tiempo de ejecución." });
       const permitirHerramientas = rondas < p.limites.rondasHerramientasMax;
       const turno = await p.provider.generar({
-        modelo, system: SYSTEM_PROMPT, historial,
+        modelo, system, historial,
         herramientas: permitirHerramientas ? defsParaProveedor() : [],
         maxTokensSalida: p.limites.tokensSalidaMax,
         timeoutMs: Math.max(1000, restante()),

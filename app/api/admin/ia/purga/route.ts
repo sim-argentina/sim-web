@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentAdminRole } from "@/lib/adminGuards";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { borrar } from "@/lib/ia/docs/storage";
 
 // Purga definitiva de la papelera (> 30 días). Endpoint PROTEGIDO: lo dispara el Cron
 // de Vercel (GET con `Authorization: Bearer ${CRON_SECRET}`), o un admin manualmente
@@ -14,6 +15,16 @@ function tieneSecretoCron(req: Request): boolean {
 }
 
 async function purgar() {
+  // Antes de eliminar las conversaciones vencidas, borrar del Storage los adjuntos NO
+  // promovidos (los promovidos ya tienen copia independiente en el conocimiento).
+  const corte = new Date(Date.now() - DIAS_RETENCION * 86400000).toISOString();
+  const { data: convs } = await supabaseAdmin.from("ia_conversaciones").select("id").eq("estado", "papelera").lt("deleted_at", corte);
+  const ids = (convs ?? []).map((c) => c.id as string);
+  if (ids.length > 0) {
+    const { data: adjs } = await supabaseAdmin.from("ia_adjuntos_conversacion").select("storage_path, promovido_documento_id").in("conversacion_id", ids);
+    const paths = (adjs ?? []).filter((a) => a.storage_path && !a.promovido_documento_id).map((a) => a.storage_path as string);
+    if (paths.length > 0) await borrar(paths);
+  }
   const { data, error } = await supabaseAdmin.rpc("ia_purgar_papelera", { p_dias: DIAS_RETENCION });
   if (error) return NextResponse.json({ error: "No se pudo purgar." }, { status: 500 });
   return NextResponse.json({ ok: true, eliminadas: data ?? 0, retencion_dias: DIAS_RETENCION });
