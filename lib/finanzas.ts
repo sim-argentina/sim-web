@@ -12,6 +12,7 @@
 // LECTURAS. turnos_historicos NO es fuente. Escritura solo en tablas fin_*.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getReembolsosReservasMes } from "@/lib/reservasReembolsos";
 import {
   calcularComisionesPagos, claveComision, METODOS_CON_COMISION,
   type ComisionConfig,
@@ -486,8 +487,10 @@ export type ResumenMes = {
   ingresosAutomaticos: number;
   ingresosManuales: number;
   ingresosBruto: number; // bruto (auto + manuales), antes de comisiones
+  reembolsosReservas: number; // reembolsos completos de Reservas web imputados a ESTE mes (fecha_reembolso). Salida de MP.
+  ingresosDespuesReembolsos: number; // ingresosBruto − reembolsosReservas (antes de comisiones)
   comisionesCobro: number; // comisiones de cobro del stand (se descuentan del revenue)
-  ingresos: number; // NETO operativo (bruto − comisiones), SIN financiamiento
+  ingresos: number; // NETO operativo (bruto − comisiones), SIN financiamiento ni reembolsos
   comisiones: ComisionesResumen | null; // detalle informativo de comisiones del stand
   financiamiento: number; // préstamos / entradas de financiamiento (no es revenue)
   costos: number;
@@ -525,8 +528,13 @@ export function resumirMes(params: {
   cuentas: FinCuenta[];
   categorias: FinCategoria[];
   comisionesData?: ComisionesResumen | null;
+  reembolsosReservas?: number;
 }): ResumenMes {
   const { mes, movimientos, ingresosAuto, ingresosAutoTotal, turnosDelMes, saldoInicialGeneral, sueldoAsignado, cuentas, categorias } = params;
+  // Reembolsos completos de Reservas web imputados a este mes (por fecha_reembolso).
+  // Es dinero que SALE de Mercado Pago; una sola fuente de verdad (no se agrega un
+  // movimiento manual que duplique el descuento).
+  const reembolsosReservas = params.reembolsosReservas ?? 0;
   // Saldo inicial por fuente para el arrastre/teórico por fuente. Si no se provee,
   // se asume todo en Efectivo (compatibilidad) y el general no cambia.
   const saldoInicialEfectivo = params.saldoInicialEfectivo ?? saldoInicialGeneral;
@@ -630,8 +638,10 @@ export function resumirMes(params: {
     // neto). Se descuenta del neto de caja; `ingresos` de la fuente queda en bruto
     // (para "Ingresos por fuente").
     const comFuente = f.tipo === "mercado_pago" ? comisionesCobro : 0;
+    // Los reembolsos de Reservas salen por Mercado Pago (se devolvieron por ese medio).
+    const reembolsosFuente = f.tipo === "mercado_pago" ? reembolsosReservas : 0;
     const saldoInicialFuente = f.tipo === "efectivo" ? saldoInicialEfectivo : saldoInicialMp;
-    const neto = f.ingresos + f.financiamiento - egresos + f.transferenciasEntrantes - f.transferenciasSalientes - comFuente;
+    const neto = f.ingresos + f.financiamiento - egresos + f.transferenciasEntrantes - f.transferenciasSalientes - comFuente - reembolsosFuente;
     return {
       ...f,
       egresos,
@@ -645,7 +655,8 @@ export function resumirMes(params: {
   const saldoTeoricoMp = porFuente.find((f) => f.tipo === "mercado_pago")?.saldoTeorico ?? saldoInicialMp;
 
   const ingresosBruto = ingresosAutoTotal + ingresosManuales; // bruto, sin financiamiento
-  const ingresos = ingresosBruto - comisionesCobro; // NETO operativo (revenue real)
+  const ingresosDespuesReembolsos = ingresosBruto - reembolsosReservas; // antes de comisiones
+  const ingresos = ingresosDespuesReembolsos - comisionesCobro; // NETO operativo (revenue real, ya neto de reembolsos)
   const egresosTotales = costos + gastos + inversiones + gastosSueldo + otros + pagosDeuda;
   const saldoFinalTeoricoGeneral = saldoInicialGeneral + ingresos + financiamiento - egresosTotales + ajustesNet;
 
@@ -654,6 +665,8 @@ export function resumirMes(params: {
     ingresosAutomaticos: ingresosAutoTotal,
     ingresosManuales,
     ingresosBruto,
+    reembolsosReservas,
+    ingresosDespuesReembolsos,
     comisionesCobro,
     ingresos,
     comisiones: comisionesData,
@@ -767,7 +780,7 @@ export async function calcularMes(mes: string): Promise<{
   ingresosAuto: IngresoAutomatico[];
   movimientos: FinMovimiento[];
 }> {
-  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicialFuente, sueldo, comisiones] = await Promise.all([
+  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicialFuente, sueldo, comisiones, reembolsosReservas] = await Promise.all([
     getCuentas(),
     getCategorias(),
     getIngresosAutomaticos(mes),
@@ -775,6 +788,7 @@ export async function calcularMes(mes: string): Promise<{
     getSaldoInicialPorFuente(mes),
     getSueldoMes(mes),
     getComisionesStandMes(mes),
+    getReembolsosReservasMes(mes),
   ]);
 
   const resumen = resumirMes({
@@ -790,6 +804,7 @@ export async function calcularMes(mes: string): Promise<{
     cuentas,
     categorias,
     comisionesData: comisiones,
+    reembolsosReservas,
   });
 
   return { resumen, ingresosAuto: ingresosAutoData.items, movimientos };

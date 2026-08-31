@@ -27,6 +27,17 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       return NextResponse.json({ error: "Estado no permitido" }, { status: 400 });
     }
 
+    // Una reserva reembolsada es terminal: no puede reactivarse ni cambiarse de estado
+    // desde acá (la baja/liberación de cupo ya la hizo el registro del reembolso).
+    const { data: actual } = await supabaseAdmin
+      .from("reservas")
+      .select("estado")
+      .eq("id", id)
+      .maybeSingle();
+    if (actual?.estado === "reembolsada") {
+      return NextResponse.json({ error: "La reserva está reembolsada y no puede modificarse." }, { status: 409 });
+    }
+
     const { data, error } = await supabaseAdmin
       .from("reservas")
       .update({ estado: nuevoEstado })

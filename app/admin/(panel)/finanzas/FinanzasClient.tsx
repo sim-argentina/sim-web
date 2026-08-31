@@ -166,7 +166,7 @@ type CierreApi = {
   diferencia_mp: number | null;
   informe_generado_at: string | null;
   comisiones?: ComisionesResumen | null;
-  desglose: { ingresos: number; comisiones_cobro: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
+  desglose: { ingresos: number; reembolsos_reservas?: number; ingresos_despues_reembolsos?: number; comisiones_cobro: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
   por_fuente: PorFuenteApi[];
   detalle: {
     ingresos: { total: number; automaticos: Array<{ fuente: string; total: number; cantidad: number }>; automaticos_total: number; manuales_por_categoria: RubroCat[]; manuales_total: number };
@@ -1164,7 +1164,8 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
         <h3 className="mb-3 text-sm font-black uppercase text-white/60">A) Cierre general del mes</h3>
         <div className="space-y-1.5 text-sm">
           <FilaCierre label="Saldo inicial general" valor={cierre.saldo_inicial_general} />
-          <FilaCierre label="+ Ingresos brutos" valor={dg.ingresos} color="verde" />
+          <FilaCierre label="+ Ingresos cobrados" valor={dg.ingresos} color="verde" />
+          {(dg.reembolsos_reservas ?? 0) > 0 && <FilaCierre label="− Reembolsos de Reservas" valor={-(dg.reembolsos_reservas ?? 0)} color="rojo" />}
           {dg.comisiones_cobro > 0 && <FilaCierre label="− Comisiones de cobro" valor={-dg.comisiones_cobro} color="rojo" />}
           {dg.financiamiento > 0 && <FilaCierre label="+ Financiamiento (préstamos)" valor={dg.financiamiento} color="verde" />}
           <FilaCierre label="− Costos" valor={-dg.costos} color="rojo" />

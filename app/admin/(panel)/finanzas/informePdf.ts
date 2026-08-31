@@ -22,7 +22,7 @@ export type InformeCierre = {
   saldo_real_guardado: number | null; saldo_real_efectivo?: number | null; saldo_real_mp?: number | null;
   diferencia_guardada: number | null; diferencia_efectivo?: number | null; diferencia_mp?: number | null;
   comisiones?: { brutoStand: number; comisionStand: number; netoStand: number; tasaEfectiva: number; advertencias: unknown[]; sinConfig: boolean } | null;
-  desglose: { ingresos: number; comisiones_cobro: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
+  desglose: { ingresos: number; reembolsos_reservas?: number; ingresos_despues_reembolsos?: number; comisiones_cobro: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
   por_fuente: PorFuente[];
   detalle: {
     ingresos: { total: number; automaticos: Array<{ fuente: string; total: number; cantidad: number }>; automaticos_total: number; manuales_por_categoria: RubroCat[]; manuales_total: number };
@@ -153,7 +153,11 @@ export function generarInformePdf(args: {
   // 2) Resumen ejecutivo
   heading("Resumen ejecutivo");
   table(["Concepto", "Monto"], [
-    ["Ingresos brutos", money(dg.ingresos)],
+    ["Ingresos cobrados", money(dg.ingresos)],
+    ...((dg.reembolsos_reservas ?? 0) > 0 ? [
+      ["Reembolsos de Reservas", money(-(dg.reembolsos_reservas ?? 0))],
+      ["Ingreso después de reembolsos", money(dg.ingresos_despues_reembolsos ?? dg.ingresos)],
+    ] : []),
     ["Comisiones de cobro", money(-dg.comisiones_cobro)],
     ["Ingresos netos", money(dg.ingresos_netos)],
     ["Costos", money(-dg.costos)],

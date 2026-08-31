@@ -52,7 +52,22 @@ export async function GET(req: Request) {
         error,
       });
     }
-    return NextResponse.json(data ?? [], { status: 200 });
+
+    // Solo el ADMIN recibe el detalle del reembolso (monto/fecha/motivo). Staff puede
+    // ver el estado "reembolsada" (viene en la columna estado) pero NUNCA el detalle.
+    let rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    if (role === "admin" && rows.length > 0) {
+      const ids = rows.map((r) => Number(r.id)).filter((n) => Number.isFinite(n));
+      if (ids.length > 0) {
+        const { data: refs } = await supabaseAdmin
+          .from("reservas_reembolsos")
+          .select("reserva_id, monto_reembolsado, fecha_reembolso, motivo, origen_registro, actor, created_at")
+          .in("reserva_id", ids);
+        const byId = new Map((refs ?? []).map((r) => [Number(r.reserva_id), r]));
+        rows = rows.map((r) => ({ ...r, reembolso: byId.get(Number(r.id)) ?? null }));
+      }
+    }
+    return NextResponse.json(rows, { status: 200 });
   } catch (error) {
     return failResponse(500, "Error al obtener reservas", {
       logContext: "reservas GET",

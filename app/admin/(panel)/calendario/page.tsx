@@ -3,6 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { getOccupiedSlots } from "@/lib/reservasSlots";
 
+type Reembolso = {
+  reserva_id: number;
+  monto_reembolsado: number;
+  fecha_reembolso: string;
+  motivo: string | null;
+  origen_registro?: string;
+  actor?: string;
+  created_at?: string;
+};
+
 type Reserva = {
   id: number;
   nombre: string;
@@ -15,6 +25,7 @@ type Reserva = {
   total?: number;
   estado?: string;
   created_at?: string;
+  reembolso?: Reembolso | null;
 };
 
 type Filtro = "dia" | "semana" | "mes" | "personalizado";
@@ -103,6 +114,7 @@ function formatearTotal(total?: number) {
 export default function CalendarioAdminPage() {
   const [reservas, setReservas] = useState<Reserva[]>([]);
   const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<string | null>(null);
 
   const [filtro, setFiltro] = useState<Filtro>("semana");
   const [fechaElegida, setFechaElegida] = useState(fechaLocalISO());
@@ -113,6 +125,23 @@ export default function CalendarioAdminPage() {
 
   const [reservaSeleccionada, setReservaSeleccionada] =
     useState<Reserva | null>(null);
+
+  // Modal de reembolso (solo admin).
+  const [reembolsoDe, setReembolsoDe] = useState<Reserva | null>(null);
+  const [fechaReembolso, setFechaReembolso] = useState(fechaLocalISO());
+  const [motivoReembolso, setMotivoReembolso] = useState("");
+  const [confirmoReembolso, setConfirmoReembolso] = useState(false);
+  const [guardandoReembolso, setGuardandoReembolso] = useState(false);
+  const [errorReembolso, setErrorReembolso] = useState<string | null>(null);
+
+  const esAdmin = role === "admin";
+
+  useEffect(() => {
+    fetch("/api/admin/me")
+      .then((r) => r.json())
+      .then((d) => setRole(d.role))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     async function cargarReservas() {
@@ -139,11 +168,56 @@ export default function CalendarioAdminPage() {
     cargarReservas();
   }, []);
 
+  function abrirReembolso(reserva: Reserva) {
+    setReembolsoDe(reserva);
+    setFechaReembolso(fechaLocalISO());
+    setMotivoReembolso("");
+    setConfirmoReembolso(false);
+    setErrorReembolso(null);
+  }
+
+  async function registrarReembolso() {
+    if (!reembolsoDe || !confirmoReembolso) return;
+    setGuardandoReembolso(true);
+    setErrorReembolso(null);
+    try {
+      const res = await fetch(`/api/admin/reservas/${reembolsoDe.id}/reembolso`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fecha_reembolso: fechaReembolso,
+          motivo: motivoReembolso.trim() || undefined,
+          confirmacion: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorReembolso(data?.error || "No se pudo registrar el reembolso.");
+        return;
+      }
+      // Actualización inmediata sin recargar: estado terminal + detalle.
+      const ref = data as Reembolso;
+      setReservas((prev) =>
+        prev.map((r) =>
+          r.id === reembolsoDe.id ? { ...r, estado: "reembolsada", reembolso: ref } : r
+        )
+      );
+      setReservaSeleccionada((sel) =>
+        sel && sel.id === reembolsoDe.id ? { ...sel, estado: "reembolsada", reembolso: ref } : sel
+      );
+      setReembolsoDe(null);
+    } catch {
+      setErrorReembolso("Error de red al registrar el reembolso.");
+    } finally {
+      setGuardandoReembolso(false);
+    }
+  }
+
   const reservasFiltradas = useMemo(() => {
     return reservas
-      // Solo reservas con pago aprobado (estado "activa"); se excluyen
-      // pendientes de pago, errores de pago y canceladas.
-      .filter((reserva) => reserva.estado === "activa")
+      // Reservas con pago aprobado ("activa") y también las "reembolsada" (para
+      // que el admin las vea marcadas). Se excluyen pendientes, errores y canceladas.
+      .filter((reserva) => reserva.estado === "activa" || reserva.estado === "reembolsada")
       .filter((reserva) => {
         const texto = busqueda.toLowerCase().trim();
 
@@ -365,6 +439,11 @@ export default function CalendarioAdminPage() {
                           </div>
 
                           <div className="flex flex-wrap gap-3">
+                            {reserva.estado === "reembolsada" && (
+                              <span className="rounded-full bg-amber-500/20 px-4 py-2 text-sm font-black uppercase text-amber-400 ring-1 ring-amber-500/40">
+                                Reembolsada
+                              </span>
+                            )}
                             <span className="rounded-full bg-red-600 px-4 py-2 text-sm font-bold text-white">
                               {simuladores.length}{" "}
                               {simuladores.length === 1
@@ -482,14 +561,164 @@ export default function CalendarioAdminPage() {
                   </p>
                 </div>
               </div>
+
+              {reservaSeleccionada.estado === "reembolsada" && (
+                <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4">
+                  <p className="text-sm font-black uppercase text-amber-400">Reembolsada</p>
+                  {reservaSeleccionada.reembolso ? (
+                    <div className="mt-2 space-y-1 text-sm text-amber-100/90">
+                      <p>Importe reembolsado: <span className="font-bold">{formatearTotal(Number(reservaSeleccionada.reembolso.monto_reembolsado))}</span></p>
+                      <p>Fecha del reembolso: <span className="font-bold">{reservaSeleccionada.reembolso.fecha_reembolso}</span></p>
+                      {reservaSeleccionada.reembolso.motivo && (
+                        <p>Motivo: <span className="font-bold">{reservaSeleccionada.reembolso.motivo}</span></p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-amber-100/80">El cupo fue liberado. El importe se devolvió por fuera de SIM.</p>
+                  )}
+                </div>
+              )}
             </div>
+
+            {esAdmin &&
+              reservaSeleccionada.estado === "activa" &&
+              Number(reservaSeleccionada.total) > 0 && (
+                <button
+                  onClick={() => abrirReembolso(reservaSeleccionada)}
+                  className="mt-6 w-full rounded-2xl border border-amber-500/50 bg-amber-500/10 px-5 py-3 font-black uppercase text-amber-400 transition hover:bg-amber-500/20"
+                >
+                  Registrar reembolso
+                </button>
+              )}
 
             <button
               onClick={() => setReservaSeleccionada(null)}
-              className="mt-6 w-full rounded-2xl bg-red-600 px-5 py-3 font-black uppercase text-white transition hover:bg-red-700"
+              className="mt-3 w-full rounded-2xl bg-red-600 px-5 py-3 font-black uppercase text-white transition hover:bg-red-700"
             >
               Cerrar detalles
             </button>
+          </div>
+        </div>
+      )}
+
+      {esAdmin && reembolsoDe && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 px-4">
+          <div className="w-full max-w-lg rounded-3xl border border-amber-500/30 bg-zinc-950 p-6 text-white shadow-2xl">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm uppercase tracking-[0.25em] text-amber-400">Registrar reembolso</p>
+                <h3 className="mt-2 text-2xl font-black uppercase">{reembolsoDe.nombre}</h3>
+              </div>
+              <button
+                onClick={() => setReembolsoDe(null)}
+                disabled={guardandoReembolso}
+                className="rounded-full border border-white/15 px-3 py-1 text-sm font-bold hover:bg-white hover:text-black disabled:opacity-40"
+              >
+                X
+              </button>
+            </div>
+
+            <div className="space-y-4 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl bg-white/[0.04] p-3">
+                  <p className="text-white/50">Fecha reservada</p>
+                  <p className="font-bold">{reembolsoDe.fecha}</p>
+                </div>
+                <div className="rounded-2xl bg-white/[0.04] p-3">
+                  <p className="text-white/50">Horario</p>
+                  <p className="font-bold">{rangoVisual(reembolsoDe)}</p>
+                </div>
+                <div className="rounded-2xl bg-white/[0.04] p-3">
+                  <p className="text-white/50">Cliente</p>
+                  <p className="font-bold">{reembolsoDe.telefono || "Sin teléfono"}</p>
+                </div>
+                <div className="rounded-2xl bg-white/[0.04] p-3">
+                  <p className="text-white/50">Importe pagado</p>
+                  <p className="font-bold">{formatearTotal(reembolsoDe.total)}</p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-white/[0.04] p-3">
+                <p className="text-white/50">Medio / origen</p>
+                <p className="font-bold">Mercado Pago · reembolso manual externo</p>
+              </div>
+
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-amber-100">
+                <p className="font-bold">Esta acción no devuelve dinero desde SIM. Solo registra un reembolso completo ya realizado.</p>
+              </div>
+
+              {(() => {
+                const fechaRes = new Date(`${reembolsoDe.fecha}T00:00:00`);
+                const hoy = new Date(fechaLocalISO() + "T00:00:00");
+                return fechaRes >= hoy ? (
+                  <p className="rounded-xl border border-white/15 bg-white/[0.03] px-4 py-2 text-xs font-bold text-white/70">
+                    Esta reserva es futura: al registrar el reembolso se cancela y se libera el cupo de inmediato en la web.
+                  </p>
+                ) : null;
+              })()}
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                  Fecha real del reembolso
+                </label>
+                <input
+                  type="date"
+                  value={fechaReembolso}
+                  max={fechaLocalISO()}
+                  onChange={(e) => setFechaReembolso(e.target.value)}
+                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-[0.2em] text-white/50">
+                  Motivo (opcional)
+                </label>
+                <input
+                  type="text"
+                  value={motivoReembolso}
+                  maxLength={500}
+                  onChange={(e) => setMotivoReembolso(e.target.value)}
+                  placeholder="Ej: cliente canceló, error de reserva..."
+                  className="w-full rounded-2xl border border-white/15 bg-black px-4 py-3 font-bold text-white outline-none placeholder:text-white/30 focus:border-amber-500"
+                />
+              </div>
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/15 bg-black p-4">
+                <input
+                  type="checkbox"
+                  checked={confirmoReembolso}
+                  onChange={(e) => setConfirmoReembolso(e.target.checked)}
+                  className="mt-1 h-5 w-5 accent-amber-500"
+                />
+                <span className="text-sm font-bold text-white/90">
+                  Confirmo que el importe total ya fue devuelto por fuera de SIM.
+                </span>
+              </label>
+
+              {errorReembolso && (
+                <p className="rounded-xl border border-red-500/40 bg-red-950/30 px-4 py-2 text-sm font-bold text-red-300">
+                  {errorReembolso}
+                </p>
+              )}
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => setReembolsoDe(null)}
+                disabled={guardandoReembolso}
+                className="flex-1 rounded-2xl border border-white/15 px-5 py-3 font-black uppercase text-white/70 transition hover:text-white disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={registrarReembolso}
+                disabled={!confirmoReembolso || guardandoReembolso}
+                className="flex-1 rounded-2xl bg-amber-500 px-5 py-3 font-black uppercase text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30"
+              >
+                {guardandoReembolso ? "Registrando..." : "Registrar reembolso"}
+              </button>
+            </div>
           </div>
         </div>
       )}

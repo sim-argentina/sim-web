@@ -115,6 +115,8 @@ export async function GET(req: NextRequest) {
       comisiones: r.comisiones,
       desglose: {
         ingresos: r.ingresosBruto,
+        reembolsos_reservas: r.reembolsosReservas,
+        ingresos_despues_reembolsos: r.ingresosDespuesReembolsos,
         comisiones_cobro: r.comisionesCobro,
         ingresos_netos: r.ingresos,
         financiamiento: r.financiamiento,
