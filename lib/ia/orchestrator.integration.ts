@@ -60,12 +60,12 @@ async function main() {
 
   // 8) EXACTITUD: consultar_metricas_equipo agosto coincide con el motor 3B.
   const tool = await HERRAMIENTAS.consultar_metricas_equipo.ejecutar({ anio: 2026, mes: 8 });
-  const payload = JSON.parse(tool.contenido) as { integrantes: Array<{ nombre: string; turnos: number; bruto: number }>; reconciliacion: { ok: boolean } };
+  const payload = JSON.parse(tool.contenido) as { integrantes: Array<{ nombre: string; turnos_cantidad: number; facturacion_bruta_pesos: number }>; reconciliacion: { ok: boolean } };
   const ref = await consultarMetricasEquipo({ desde: "2026-08-01", hasta: "2026-08-31" });
   const fedeTool = payload.integrantes.find((i) => i.nombre === "Federico")!;
   const fedeRef = ref.integrantes.find((i) => i.nombre === "Federico")!;
-  assert.equal(fedeTool.turnos, fedeRef.total.turnos, "turnos Federico coinciden con 3B");
-  assert.equal(fedeTool.bruto, fedeRef.total.bruto, "bruto Federico coincide con 3B");
+  assert.equal(fedeTool.turnos_cantidad, fedeRef.total.turnos, "turnos Federico coinciden con 3B");
+  assert.equal(fedeTool.facturacion_bruta_pesos, fedeRef.total.bruto, "bruto Federico coincide con 3B");
   assert.ok(payload.reconciliacion.ok, "reconciliación ok vía herramienta");
 
   // 9) Finanzas: ganancia SIM presente y coherente (sin PII).

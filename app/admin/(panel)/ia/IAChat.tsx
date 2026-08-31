@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import SafeMarkdown from "./SafeMarkdown";
 
 // IA SIM · Bloque 4A — Interfaz del chat (admin-only). Estética SIM (negro/rojo/blanco).
 
@@ -195,7 +196,9 @@ export default function IAChat() {
             {mensajes.map((m) => (
               <div key={m.id} className={m.rol === "user" ? "flex justify-end" : "flex justify-start"}>
                 <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${m.rol === "user" ? "bg-red-600 text-white" : "border border-white/10 bg-white/[0.04] text-white/90"}`}>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.contenido}</p>
+                  {m.rol === "assistant"
+                    ? <SafeMarkdown text={m.contenido} />
+                    : <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.contenido}</p>}
                   {m.rol === "assistant" && (
                     <div className="mt-3 border-t border-white/10 pt-2 text-xs text-white/50">
                       {m.fuentes && m.fuentes.length > 0 && (

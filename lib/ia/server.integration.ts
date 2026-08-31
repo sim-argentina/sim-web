@@ -82,6 +82,9 @@ async function main() {
     assert.ok(Number(purga.data) >= 1, "purga elimina la conversación vencida");
     const { data: sigue } = await supabaseAdmin.from("ia_conversaciones").select("id").eq("id", convId).maybeSingle();
     assert.equal(sigue, null, "conversación purgada");
+    // La purga borra la conversación pero ia_ejecuciones no cascada: limpiar sus
+    // ejecuciones del test por convId (las herramientas sí cascadan desde ejecuciones).
+    await supabaseAdmin.from("ia_ejecuciones").delete().eq("conversacion_id", convId);
 
     console.log("✔ server.integration OK (persistencia, cuota atómica, idempotencia, título, feedback, papelera/purga)");
   } finally {

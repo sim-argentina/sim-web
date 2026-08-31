@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { validarAnioMes } from "@/lib/cronograma";
+import { validarAnioMes, formatHoras } from "@/lib/cronograma";
 import { consultarMetricasEquipo } from "@/lib/metricasEquipoServer";
 import { getMesVista, getHorasMensuales } from "@/lib/cronogramaServer";
 import { calcularMes, getCierreMes } from "@/lib/finanzas";
@@ -62,8 +62,58 @@ const consultar_metricas_equipo: ToolDef = {
   ejecutar: async (input) => {
     const { anio, mes } = pedirAnioMes(input);
     const r = await consultarMetricasEquipo({ desde: `${mesStr(anio, mes)}-01`, hasta: finDeMes(anio, mes) });
-    const integrantes = r.integrantes.map((i) => ({ nombre: i.nombre, archivado: i.archivado, horas_min: Math.round(i.horas_minutos), turnos: i.total.turnos, personas: i.total.personas, operaciones: i.total.operaciones, minutos: i.total.minutos, bruto: i.total.bruto, comision: i.total.comision, neto: i.total.neto, stand: { bruto: i.stand.bruto, turnos: i.stand.turnos }, reservas: { bruto: i.reservas.bruto, turnos: i.reservas.turnos } }));
-    const payload = { periodo: r.periodo, zonaHoraria: r.zonaHoraria, corte: r.corte, cronograma: r.cronograma, integrantes, totalesOrigen: r.totalesOrigen, totalesAtribuidos: r.totalesAtribuidos, sinAtribuir: r.sinAtribuir, actividadFuturaPendiente: r.actividadFuturaPendiente, exclusiones: r.exclusiones, anomalias: r.anomalias, reconciliacion: { ok: r.reconciliacion.ok }, registros: r.registros, nota_comision_reservas: "Finanzas no modela comisión de Reservas web → 0 (no se inventa)." };
+    // Nombres INEQUÍVOCOS + unidad declarada. Las HORAS del cronograma se guardan en
+    // minutos y se muestran ya formateadas (formatHoras): 11460 min → "191 h". NUNCA
+    // se debe leer un valor en minutos como si fueran horas.
+    const integrantes = r.integrantes.map((i) => ({
+      nombre: i.nombre,
+      archivado: i.archivado,
+      horas_trabajadas_minutos: Math.round(i.horas_minutos),
+      horas_trabajadas_formateadas: formatHoras(i.horas_minutos),
+      turnos_cantidad: i.total.turnos,
+      personas_cantidad: i.total.personas,
+      operaciones_cantidad: i.total.operaciones,
+      minutos_actividad: i.total.minutos,
+      facturacion_bruta_pesos: i.total.bruto,
+      comisiones_pesos: i.total.comision,
+      facturacion_neta_pesos: i.total.neto,
+      stand: { turnos_cantidad: i.stand.turnos, facturacion_bruta_pesos: i.stand.bruto },
+      reservas: { turnos_cantidad: i.reservas.turnos, facturacion_bruta_pesos: i.reservas.bruto },
+    }));
+    const mesEnCurso = r.corte.slice(0, 10) <= r.periodo.hasta && r.corte.slice(0, 10) >= r.periodo.desde;
+    const payload = {
+      periodo: r.periodo,
+      zonaHoraria: r.zonaHoraria,
+      corte: r.corte,
+      mes_en_curso: mesEnCurso,
+      cronograma: r.cronograma,
+      integrantes,
+      totales_origen: r.totalesOrigen,
+      totales_atribuidos: r.totalesAtribuidos,
+      sin_atribuir: r.sinAtribuir,
+      actividad_futura_pendiente: r.actividadFuturaPendiente,
+      exclusiones: r.exclusiones,
+      anomalias: r.anomalias,
+      reconciliacion: { ok: r.reconciliacion.ok },
+      registros: r.registros,
+      _unidades: {
+        horas_trabajadas_minutos: "MINUTOS del cronograma. Para expresarlas en horas, dividir por 60 O usar directamente 'horas_trabajadas_formateadas'. 11460 minutos = 191 horas.",
+        horas_trabajadas_formateadas: "Texto ya listo para mostrar las horas de cronograma (ej: '191 h').",
+        minutos_actividad: "MINUTOS-persona de uso comercial (turnos × 15). NO son horas trabajadas del cronograma; son otra métrica.",
+        turnos_cantidad: "Cantidad de turnos (1 turno = 15 min de uso por 1 persona/simulador).",
+        personas_cantidad: "Cantidad de personas/simuladores.",
+        operaciones_cantidad: "Cantidad de operaciones (registros/sesiones fuente).",
+        facturacion_bruta_pesos: "Pesos argentinos (ARS), enteros.",
+        comisiones_pesos: "Pesos argentinos (ARS), enteros.",
+        facturacion_neta_pesos: "Pesos argentinos (ARS), enteros (bruta − comisiones).",
+      },
+      _definiciones: {
+        horas_trabajadas: "Horas de trabajo del cronograma confirmado (jornadas + cobertura de Ramiro). NO son 'facturables' ni 'mínimas'.",
+        turnos: "Actividad comercial atribuida; turnos = personas × minutos / 15.",
+        nota_mes_en_curso: mesEnCurso ? "El mes está en curso: las cifras son 'hasta la fecha y hora de corte'." : "Mes completo.",
+        nota_comision_reservas: "Finanzas no modela comisión de Reservas web → comisiones_pesos de esa fuente es 0 (no se inventa).",
+      },
+    };
     return {
       contenido: JSON.stringify(payload),
       resumen: { integrantes: integrantes.length, reconciliacion: r.reconciliacion.ok, registros: r.registros },
@@ -117,6 +167,7 @@ const consultar_finanzas: ToolDef = {
       ganancia_sim: gananciaSIM,
       saldo_final_teorico: resumen.saldoFinalTeoricoGeneral,
       cierre: { estado: estadoCierre, saldo_real: cierre ? Number(cierre.saldo_real_general) : null },
+      _unidades: { montos: "Todos los montos están en pesos argentinos (ARS), enteros. No son centavos." },
       nota: "Excluye Colectivo. Comisiones ya descontadas en netos (no se restan dos veces). Ganancia SIM = netos − costos − gastos − inversiones − Mi sueldo.",
     };
     return {
