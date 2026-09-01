@@ -39,6 +39,10 @@ export default function IAChat() {
   const [vista, setVista] = useState<"chat" | "conocimiento">("chat");
   const [adjuntos, setAdjuntos] = useState<Adjunto[]>([]);
   const [adjuntando, setAdjuntando] = useState(false);
+  const [ocrModal, setOcrModal] = useState<{ adj: Adjunto; detalle: { tipo_ocr: string; paginas_o_imagenes: number | null; tamano: number } } | null>(null);
+  const [ocrConfirmado, setOcrConfirmado] = useState(false);
+  const [ocrProcesando, setOcrProcesando] = useState(false);
+  const [ocrMsg, setOcrMsg] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const enfocar = () => setTimeout(() => textareaRef.current?.focus(), 0);
@@ -123,6 +127,31 @@ export default function IAChat() {
 
   async function quitarAdjunto(id: string) {
     await fetch(`/api/admin/ia/adjuntos/${id}`, { method: "DELETE" });
+    if (activa) cargarAdjuntos(activa);
+  }
+
+  // OCR/visión: abrir confirmación (NO consume la API todavía).
+  async function abrirOCR(adj: Adjunto) {
+    const det = await (await fetch(`/api/admin/ia/adjuntos/${adj.id}`, { cache: "no-store" })).json();
+    setOcrModal({ adj, detalle: { tipo_ocr: det.tipo_ocr, paginas_o_imagenes: det.paginas_o_imagenes, tamano: det.tamano } });
+    setOcrConfirmado(false); setOcrMsg(null);
+  }
+  async function analizarOCR(reprocesar = false) {
+    if (!ocrModal || (!ocrConfirmado && !reprocesar)) return;
+    setOcrProcesando(true); setOcrMsg(null);
+    try {
+      const r = await fetch(`/api/admin/ia/adjuntos/${ocrModal.adj.id}/ocr`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmacion: true, reprocesar }) });
+      const j = await r.json();
+      if (!r.ok) { setOcrMsg(j.error || "No se pudo analizar."); return; }
+      if (activa) cargarAdjuntos(activa);
+      setOcrModal(null);
+      alert(j.ocr?.reutilizado ? "Se reutilizó una extracción existente (sin nuevo consumo)." : `Extracción lista (confianza ${j.ocr?.confianza}). Revisala y, si querés, guardala como conocimiento.`);
+    } finally { setOcrProcesando(false); }
+  }
+  async function cargarManual(adj: Adjunto) {
+    const contenido = window.prompt("Pegá o escribí el contenido representativo del archivo:", "");
+    if (contenido === null) return;
+    await fetch(`/api/admin/ia/adjuntos/${adj.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contenido }) });
     if (activa) cargarAdjuntos(activa);
   }
   async function eliminar(id: string) {
@@ -309,8 +338,17 @@ export default function IAChat() {
                 {adjuntos.map((a) => (
                   <span key={a.id} className="flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-3 py-1 text-xs text-white/80">
                     📎 {a.nombre_original}
-                    <span className={`text-[10px] uppercase ${a.estado_procesamiento === "listo" ? "text-green-400" : a.estado_procesamiento === "error" ? "text-red-400" : "text-amber-400"}`}>{a.estado_procesamiento === "sin_extractor" ? "sin extractor" : a.estado_procesamiento}</span>
-                    {a.promovido_documento_id ? <span className="text-[10px] text-white/40">· en conocimiento</span> : <button onClick={() => guardarComoConocimiento(a)} className="text-red-400 hover:text-red-300">guardar</button>}
+                    <span className={`text-[10px] uppercase ${a.estado_procesamiento === "listo" ? "text-green-400" : a.estado_procesamiento === "error" ? "text-red-400" : "text-amber-400"}`}>{a.estado_procesamiento === "sin_extractor" ? "sin extractor" : a.estado_procesamiento === "necesita_ocr" ? "necesita OCR" : a.estado_procesamiento === "necesita_revision" ? "revisar" : a.estado_procesamiento}</span>
+                    {a.estado_procesamiento === "necesita_ocr" ? (
+                      <>
+                        <button onClick={() => abrirOCR(a)} className="text-red-400 hover:text-red-300">Analizar con IA</button>
+                        <button onClick={() => cargarManual(a)} className="text-white/60 hover:text-white">Cargar texto</button>
+                      </>
+                    ) : a.promovido_documento_id ? <span className="text-[10px] text-white/40">· en conocimiento</span> : a.estado_procesamiento === "sin_extractor" ? (
+                      <button onClick={() => cargarManual(a)} className="text-white/60 hover:text-white">Cargar texto</button>
+                    ) : (
+                      <button onClick={() => guardarComoConocimiento(a)} className="text-red-400 hover:text-red-300">guardar</button>
+                    )}
                     <button onClick={() => quitarAdjunto(a.id)} className="text-white/40 hover:text-white">✕</button>
                   </span>
                 ))}
@@ -359,6 +397,36 @@ export default function IAChat() {
               {papelera.length === 0 && <p className="text-sm text-white/40">Papelera vacía.</p>}
             </div>
             <button onClick={() => setVerPapelera(false)} className="mt-5 w-full rounded-2xl bg-red-600 px-5 py-2.5 text-sm font-black uppercase hover:bg-red-700">Cerrar</button>
+          </div>
+        </div>
+      )}
+
+      {ocrModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 px-4">
+          <div className="w-full max-w-lg rounded-3xl border border-amber-500/30 bg-zinc-950 p-6 text-white">
+            <p className="text-sm uppercase tracking-[0.25em] text-amber-400">Analizar con IA</p>
+            <h3 className="mt-2 text-xl font-black uppercase">{ocrModal.adj.nombre_original}</h3>
+            <p className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              Este archivo necesita OCR/visión para poder interpretarse. El análisis utilizará la API de Claude y consumirá créditos.
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-white/70">
+              <div>Tipo: <b className="text-white">{ocrModal.detalle.tipo_ocr === "imagen" ? "Imagen" : "PDF escaneado"}</b></div>
+              <div>Tamaño: <b className="text-white">{Math.round(ocrModal.detalle.tamano / 1024)} KB</b></div>
+              <div>{ocrModal.detalle.tipo_ocr === "imagen" ? "Imágenes" : "Páginas"}: <b className="text-white">{ocrModal.detalle.paginas_o_imagenes ?? "—"}</b></div>
+              <div>Se analizará: <b className="text-white">texto visible + tablas</b></div>
+            </div>
+            <p className="mt-3 text-xs text-white/40">El costo exacto puede variar y no se muestra antes del análisis. Se respetan los límites diarios/mensuales de IA.</p>
+            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-white/15 bg-black p-4">
+              <input type="checkbox" checked={ocrConfirmado} onChange={(e) => setOcrConfirmado(e.target.checked)} className="mt-1 h-5 w-5 accent-amber-500" />
+              <span className="text-sm font-bold text-white/90">Confirmo que quiero utilizar IA para extraer e interpretar este archivo.</span>
+            </label>
+            {ocrMsg && <p className="mt-3 rounded-xl border border-red-500/40 bg-red-950/30 px-4 py-2 text-sm font-bold text-red-300">{ocrMsg}</p>}
+            <div className="mt-5 flex gap-3">
+              <button onClick={() => setOcrModal(null)} disabled={ocrProcesando} className="flex-1 rounded-2xl border border-white/15 px-5 py-3 text-sm font-black uppercase text-white/70 hover:text-white disabled:opacity-40">Cancelar</button>
+              <button onClick={() => analizarOCR(false)} disabled={!ocrConfirmado || ocrProcesando} className="flex-1 rounded-2xl bg-amber-500 px-5 py-3 text-sm font-black uppercase text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/30">
+                {ocrProcesando ? "Analizando con IA…" : "Analizar con IA"}
+              </button>
+            </div>
           </div>
         </div>
       )}

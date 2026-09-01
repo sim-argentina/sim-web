@@ -1,4 +1,4 @@
-import type { IAProvider, GenerarParams, TurnoProveedor, LlamadaHerramienta } from "@/lib/ia/provider";
+import type { IAProvider, GenerarParams, TurnoProveedor, LlamadaHerramienta, AnalizarVisualParams, ResultadoVisual } from "@/lib/ia/provider";
 import { IAProviderError } from "@/lib/ia/provider";
 
 // Proveedor Anthropic vía la API OFICIAL de Claude (no automatiza el sitio web ni
@@ -79,4 +79,56 @@ export class AnthropicProvider implements IAProvider {
     if (llamadas.length > 0) return { tipo: "herramientas", texto: texto || undefined, llamadas, uso };
     return { tipo: "texto", texto, uso };
   }
+
+  // OCR / visión: envía imágenes o un PDF (document) y pide un JSON estructurado.
+  async analizarVisual(params: AnalizarVisualParams): Promise<ResultadoVisual> {
+    const bloques = params.contenidos.map((c) =>
+      c.tipo === "imagen"
+        ? { type: "image", source: { type: "base64", media_type: c.media_type, data: c.dataBase64 } }
+        : { type: "document", source: { type: "base64", media_type: "application/pdf", data: c.dataBase64 } }
+    );
+    const body = {
+      model: params.modelo,
+      max_tokens: params.maxTokensSalida,
+      system: params.instruccion,
+      messages: [{ role: "user", content: [...bloques, { type: "text", text: "Respondé ÚNICAMENTE con un objeto JSON válido (sin texto adicional) con las claves: texto_detectado (string), descripcion_visual (string), tablas (string), confianza ('alta'|'media'|'baja'), advertencias (string[]), paginas_o_imagenes (number)." }] }],
+    };
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), params.timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(API_URL, { method: "POST", headers: { "content-type": "application/json", "x-api-key": this.apiKey, "anthropic-version": ANTHROPIC_VERSION }, body: JSON.stringify(body), signal: ctrl.signal });
+    } catch (e) {
+      throw new IAProviderError((e as Error)?.name === "AbortError" ? "El análisis visual tardó demasiado (timeout)." : "No se pudo contactar al proveedor de IA.");
+    } finally { clearTimeout(timer); }
+    if (!res.ok) {
+      throw new IAProviderError(res.status === 400 ? "El modelo no pudo procesar este archivo (formato no soportado por visión)." : `El proveedor respondió con estado ${res.status}.`, res.status === 429 ? 429 : 502);
+    }
+    const json = (await res.json()) as { content?: Array<{ type: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+    const uso = { tokensIn: json.usage?.input_tokens ?? 0, tokensOut: json.usage?.output_tokens ?? 0 };
+    const texto = (json.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim();
+    return parsearResultadoVisual(texto, uso);
+  }
+}
+
+function parsearResultadoVisual(texto: string, uso: ResultadoVisual["uso"]): ResultadoVisual {
+  const m = texto.match(/\{[\s\S]*\}/);
+  if (m) {
+    try {
+      const o = JSON.parse(m[0]) as Record<string, unknown>;
+      const conf = o.confianza === "alta" || o.confianza === "media" || o.confianza === "baja" ? o.confianza : "media";
+      return {
+        texto_detectado: String(o.texto_detectado ?? ""),
+        descripcion_visual: String(o.descripcion_visual ?? ""),
+        tablas: String(o.tablas ?? ""),
+        confianza: conf,
+        advertencias: Array.isArray(o.advertencias) ? o.advertencias.map(String) : [],
+        paginas_o_imagenes: Number(o.paginas_o_imagenes) || 1,
+        uso,
+      };
+    } catch { /* cae abajo */ }
+  }
+  // Respuesta no estructurada: se conserva cruda y se marca baja confianza para revisión.
+  return { texto_detectado: texto, descripcion_visual: "", tablas: "", confianza: "baja", advertencias: ["La respuesta del modelo no fue un JSON válido; revisá el contenido."], paginas_o_imagenes: 1, uso, crudo: texto };
 }

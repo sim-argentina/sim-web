@@ -1,4 +1,5 @@
-import type { IAProvider, GenerarParams, TurnoProveedor, Uso } from "@/lib/ia/provider";
+import type { IAProvider, GenerarParams, TurnoProveedor, Uso, AnalizarVisualParams, ResultadoVisual } from "@/lib/ia/provider";
+import { IAProviderError } from "@/lib/ia/provider";
 
 // Proveedor FALSO determinístico (solo tests / IA_PROVIDER=fake). No llama a ninguna
 // API externa. Permite verificar el orquestador, las herramientas y la UI sin gastar.
@@ -55,5 +56,37 @@ export class FakeProviderDefault implements IAProvider {
     const resumen = tool && tool.rol === "tool" ? tool.resultados.map((r) => r.contenido).join(" ").slice(0, 600) : "Sin datos consultados.";
     const texto = `[proveedor de prueba] Respuesta directa basada en las herramientas consultadas. Datos: ${resumen}`;
     return { tipo: "texto", texto, uso: { ...uso, tokensOut: estimarTokens(texto) } };
+  }
+
+  async analizarVisual(params: AnalizarVisualParams): Promise<ResultadoVisual> {
+    return {
+      texto_detectado: `OCR de prueba (${params.contenidos.length} contenido/s): texto legible del archivo.`,
+      descripcion_visual: "Descripción visual de prueba.",
+      tablas: "", confianza: "alta", advertencias: [], paginas_o_imagenes: params.contenidos.length,
+      uso: { tokensIn: 500, tokensOut: 60 },
+    };
+  }
+}
+
+// Proveedor de VISIÓN guionado para tests (baja confianza, inválido, timeout, error).
+export type GuionVisual =
+  | { tipo: "ok"; resultado: Partial<ResultadoVisual> }
+  | { tipo: "error"; mensaje: string }
+  | { tipo: "timeout" };
+
+export class FakeVisionProvider implements IAProvider {
+  nombre = "fake";
+  private i = 0;
+  constructor(private guion: GuionVisual[]) {}
+  async generar(): Promise<TurnoProveedor> { return { tipo: "texto", texto: "", uso: { tokensIn: 0, tokensOut: 0 } }; }
+  async analizarVisual(params: AnalizarVisualParams): Promise<ResultadoVisual> {
+    const paso = this.guion[this.i] ?? { tipo: "ok", resultado: {} };
+    this.i++;
+    if (paso.tipo === "error") throw new IAProviderError(paso.mensaje);
+    if (paso.tipo === "timeout") { await new Promise((r) => setTimeout(r, params.timeoutMs + 20)); throw new IAProviderError("timeout"); }
+    return {
+      texto_detectado: "texto ocr", descripcion_visual: "", tablas: "", confianza: "alta", advertencias: [],
+      paginas_o_imagenes: params.contenidos.length, uso: { tokensIn: 400, tokensOut: 50 }, ...paso.resultado,
+    } as ResultadoVisual;
   }
 }

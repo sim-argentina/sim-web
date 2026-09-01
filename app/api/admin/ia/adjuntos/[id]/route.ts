@@ -26,11 +26,17 @@ export async function GET(req: Request, { params }: Ctx) {
   if (!adj) return NextResponse.json({ error: "No encontrado." }, { status: 404 });
   const firmar = new URL(req.url).searchParams.get("archivo") === "1";
   const url = firmar && adj.storage_path ? await urlFirmada(adj.storage_path as string, 60) : null;
+  const esImagen = typeof adj.mime === "string" && adj.mime.startsWith("image/");
   return NextResponse.json({
     id: adj.id, nombre_original: adj.nombre_original, mime: adj.mime, tamano: adj.tamano,
     estado_procesamiento: adj.estado_procesamiento, metodo_extraccion: adj.metodo_extraccion,
     paginas: adj.paginas, hojas: adj.hojas, diapositivas: adj.diapositivas, advertencias: adj.advertencias,
     contenido: adj.contenido_corregido ?? adj.contenido_extraido, promovido_documento_id: adj.promovido_documento_id,
+    // OCR/visión (separado): resultado OCR, descripción visual y confianza.
+    necesita_ocr: adj.estado_procesamiento === "necesita_ocr",
+    tipo_ocr: esImagen ? "imagen" : "pdf",
+    paginas_o_imagenes: esImagen ? 1 : (adj.paginas ?? null),
+    ocr_texto_detectado: adj.ocr_texto_detectado, ocr_descripcion_visual: adj.ocr_descripcion_visual, ocr_confianza: adj.ocr_confianza,
     archivo_url: url,
   });
 }

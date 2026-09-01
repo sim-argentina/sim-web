@@ -30,9 +30,35 @@ export type GenerarParams = {
   timeoutMs: number;
 };
 
+// ── Visión / OCR (Bloque 4B.1) ────────────────────────────────────────────────
+export type ContenidoVisual =
+  | { tipo: "imagen"; media_type: string; dataBase64: string }
+  | { tipo: "pdf"; dataBase64: string };
+
+export type ResultadoVisual = {
+  texto_detectado: string;
+  descripcion_visual: string;
+  tablas: string;
+  confianza: "alta" | "media" | "baja";
+  advertencias: string[];
+  paginas_o_imagenes: number;
+  uso: Uso;
+  crudo?: string; // respuesta cruda si no se pudo parsear JSON
+};
+
+export type AnalizarVisualParams = {
+  modelo: string;
+  contenidos: ContenidoVisual[];
+  instruccion: string;
+  maxTokensSalida: number;
+  timeoutMs: number;
+};
+
 export interface IAProvider {
   nombre: string;
   generar(params: GenerarParams): Promise<TurnoProveedor>;
+  // Opcional: OCR/visión. Si el proveedor/modelo no lo soporta, lanza IAProviderError.
+  analizarVisual?(params: AnalizarVisualParams): Promise<ResultadoVisual>;
 }
 
 export class IAProviderError extends Error {
