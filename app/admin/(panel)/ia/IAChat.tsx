@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import SafeMarkdown from "./SafeMarkdown";
 import Conocimiento from "./Conocimiento";
+import SaldoCreditos, { type Resumen as SaldoResumen } from "./SaldoCreditos";
 
 type Adjunto = { id: string; nombre_original: string; estado_procesamiento: string; metodo_extraccion: string; advertencias?: string[] | null; promovido_documento_id?: string | null };
 
@@ -23,12 +24,6 @@ const SUGERIDAS = [
 ];
 const PASOS = ["Analizando la pregunta…", "Consultando los módulos…", "Preparando respuesta…"];
 
-// Costo en USD: montos chicos con 4 decimales (no aparecen como cero); ≥US$1 con 2.
-function formatoUSD(n: number): string {
-  const v = Number(n) || 0;
-  return v < 1 ? v.toFixed(4) : v.toFixed(2);
-}
-
 export default function IAChat() {
   const [config, setConfig] = useState<Config | null>(null);
   const [convs, setConvs] = useState<Conv[]>([]);
@@ -40,7 +35,7 @@ export default function IAChat() {
   const [enviando, setEnviando] = useState(false);
   const [paso, setPaso] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [consumo, setConsumo] = useState<{ mes: { tokens_total: number; costo_estimado_usd: number }; porcentaje: { tokens_mes: number }; uso_desconocido?: number } | null>(null);
+  const [saldo, setSaldo] = useState<SaldoResumen | null>(null);
   const [fuentesAbiertas, setFuentesAbiertas] = useState<Record<string, boolean>>({});
   const [vista, setVista] = useState<"chat" | "conocimiento">("chat");
   const [adjuntos, setAdjuntos] = useState<Adjunto[]>([]);
@@ -57,16 +52,16 @@ export default function IAChat() {
     const r = await fetch("/api/admin/ia/conversaciones", { cache: "no-store" });
     if (r.ok) setConvs((await r.json()).conversaciones ?? []);
   }, []);
-  const cargarConsumo = useCallback(async () => {
-    const r = await fetch("/api/admin/ia/consumo", { cache: "no-store" });
-    if (r.ok) setConsumo(await r.json());
+  const cargarSaldo = useCallback(async () => {
+    const res = await fetch("/api/admin/ia/creditos", { cache: "no-store" }).catch(() => null);
+    if (res && res.ok) setSaldo(await res.json());
   }, []);
 
   useEffect(() => {
     fetch("/api/admin/ia/config", { cache: "no-store" }).then((r) => r.json()).then(setConfig).catch(() => setConfig({ configurada: false, faltantes: ["ANTHROPIC_API_KEY"], proveedor: "anthropic", modelos: { economico: "", potente: "" } }));
     cargarConvs();
-    cargarConsumo();
-  }, [cargarConvs, cargarConsumo]);
+    cargarSaldo();
+  }, [cargarConvs, cargarSaldo]);
 
   useEffect(() => {
     if (!enviando) return;
@@ -150,7 +145,7 @@ export default function IAChat() {
       const j = await r.json();
       if (!r.ok) { setOcrMsg(j.error || "No se pudo analizar."); return; }
       if (activa) cargarAdjuntos(activa);
-      cargarConsumo(); // el OCR consume: refrescar el contador sin recargar
+      cargarSaldo(); // el OCR consume: refrescar el saldo/consumo sin recargar
       setOcrModal(null);
       alert(j.ocr?.reutilizado ? "Se reutilizó una extracción existente (sin nuevo consumo)." : `Extracción lista (confianza ${j.ocr?.confianza}). Revisala y, si querés, guardala como conocimiento.`);
     } finally { setOcrProcesando(false); }
@@ -208,7 +203,7 @@ export default function IAChat() {
         return;
       }
       setMensajes((m) => [...m, { id: j.mensajeId, rol: "assistant", contenido: j.texto, modelo: j.modelo, clase_modelo: j.claseModelo, escalado: j.escalado, fuentes: j.fuentes, herramientas: j.herramientas, estado: j.estado }]);
-      cargarConvs(); cargarConsumo();
+      cargarConvs(); cargarSaldo();
     } catch {
       setError("Error de red."); setInput(pregunta);
       setMensajes((m) => m.filter((x) => x.id !== userMsg.id));
@@ -248,12 +243,7 @@ export default function IAChat() {
             <button onClick={() => setVista("conocimiento")} className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-black uppercase ${vista === "conocimiento" ? "bg-red-600 text-white" : "text-white/50 hover:text-white"}`}>Conocimiento</button>
           </div>
           <button onClick={nueva} className="mb-3 w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black uppercase hover:bg-red-700">+ Nueva conversación</button>
-          {consumo && (
-            <div className="mb-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/50">
-              Mes: {consumo.mes.tokens_total.toLocaleString("es-AR")} tokens · ~US${formatoUSD(consumo.mes.costo_estimado_usd)} · {consumo.porcentaje.tokens_mes}% del tope
-              {consumo.uso_desconocido ? <span className="mt-1 block text-amber-400">⚠ {consumo.uso_desconocido} consulta(s) con uso desconocido (no computado).</span> : null}
-            </div>
-          )}
+          <SaldoCreditos data={saldo} recargar={cargarSaldo} />
           <div className="space-y-1">
             {convs.map((c) => (
               <div key={c.id} className={`group flex items-center gap-1 rounded-lg px-3 py-2 text-sm ${activa === c.id ? "bg-white/10" : "hover:bg-white/5"}`}>

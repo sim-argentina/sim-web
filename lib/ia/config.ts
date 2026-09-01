@@ -79,3 +79,34 @@ export function estimarCostoUSD(modelo: string, tokensIn: number, tokensOut: num
 // distingue ROL (admin/staff), no persona; se usa un owner fijo para el admin.
 // LIMITACIÓN documentada: para multi-administrador habrá que emitir identidad por persona.
 export const IA_OWNER_ADMIN = "admin:ramiro";
+
+// ── IA SIM · Bloque 4B.5 — Sincronización de costos OFICIALES (Cost Report) ──
+// Credencial ADMINISTRATIVA distinta de ANTHROPIC_API_KEY. Formato oficial de
+// Anthropic: Admin API key `sk-ant-admin01-...`. Se lee SOLO server-side; nunca
+// se expone al cliente, nunca se guarda en Supabase, nunca se loguea.
+export const IA_ADMIN_KEY_VAR = "ANTHROPIC_ADMIN_KEY";
+
+export function getAdminKey(): string | null {
+  const k = process.env[IA_ADMIN_KEY_VAR];
+  return k && k.trim() ? k.trim() : null;
+}
+export function costoOficialConfigurado(): boolean {
+  return Boolean(getAdminKey());
+}
+
+// Fecha de inicio del rango histórico para el Cost Report (configurable). El
+// costo oficial acumulado se recalcula desde acá hasta hoy en cada sync.
+export function getCostosDesdeISO(): string {
+  const v = process.env.IA_COSTOS_DESDE;
+  if (v && /^\d{4}-\d{2}-\d{2}/.test(v)) return `${v.slice(0, 10)}T00:00:00Z`;
+  return "2025-01-01T00:00:00Z";
+}
+
+// Umbrales de alerta del saldo (USD) y de antigüedad de la sincronización (días).
+export function getAlertasSaldo(): { bajo1: number; bajo2: number; syncStaleDias: number } {
+  return {
+    bajo1: num("IA_SALDO_ALERTA_1", 1),
+    bajo2: num("IA_SALDO_ALERTA_2", 2),
+    syncStaleDias: num("IA_SYNC_STALE_DIAS", 2),
+  };
+}
