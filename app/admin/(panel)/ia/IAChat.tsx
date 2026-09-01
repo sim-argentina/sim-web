@@ -23,6 +23,12 @@ const SUGERIDAS = [
 ];
 const PASOS = ["Analizando la pregunta…", "Consultando los módulos…", "Preparando respuesta…"];
 
+// Costo en USD: montos chicos con 4 decimales (no aparecen como cero); ≥US$1 con 2.
+function formatoUSD(n: number): string {
+  const v = Number(n) || 0;
+  return v < 1 ? v.toFixed(4) : v.toFixed(2);
+}
+
 export default function IAChat() {
   const [config, setConfig] = useState<Config | null>(null);
   const [convs, setConvs] = useState<Conv[]>([]);
@@ -34,7 +40,7 @@ export default function IAChat() {
   const [enviando, setEnviando] = useState(false);
   const [paso, setPaso] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [consumo, setConsumo] = useState<{ mes: { tokens_total: number; costo_estimado_usd: number }; porcentaje: { tokens_mes: number } } | null>(null);
+  const [consumo, setConsumo] = useState<{ mes: { tokens_total: number; costo_estimado_usd: number }; porcentaje: { tokens_mes: number }; uso_desconocido?: number } | null>(null);
   const [fuentesAbiertas, setFuentesAbiertas] = useState<Record<string, boolean>>({});
   const [vista, setVista] = useState<"chat" | "conocimiento">("chat");
   const [adjuntos, setAdjuntos] = useState<Adjunto[]>([]);
@@ -144,6 +150,7 @@ export default function IAChat() {
       const j = await r.json();
       if (!r.ok) { setOcrMsg(j.error || "No se pudo analizar."); return; }
       if (activa) cargarAdjuntos(activa);
+      cargarConsumo(); // el OCR consume: refrescar el contador sin recargar
       setOcrModal(null);
       alert(j.ocr?.reutilizado ? "Se reutilizó una extracción existente (sin nuevo consumo)." : `Extracción lista (confianza ${j.ocr?.confianza}). Revisala y, si querés, guardala como conocimiento.`);
     } finally { setOcrProcesando(false); }
@@ -243,7 +250,8 @@ export default function IAChat() {
           <button onClick={nueva} className="mb-3 w-full rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black uppercase hover:bg-red-700">+ Nueva conversación</button>
           {consumo && (
             <div className="mb-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/50">
-              Mes: {consumo.mes.tokens_total.toLocaleString("es-AR")} tokens · ~US${consumo.mes.costo_estimado_usd} · {consumo.porcentaje.tokens_mes}% del tope
+              Mes: {consumo.mes.tokens_total.toLocaleString("es-AR")} tokens · ~US${formatoUSD(consumo.mes.costo_estimado_usd)} · {consumo.porcentaje.tokens_mes}% del tope
+              {consumo.uso_desconocido ? <span className="mt-1 block text-amber-400">⚠ {consumo.uso_desconocido} consulta(s) con uso desconocido (no computado).</span> : null}
             </div>
           )}
           <div className="space-y-1">

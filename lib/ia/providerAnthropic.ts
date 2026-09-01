@@ -8,6 +8,17 @@ import { IAProviderError } from "@/lib/ia/provider";
 const API_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
+// Usage real de Anthropic. Los tokens de caché son tokens de ENTRADA facturables:
+// se suman a tokensIn para que el consumo total sea exacto (no cero).
+export type Usage = { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
+export function usoDesde(u: Usage | undefined): { tokensIn: number; tokensOut: number } {
+  const uu = u ?? {};
+  return {
+    tokensIn: (uu.input_tokens ?? 0) + (uu.cache_creation_input_tokens ?? 0) + (uu.cache_read_input_tokens ?? 0),
+    tokensOut: uu.output_tokens ?? 0,
+  };
+}
+
 type Bloque =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
@@ -68,10 +79,10 @@ export class AnthropicProvider implements IAProvider {
 
     const json = (await res.json()) as {
       content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
-      usage?: { input_tokens?: number; output_tokens?: number };
+      usage?: Usage;
       stop_reason?: string;
     };
-    const uso = { tokensIn: json.usage?.input_tokens ?? 0, tokensOut: json.usage?.output_tokens ?? 0 };
+    const uso = usoDesde(json.usage);
     const bloques = json.content ?? [];
     const llamadas: LlamadaHerramienta[] = bloques.filter((b) => b.type === "tool_use").map((b) => ({ id: b.id!, nombre: b.name!, input: (b.input ?? {}) as Record<string, unknown> }));
     const texto = bloques.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim();
@@ -105,8 +116,8 @@ export class AnthropicProvider implements IAProvider {
     if (!res.ok) {
       throw new IAProviderError(res.status === 400 ? "El modelo no pudo procesar este archivo (formato no soportado por visión)." : `El proveedor respondió con estado ${res.status}.`, res.status === 429 ? 429 : 502);
     }
-    const json = (await res.json()) as { content?: Array<{ type: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
-    const uso = { tokensIn: json.usage?.input_tokens ?? 0, tokensOut: json.usage?.output_tokens ?? 0 };
+    const json = (await res.json()) as { content?: Array<{ type: string; text?: string }>; usage?: Usage };
+    const uso = usoDesde(json.usage);
     const texto = (json.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim();
     return parsearResultadoVisual(texto, uso);
   }
