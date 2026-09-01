@@ -38,6 +38,26 @@ for (const ruta of rutas) {
   assert.ok(/HERRAMIENTAS_CONOCIMIENTO/.test(reg), "el registro principal incluye conocimiento");
 }
 
+// Recuperación GLOBAL determinística: el servidor busca conocimiento ANTES de responder
+// (no depende de que el modelo llame la herramienta) y lo audita.
+{
+  const src = read("lib/ia/server.ts");
+  assert.ok(/buscarConocimiento\(/.test(src), "server: hace búsqueda previa de conocimiento");
+  assert.ok(/busqueda_previa/.test(src), "server: audita la búsqueda previa (consulta, coincidencias, documentos)");
+  assert.ok(/INTENCION_CONOCIMIENTO|listarDocumentosActivos/.test(src), "server: intención de conocimiento + fallback a listar documentos");
+  // Las herramientas de conocimiento siguen disponibles para ambos modelos (no las quita el router).
+  const orq = read("lib/ia/orchestrator.ts");
+  assert.ok(/defsParaProveedor\(\)/.test(orq) && !/economico[^]*herramientas: \[\]/.test(orq), "orquestador ofrece todas las herramientas (no las quita por modelo)");
+}
+
+// FTS OR: una pregunta natural no exige TODOS los términos.
+{
+  const src = read("lib/ia/docs/conocimientoServer.ts");
+  assert.ok(/construirTsQueryOR/.test(src) && /join\(" \| "\)/.test(src), "FTS con OR de términos (no websearch/AND)");
+  assert.ok(!/type: "websearch"/.test(src), "no usa websearch (AND estricto)");
+  assert.ok(/resolverCategoriaActiva/.test(src), "categoría obligatoria (default General, rechaza inexistente/archivada)");
+}
+
 // El prompt declara la prioridad de fuentes y trata los documentos como datos.
 {
   const sp = read("lib/ia/systemPrompt.ts");

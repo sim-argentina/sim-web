@@ -45,7 +45,7 @@ async function main() {
     const catId = cat.ok ? cat.categoria.id as string : "";
 
     // ── Documento directo → borrador → NO se busca hasta activar ─────────────
-    const doc1 = await crearDocumento({ buf: enc("Politica de precios SIM. El turno cuesta 15000. Los martes cerramos a las 20 hs."), nombre: "politica.txt", titulo: "ZZTEST Politica precios", categoriaId: catId, descripcion: null, vigenciaDesde: null, vigenciaHasta: null, actor: "test" });
+    const doc1 = await crearDocumento({ buf: enc("Politica de precios SIM. El turno cuesta 15000. Los martes el local cierra temprano."), nombre: "politica.txt", titulo: "ZZTEST Politica precios", categoriaId: catId, descripcion: null, vigenciaDesde: null, vigenciaHasta: null, actor: "test" });
     assert.ok(doc1.ok, "documento creado"); if (!doc1.ok) return;
     let hits = await buscarConocimiento({ consulta: "martes cerramos" });
     assert.ok(!hits.some((h) => h.documento_id === doc1.documentoId), "borrador NO aparece en la búsqueda");
@@ -58,15 +58,15 @@ async function main() {
     assert.equal((await versionesActivas(doc1.documentoId)).length, 1, "una sola versión activa");
 
     // ── Nueva versión: la anterior sigue activa hasta confirmar; luego swap atómico ─
-    const v2 = await nuevaVersion({ documentoId: doc1.documentoId, buf: enc("Politica v2. Los martes cerramos a las 21 hs."), nombre: "politica2.txt", actor: "test" });
+    const v2 = await nuevaVersion({ documentoId: doc1.documentoId, buf: enc("Politica v2. Los martes el local cierra tardisimo."), nombre: "politica2.txt", actor: "test" });
     assert.ok(v2.ok, "nueva versión (borrador)"); if (!v2.ok) return;
     assert.equal((await versionesActivas(doc1.documentoId)).length, 1, "sigue una sola activa (la anterior) durante el borrador");
-    hits = await buscarConocimiento({ consulta: "21 hs" });
+    hits = await buscarConocimiento({ consulta: "tardisimo" });
     assert.ok(!hits.some((x) => x.documento_id === doc1.documentoId), "borrador v2 no se busca todavía");
     await activarVersion(doc1.documentoId, v2.versionId);
     assert.equal((await versionesActivas(doc1.documentoId)).length, 1, "sigue una sola activa tras el swap");
-    assert.ok((await buscarConocimiento({ consulta: "21 hs" })).some((x) => x.documento_id === doc1.documentoId), "v2 activa se busca");
-    assert.ok(!(await buscarConocimiento({ consulta: "20 hs" })).some((x) => x.documento_id === doc1.documentoId), "v1 reemplazada NO se busca");
+    assert.ok((await buscarConocimiento({ consulta: "tardisimo" })).some((x) => x.documento_id === doc1.documentoId), "v2 activa se busca");
+    assert.ok(!(await buscarConocimiento({ consulta: "temprano" })).some((x) => x.documento_id === doc1.documentoId), "v1 reemplazada NO se busca");
 
     // ── Restaurar v1 → nueva versión activa basada en ella ──────────────────
     const { data: vlist } = await supabaseAdmin.from("ia_documento_versiones").select("id, numero").eq("documento_id", doc1.documentoId).order("numero");
@@ -74,10 +74,10 @@ async function main() {
     const rest = await restaurarVersion({ documentoId: doc1.documentoId, versionBaseId: v1id, actor: "test" });
     assert.ok(rest.ok, "restauración ok");
     assert.equal((await versionesActivas(doc1.documentoId)).length, 1, "una sola activa tras restaurar");
-    assert.ok((await buscarConocimiento({ consulta: "20 hs" })).some((x) => x.documento_id === doc1.documentoId), "contenido restaurado se busca");
+    assert.ok((await buscarConocimiento({ consulta: "temprano" })).some((x) => x.documento_id === doc1.documentoId), "contenido restaurado se busca");
 
     // ── Dedup por SHA (informativo) ─────────────────────────────────────────
-    const dupDoc = await crearDocumento({ buf: enc("Politica de precios SIM. El turno cuesta 15000. Los martes cerramos a las 20 hs."), nombre: "politica.txt", titulo: "ZZTEST Politica dup", categoriaId: catId, descripcion: null, vigenciaDesde: null, vigenciaHasta: null, actor: "test" });
+    const dupDoc = await crearDocumento({ buf: enc("Politica de precios SIM. El turno cuesta 15000. Los martes el local cierra temprano."), nombre: "politica.txt", titulo: "ZZTEST Politica dup", categoriaId: catId, descripcion: null, vigenciaDesde: null, vigenciaHasta: null, actor: "test" });
     assert.ok(dupDoc.ok && dupDoc.duplicadoDe, "aviso de duplicado por SHA");
 
     // ── Adjunto: propio de la conversación, no visible en otra ──────────────

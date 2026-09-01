@@ -37,6 +37,20 @@ export async function actualizarCategoria(id: string, patch: { nombre?: string; 
   return { ok: true as const };
 }
 
+// Resuelve la categoría a usar: la provista (si existe y está activa) o General por
+// defecto. Rechaza categorías inexistentes o archivadas (validación server-side).
+export async function resolverCategoriaActiva(categoriaId: string | null): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  if (categoriaId) {
+    const { data } = await supabaseAdmin.from("ia_conocimiento_categorias").select("id, estado").eq("id", categoriaId).maybeSingle();
+    if (!data) return { ok: false, error: "La categoría no existe." };
+    if (data.estado !== "activa") return { ok: false, error: "La categoría está archivada." };
+    return { ok: true, id: data.id as string };
+  }
+  const { data: gen } = await supabaseAdmin.from("ia_conocimiento_categorias").select("id").eq("nombre_norm", "general").maybeSingle();
+  if (!gen) return { ok: false, error: "No existe la categoría General." };
+  return { ok: true, id: gen.id as string };
+}
+
 // ── Fragmentos ────────────────────────────────────────────────────────────────
 function chunkManual(texto: string): Fragmento[] {
   const limpio = (texto || "").replace(/\r\n/g, "\n").trim();
@@ -75,35 +89,66 @@ async function reindexarFragmentos(documentoId: string, versionId: string, categ
 
 // ── Activación atómica de una versión (regenera fragmentos) ───────────────────
 export async function activarVersion(documentoId: string, versionId: string) {
+  // Precondiciones: contenido utilizable y categoría (no activar una tarjeta vacía).
+  const { data: ver0 } = await supabaseAdmin.from("ia_documento_versiones").select("contenido_extraido, contenido_corregido").eq("id", versionId).eq("documento_id", documentoId).maybeSingle();
+  if (!ver0) return { ok: false as const, status: 404, error: "Versión no encontrada." };
+  const contenido = ((ver0.contenido_corregido ?? ver0.contenido_extraido) ?? "").trim();
+  if (!contenido) return { ok: false as const, status: 409, error: "La versión no tiene contenido utilizable; cargá el contenido antes de activar." };
+  const { data: doc } = await supabaseAdmin.from("ia_documentos").select("categoria_id").eq("id", documentoId).single();
+  if (!doc?.categoria_id) return { ok: false as const, status: 409, error: "El documento no tiene categoría; asignale una antes de activar." };
+
+  // Generar fragmentos ANTES de activar; si no hay fragmentos válidos, no se activa.
+  const { data: ver } = await supabaseAdmin.from("ia_documento_versiones").select("*").eq("id", versionId).single();
+  const frags = ver ? await fragmentosParaVersion(ver) : [];
+  if (frags.length === 0) return { ok: false as const, status: 409, error: "No se pudieron generar fragmentos indexables; revisá el contenido." };
+
   const { error } = await supabaseAdmin.rpc("ia_doc_activar_version", { p_documento_id: documentoId, p_version_id: versionId });
   if (error) return { ok: false as const, status: 409, error: "No se pudo activar la versión." };
-  const { data: ver } = await supabaseAdmin.from("ia_documento_versiones").select("*").eq("id", versionId).single();
-  const { data: doc } = await supabaseAdmin.from("ia_documentos").select("categoria_id").eq("id", documentoId).single();
-  if (ver) await reindexarFragmentos(documentoId, versionId, doc?.categoria_id ?? null, await fragmentosParaVersion(ver));
+  await reindexarFragmentos(documentoId, versionId, doc.categoria_id as string, frags);
   return { ok: true as const };
 }
 
 // ── Búsqueda de conocimiento (FTS español, ranking determinístico) ────────────
 export type FragmentoResultado = {
-  documento_id: string; version_id: string; titulo: string; categoria: string | null;
+  documento_id: string; version_id: string; version_numero: number; titulo: string; categoria: string | null;
   ubicacion: string; fragmento: string; metodo_extraccion: string | null; vigencia: { desde: string | null; hasta: string | null };
   score: number; advertencias: string[];
 };
+
+// Stopwords mínimas en español (para no exigir que "aparecen"/"qué"/"según" matcheen).
+const STOP = new Set([
+  "de", "el", "la", "lo", "un", "en", "es", "se", "al", "mi", "tu", "su", "si", "ya", "me", "te", "le", "los", "las",
+  "que", "qué", "con", "del", "para", "por", "una", "uno", "unos", "unas", "como", "cual", "cuál", "cuales", "cuáles",
+  "esta", "este", "esto", "estos", "estas", "aparece", "aparecen", "tiene", "tienen", "sobre", "entre", "desde", "hasta",
+  "muy", "mas", "más", "sus", "según", "segun", "cuando", "donde", "dónde", "porque", "cuánto", "cuanto", "hay", "son",
+  "fue", "ser", "the", "and", "documento", "documentos", "archivo", "imagen",
+]);
+
+// tsquery OR de los términos significativos → una pregunta natural igual encuentra el
+// documento relevante (websearch exigía TODOS los términos y devolvía 0 resultados).
+// Se conservan términos de 2+ caracteres (para números/códigos como "21", "20").
+export function construirTsQueryOR(consulta: string): string | null {
+  const tokens = normalizar(consulta).split(/[^a-z0-9ñ]+/).filter((t) => t.length >= 2 && !STOP.has(t));
+  const unicos = [...new Set(tokens)];
+  return unicos.length > 0 ? unicos.join(" | ") : null;
+}
 
 export async function buscarConocimiento(params: { consulta: string; categorias?: string[]; vigenteEn?: string | null; limite?: number }): Promise<FragmentoResultado[]> {
   const q = (params.consulta || "").trim();
   if (!q) return [];
   const limite = Math.min(Math.max(params.limite ?? 6, 1), 20);
-  // FTS español sobre fragmentos de la versión ACTIVA de documentos ACTIVOS.
+  const tsq = construirTsQueryOR(q);
+  if (!tsq) return [];
+  // FTS español (OR de términos) sobre fragmentos de la versión ACTIVA de docs ACTIVOS.
   const sql = await supabaseAdmin
     .from("ia_documento_fragmentos")
-    .select("id, documento_id, version_id, ubicacion, texto, categoria_id, ia_documentos!inner(id, titulo, estado, categoria_id, version_activa_id, vigencia_desde, vigencia_hasta), ia_documento_versiones!inner(id, estado, metodo_extraccion)")
-    .textSearch("tsv", q, { type: "websearch", config: "spanish" })
+    .select("id, documento_id, version_id, ubicacion, texto, categoria_id, ia_documentos!inner(id, titulo, estado, categoria_id, version_activa_id, vigencia_desde, vigencia_hasta), ia_documento_versiones!inner(id, numero, estado, metodo_extraccion)")
+    .textSearch("tsv", tsq, { config: "spanish" })
     .limit(80);
   const rows = (sql.data ?? []) as unknown as Array<{
     documento_id: string; version_id: string; ubicacion: string; texto: string; categoria_id: string | null;
     ia_documentos: { titulo: string; estado: string; version_activa_id: string | null; vigencia_desde: string | null; vigencia_hasta: string | null };
-    ia_documento_versiones: { estado: string; metodo_extraccion: string | null };
+    ia_documento_versiones: { numero: number; estado: string; metodo_extraccion: string | null };
   }>;
 
   const catNombre = await mapaCategorias();
@@ -127,7 +172,7 @@ export async function buscarConocimiento(params: { consulta: string; categorias?
     let score = terminos.reduce((s, t) => s + (tN.includes(t) ? 1 : 0), 0);
     if (terminos.some((t) => normalizar(r.ia_documentos.titulo).includes(t))) score += 0.5;
     out.push({
-      documento_id: r.documento_id, version_id: r.version_id, titulo: r.ia_documentos.titulo,
+      documento_id: r.documento_id, version_id: r.version_id, version_numero: r.ia_documento_versiones.numero, titulo: r.ia_documentos.titulo,
       categoria: r.categoria_id ? catNombre[r.categoria_id] ?? null : null,
       ubicacion: r.ubicacion, fragmento: r.texto.length > 700 ? r.texto.slice(0, 700) + "…" : r.texto,
       metodo_extraccion: r.ia_documento_versiones.metodo_extraccion,

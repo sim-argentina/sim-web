@@ -4,7 +4,7 @@ import { detectar } from "@/lib/ia/docs/deteccion";
 import { extraer } from "@/lib/ia/docs/extractors";
 import { getLimitesDocs } from "@/lib/ia/docs/config";
 import { sha256, rutaDocumento, subir, borrar } from "@/lib/ia/docs/storage";
-import { activarVersion } from "@/lib/ia/docs/conocimientoServer";
+import { activarVersion, resolverCategoriaActiva } from "@/lib/ia/docs/conocimientoServer";
 
 // IA SIM · Bloque 4B — Ciclo de vida de documentos de conocimiento: carga directa,
 // nueva versión (borrador → activa atómica), restauración e historial.
@@ -32,13 +32,16 @@ async function proximoNumero(documentoId: string): Promise<number> {
 // Carga directa de un documento nuevo (queda en BORRADOR hasta confirmar/activar).
 export async function crearDocumento(p: { buf: Uint8Array; nombre: string; titulo: string; categoriaId: string | null; descripcion: string | null; vigenciaDesde: string | null; vigenciaHasta: string | null; actor: string }): Promise<{ ok: true; documentoId: string; versionId: string; resultado: unknown; duplicadoDe?: string } | Fail> {
   if (!p.titulo.trim()) return { ok: false, status: 400, error: "El título es obligatorio." };
+  // Categoría OBLIGATORIA (default General; rechaza inexistente/archivada).
+  const cat = await resolverCategoriaActiva(p.categoriaId);
+  if (!cat.ok) return { ok: false, status: 400, error: cat.error };
   const proc = await procesarYSubir(p.buf, p.nombre);
   if (!proc.ok) return proc;
 
   // Aviso de duplicado por SHA (no bloquea, informa).
   const { data: dup } = await supabaseAdmin.from("ia_documento_versiones").select("documento_id").eq("sha256", proc.sha).limit(1).maybeSingle();
 
-  const { data: doc, error: e1 } = await supabaseAdmin.from("ia_documentos").insert({ titulo: p.titulo.trim().slice(0, 300), categoria_id: p.categoriaId, descripcion: p.descripcion?.slice(0, 2000) ?? null, fuente: "carga_directa", vigencia_desde: p.vigenciaDesde, vigencia_hasta: p.vigenciaHasta, actor: p.actor }).select("id").single();
+  const { data: doc, error: e1 } = await supabaseAdmin.from("ia_documentos").insert({ titulo: p.titulo.trim().slice(0, 300), categoria_id: cat.id, descripcion: p.descripcion?.slice(0, 2000) ?? null, fuente: "carga_directa", vigencia_desde: p.vigenciaDesde, vigencia_hasta: p.vigenciaHasta, actor: p.actor }).select("id").single();
   if (e1 || !doc) { await borrar([proc.path]); return { ok: false, status: 500, error: "No se pudo crear el documento." }; }
   const { data: ver, error: e2 } = await supabaseAdmin.from("ia_documento_versiones").insert({
     documento_id: doc.id, numero: 1, estado: "borrador", storage_path: proc.path, nombre_original: p.nombre.slice(0, 300),

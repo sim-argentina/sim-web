@@ -4,7 +4,7 @@ import { detectar } from "@/lib/ia/docs/deteccion";
 import { extraer } from "@/lib/ia/docs/extractors";
 import { getLimitesDocs } from "@/lib/ia/docs/config";
 import { sha256, rutaAdjunto, rutaDocumento, subir, borrar, copiar, descargar } from "@/lib/ia/docs/storage";
-import { fragmentosParaVersion, reindexarFragmentos } from "@/lib/ia/docs/conocimientoServer";
+import { fragmentosParaVersion, reindexarFragmentos, resolverCategoriaActiva } from "@/lib/ia/docs/conocimientoServer";
 import { necesidadOCR, analizarArchivoOCR } from "@/lib/ia/docs/ocr";
 import { crearProvider } from "@/lib/ia/providerFactory";
 import { IA_OWNER_ADMIN, iaEstaConfigurada } from "@/lib/ia/config";
@@ -114,6 +114,9 @@ export async function promoverAdjunto(p: { adjuntoId: string; titulo: string; ca
   if (adj.promovido_documento_id) return { ok: false, status: 409, error: "El adjunto ya fue guardado como conocimiento." };
   if (!p.titulo.trim()) return { ok: false, status: 400, error: "El título es obligatorio." };
   if (!p.contenido.trim()) return { ok: false, status: 400, error: "El contenido a guardar no puede estar vacío." };
+  // Categoría OBLIGATORIA (default General; rechaza inexistente/archivada).
+  const cat = await resolverCategoriaActiva(p.categoriaId);
+  if (!cat.ok) return { ok: false, status: 400, error: cat.error };
 
   // Copiar el archivo a una ruta de documento (independiente del adjunto/conversación).
   const destPath = adj.storage_path ? rutaDocumento(randomUUID(), (adj.nombre_original as string) || "doc") : null;
@@ -123,7 +126,7 @@ export async function promoverAdjunto(p: { adjuntoId: string; titulo: string; ca
   }
 
   const { data, error } = await supabaseAdmin.rpc("ia_promover_adjunto", {
-    p_adjunto_id: p.adjuntoId, p_titulo: p.titulo.trim().slice(0, 300), p_categoria_id: p.categoriaId,
+    p_adjunto_id: p.adjuntoId, p_titulo: p.titulo.trim().slice(0, 300), p_categoria_id: cat.id,
     p_descripcion: p.descripcion?.slice(0, 2000) ?? null, p_contenido: p.contenido.slice(0, getLimitesDocs().maxCaracteres),
     p_storage_path: destPath, p_vigencia_desde: p.vigenciaDesde, p_vigencia_hasta: p.vigenciaHasta, p_actor: p.actor,
   });
