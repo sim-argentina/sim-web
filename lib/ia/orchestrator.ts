@@ -33,7 +33,7 @@ export type EjecutarChatParams = {
   limites: IALimites;
   historialPrevio: HistorialTurno[];
   pregunta: string;
-  sistemaExtra?: string; // contexto adicional (ej: adjuntos de la conversación), como DATO
+  contextoUsuario?: string; // contexto dinámico (conocimiento/adjuntos) como DATO de nivel USUARIO
 };
 
 export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResultado> {
@@ -43,8 +43,11 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
   let modelo = p.modelos[clase];
   let escalado = false;
 
-  const system = SYSTEM_PROMPT + (p.sistemaExtra ? "\n\n" + p.sistemaExtra : "");
-  const historial: HistorialTurno[] = [...p.historialPrevio, { rol: "user", texto: p.pregunta }];
+  // El prompt del sistema es ESTÁTICO (reglas estables). El conocimiento/adjuntos
+  // recuperados NUNCA se concatenan al sistema: viajan como CONTEXTO de nivel USUARIO.
+  const system = SYSTEM_PROMPT;
+  const turnoUsuario = p.contextoUsuario ? `${p.contextoUsuario}\n\n[PREGUNTA DEL ADMINISTRADOR]\n${p.pregunta}` : p.pregunta;
+  const historial: HistorialTurno[] = [...p.historialPrevio, { rol: "user", texto: turnoUsuario }];
   const herramientasEjecutadas: HerramientaEjecutada[] = [];
   const fuentes: ToolFuente[] = [];
   let tokensIn = 0, tokensOut = 0;
