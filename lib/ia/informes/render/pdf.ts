@@ -55,15 +55,24 @@ export function renderPDF(ctx: ContextoRender): Buffer {
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
   const CW = W - MX * 2;
-  const LIMITE = H - MBOT; // el contenido no puede pasar de aquí
+  const LIMITE = H - MBOT; // el contenido no puede pasar de aquí (zona de pie reservada)
+  const UTIL = LIMITE - MTOP; // altura útil de una página nueva (bajo el encabezado)
   let y = MTOP;
 
   const nuevaPagina = () => { doc.addPage(); y = MTOP; };
   const espacio = (h: number) => { if (y + h > LIMITE) nuevaPagina(); };
+  // Alto de un texto envuelto a un ancho dado.
+  const medir = (txt: string, size: number, ancho = CW) => (doc.splitTextToSize(sanPdf(txt), ancho) as string[]).length * (size + 3);
+  // Si un bloque de alto `h` no entra en lo que resta pero SÍ entra en una página nueva,
+  // empieza en página nueva (así el bloque no se parte ni queda huérfano).
+  const mantenerJuntos = (h: number) => { if (y + h > LIMITE && h <= UTIL) nuevaPagina(); };
+  // Párrafo INDIVISIBLE: si entra completo en una página nueva, no se parte entre páginas
+  // (solo se divide línea a línea cuando es más alto que una página entera).
   const parrafo = (txt: string, size = 10, color = NEGRO, gap = 6) => {
     if (!txt) return;
     doc.setFont(FONT, "normal").setFontSize(size).setTextColor(...color);
     const lineas = doc.splitTextToSize(sanPdf(txt), CW) as string[];
+    mantenerJuntos(lineas.length * (size + 3));
     for (const ln of lineas) { espacio(size + 3); doc.text(ln, MX, y); y += size + 3; }
     y += gap;
   };
@@ -164,12 +173,26 @@ export function renderPDF(ctx: ContextoRender): Buffer {
     }
   }
 
-  // ── Fuentes y metodología (SIN duplicar período/corte: ya están en la portada) ─
-  titulo("Fuentes y metodología", 13, 44);
-  parrafo(`Módulos consultados: ${s.modulos_consultados.join(", ") || "—"}.`, 10, NEGRO, 2);
-  if (s.registros_utilizados != null) parrafo(`Registros utilizados: ${s.registros_utilizados}.`, 10, NEGRO, 2);
-  if (s.metodologia) parrafo(s.metodologia, 10, NEGRO, 4);
-  if (s.fuentes.length) bullets(s.fuentes.map((f) => `${f.modulo}${f.periodo ? ` · ${f.periodo}` : ""}${f.registros != null ? ` · ${f.registros} reg.` : ""}`), 9);
+  // ── Fuentes y metodología: BLOQUE COHERENTE (título + módulos + metodología + fuentes).
+  // Se mide completo y, si no entra en lo que resta, comienza en página nueva (así no arranca
+  // a mitad de una oración ni el título queda separado de su primer párrafo). La metodología
+  // se divide en párrafos INDIVISIBLES (cada oración no se parte entre páginas).
+  const lineaModulos = `Módulos consultados: ${s.modulos_consultados.join(", ") || "—"}.`;
+  const lineaRegistros = s.registros_utilizados != null ? `Registros utilizados: ${s.registros_utilizados}.` : "";
+  const metodParrafos = (s.metodologia ?? "").split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  const fuentesLineas = s.fuentes.map((f) => `${f.modulo}${f.periodo ? ` · ${f.periodo}` : ""}${f.registros != null ? ` · ${f.registros} reg.` : ""}`);
+  // Altura estimada del bloque completo (título + párrafos + metodología + fuentes).
+  let hFuentes = 13 + 9 + 5; // título
+  hFuentes += medir(lineaModulos, 10) + 2;
+  if (lineaRegistros) hFuentes += medir(lineaRegistros, 10) + 2;
+  for (const p of metodParrafos) hFuentes += medir(p, 10) + 4;
+  hFuentes += fuentesLineas.reduce((acc, ln) => acc + medir(ln, 9, CW - 14) + 2, 0) + 3;
+  mantenerJuntos(hFuentes);
+  titulo("Fuentes y metodología", 13, medir(lineaModulos, 10));
+  parrafo(lineaModulos, 10, NEGRO, 2);
+  if (lineaRegistros) parrafo(lineaRegistros, 10, NEGRO, 2);
+  for (const p of metodParrafos) parrafo(p, 10, NEGRO, 3);
+  if (fuentesLineas.length) bullets(fuentesLineas, 9);
 
   // ── Advertencias / faltantes / cambios manuales ──────────────────────────────
   if (s.advertencias.length) { titulo("Advertencias", 12, 26); bullets(s.advertencias, 9); }

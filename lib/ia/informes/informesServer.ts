@@ -415,6 +415,13 @@ export function repararPortabilidadV4(p: { informeId: string; owner: string }): 
   return repararRenderizado(p, "correccion_portabilidad_pdf", { fuente_incrustada: "Liberation Sans (regular + bold, OFL)", paginacion_corregida: true, tildes_corregidas: true, autofiltros_corregidos: true });
 }
 
+// 4C.5 — corrección de continuidad de páginas (v4 → v5): párrafos indivisibles (no se parten
+// entre páginas), "Fuentes y metodología" como bloque coherente que empieza limpio en página
+// nueva (no a mitad de oración), encabezado/pie centralizados en todas las páginas ≥2. Cierra 4C.
+export function repararContinuidadV5(p: { informeId: string; owner: string }): Promise<ResultadoReparacion> {
+  return repararRenderizado(p, "correccion_continuidad_paginas", { parrafos_indivisibles: true, seccion_fuentes_bloque_coherente: true, encabezado_centralizado: true, sin_oracion_cortada_entre_paginas: true });
+}
+
 // ── Listar versiones ──────────────────────────────────────────────────────────
 export async function listarVersiones(informeId: string, owner: string): Promise<{ ok: true; versiones: unknown[] } | Fail> {
   const c = await cargar(informeId, owner);
