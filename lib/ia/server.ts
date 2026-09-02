@@ -2,7 +2,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { HistorialTurno } from "@/lib/ia/provider";
 import { ejecutarChat } from "@/lib/ia/orchestrator";
 import { crearProvider } from "@/lib/ia/providerFactory";
-import { getLimites, getModelos, getProveedor, estimarCostoUSD, iaEstaConfigurada, variablesFaltantes } from "@/lib/ia/config";
+import { getLimites, getModelos, getProveedor, estimarCostoUSD, iaEstaConfigurada, variablesFaltantes, PRECIOS_VERSION } from "@/lib/ia/config";
 import { buscarConocimiento, listarDocumentosActivos, normalizar } from "@/lib/ia/docs/conocimientoServer";
 import { crearBorrador } from "@/lib/ia/informes/informesServer";
 import { NOMBRE_PREPARAR_INFORME } from "@/lib/ia/informes/informeTool";
@@ -143,6 +143,8 @@ export async function correrChat(params: { owner: string; conversacionId: string
     clase_modelo: res.claseModelo, motivo_router: res.motivoRouter, escalado: res.escalado,
     tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, rondas: res.rondas, duracion_ms: res.duracion_ms, estado: res.estado, error: res.error ?? null,
     busqueda_previa: busquedaPrevia,
+    // Costo por ejecución CONGELADO con la versión de precios vigente (para el saldo interno).
+    costo_estimado: costo ?? 0, precios_version: PRECIOS_VERSION,
   }).select("id").single();
   if (eje?.id && res.herramientas.length > 0) {
     await supabaseAdmin.from("ia_herramientas_ejecuciones").insert(res.herramientas.map((h) => ({ ejecucion_id: eje.id, herramienta: h.nombre, params: h.params, resumen: h.resumen, ok: h.ok, error: h.error ?? null, duracion_ms: h.duracion_ms })));
