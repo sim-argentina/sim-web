@@ -83,21 +83,21 @@ export function construirComponentes(datos: DatosMetricas, meta: MetaInforme): {
   // ── Metodología (reglas del motor; SIN repetir período/corte, ASCII-safe) ────
   const cro = meta.cronograma;
   const metodologia = [
-    "Atribucion por MES DE SERVICIO (no por mes de cobro; no altera Finanzas). Se atribuye al integrante presente segun el cronograma confirmado; ante simultaneidad, la actividad se reparte entre los integrantes presentes.",
-    "Se separan dos origenes: Turnero Stand y Reservas web (se cuentan una sola vez cada uno; reconcilian con el total).",
-    "Unidades: horas de cronograma (h; en minutos internamente), turnos (personas x minutos / 15), personas/simuladores, operaciones, minutos de actividad, y pesos argentinos (ARS) para facturacion.",
-    "Facturacion: bruta, comisiones y neta (neta = bruta - comisiones). Finanzas no modela comision de Reservas web (queda en 0; no se inventa).",
-    `Cronograma del mes: estado ${cro?.estado ?? "confirmado"}${cro?.dias != null ? ` (${cro.dias} dias, ${cro.cerrados ?? 0} cerrados)` : ""}. Se excluyen reservas reembolsadas segun las reglas vigentes.`,
-    `Reconciliacion de datos: OK. Registros considerados: Stand ${meta.registros?.stand ?? 0}, Reservas ${meta.registros?.reservas ?? 0}.`,
+    "Atribución por MES DE SERVICIO (no por mes de cobro; no altera Finanzas). Se atribuye al integrante presente según el cronograma confirmado; ante simultaneidad, la actividad se reparte entre los integrantes presentes.",
+    "Se separan dos orígenes: Turnero Stand y Reservas web (se cuentan una sola vez cada uno; reconcilian con el total).",
+    "Unidades: horas de cronograma (h; en minutos internamente), turnos (personas x minutos / 15), personas/simuladores, operaciones, minutos de actividad, y pesos argentinos (ARS) para facturación.",
+    "Facturación: bruta, comisiones y neta (neta = bruta - comisiones). Finanzas no modela comisión de Reservas web (queda en 0; no se inventa).",
+    `Cronograma del mes: estado ${cro?.estado ?? "confirmado"}${cro?.dias != null ? ` (${cro.dias} días, ${cro.cerrados ?? 0} cerrados)` : ""}. Se excluyen reservas reembolsadas según las reglas vigentes.`,
+    `Reconciliación de datos: OK. Registros considerados: Stand ${meta.registros?.stand ?? 0}, Reservas ${meta.registros?.reservas ?? 0}.`,
   ].join("\n");
 
   // ── Conclusiones DETERMINÍSTICAS (objetivas, sin adjetivos subjetivos) ───────
   const conclusiones: string[] = [
     `Actividad total atribuida a ${meta.integrante} en ${meta.anio}-${mm}: ${nAR(T.turnos)} turnos, ${nAR(Math.round(T.personas))} personas/simuladores y ${nAR(T.minutos)} minutos de actividad (${formatHoras(datos.horas_minutos)} de cronograma).`,
-    `El Stand concentro el ${pct(S.turnos, T.turnos)}% de los turnos (${nAR(S.turnos)}) y el ${pct(S.bruto, T.bruto)}% de la facturacion bruta (${pesos(S.bruto)}); las Reservas web, el ${pct(R.turnos, T.turnos)}% de los turnos (${nAR(R.turnos)}) y ${pesos(R.bruto)}.`,
-    `Facturacion bruta ${pesos(T.bruto)}, comisiones ${pesos(r2(T.comision))} y facturacion neta ${pesos(r2(T.neto))}.`,
-    `Cronograma ${cro?.estado ?? "confirmado"}; reconciliacion de datos correcta (Stand + Reservas = Total).`,
-    "No se detectaron anomalias ni brechas de atribucion en los datos utilizados.",
+    `El Stand concentró el ${pct(S.turnos, T.turnos)}% de los turnos (${nAR(S.turnos)}) y el ${pct(S.bruto, T.bruto)}% de la facturación bruta (${pesos(S.bruto)}); las Reservas web, el ${pct(R.turnos, T.turnos)}% de los turnos (${nAR(R.turnos)}) y ${pesos(R.bruto)}.`,
+    `Facturación bruta ${pesos(T.bruto)}, comisiones ${pesos(r2(T.comision))} y facturación neta ${pesos(r2(T.neto))}.`,
+    `Cronograma ${cro?.estado ?? "confirmado"}; reconciliación de datos correcta (Stand + Reservas = Total).`,
+    "No se detectaron anomalías ni brechas de atribución en los datos utilizados.",
   ];
 
   // ── Anexo (respaldo tabular con Total) ───────────────────────────────────────
@@ -105,7 +105,7 @@ export function construirComponentes(datos: DatosMetricas, meta: MetaInforme): {
     titulo: `Anexo — totales por origen y total (${meta.integrante}, ${meta.anio}-${mm})`,
     columnas: colsOrigen,
     filas: [filaMetricas("Stand", S), filaMetricas("Reservas web", R), filaMetricas("Total atribuido", T)],
-    nota: "Datos de Metricas de Equipo. Unidades explicitas por columna. Sin PII.",
+    nota: "Datos de Métricas de Equipo. Unidades explícitas por columna. Sin PII.",
   }];
 
   void periodoStr;

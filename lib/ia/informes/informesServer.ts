@@ -337,16 +337,21 @@ function cronogramaDesdeMetodologia(metodologia: string | null | undefined): Cro
   return { estado: m[1] ?? "confirmado", dias: m[2] != null ? Number(m[2]) : null, cerrados: m[3] != null ? Number(m[3]) : null };
 }
 
-export async function repararRenderizadoV3(p: { informeId: string; owner: string }): Promise<
-  { ok: true; version: number; yaExistia: boolean; archivos: Array<{ id: string; formato: string; nombre_descarga: string; mime: string; tamano_bytes: number; hash_sha256: string }> } | Fail
-> {
+type ResultadoReparacion = { ok: true; version: number; yaExistia: boolean; archivos: Array<{ id: string; formato: string; nombre_descarga: string; mime: string; tamano_bytes: number; hash_sha256: string }> } | Fail;
+
+// Reparación genérica de renderizado: crea la siguiente versión desde el snapshot CONGELADO
+// de la versión actual (misma data/números; sin re-ejecutar métricas ni llamar a Claude),
+// re-arma los componentes determinísticos (conclusiones/metodología/tablas actualizadas) y
+// genera PDF+Excel con nombres amigables en rutas nuevas. Idempotente POR ACCIÓN: si ya se
+// hizo esta corrección, devuelve la versión existente sin crear otra ni duplicar archivos.
+async function repararRenderizado(p: { informeId: string; owner: string }, accion: string, detalleExtra: Record<string, unknown>): Promise<ResultadoReparacion> {
   const c = await cargar(p.informeId, p.owner);
   if (!c || !c.ver) return { ok: false, status: 404, error: "Informe no encontrado." };
   if (["papelera", "eliminado", "descartado"].includes(c.inf.estado as string)) return { ok: false, status: 409, error: "El informe no admite reparación en su estado actual." };
 
-  // Idempotencia: si ya se corrigió el renderizado, devolver la versión existente sin crear otra.
+  // Idempotencia por acción: si ya se aplicó esta corrección, devolver su versión sin crear otra.
   const { data: hechos } = await supabaseAdmin.from("ia_informe_historial")
-    .select("version_id, detalle").eq("informe_id", p.informeId).eq("accion", "correccion_renderizado")
+    .select("version_id, detalle").eq("informe_id", p.informeId).eq("accion", accion)
     .order("created_at", { ascending: false }).limit(1);
   if (hechos && hechos.length > 0) {
     const versionNueva = Number((hechos[0].detalle as { version_nueva?: number } | null)?.version_nueva ?? c.inf.version_actual);
@@ -355,7 +360,7 @@ export async function repararRenderizadoV3(p: { informeId: string; owner: string
     return { ok: true, version: versionNueva, yaExistia: true, archivos: (archivos ?? []) as never };
   }
 
-  // Snapshot CONGELADO de la versión origen (la actual, p.ej. v2 generada).
+  // Snapshot CONGELADO de la versión origen (la actual).
   const snap = ((c.ver.snapshot_fuentes as Array<{ datos?: DatosMetricas; corte?: string; periodo?: string; integrante?: string; registros?: { stand: number; reservas: number } }>) ?? [])[0];
   if (!snap?.datos || !snap.corte || !snap.periodo) return { ok: false, status: 422, error: "La versión no tiene un snapshot congelado de métricas para reparar.", detalle: { faltante: "snapshot_datos" } };
   const mSem = /(\d{4})-(\d{2})/.exec(snap.periodo);
@@ -366,7 +371,7 @@ export async function repararRenderizadoV3(p: { informeId: string; owner: string
 
   const specBaseVal = validarInforme(c.ver.spec);
   if (!specBaseVal.ok) return { ok: false, status: 400, error: "La versión origen no es válida." };
-  // Forzar conclusiones DETERMINÍSTICAS (descartar las de la versión previa).
+  // Forzar conclusiones DETERMINÍSTICAS re-generadas (descartar las de la versión previa).
   const specBase = { ...specBaseVal.spec, conclusiones: [] as string[] };
   const meta: MetaInforme = {
     integrante: snap.integrante || detectarSujeto(c.inf.titulo as string) || "el integrante",
@@ -378,25 +383,36 @@ export async function repararRenderizadoV3(p: { informeId: string; owner: string
   const armado = armarDesde(specBase, snap.datos, meta, requisitos.componentes);
   if (!armado.ok) return { ok: false, status: 422, error: armado.motivo, detalle: { faltan: armado.faltan } };
 
-  // Nueva versión v3 (conserva la origen). MISMO snapshot congelado (misma data/números).
+  // Nueva versión (conserva la origen y todas las anteriores). MISMO snapshot congelado.
   const version = (c.ver.version as number) + 1;
   const formatos = ((c.ver.formatos as FormatoArchivo[] | null) ?? (requisitos.formatos?.length ? requisitos.formatos : ["pdf", "xlsx"])) as FormatoArchivo[];
   const { data: nv, error: eNv } = await supabaseAdmin.from("ia_informe_versiones").insert({
     informe_id: p.informeId, version, spec: armado.spec, hash: hashSpec(armado.spec), snapshot_fuentes: c.ver.snapshot_fuentes,
     fecha_corte: armado.spec.fecha_corte, actor: p.owner, estado: "borrador", formatos, ediciones_manuales: null,
   }).select("id").single();
-  if (eNv || !nv) return { ok: false, status: 500, error: "No se pudo crear la versión v3." };
+  if (eNv || !nv) return { ok: false, status: 500, error: `No se pudo crear la versión v${version}.` };
   await supabaseAdmin.from("ia_informes").update({ version_actual: version, estado: "borrador", updated_at: new Date().toISOString() }).eq("id", p.informeId);
   if (armado.spec.fuentes.length > 0) await supabaseAdmin.from("ia_informe_fuentes").insert(armado.spec.fuentes.map((f) => ({ version_id: nv.id, modulo: f.modulo, periodo: f.periodo, registros: f.registros, actualizado: f.actualizado, herramienta: "consultar_metricas_equipo" })));
-  await historial(p.informeId, nv.id, "correccion_renderizado", p.owner, {
-    version_origen: c.ver.version, version_nueva: version, mismo_snapshot: true, unificacion_corte: corte,
-    correccion_pdf: true, correccion_excel: true, conclusiones_deterministicas: true, nombres_amigables: true, sin_consumo_ia: true,
+  await historial(p.informeId, nv.id, accion, p.owner, {
+    version_origen: c.ver.version, version_nueva: version, mismo_snapshot: true, unificacion_corte: corte, sin_consumo_ia: true, ...detalleExtra,
   });
 
-  // Generar los archivos de la v3 (nombres amigables + rutas nuevas; NO tocan la v2).
+  // Generar los archivos de la nueva versión (nombres amigables + rutas nuevas; no tocan las previas).
   const gen = await confirmarYGenerar({ informeId: p.informeId, owner: p.owner, formatos, confirmarPii: c.inf.incluye_pii as boolean, confirmarManuales: true });
   if (!gen.ok) return gen;
   return { ok: true, version, yaExistia: false, archivos: gen.archivos };
+}
+
+// 4C.3 — corrección de renderizado (v2 → v3): corte único, PDF/Excel profesionales,
+// conclusiones determinísticas, nombres amigables.
+export function repararRenderizadoV3(p: { informeId: string; owner: string }): Promise<ResultadoReparacion> {
+  return repararRenderizado(p, "correccion_renderizado", { correccion_pdf: true, correccion_excel: true, conclusiones_deterministicas: true, nombres_amigables: true });
+}
+
+// 4C.4 — corrección de portabilidad (v3 → v4): fuente INCRUSTADA (Liberation Sans reg+bold),
+// paginación compacta sin títulos huérfanos, tildes correctas, autofiltros del Excel completos.
+export function repararPortabilidadV4(p: { informeId: string; owner: string }): Promise<ResultadoReparacion> {
+  return repararRenderizado(p, "correccion_portabilidad_pdf", { fuente_incrustada: "Liberation Sans (regular + bold, OFL)", paginacion_corregida: true, tildes_corregidas: true, autofiltros_corregidos: true });
 }
 
 // ── Listar versiones ──────────────────────────────────────────────────────────

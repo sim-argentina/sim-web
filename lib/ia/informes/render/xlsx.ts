@@ -69,7 +69,8 @@ function hojaTabla(wb: ExcelJS.Workbook, nombre: string, t: Tabla, opts?: { tota
     col.width = Math.min(38, Math.max(12, max));
   });
   ws.views = [{ state: "frozen", ySplit: 1 }];
-  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: t.columnas.length } };
+  // Autofiltro sobre la TABLA COMPLETA (encabezado + filas), no solo el encabezado.
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1 + t.filas.length, column: t.columnas.length } };
   return ws;
 }
 
@@ -130,6 +131,8 @@ export async function renderXLSX(ctx: ContextoRender): Promise<Buffer> {
   F.columns = [{ width: 30 }, { width: 22 }, { width: 14 }, { width: 24 }];
   const fh = F.addRow(["Módulo", "Período", "Registros", "Actualizado"]); estiloEncabezado(fh);
   for (const f of s.fuentes) { const r = F.addRow([f.modulo, f.periodo ?? "", f.registros ?? "", f.actualizado ?? ""]); if (esNum(f.registros)) r.getCell(3).numFmt = "#,##0"; }
+  // Autofiltro sobre el bloque de fuentes (encabezado + filas), antes de la metodología.
+  if (s.fuentes.length) F.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1 + s.fuentes.length, column: 4 } };
   F.addRow([]);
   F.addRow(["Metodología"]).getCell(1).font = { bold: true, size: 12 };
   for (const p of (s.metodologia ?? "").split(/\n+/).filter(Boolean)) { const r = F.addRow(["", p]); F.mergeCells(r.number, 2, r.number, 4); r.getCell(2).alignment = { wrapText: true }; }
