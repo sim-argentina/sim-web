@@ -12,7 +12,10 @@ function norm(s: string): string {
 // Señales de razonamiento complejo → modelo POTENTE.
 const SENALES_POTENTES: Array<{ re: RegExp; motivo: string }> = [
   { re: /\bfoda\b/, motivo: "análisis FODA" },
-  { re: /\bcompar|\bversus\b|\bvs\b|\bcontra\b|\bfrente a\b/, motivo: "comparación" },
+  { re: /\bcompar|\bversus\b|\bvs\b|\bcontra\b|\bfrente a\b|\bdiferencias?\b/, motivo: "comparación" },
+  // 4D.1 — análisis competitivo / mercado externo → potente desde el inicio (no económico
+  // con escalado tardío). Un dato externo PUNTUAL sigue siendo económico (sin estas señales).
+  { re: /\bcompetidor|\bcompetencia\b|\bcompetidores\b|\bcompetitiv|\bde mercado\b|\bbenchmark\b/, motivo: "análisis competitivo" },
   { re: /\bdiagnostic|\bconclus|\banaliz|\banalisis\b|\bevalua/, motivo: "diagnóstico/análisis" },
   { re: /\bproyec|\bestima|\bpronostic|\btendencia|\bescenario/, motivo: "proyección" },
   { re: /\bpor que\b|\bpor qué\b|\bporque baj|\bmotivo|\bcausa|\bexplica por/, motivo: "explicación causal" },

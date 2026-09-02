@@ -7,6 +7,7 @@ import { agregarStand } from "@/lib/metricasStand";
 import { idsReembolsadas } from "@/lib/reservasReembolsos";
 import { HERRAMIENTAS_CONOCIMIENTO } from "@/lib/ia/docs/conocimientoTools";
 import { preparar_informe } from "@/lib/ia/informes/informeTool";
+import { estadoPeriodoCalendario, fraseEstado } from "@/lib/ia/periodo";
 
 // IA SIM · Bloque 4A — REGISTRO CERRADO de herramientas de SOLO LECTURA.
 // El modelo NUNCA elige tablas/columnas ni genera SQL: solo puede invocar estas
@@ -86,11 +87,25 @@ const consultar_metricas_equipo: ToolDef = {
       reservas: { turnos_cantidad: i.reservas.turnos, facturacion_bruta_pesos: i.reservas.bruto },
     }));
     const mesEnCurso = r.corte.slice(0, 10) <= r.periodo.hasta && r.corte.slice(0, 10) >= r.periodo.desde;
+    // 4D.1 — Semántica de período SEPARADA (no un único booleano ambiguo). El calendario se
+    // calcula con la fecha de Córdoba; el cronograma informa su propio estado; el corte de
+    // datos va aparte. Un mes finalizado NO es "incompleto".
+    const cal = estadoPeriodoCalendario(anio, mes);
+    const cronoEstado = r.cronograma.cobertura[0]?.estado ?? null;
+    const estado_periodo = {
+      periodo_calendario: cal.periodo_calendario, // 'en_curso' | 'finalizado'
+      cronograma_estado: cronoEstado,             // inexistente | borrador | confirmado | descartado
+      datos_hasta: r.corte,                       // corte de esta fuente (Córdoba)
+      hoy_cordoba: cal.hoy_cordoba,
+      descripcion: fraseEstado(cal, { cronogramaEstado: cronoEstado }),
+      _regla: "Si periodo_calendario='finalizado', el mes YA terminó: NO lo llames 'incompleto'. Un cronograma 'confirmado' es oficial (no borrador). El cierre financiero es un estado APARTE (ver consultar_finanzas).",
+    };
     const payload = {
       periodo: r.periodo,
       zonaHoraria: r.zonaHoraria,
       corte: r.corte,
       mes_en_curso: mesEnCurso,
+      estado_periodo,
       cronograma: r.cronograma,
       integrantes,
       totales_origen: r.totalesOrigen,

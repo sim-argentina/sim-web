@@ -12,6 +12,8 @@ import { getMaxBusquedasWeb, getWebToolVersion, webHabilitadaGlobal } from "@/li
 import { costoBusquedasUSD, PRECIOS_WEB_VERSION } from "@/lib/ia/web/costo";
 import { dominioDe } from "@/lib/ia/web/fuentes";
 import { sanitizarConsultaWeb } from "@/lib/ia/web/sanitizar";
+import { validarRespuestaMixta } from "@/lib/ia/web/validacion";
+import { mesFinalizadoMencionado } from "@/lib/ia/periodo";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -208,11 +210,18 @@ export async function correrChat(params: { owner: string; conversacionId: string
   const notaWebNoDisp = res.web.error === "web_no_disponible" && !borrador
     ? "\n\n_La búsqueda web no está disponible en este momento. Respondí con los datos internos de SIM; puedo intentarlo nuevamente más tarde._"
     : "";
+  // 4D.1 — Validación DETERMINÍSTICA previa a publicar (respuestas mixtas con búsqueda web):
+  // detecta afirmaciones no respaldadas (período finalizado llamado "incompleto", superlativos
+  // sin benchmark, máquinas derivadas de operaciones, precios sin moneda, SIM Café Racer como
+  // competidor) y anexa salvedades. No dispara nuevas búsquedas ni reintentos.
+  const notaValidacion = (!borrador && res.estado === "completa" && res.web.busquedasFacturables > 0)
+    ? validarRespuestaMixta(res.texto, { periodoFinalizado: mesFinalizadoMencionado(`${pregunta} ${res.texto}`), hayBenchmarkCompetidores: false }).notas
+    : "";
   const contenido = borrador
     ? (huboTimeoutPosterior
         ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos."
         : res.texto)
-    : (res.estado === "completa" ? res.texto + notaWebNoDisp : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
+    : (res.estado === "completa" ? res.texto + notaValidacion + notaWebNoDisp : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
   // El mensaje se marca 'completa' si hay borrador (la UI muestra la vista previa, no un error).
   const estadoMensaje = borrador ? "completa" : res.estado;
   const { data: asstMsg } = await supabaseAdmin.from("ia_mensajes").insert({
