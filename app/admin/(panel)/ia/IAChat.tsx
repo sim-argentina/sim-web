@@ -10,9 +10,11 @@ type Adjunto = { id: string; nombre_original: string; estado_procesamiento: stri
 
 // IA SIM · Bloque 4A — Interfaz del chat (admin-only). Estética SIM (negro/rojo/blanco).
 
-type Fuente = { modulo: string; periodo?: string; registros?: number; estadoMes?: string; exclusiones?: number; actualizado?: string };
+type Fuente = { tipo?: "interna" | "externa"; modulo: string; periodo?: string; registros?: number; estadoMes?: string; exclusiones?: number; actualizado?: string; url?: string; titulo?: string | null; dominio?: string | null; fragmento?: string | null; fecha_pagina?: string | null };
 type Herr = { nombre: string; ok: boolean; error?: string };
-type Mensaje = { id: string; rol: "user" | "assistant"; contenido: string; modelo?: string; clase_modelo?: string; escalado?: boolean; fuentes?: Fuente[]; herramientas?: Herr[]; estado?: string };
+type Mensaje = { id: string; rol: "user" | "assistant"; contenido: string; modelo?: string; clase_modelo?: string; escalado?: boolean; fuentes?: Fuente[]; herramientas?: Herr[]; estado?: string; busquedas_web?: number };
+
+const esExterna = (f: Fuente) => f.tipo === "externa" || (typeof f.url === "string" && /^https?:\/\//i.test(f.url));
 type Conv = { id: string; titulo: string | null; updated_at?: string };
 type Config = { configurada: boolean; faltantes: string[]; proveedor: string; modelos: { economico: string; potente: string } };
 
@@ -212,7 +214,7 @@ export default function IAChat() {
         cargarInformes(convId); // por si quedó un borrador persistido pese al error
         return;
       }
-      setMensajes((m) => [...m, { id: j.mensajeId, rol: "assistant", contenido: j.texto, modelo: j.modelo, clase_modelo: j.claseModelo, escalado: j.escalado, fuentes: j.fuentes, herramientas: j.herramientas, estado: j.estado }]);
+      setMensajes((m) => [...m, { id: j.mensajeId, rol: "assistant", contenido: j.texto, modelo: j.modelo, clase_modelo: j.claseModelo, escalado: j.escalado, fuentes: j.fuentes, herramientas: j.herramientas, estado: j.estado, busquedas_web: j.busquedasWeb }]);
       if (j.borrador?.informeId) setInformes((prev) => (prev.includes(j.borrador.informeId) ? prev : [...prev, j.borrador.informeId]));
       else cargarInformes(convId); // recuperar cualquier borrador vinculado (éxito/timeout posterior)
       cargarConvs(); cargarSaldo();
@@ -298,24 +300,47 @@ export default function IAChat() {
                   {m.rol === "assistant"
                     ? <SafeMarkdown text={m.contenido} />
                     : <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.contenido}</p>}
-                  {m.rol === "assistant" && (
+                  {m.rol === "assistant" && (() => {
+                    const internas = (m.fuentes ?? []).filter((f) => !esExterna(f));
+                    const externas = (m.fuentes ?? []).filter(esExterna);
+                    return (
                     <div className="mt-3 border-t border-white/10 pt-2 text-xs text-white/50">
                       {m.fuentes && m.fuentes.length > 0 && (
                         <div>
                           <button onClick={() => setFuentesAbiertas((s) => ({ ...s, [m.id]: !s[m.id] }))} className="font-bold text-white/70 hover:text-white">
-                            Fuentes: {m.fuentes.map((f) => f.modulo).filter((v, i, a) => a.indexOf(v) === i).join(" · ")} {fuentesAbiertas[m.id] ? "▾" : "▸"}
+                            Fuentes ({internas.length} internas{externas.length ? ` · ${externas.length} de internet` : ""}) {fuentesAbiertas[m.id] ? "▾" : "▸"}
                           </button>
                           {fuentesAbiertas[m.id] && (
-                            <ul className="mt-2 space-y-1">
-                              {m.fuentes.map((f, k) => (
-                                <li key={k} className="text-white/50">• {f.modulo}{f.periodo ? ` · ${f.periodo}` : ""}{f.registros != null ? ` · ${f.registros} registros` : ""}{f.estadoMes ? ` · mes ${f.estadoMes}` : ""}{f.exclusiones ? ` · ${f.exclusiones} exclusiones` : ""}</li>
-                              ))}
-                            </ul>
+                            <div className="mt-2 space-y-2">
+                              {internas.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] uppercase tracking-wide text-white/40">Fuentes internas de SIM</p>
+                                  <ul className="mt-1 space-y-1">
+                                    {internas.map((f, k) => (
+                                      <li key={k} className="text-white/50">• {f.modulo}{f.periodo ? ` · ${f.periodo}` : ""}{f.registros != null ? ` · ${f.registros} registros` : ""}{f.estadoMes ? ` · mes ${f.estadoMes}` : ""}{f.exclusiones ? ` · ${f.exclusiones} exclusiones` : ""}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {externas.length > 0 && (
+                                <div>
+                                  <p className="text-[10px] uppercase tracking-wide text-white/40">Fuentes externas de internet</p>
+                                  <ul className="mt-1 space-y-1">
+                                    {externas.map((f, k) => (
+                                      <li key={k} className="text-white/50">• <a href={f.url} target="_blank" rel="noopener noreferrer" className="text-red-300 underline hover:text-red-200">{f.titulo || f.dominio || f.url}</a>{f.dominio ? <span className="text-white/30"> · {f.dominio}</span> : null}{f.fecha_pagina ? <span className="text-white/30"> · {f.fecha_pagina}</span> : null}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}
                       <div className="mt-2 flex flex-wrap items-center gap-3">
                         <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase text-white/40">{m.clase_modelo === "potente" ? "Modelo potente" : "Modelo económico"}{m.escalado ? " · escalado" : ""}</span>
+                        {(m.busquedas_web ?? 0) > 0 && (
+                          <span className="rounded-full bg-red-600/20 px-2 py-0.5 text-[10px] uppercase text-red-300">Búsqueda web · {m.busquedas_web} {m.busquedas_web === 1 ? "consulta" : "consultas"}</span>
+                        )}
                         {!m.id.startsWith("tmp-") && (
                           <>
                             <button onClick={() => feedback(m.id, "util")} className="hover:text-green-400">👍 Útil</button>
@@ -325,7 +350,7 @@ export default function IAChat() {
                         )}
                       </div>
                     </div>
-                  )}
+                  ); })()}
                 </div>
               </div>
             ))}

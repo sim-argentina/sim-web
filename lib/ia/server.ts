@@ -7,6 +7,11 @@ import { buscarConocimiento, listarDocumentosActivos, normalizar } from "@/lib/i
 import { crearBorrador } from "@/lib/ia/informes/informesServer";
 import { NOMBRE_PREPARAR_INFORME } from "@/lib/ia/informes/informeTool";
 import { parsearRequisitos } from "@/lib/ia/informes/requisitos";
+import { decidirWeb } from "@/lib/ia/web/decision";
+import { getMaxBusquedasWeb, getWebToolVersion, webHabilitadaGlobal } from "@/lib/ia/web/config";
+import { costoBusquedasUSD, PRECIOS_WEB_VERSION } from "@/lib/ia/web/costo";
+import { dominioDe } from "@/lib/ia/web/fuentes";
+import { sanitizarConsultaWeb } from "@/lib/ia/web/sanitizar";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -17,7 +22,7 @@ const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimi
 const CONTEXTO_MAX_MENSAJES = 12;
 const CONTEXTO_MAX_CHARS = 12000;
 
-export type CorrerOk = { ok: true; mensajeId: string; texto: string; fuentes: unknown; modelo: string; claseModelo: string; escalado: boolean; estado: string; herramientas: unknown; uso: { tokensIn: number; tokensOut: number }; duplicado?: boolean; borrador?: { informeId: string; versionId: string; version: number } | null };
+export type CorrerOk = { ok: true; mensajeId: string; texto: string; fuentes: unknown; modelo: string; claseModelo: string; escalado: boolean; estado: string; herramientas: unknown; uso: { tokensIn: number; tokensOut: number }; duplicado?: boolean; borrador?: { informeId: string; versionId: string; version: number } | null; busquedasWeb?: number; webExplicita?: boolean };
 export type CorrerFail = { ok: false; status: number; error: string; motivo?: string };
 
 function hoyISO(): string {
@@ -50,14 +55,14 @@ function tituloAuto(pregunta: string): string {
   return t.length > 60 ? t.slice(0, 57) + "…" : t || "Nueva conversación";
 }
 
-export async function correrChat(params: { owner: string; conversacionId: string; pregunta: string; idempotencyKey?: string | null }): Promise<CorrerOk | CorrerFail> {
+export async function correrChat(params: { owner: string; conversacionId: string; pregunta: string; idempotencyKey?: string | null }, opts?: { provider?: import("@/lib/ia/provider").IAProvider }): Promise<CorrerOk | CorrerFail> {
   const { owner, conversacionId, pregunta } = params;
   const idem = params.idempotencyKey || null;
 
   if (!iaEstaConfigurada()) {
     return { ok: false, status: 503, error: "IA SIM todavía no está configurada.", motivo: "no_configurada" };
   }
-  const provider = crearProvider();
+  const provider = opts?.provider ?? crearProvider();
   if (!provider) {
     return { ok: false, status: 503, error: `IA SIM todavía no está configurada. Falta: ${variablesFaltantes().join(", ") || "configuración del proveedor"}.`, motivo: "no_configurada" };
   }
@@ -130,13 +135,23 @@ export async function correrChat(params: { owner: string; conversacionId: string
   const busquedaPrevia = { consulta_normalizada: normalizar(pregunta).slice(0, 300), coincidencias: relevantes.length, documentos: [...new Set(relevantes.map((h) => h.documento_id))], versiones: [...new Set(relevantes.map((h) => h.version_id))], contexto_enviado: !!contextoUsuario };
 
   const modelos = getModelos();
-  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario });
+  // ── Bloque 4D — decisión DETERMINÍSTICA de búsqueda web (antes de llamar al proveedor).
+  const decWeb = decidirWeb(pregunta);
+  const webActiva = decWeb.habilitar && webHabilitadaGlobal();
+  const webParam = { habilitar: webActiva, explicita: decWeb.explicita, motivo: decWeb.motivo, maxUsos: getMaxBusquedasWeb(), version: getWebToolVersion() };
+  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParam });
 
-  const costo = estimarCostoUSD(res.modelo, res.uso.tokensIn, res.uso.tokensOut);
+  // Costo = tokens + búsquedas web (VERSIONADO). El total se congela en la ejecución, así el
+  // saldo dinámico (4B.5.1) descuenta la búsqueda UNA sola vez junto con los tokens.
+  const costoTokens = estimarCostoUSD(res.modelo, res.uso.tokensIn, res.uso.tokensOut) ?? 0;
+  const costoWeb = costoBusquedasUSD(res.web.busquedasFacturables);
+  const costoTotal = costoTokens + costoWeb;
 
-  // Fuentes de conocimiento recuperadas por la búsqueda previa (para citar en la UI).
-  const fuentesConocimiento = relevantes.map((h) => ({ modulo: `${h.titulo} · versión ${h.version_numero} · ${h.metodo_extraccion ?? "documento"} · categoría ${h.categoria ?? "—"} · ${h.ubicacion}`, actualizado: new Date().toISOString() }));
-  const fuentesFinales = [...fuentesConocimiento, ...res.fuentes];
+  // Fuentes: INTERNAS (herramientas + conocimiento) y EXTERNAS (internet), diferenciadas.
+  const fuentesConocimiento = relevantes.map((h) => ({ tipo: "interna" as const, modulo: `${h.titulo} · versión ${h.version_numero} · ${h.metodo_extraccion ?? "documento"} · categoría ${h.categoria ?? "—"} · ${h.ubicacion}`, actualizado: new Date().toISOString() }));
+  const fuentesInternas = [...fuentesConocimiento, ...res.fuentes.map((f) => ({ tipo: "interna" as const, ...f }))];
+  const fuentesExternas = res.web.fuentes.map((f) => ({ tipo: "externa" as const, modulo: f.dominio || dominioDe(f.url) || "internet", url: f.url, titulo: f.titulo ?? null, dominio: f.dominio ?? dominioDe(f.url) ?? null, fragmento: f.fragmento ?? null, fecha_pagina: f.fecha_pagina ?? null }));
+  const fuentesFinales = [...fuentesInternas, ...fuentesExternas];
 
   // Persistir ejecución + herramientas + mensaje del asistente.
   const { data: eje } = await supabaseAdmin.from("ia_ejecuciones").insert({
@@ -144,11 +159,30 @@ export async function correrChat(params: { owner: string; conversacionId: string
     clase_modelo: res.claseModelo, motivo_router: res.motivoRouter, escalado: res.escalado,
     tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, rondas: res.rondas, duracion_ms: res.duracion_ms, estado: res.estado, error: res.error ?? null,
     busqueda_previa: busquedaPrevia,
-    // Costo por ejecución CONGELADO con la versión de precios vigente (para el saldo interno).
-    costo_estimado: costo ?? 0, precios_version: PRECIOS_VERSION,
+    // Costo por ejecución CONGELADO (tokens + web) con las versiones de precios vigentes.
+    costo_estimado: costoTotal, precios_version: PRECIOS_VERSION,
+    busquedas_web: res.web.busquedasFacturables, costo_busquedas_usd: costoWeb, precios_web_version: PRECIOS_WEB_VERSION,
   }).select("id").single();
   if (eje?.id && res.herramientas.length > 0) {
     await supabaseAdmin.from("ia_herramientas_ejecuciones").insert(res.herramientas.map((h) => ({ ejecucion_id: eje.id, herramienta: h.nombre, params: h.params, resumen: h.resumen, ok: h.ok, error: h.error ?? null, duracion_ms: h.duracion_ms })));
+  }
+
+  // ── Bloque 4D — auditoría de la búsqueda web (una fila por ejecución que habilitó internet)
+  // + fuentes externas citadas (procedencia de Anthropic; sin páginas completas ni duplicados).
+  if (webActiva || res.web.busquedasFacturables > 0 || (res.web.fuentes.length > 0)) {
+    const estadoWeb = res.web.error ? "error" : res.web.busquedasFacturables === 0 && res.web.fuentes.length === 0 ? "vacio" : "ok";
+    const { data: bw } = await supabaseAdmin.from("ia_busquedas_web").insert({
+      conversacion_id: conversacionId, mensaje_usuario_id: userMsg.id, ejecucion_id: eje?.id ?? null,
+      motivo: decWeb.motivo, explicita: decWeb.explicita, proveedor: getProveedor(), modelo: res.modelo,
+      estado: estadoWeb, duracion_ms: res.duracion_ms, consultas: (res.web.consultas ?? []).map((q) => sanitizarConsultaWeb(q)),
+      busquedas_facturables: res.web.busquedasFacturables, costo_usd: costoWeb, precios_version: PRECIOS_WEB_VERSION,
+      error_normalizado: res.web.error ?? null,
+    }).select("id").single();
+    if (bw?.id && res.web.fuentes.length > 0) {
+      // Dedup por URL dentro de la ejecución (índice único lo garantiza; upsert ignora repetidos).
+      const filas = res.web.fuentes.map((f, i) => ({ busqueda_id: bw.id, ejecucion_id: eje?.id ?? null, url: f.url, dominio: f.dominio ?? dominioDe(f.url) ?? null, titulo: f.titulo ?? null, fecha_pagina: f.fecha_pagina ?? null, fragmento: f.fragmento ?? null, claim: f.claim ?? null, orden: f.orden ?? i }));
+      await supabaseAdmin.from("ia_fuentes_externas").upsert(filas, { onConflict: "busqueda_id,url", ignoreDuplicates: true });
+    }
   }
 
   // ── Bloque 4C/4C.1 — Si el modelo preparó un informe (terminal), el SERVIDOR crea el
@@ -170,26 +204,32 @@ export async function correrChat(params: { owner: string; conversacionId: string
   // Texto del asistente: si se preparó el borrador, SIEMPRE es un mensaje de éxito
   // (aunque una etapa posterior del modelo haya dado timeout). Nunca error fatal.
   const huboTimeoutPosterior = borrador != null && res.estado !== "completa";
+  // §15 — degradación de la búsqueda web: nota clara, sin inventar la parte externa.
+  const notaWebNoDisp = res.web.error === "web_no_disponible" && !borrador
+    ? "\n\n_La búsqueda web no está disponible en este momento. Respondí con los datos internos de SIM; puedo intentarlo nuevamente más tarde._"
+    : "";
   const contenido = borrador
     ? (huboTimeoutPosterior
         ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos."
         : res.texto)
-    : (res.estado === "completa" ? res.texto : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
+    : (res.estado === "completa" ? res.texto + notaWebNoDisp : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
   // El mensaje se marca 'completa' si hay borrador (la UI muestra la vista previa, no un error).
   const estadoMensaje = borrador ? "completa" : res.estado;
   const { data: asstMsg } = await supabaseAdmin.from("ia_mensajes").insert({
     conversacion_id: conversacionId, rol: "assistant", contenido, modelo: res.modelo, proveedor: getProveedor(),
     clase_modelo: res.claseModelo, motivo_router: res.motivoRouter, escalado: res.escalado,
     tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, fuentes: fuentesFinales, herramientas: res.herramientas, estado: estadoMensaje, error: huboTimeoutPosterior ? res.error ?? null : (borrador ? null : res.error ?? null),
+    busquedas_web: res.web.busquedasFacturables,
   }).select("id").single();
 
-  // Sumar consumo real (tokens/costo).
-  await supabaseAdmin.rpc("ia_sumar_consumo", { p_owner: owner, p_dia: dia, p_in: res.uso.tokensIn, p_out: res.uso.tokensOut, p_costo: costo ?? 0 });
+  // Sumar consumo real (tokens + búsquedas web). El saldo lee ia_ejecuciones.costo_estimado
+  // (una sola vez); este contador diario refleja el mismo total.
+  await supabaseAdmin.rpc("ia_sumar_consumo", { p_owner: owner, p_dia: dia, p_in: res.uso.tokensIn, p_out: res.uso.tokensOut, p_costo: costoTotal });
 
   // Título automático tras el primer intercambio + updated_at.
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), modelo_ultimo: res.modelo, proveedor: getProveedor() };
   if (!conv.titulo) patch.titulo = tituloAuto(pregunta);
   await supabaseAdmin.from("ia_conversaciones").update(patch).eq("id", conversacionId);
 
-  return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: res.escalado, estado: estadoMensaje, herramientas: res.herramientas, uso: res.uso, borrador };
+  return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: res.escalado, estado: estadoMensaje, herramientas: res.herramientas, uso: res.uso, borrador, busquedasWeb: res.web.busquedasFacturables, webExplicita: res.web.explicita };
 }

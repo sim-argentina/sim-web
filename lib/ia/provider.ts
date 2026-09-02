@@ -2,24 +2,38 @@
 // La interfaz es NEUTRAL: cada proveedor traduce a/desde su formato. Así se puede
 // agregar OpenAI/Gemini sin tocar las herramientas de SIM ni la UI del chat.
 
+import type { FuenteWeb } from "@/lib/ia/web/fuentes";
+
 export type Uso = { tokensIn: number; tokensOut: number };
 
 export type LlamadaHerramienta = { id: string; nombre: string; input: Record<string, unknown> };
 
 export type ResultadoHerramienta = { id: string; nombre: string; contenido: string; ok: boolean };
 
+// Datos de la búsqueda web SERVER-SIDE de Anthropic dentro de un turno (Bloque 4D):
+// cantidad FACTURABLE de búsquedas, fuentes citadas y error normalizado si lo hubo.
+export type WebTurno = { busquedasFacturables: number; fuentes: FuenteWeb[]; error?: string; consultas?: string[] };
+
 // Un turno del proveedor: o produce texto final, o pide ejecutar herramientas.
+// Ambos pueden traer `web` cuando el modelo usó la búsqueda web oficial (server tool).
+// `rawContent` son los bloques CRUDOS del proveedor (opacos): se conservan para poder
+// continuar el turno del asistente sin perder bloques cifrados (server_tool_use /
+// web_search_tool_result / citas) cuando además hay herramientas internas.
 export type TurnoProveedor =
-  | { tipo: "texto"; texto: string; uso: Uso }
-  | { tipo: "herramientas"; texto?: string; llamadas: LlamadaHerramienta[]; uso: Uso };
+  | { tipo: "texto"; texto: string; uso: Uso; web?: WebTurno; rawContent?: unknown[] }
+  | { tipo: "herramientas"; texto?: string; llamadas: LlamadaHerramienta[]; uso: Uso; web?: WebTurno; rawContent?: unknown[] };
 
 // Historial neutral que el orquestador mantiene y pasa al proveedor.
 export type HistorialTurno =
   | { rol: "user"; texto: string }
-  | { rol: "assistant"; texto?: string; llamadas?: LlamadaHerramienta[] }
+  | { rol: "assistant"; texto?: string; llamadas?: LlamadaHerramienta[]; rawContent?: unknown[] }
   | { rol: "tool"; resultados: ResultadoHerramienta[] };
 
 export type HerramientaDef = { nombre: string; descripcion: string; schema: Record<string, unknown> };
+
+// Habilitación de búsqueda web (Bloque 4D). La DECISIÓN es determinística y externa
+// al proveedor; acá solo se le indica si puede usar la herramienta y con qué tope.
+export type WebSearchParam = { habilitado: boolean; maxUsos: number; version: string };
 
 export type GenerarParams = {
   modelo: string;
@@ -28,6 +42,7 @@ export type GenerarParams = {
   herramientas: HerramientaDef[];
   maxTokensSalida: number;
   timeoutMs: number;
+  webSearch?: WebSearchParam;
 };
 
 // ── Visión / OCR (Bloque 4B.1) ────────────────────────────────────────────────

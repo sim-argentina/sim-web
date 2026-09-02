@@ -1,9 +1,10 @@
-import type { IAProvider, HistorialTurno, ResultadoHerramienta } from "@/lib/ia/provider";
+import type { IAProvider, HistorialTurno, ResultadoHerramienta, WebSearchParam } from "@/lib/ia/provider";
 import { IAProviderError } from "@/lib/ia/provider";
 import type { IALimites, ModeloClase } from "@/lib/ia/config";
 import { SYSTEM_PROMPT } from "@/lib/ia/systemPrompt";
 import { elegirModelo, debeEscalar } from "@/lib/ia/router";
 import { HERRAMIENTAS, defsParaProveedor, ToolParamError, type ToolFuente } from "@/lib/ia/tools";
+import { dedupFuentesWeb, type FuenteWeb } from "@/lib/ia/web/fuentes";
 
 // IA SIM · Bloque 4A — Orquestador determinístico del chat. Corre el loop
 // proveedor ↔ herramientas con TODAS las guardas (rondas, herramientas por ronda,
@@ -29,6 +30,16 @@ export type EjecucionResultado = {
   // se detiene acá (sin otra llamada a Claude) y el servidor persiste el borrador.
   terminalInforme?: boolean;
   borradorSpec?: unknown;
+  // Bloque 4D — búsqueda web (server tool de Anthropic).
+  web: {
+    habilitada: boolean;      // se ofreció la herramienta al modelo
+    explicita: boolean;       // el admin pidió internet explícitamente
+    motivo: string;           // por qué se habilitó/deshabilitó (determinístico)
+    busquedasFacturables: number;
+    fuentes: FuenteWeb[];
+    error?: string;           // código de error normalizado (si lo hubo)
+    consultas: string[];      // queries EJECUTADAS por el modelo (se completan en el server)
+  };
 };
 
 // Respuesta LOCAL determinística tras preparar el borrador (no consume tokens).
@@ -41,6 +52,8 @@ export type EjecutarChatParams = {
   historialPrevio: HistorialTurno[];
   pregunta: string;
   contextoUsuario?: string; // contexto dinámico (conocimiento/adjuntos) como DATO de nivel USUARIO
+  // Bloque 4D — decisión DETERMINÍSTICA de búsqueda web (tomada antes de llamar al proveedor).
+  web?: { habilitar: boolean; explicita: boolean; motivo: string; maxUsos: number; version: string };
 };
 
 export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResultado> {
@@ -60,22 +73,65 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
   let tokensIn = 0, tokensOut = 0;
   let rondas = 0;
 
+  // ── Estado de la búsqueda web (Bloque 4D) ──────────────────────────────────
+  const webConf = p.web;
+  const webHabilitadaGeneral = Boolean(webConf?.habilitar);
+  let webBusquedas = 0;
+  const webFuentesAcum: FuenteWeb[] = [];
+  const webConsultas: string[] = [];
+  let webError: string | undefined;
+  let webDegradada = false; // si el proveedor rechazó la web (400) y se siguió sin ella
+
   const restante = () => p.limites.tiempoEjecucionMsMax - (Date.now() - inicio);
-  const fin = (r: Partial<EjecucionResultado> & Pick<EjecucionResultado, "estado" | "texto">): EjecucionResultado => ({
-    fuentes, herramientas: herramientasEjecutadas, modelo, claseModelo: clase, motivoRouter: decision.motivo, escalado, rondas, uso: { tokensIn, tokensOut }, duracion_ms: Date.now() - inicio, error: undefined, ...r,
+  const construirWeb = (): EjecucionResultado["web"] => ({
+    habilitada: webHabilitadaGeneral, explicita: Boolean(webConf?.explicita),
+    motivo: webConf?.motivo ?? "sin_web", busquedasFacturables: webBusquedas,
+    fuentes: dedupFuentesWeb(webFuentesAcum), error: webDegradada ? "web_no_disponible" : webError, consultas: [...webConsultas],
   });
+  const fin = (r: Partial<EjecucionResultado> & Pick<EjecucionResultado, "estado" | "texto">): EjecucionResultado => ({
+    fuentes, herramientas: herramientasEjecutadas, modelo, claseModelo: clase, motivoRouter: decision.motivo, escalado, rondas, uso: { tokensIn, tokensOut }, duracion_ms: Date.now() - inicio, error: undefined, web: construirWeb(), ...r,
+  });
+
+  // Tope de búsquedas web POR RESPUESTA (no se aumenta silenciosamente). Al agotarse, se
+  // deja de ofrecer la herramienta en las rondas siguientes.
+  const presupuestoWeb = webConf?.maxUsos ?? 0;
+  const acumular = (turno: { web?: { busquedasFacturables: number; fuentes: FuenteWeb[]; error?: string; consultas?: string[] } }) => {
+    if (!turno.web) return;
+    webBusquedas += turno.web.busquedasFacturables || 0;
+    for (const f of turno.web.fuentes) webFuentesAcum.push(f);
+    for (const q of turno.web.consultas ?? []) webConsultas.push(q);
+    if (turno.web.error) webError = turno.web.error;
+  };
 
   try {
     while (true) {
       if (restante() <= 0) return fin({ estado: "error", texto: "", error: "Se agotó el tiempo de ejecución." });
       const permitirHerramientas = rondas < p.limites.rondasHerramientasMax;
-      const turno = await p.provider.generar({
-        modelo, system, historial,
-        herramientas: permitirHerramientas ? defsParaProveedor() : [],
-        maxTokensSalida: p.limites.tokensSalidaMax,
-        timeoutMs: Math.max(1000, restante()),
-      });
+      // Ofrecer web solo si está habilitada y queda presupuesto (y no fue degradada por 400).
+      const restanteWeb = Math.max(0, presupuestoWeb - webBusquedas);
+      const ofrecerWeb = webHabilitadaGeneral && !webDegradada && restanteWeb > 0;
+      const webParam: WebSearchParam | undefined = ofrecerWeb ? { habilitado: true, maxUsos: restanteWeb, version: webConf!.version } : undefined;
+
+      let turno;
+      try {
+        turno = await p.provider.generar({
+          modelo, system, historial,
+          herramientas: permitirHerramientas ? defsParaProveedor() : [],
+          maxTokensSalida: p.limites.tokensSalidaMax,
+          timeoutMs: Math.max(1000, restante()),
+          webSearch: webParam,
+        });
+      } catch (e) {
+        // Degradación (§15): si el proveedor rechaza la búsqueda web (400: deshabilitada en
+        // Console o incompatible), se reintenta UNA vez SIN web para responder la parte interna.
+        if (e instanceof IAProviderError && e.status === 400 && ofrecerWeb && !webDegradada) {
+          webDegradada = true;
+          continue; // misma ronda, ahora sin web
+        }
+        throw e;
+      }
       tokensIn += turno.uso.tokensIn; tokensOut += turno.uso.tokensOut;
+      acumular(turno);
 
       if (turno.tipo === "texto") {
         return fin({ estado: "completa", texto: turno.texto });
@@ -86,7 +142,8 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
       if (llamadas.length > p.limites.herramientasPorRespuestaMax) {
         llamadas = llamadas.slice(0, p.limites.herramientasPorRespuestaMax);
       }
-      historial.push({ rol: "assistant", texto: turno.texto, llamadas });
+      // Se conservan los bloques crudos del proveedor (web/cifrados) para continuar el turno.
+      historial.push({ rol: "assistant", texto: turno.texto, llamadas, rawContent: turno.rawContent });
 
       const resultados: ResultadoHerramienta[] = [];
       let terminalSpec: unknown;

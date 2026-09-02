@@ -22,7 +22,7 @@ export async function GET(_req: Request, { params }: Ctx) {
   if (!conv) return NextResponse.json({ error: "No encontrada." }, { status: 404 });
   const { data: mensajes } = await supabaseAdmin
     .from("ia_mensajes")
-    .select("id, rol, contenido, modelo, clase_modelo, escalado, fuentes, herramientas, estado, tokens_in, tokens_out, created_at")
+    .select("id, rol, contenido, modelo, clase_modelo, escalado, fuentes, herramientas, estado, tokens_in, tokens_out, busquedas_web, created_at")
     .eq("conversacion_id", id)
     .order("created_at", { ascending: true });
   return NextResponse.json({ conversacion: conv, mensajes: mensajes ?? [] });

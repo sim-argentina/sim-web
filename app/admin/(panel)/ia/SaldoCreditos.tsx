@@ -13,7 +13,7 @@ type PorMes = { mes: string; estimado_usd: string; oficial_usd: string | null };
 type Alerta = { nivel: "info" | "warn" | "critico"; codigo: string; texto: string };
 export type Resumen = {
   saldo: { modo: string; etiqueta_modo: string; saldo_display: string; saldo_usd: string; referencia_usd: string; porcentaje: number | null; color: "ok" | "warn" | "critico"; creditos_registrados_usd: string; ultimo_saldo_real: { usd: string; fecha: string } | null; gastado_desde_usd: string | null };
-  consumo_mes: { periodo: string; tokens_total: number; costo_estimado_usd: string; porcentaje_tope: number };
+  consumo_mes: { periodo: string; tokens_total: number; costo_estimado_usd: string; porcentaje_tope: number; busquedas_web?: number; costo_web_usd?: string };
   sincronizacion: { estado: string; configurada: boolean; variable_requerida: string | null; ultimo_intento: string | null; ultimo_exito: string | null; ultimo_error: string | null };
   alertas: Alerta[];
   detalle: {
@@ -148,6 +148,14 @@ function Detalle({ r, recargar }: { r: Resumen; recargar: () => void }) {
             </div>
           );
         })}
+      </section>
+
+      {/* 3.b) Búsquedas web del mes (discreto; el detalle de costo, no la tarjeta principal) */}
+      <section>
+        <h4 className="mb-1 font-black uppercase tracking-wider text-white/40">Este mes ({mesLargo(r.consumo_mes.periodo)})</h4>
+        <div className="flex items-center justify-between py-0.5 text-white/60"><span>Tokens</span><span className="tabular-nums">{r.consumo_mes.tokens_total.toLocaleString("es-AR")}</span></div>
+        <div className="flex items-center justify-between py-0.5 text-white/60"><span>Búsquedas web</span><span className="tabular-nums">{r.consumo_mes.busquedas_web ?? 0}{(r.consumo_mes.busquedas_web ?? 0) > 0 ? ` · ~${usd(r.consumo_mes.costo_web_usd ?? "0")}` : ""}</span></div>
+        <div className="flex items-center justify-between py-0.5 text-white/60"><span>Costo total estimado</span><span className="tabular-nums">~{usd(r.consumo_mes.costo_estimado_usd)}</span></div>
       </section>
 
       {/* 3) Consumo por mes (solo estimado; sin columnas oficiales vacías) */}

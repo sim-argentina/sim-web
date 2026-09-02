@@ -1,4 +1,4 @@
-import type { IAProvider, GenerarParams, TurnoProveedor, Uso, AnalizarVisualParams, ResultadoVisual } from "@/lib/ia/provider";
+import type { IAProvider, GenerarParams, TurnoProveedor, Uso, WebTurno, AnalizarVisualParams, ResultadoVisual } from "@/lib/ia/provider";
 import { IAProviderError } from "@/lib/ia/provider";
 
 // Proveedor FALSO determinístico (solo tests / IA_PROVIDER=fake). No llama a ninguna
@@ -10,30 +10,36 @@ function estimarTokens(texto: string): number {
 }
 
 export type GuionTurno =
-  | { tipo: "texto"; texto: string }
-  | { tipo: "herramientas"; texto?: string; llamadas: Array<{ nombre: string; input: Record<string, unknown> }> }
-  | { tipo: "error"; mensaje: string }
+  | { tipo: "texto"; texto: string; web?: WebTurno }
+  | { tipo: "herramientas"; texto?: string; llamadas: Array<{ nombre: string; input: Record<string, unknown> }>; web?: WebTurno }
+  | { tipo: "error"; mensaje: string; status?: number }
   | { tipo: "timeout" };
 
 // Proveedor guionado: devuelve los turnos en orden. Ideal para tests deterministas.
+// Puede simular la búsqueda web (campo `web`) y errores del proveedor (status 400/429).
 export class FakeProviderGuionado implements IAProvider {
   nombre = "fake";
   private i = 0;
   constructor(private guion: GuionTurno[]) {}
+  // Registra los últimos params (para verificar si se ofreció la herramienta web).
+  ultimoWebSearch?: GenerarParams["webSearch"];
   async generar(params: GenerarParams): Promise<TurnoProveedor> {
+    this.ultimoWebSearch = params.webSearch;
     const paso = this.guion[this.i] ?? { tipo: "texto", texto: "(fin del guión)" };
     this.i++;
-    if (paso.tipo === "error") throw new Error(paso.mensaje);
-    if (paso.tipo === "timeout") { await new Promise((r) => setTimeout(r, params.timeoutMs + 50)); throw new Error("timeout"); }
+    if (paso.tipo === "error") throw new IAProviderError(paso.mensaje, paso.status ?? 502);
+    if (paso.tipo === "timeout") { await new Promise((r) => setTimeout(r, params.timeoutMs + 50)); throw new IAProviderError("El proveedor tardó demasiado (timeout)."); }
     const inTok = estimarTokens(params.system + JSON.stringify(params.historial));
+    // Solo se adjunta `web` si el orquestador REALMENTE habilitó la búsqueda (coherencia).
+    const web = params.webSearch?.habilitado ? paso.web : undefined;
     // Proveedor compliant: si no se le ofrecen herramientas (tope de rondas), responde texto.
     if (paso.tipo === "herramientas" && params.herramientas.length === 0) {
-      return { tipo: "texto", texto: "(sin más herramientas disponibles) respuesta final.", uso: { tokensIn: inTok, tokensOut: 8 } };
+      return { tipo: "texto", texto: "(sin más herramientas disponibles) respuesta final.", uso: { tokensIn: inTok, tokensOut: 8 }, web };
     }
     if (paso.tipo === "herramientas") {
-      return { tipo: "herramientas", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: 10 }, llamadas: paso.llamadas.map((l, k) => ({ id: `fake-${this.i}-${k}`, nombre: l.nombre, input: l.input })) };
+      return { tipo: "herramientas", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: 10 }, llamadas: paso.llamadas.map((l, k) => ({ id: `fake-${this.i}-${k}`, nombre: l.nombre, input: l.input })), web };
     }
-    return { tipo: "texto", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: estimarTokens(paso.texto) } };
+    return { tipo: "texto", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: estimarTokens(paso.texto) }, web };
   }
 }
 
