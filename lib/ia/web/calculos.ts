@@ -36,6 +36,18 @@ export function promedioPorDia(total: number, dias: number, criterio: "calendari
   };
 }
 
+// Participación de una parte sobre el total, con la MÉTRICA explícita (turnos, personas,
+// operaciones o facturación). Evita "muy minoritario" sin criterio.
+export function participacion(parte: number, total: number, metrica: string): Calculo | CalculoError {
+  if (!Number.isFinite(total) || total <= 0) return { error: "sin_total", motivo: "No hay un total válido para calcular participación." };
+  const resultado = round((parte / total) * 100, 1);
+  return {
+    formula: `${parte} / ${total} × 100`, numerador: parte, denominador: total,
+    resultado, unidad: `% de ${metrica}`, criterio: `participación por ${metrica}`, redondeo: 1,
+    fuentes: ["Métricas de Equipo / Stand+Reservas"],
+  };
+}
+
 // bruto − comisión = neto (reconciliación exacta con la fuente).
 export function neto(bruto: number, comision: number): Calculo {
   return {

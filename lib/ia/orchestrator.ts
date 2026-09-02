@@ -54,6 +54,10 @@ export type EjecutarChatParams = {
   contextoUsuario?: string; // contexto dinámico (conocimiento/adjuntos) como DATO de nivel USUARIO
   // Bloque 4D — decisión DETERMINÍSTICA de búsqueda web (tomada antes de llamar al proveedor).
   web?: { habilitar: boolean; explicita: boolean; motivo: string; maxUsos: number; version: string };
+  // Bloque 4D.2 — subconjunto de herramientas por intención (menos schemas = menos tokens).
+  herramientasPermitidas?: string[];
+  // Bloque 4D.2 — override del máximo de tokens de salida (evita truncar síntesis complejas).
+  maxTokensSalida?: number;
 };
 
 export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResultado> {
@@ -116,8 +120,8 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
       try {
         turno = await p.provider.generar({
           modelo, system, historial,
-          herramientas: permitirHerramientas ? defsParaProveedor() : [],
-          maxTokensSalida: p.limites.tokensSalidaMax,
+          herramientas: permitirHerramientas ? defsParaProveedor(p.herramientasPermitidas) : [],
+          maxTokensSalida: Math.min(p.maxTokensSalida ?? p.limites.tokensSalidaMax, 8000),
           timeoutMs: Math.max(1000, restante()),
           webSearch: webParam,
         });

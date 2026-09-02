@@ -12,8 +12,9 @@ import { getMaxBusquedasWeb, getWebToolVersion, webHabilitadaGlobal } from "@/li
 import { costoBusquedasUSD, PRECIOS_WEB_VERSION } from "@/lib/ia/web/costo";
 import { dominioDe } from "@/lib/ia/web/fuentes";
 import { sanitizarConsultaWeb } from "@/lib/ia/web/sanitizar";
-import { validarRespuestaMixta } from "@/lib/ia/web/validacion";
+import { validarRespuestaMixta, VALIDADOR_VERSION, type ResultadoValidacion } from "@/lib/ia/web/validacion";
 import { mesFinalizadoMencionado } from "@/lib/ia/periodo";
+import { seleccionarHerramientas } from "@/lib/ia/herramientasIntencion";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -141,7 +142,11 @@ export async function correrChat(params: { owner: string; conversacionId: string
   const decWeb = decidirWeb(pregunta);
   const webActiva = decWeb.habilitar && webHabilitadaGlobal();
   const webParam = { habilitar: webActiva, explicita: decWeb.explicita, motivo: decWeb.motivo, maxUsos: getMaxBusquedasWeb(), version: getWebToolVersion() };
-  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParam });
+  // 4D.2 — subconjunto de herramientas por intención (menos schemas = menos tokens) y salida
+  // ampliada SOLO para síntesis web/competitiva (evita truncar sin inflar consultas simples).
+  const herramientasPermitidas = seleccionarHerramientas(pregunta, { conocimientoRelevante: relevantes.length > 0 });
+  const maxTokensSalida = webActiva ? 2500 : limites.tokensSalidaMax;
+  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParam, herramientasPermitidas, maxTokensSalida });
 
   // Costo = tokens + búsquedas web (VERSIONADO). El total se congela en la ejecución, así el
   // saldo dinámico (4B.5.1) descuenta la búsqueda UNA sola vez junto con los tokens.
@@ -154,6 +159,12 @@ export async function correrChat(params: { owner: string; conversacionId: string
   const fuentesInternas = [...fuentesConocimiento, ...res.fuentes.map((f) => ({ tipo: "interna" as const, ...f }))];
   const fuentesExternas = res.web.fuentes.map((f) => ({ tipo: "externa" as const, modulo: f.dominio || dominioDe(f.url) || "internet", url: f.url, titulo: f.titulo ?? null, dominio: f.dominio ?? dominioDe(f.url) ?? null, fragmento: f.fragmento ?? null, fecha_pagina: f.fecha_pagina ?? null }));
   const fuentesFinales = [...fuentesInternas, ...fuentesExternas];
+
+  // 4D.2 — Validación DETERMINÍSTICA (una sola vez): polaridad + integridad. Se usa para la
+  // nota anexada Y para la auditoría de la búsqueda web.
+  const validacion: ResultadoValidacion | null = (res.estado === "completa" && res.web.busquedasFacturables > 0)
+    ? validarRespuestaMixta(res.texto, { periodoFinalizado: mesFinalizadoMencionado(`${pregunta} ${res.texto}`), hayBenchmarkCompetidores: false })
+    : null;
 
   // Persistir ejecución + herramientas + mensaje del asistente.
   const { data: eje } = await supabaseAdmin.from("ia_ejecuciones").insert({
@@ -179,6 +190,10 @@ export async function correrChat(params: { owner: string; conversacionId: string
       estado: estadoWeb, duracion_ms: res.duracion_ms, consultas: (res.web.consultas ?? []).map((q) => sanitizarConsultaWeb(q)),
       busquedas_facturables: res.web.busquedasFacturables, costo_usd: costoWeb, precios_version: PRECIOS_WEB_VERSION,
       error_normalizado: res.web.error ?? null,
+      // 4D.2 — auditoría de validación y consumo.
+      validador_version: VALIDADOR_VERSION, fuentes_recibidas: res.web.fuentes.length,
+      salvedades: validacion?.advertencias.length ?? 0, herramientas_ofrecidas: herramientasPermitidas.length + (webActiva ? 1 : 0),
+      integridad_ok: validacion?.integridad.ok ?? null,
     }).select("id").single();
     if (bw?.id && res.web.fuentes.length > 0) {
       // Dedup por URL dentro de la ejecución (índice único lo garantiza; upsert ignora repetidos).
@@ -210,13 +225,16 @@ export async function correrChat(params: { owner: string; conversacionId: string
   const notaWebNoDisp = res.web.error === "web_no_disponible" && !borrador
     ? "\n\n_La búsqueda web no está disponible en este momento. Respondí con los datos internos de SIM; puedo intentarlo nuevamente más tarde._"
     : "";
-  // 4D.1 — Validación DETERMINÍSTICA previa a publicar (respuestas mixtas con búsqueda web):
-  // detecta afirmaciones no respaldadas (período finalizado llamado "incompleto", superlativos
-  // sin benchmark, máquinas derivadas de operaciones, precios sin moneda, SIM Café Racer como
-  // competidor) y anexa salvedades. No dispara nuevas búsquedas ni reintentos.
-  const notaValidacion = (!borrador && res.estado === "completa" && res.web.busquedasFacturables > 0)
-    ? validarRespuestaMixta(res.texto, { periodoFinalizado: mesFinalizadoMencionado(`${pregunta} ${res.texto}`), hayBenchmarkCompetidores: false }).notas
-    : "";
+  // 4D.1/4D.2 — Validación DETERMINÍSTICA previa a publicar (respuestas mixtas con búsqueda web).
+  // NO destructiva y con conciencia de polaridad (no marca lo ya negado/correcto). Si la respuesta
+  // quedó truncada (integridad), se avisa en vez de dejar una viñeta huérfana sin explicación.
+  let notaValidacion = "";
+  if (!borrador && validacion) {
+    notaValidacion = validacion.notas;
+    if (!validacion.integridad.ok && validacion.integridad.problemas.some((p) => p === "truncado_al_final" || p === "vineta_cortada" || p === "parrafo_cortado")) {
+      notaValidacion += "\n\n_La respuesta puede haber quedado incompleta. Pedí que la continúe o reformulá para acotar el alcance._";
+    }
+  }
   const contenido = borrador
     ? (huboTimeoutPosterior
         ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos."

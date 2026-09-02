@@ -292,6 +292,11 @@ export const HERRAMIENTAS: Record<string, ToolDef> = {
   [preparar_informe.nombre]: preparar_informe,
 };
 
-export function defsParaProveedor() {
-  return Object.values(HERRAMIENTAS).map((t) => ({ nombre: t.nombre, descripcion: t.descripcion, schema: t.schema }));
+// Definiciones para el proveedor. Con `soloNombres` se ofrece SOLO ese subconjunto (por
+// intención, Bloque 4D.2) para no gastar tokens en schemas que la consulta no necesita.
+export function defsParaProveedor(soloNombres?: string[]) {
+  const permitido = soloNombres ? new Set(soloNombres) : null;
+  return Object.values(HERRAMIENTAS)
+    .filter((t) => !permitido || permitido.has(t.nombre))
+    .map((t) => ({ nombre: t.nombre, descripcion: t.descripcion, schema: t.schema }));
 }
