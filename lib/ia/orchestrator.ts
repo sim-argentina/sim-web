@@ -25,7 +25,14 @@ export type EjecucionResultado = {
   rondas: number;
   uso: { tokensIn: number; tokensOut: number };
   duracion_ms: number;
+  // Bloque 4C.1: si una herramienta TERMINAL (preparar_informe) se ejecutó OK, el loop
+  // se detiene acá (sin otra llamada a Claude) y el servidor persiste el borrador.
+  terminalInforme?: boolean;
+  borradorSpec?: unknown;
 };
+
+// Respuesta LOCAL determinística tras preparar el borrador (no consume tokens).
+export const TEXTO_BORRADOR_LISTO = "Preparé el borrador del informe. Revisalo y editá lo que necesites antes de generar los archivos.";
 
 export type EjecutarChatParams = {
   provider: IAProvider;
@@ -82,6 +89,8 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
       historial.push({ rol: "assistant", texto: turno.texto, llamadas });
 
       const resultados: ResultadoHerramienta[] = [];
+      let terminalSpec: unknown;
+      let hayTerminal = false;
       for (const ll of llamadas) {
         const t0 = Date.now();
         const def = HERRAMIENTAS[ll.nombre];
@@ -90,11 +99,21 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
           resultados.push({ id: ll.id, nombre: ll.nombre, ok: false, contenido: JSON.stringify({ error: "Herramienta no permitida o inexistente." }) });
           continue;
         }
+        // Si ya se preparó un borrador en esta ronda, no ejecutamos más herramientas.
+        if (hayTerminal) {
+          resultados.push({ id: ll.id, nombre: ll.nombre, ok: false, contenido: JSON.stringify({ error: "El borrador ya fue preparado; no se ejecutan más herramientas." }) });
+          continue;
+        }
         try {
           const r = await def.ejecutar(ll.input);
           fuentes.push(r.fuente);
           herramientasEjecutadas.push({ nombre: ll.nombre, params: ll.input, resumen: r.resumen, ok: true, duracion_ms: Date.now() - t0 });
           resultados.push({ id: ll.id, nombre: ll.nombre, ok: true, contenido: r.contenido });
+          // Herramienta TERMINAL exitosa (preparar_informe): capturar el spec y cortar.
+          if (def.terminal && (r.resumen as { es_preparar_informe?: boolean } | null)?.es_preparar_informe) {
+            terminalSpec = (r.resumen as { spec?: unknown }).spec;
+            hayTerminal = true;
+          }
         } catch (e) {
           const msg = e instanceof ToolParamError ? e.message : "No se pudo ejecutar la herramienta.";
           herramientasEjecutadas.push({ nombre: ll.nombre, params: ll.input, resumen: null, ok: false, error: msg, duracion_ms: Date.now() - t0 });
@@ -103,6 +122,12 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
       }
       historial.push({ rol: "tool", resultados });
       rondas++;
+
+      // TERMINAL: el pedido se cumplió (borrador preparado). Cortamos el loop y devolvemos
+      // una respuesta LOCAL determinística. NO hay otra llamada a Claude.
+      if (hayTerminal) {
+        return fin({ estado: "completa", texto: TEXTO_BORRADOR_LISTO, terminalInforme: true, borradorSpec: terminalSpec });
+      }
 
       if (debeEscalar(clase, rondas) && !escalado) {
         clase = "potente"; modelo = p.modelos.potente; escalado = true;

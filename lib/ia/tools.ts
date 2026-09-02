@@ -33,6 +33,9 @@ export type ToolDef = {
   descripcion: string;
   schema: Record<string, unknown>;
   periodoMaxDias?: number;
+  // TERMINAL: si la herramienta se ejecuta OK, el objetivo del pedido está cumplido y el
+  // orquestador DETIENE el loop (no hay otra llamada obligatoria a Claude). Ej: preparar_informe.
+  terminal?: boolean;
   ejecutar: (input: Record<string, unknown>) => Promise<ToolResultado>;
 };
 

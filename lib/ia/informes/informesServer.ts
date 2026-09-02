@@ -30,18 +30,37 @@ async function historial(informeId: string, versionId: string | null, accion: st
 }
 
 // ── Crear borrador (llamado por el SERVIDOR desde el flujo de chat) ───────────
+// Idempotente por (conversación, mensaje de usuario): reintentos/refresh/doble clic
+// reutilizan el borrador existente en vez de duplicarlo. NO consume Claude.
 export async function crearBorrador(p: {
-  conversacionId: string; owner: string; ejecucionId: string | null; specRaw: unknown; snapshotFuentes: unknown[];
-}): Promise<{ ok: true; informeId: string; versionId: string; version: number } | Fail> {
+  conversacionId: string; owner: string; ejecucionId: string | null; mensajeUsuarioId?: string | null; specRaw: unknown; snapshotFuentes: unknown[];
+}): Promise<{ ok: true; informeId: string; versionId: string; version: number; reutilizado?: boolean } | Fail> {
+  // Idempotencia: si ya hay un borrador ACTIVO para este mensaje, reutilizarlo.
+  if (p.mensajeUsuarioId) {
+    const { data: existente } = await supabaseAdmin.from("ia_informes")
+      .select("id, version_actual").eq("conversacion_id", p.conversacionId).eq("mensaje_usuario_id", p.mensajeUsuarioId)
+      .not("estado", "in", "(descartado,papelera,eliminado)").order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (existente) {
+      const { data: ver } = await supabaseAdmin.from("ia_informe_versiones").select("id, version").eq("informe_id", existente.id).order("version", { ascending: false }).limit(1).maybeSingle();
+      return { ok: true, informeId: existente.id as string, versionId: (ver?.id as string) ?? "", version: (ver?.version as number) ?? 1, reutilizado: true };
+    }
+  }
   const val = validarInforme(p.specRaw);
   if (!val.ok) return { ok: false, status: 400, error: "El borrador no pasó la validación.", detalle: val.errores };
   const spec = val.spec;
 
   const { data: inf, error: e1 } = await supabaseAdmin.from("ia_informes").insert({
-    conversacion_id: p.conversacionId, owner: p.owner, ejecucion_id: p.ejecucionId,
+    conversacion_id: p.conversacionId, owner: p.owner, ejecucion_id: p.ejecucionId, mensaje_usuario_id: p.mensajeUsuarioId ?? null,
     titulo: spec.titulo, tipo_informe: spec.tipo_informe, periodo: spec.periodo, incluye_pii: spec.incluye_pii, estado: "borrador", version_actual: 1,
   }).select("id").single();
-  if (e1 || !inf) return { ok: false, status: 500, error: "No se pudo crear el informe." };
+  if (e1 || !inf) {
+    // Carrera con el índice único (conv, mensaje): reutilizar el que quedó.
+    if (p.mensajeUsuarioId && (e1 as { code?: string } | null)?.code === "23505") {
+      const { data: ya } = await supabaseAdmin.from("ia_informes").select("id, version_actual").eq("conversacion_id", p.conversacionId).eq("mensaje_usuario_id", p.mensajeUsuarioId).not("estado", "in", "(descartado,papelera,eliminado)").maybeSingle();
+      if (ya) { const { data: ver } = await supabaseAdmin.from("ia_informe_versiones").select("id, version").eq("informe_id", ya.id).order("version", { ascending: false }).limit(1).maybeSingle(); return { ok: true, informeId: ya.id as string, versionId: (ver?.id as string) ?? "", version: (ver?.version as number) ?? 1, reutilizado: true }; }
+    }
+    return { ok: false, status: 500, error: "No se pudo crear el informe." };
+  }
 
   const { data: ver, error: e2 } = await supabaseAdmin.from("ia_informe_versiones").insert({
     informe_id: inf.id, version: 1, spec, hash: hashSpec(spec), snapshot_fuentes: p.snapshotFuentes, fecha_corte: spec.fecha_corte, actor: p.owner, estado: "borrador",

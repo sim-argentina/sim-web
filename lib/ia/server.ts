@@ -150,25 +150,34 @@ export async function correrChat(params: { owner: string; conversacionId: string
     await supabaseAdmin.from("ia_herramientas_ejecuciones").insert(res.herramientas.map((h) => ({ ejecucion_id: eje.id, herramienta: h.nombre, params: h.params, resumen: h.resumen, ok: h.ok, error: h.error ?? null, duracion_ms: h.duracion_ms })));
   }
 
-  // ── Bloque 4C — Si el modelo pidió preparar un informe, el SERVIDOR crea el
-  // borrador vinculado a esta conversación/ejecución, con el snapshot REAL de las
-  // herramientas de datos que corrieron (para reconciliar). El modelo no toca nada.
+  // ── Bloque 4C/4C.1 — Si el modelo preparó un informe (terminal), el SERVIDOR crea el
+  // borrador con el snapshot REAL de las tools. Se crea AUNQUE una etapa posterior haya
+  // fallado (recuperación de evidencia ya pagada) e IDEMPOTENTE por mensaje de usuario.
   let borrador: { informeId: string; versionId: string; version: number } | null = null;
   const pedidosInforme = res.herramientas.filter((h) => h.nombre === NOMBRE_PREPARAR_INFORME && h.ok && (h.resumen as { es_preparar_informe?: boolean } | null)?.es_preparar_informe);
   const ultimo = pedidosInforme[pedidosInforme.length - 1];
-  if (ultimo && res.estado === "completa") {
-    const spec = (ultimo.resumen as { spec?: unknown }).spec;
-    // Snapshot de grounding: resúmenes de las herramientas de DATOS (no el propio preparar_informe).
+  // El spec terminal viene del orquestador; si no, el del último preparar_informe OK.
+  const specBorrador = res.terminalInforme ? res.borradorSpec : (ultimo ? (ultimo.resumen as { spec?: unknown }).spec : undefined);
+  if (specBorrador !== undefined) {
     const snapshot = res.herramientas.filter((h) => h.nombre !== NOMBRE_PREPARAR_INFORME && h.ok && h.resumen).map((h) => ({ herramienta: h.nombre, resumen: h.resumen }));
-    const cb = await crearBorrador({ conversacionId, owner, ejecucionId: eje?.id ?? null, specRaw: spec, snapshotFuentes: snapshot });
+    const cb = await crearBorrador({ conversacionId, owner, ejecucionId: eje?.id ?? null, mensajeUsuarioId: userMsg.id, specRaw: specBorrador, snapshotFuentes: snapshot });
     if (cb.ok) borrador = { informeId: cb.informeId, versionId: cb.versionId, version: cb.version };
   }
 
-  const contenido = res.estado === "completa" ? res.texto : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`;
+  // Texto del asistente: si se preparó el borrador, SIEMPRE es un mensaje de éxito
+  // (aunque una etapa posterior del modelo haya dado timeout). Nunca error fatal.
+  const huboTimeoutPosterior = borrador != null && res.estado !== "completa";
+  const contenido = borrador
+    ? (huboTimeoutPosterior
+        ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos."
+        : res.texto)
+    : (res.estado === "completa" ? res.texto : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
+  // El mensaje se marca 'completa' si hay borrador (la UI muestra la vista previa, no un error).
+  const estadoMensaje = borrador ? "completa" : res.estado;
   const { data: asstMsg } = await supabaseAdmin.from("ia_mensajes").insert({
     conversacion_id: conversacionId, rol: "assistant", contenido, modelo: res.modelo, proveedor: getProveedor(),
     clase_modelo: res.claseModelo, motivo_router: res.motivoRouter, escalado: res.escalado,
-    tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, fuentes: fuentesFinales, herramientas: res.herramientas, estado: res.estado, error: res.error ?? null,
+    tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, fuentes: fuentesFinales, herramientas: res.herramientas, estado: estadoMensaje, error: huboTimeoutPosterior ? res.error ?? null : (borrador ? null : res.error ?? null),
   }).select("id").single();
 
   // Sumar consumo real (tokens/costo).
@@ -179,5 +188,5 @@ export async function correrChat(params: { owner: string; conversacionId: string
   if (!conv.titulo) patch.titulo = tituloAuto(pregunta);
   await supabaseAdmin.from("ia_conversaciones").update(patch).eq("id", conversacionId);
 
-  return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: res.escalado, estado: res.estado, herramientas: res.herramientas, uso: res.uso, borrador };
+  return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: res.escalado, estado: estadoMensaje, herramientas: res.herramientas, uso: res.uso, borrador };
 }

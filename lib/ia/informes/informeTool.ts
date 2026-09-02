@@ -21,18 +21,22 @@ export const preparar_informe: ToolDef = {
   nombre: NOMBRE_PREPARAR_INFORME,
   descripcion: DESCRIPCION,
   schema: SCHEMA_PREPARAR_INFORME,
+  terminal: true, // éxito ⇒ el orquestador corta el loop (sin otra llamada a Claude).
   ejecutar: async (input): Promise<ToolResultado> => {
     const val = validarInforme(input);
     if (!val.ok) {
+      // Fallo de validación: NO es terminal; el modelo puede corregir y reintentar.
       return {
         contenido: JSON.stringify({ ok: false, motivo: "El borrador no pasó la validación. Corregí y volvé a intentar.", errores: val.errores.slice(0, 20) }),
         resumen: { ok: false, errores: val.errores },
         fuente: { modulo: "preparar_informe", actualizado: new Date().toISOString() },
       };
     }
-    // El servidor detecta este resumen, reconcilia contra las tools reales y crea el borrador.
+    // El servidor toma este `spec` (resumen), reconcilia contra las tools reales y crea el
+    // borrador. El `contenido` que ve el modelo es MÍNIMO (no se le devuelve el spec/tablas/
+    // anexo); además, al ser terminal, el orquestador ya no hace otra ronda.
     return {
-      contenido: JSON.stringify({ ok: true, mensaje: "Borrador preparado. El servidor lo creará y mostrará la vista previa editable. NO afirmes todavía que el archivo fue generado." }),
+      contenido: JSON.stringify({ ok: true, estado: "borrador", mensaje: "Borrador preparado por el servidor." }),
       resumen: { ok: true, es_preparar_informe: true, spec: val.spec },
       fuente: { modulo: "preparar_informe", actualizado: new Date().toISOString() },
     };

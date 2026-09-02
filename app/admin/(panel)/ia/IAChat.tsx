@@ -209,10 +209,12 @@ export default function IAChat() {
         setError(j?.error || "No se pudo responder.");
         setInput(pregunta); // conservar el texto si falló
         setMensajes((m) => m.filter((x) => x.id !== userMsg.id));
+        cargarInformes(convId); // por si quedó un borrador persistido pese al error
         return;
       }
       setMensajes((m) => [...m, { id: j.mensajeId, rol: "assistant", contenido: j.texto, modelo: j.modelo, clase_modelo: j.claseModelo, escalado: j.escalado, fuentes: j.fuentes, herramientas: j.herramientas, estado: j.estado }]);
       if (j.borrador?.informeId) setInformes((prev) => (prev.includes(j.borrador.informeId) ? prev : [...prev, j.borrador.informeId]));
+      else cargarInformes(convId); // recuperar cualquier borrador vinculado (éxito/timeout posterior)
       cargarConvs(); cargarSaldo();
     } catch {
       setError("Error de red."); setInput(pregunta);
