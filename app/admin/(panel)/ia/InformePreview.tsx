@@ -19,9 +19,14 @@ type Spec = {
 };
 type Recon = { ok: boolean; contradicciones: { etiqueta: string; detalle: string }[]; respaldo: { total_cifras: number; respaldadas: number; sin_respaldo: number } };
 type Archivo = { id: string; formato: string; nombre_descarga: string; tamano_bytes: number };
-type Preview = { informe: { id: string; estado: string; version_actual: number }; version: { estado: string }; spec: Spec; reconciliacion: Recon; archivos: Archivo[] };
+type Requisitos = { componentes: string[]; formatos: string[] };
+type Integridad = { estado: "completo" | "incompleto" | "bloqueado"; faltantes: string[]; faltantes_labels: string[]; formatos_faltantes: string[]; contradicciones: string[]; presencia: Record<string, boolean> };
+type Preview = { informe: { id: string; tipo_informe: string; periodo?: string | null; estado: string; version_actual: number }; version: { version: number; estado: string }; spec: Spec; reconciliacion: Recon; archivos: Archivo[]; requisitos: Requisitos | null; formatos_seleccionados: string[]; integridad: Integridad | null };
 
 const FORMATOS = ["pdf", "docx", "xlsx", "csv", "png"] as const;
+const FORMATO_LABEL: Record<string, string> = { pdf: "PDF", docx: "Word", xlsx: "Excel", csv: "CSV", png: "Imagen/PNG" };
+const TIPO_LABEL: Record<string, string> = { analitico_mensual: "Informe analítico mensual", analitico: "Informe analítico", comparacion: "Comparación", foda: "Análisis FODA" };
+const tipoLabel = (t: string) => TIPO_LABEL[t] ?? (t ? t.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : "Informe");
 const kb = (n: number) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 const esNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
@@ -37,7 +42,7 @@ export default function InformePreview({ informeId }: { informeId: string }) {
 
   const cargar = useCallback(async () => {
     const r = await fetch(`/api/admin/ia/informes/${informeId}`, { cache: "no-store" }).catch(() => null);
-    if (r && r.ok) { const j = (await r.json()) as Preview; setP(j); setSpec(structuredClone(j.spec)); original.current = structuredClone(j.spec); }
+    if (r && r.ok) { const j = (await r.json()) as Preview; setP(j); setSpec(structuredClone(j.spec)); original.current = structuredClone(j.spec); setFormatos(j.formatos_seleccionados?.length ? j.formatos_seleccionados : ["pdf"]); }
   }, [informeId]);
   // informeId es estable por instancia (el componente va key-ado por id) → el efecto
   // corre una vez y el setState ocurre tras el await (no es síncrono ni cascada).
@@ -47,6 +52,10 @@ export default function InformePreview({ informeId }: { informeId: string }) {
   if (!p || !spec) return null;
   const generado = p.informe.estado === "generado" && p.archivos.length > 0;
   const rec = p.reconciliacion;
+  const integ = p.integridad;
+  const COMPLETABLES = ["tablas", "graficos", "fuentes", "metodologia", "anexo", "periodo", "conclusiones"];
+  const puedeCompletar = Boolean(integ && integ.estado !== "completo" && integ.faltantes.some((f) => COMPLETABLES.includes(f)));
+  const bloqueadoParaGenerar = Boolean(integ && integ.estado !== "completo");
 
   // Detecta y marca cambios manuales sobre valores numéricos del sistema.
   const marcarCambios = (s: Spec): Spec => {
@@ -77,9 +86,27 @@ export default function InformePreview({ informeId }: { informeId: string }) {
       if (confirm("Hay valores modificados manualmente. ¿Confirmás que querés generarlo así?")) return confirmar({ ...extra, confirmar_manuales: true });
       return;
     }
+    if (r.status === 409 && j.detalle?.integridad) { setMsg(`Falta completar lo solicitado: ${(j.detalle.integridad.faltantes_labels || []).join(", ") || "requisitos"}. Usá “Completar desde los datos guardados”.`); return; }
     if (r.status === 409 && j.detalle?.contradicciones) { setMsg(`No reconcilia: ${j.detalle.contradicciones.map((c: { etiqueta: string }) => c.etiqueta).join(", ")}. Corregí el borrador.`); return; }
     if (!r.ok) { setMsg(j.error || "No se pudo generar."); return; }
     setMsg(`Generado: ${j.archivos.length} archivo(s).`); await cargar();
+  };
+
+  // Completar determinísticamente desde el snapshot (NO consume IA).
+  const completar = async () => {
+    setBusy(true); setMsg(null);
+    const r = await fetch(`/api/admin/ia/informes/${informeId}/completar`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const j = await r.json();
+    setBusy(false);
+    if (!r.ok) { setMsg(j.error || "No se pudo completar."); return; }
+    setMsg(`Completado desde los datos guardados (${(j.agregados || []).length} componente(s)). No consumió IA.`); await cargar();
+  };
+
+  // Alternar un formato seleccionado y persistir la selección.
+  const toggleFormato = async (f: string, on: boolean) => {
+    const next = on ? [...new Set([...formatos, f])] : formatos.filter((x) => x !== f);
+    setFormatos(next);
+    await fetch(`/api/admin/ia/informes/${informeId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ formatos: next }) }).catch(() => null);
   };
 
   const descargar = async (archivoId: string) => {
@@ -101,10 +128,20 @@ export default function InformePreview({ informeId }: { informeId: string }) {
         <div>
           <p className="text-[10px] font-black uppercase tracking-wider text-red-500">Vista previa del informe</p>
           <p className="font-bold text-white">{spec.titulo}</p>
-          <p className="text-xs text-white/50">{spec.tipo_informe}{spec.periodo ? ` · ${spec.periodo}` : ""} · {spec.tablas.length} tabla(s) · {spec.graficos.length} gráfico(s) · estado {p.informe.estado}</p>
+          <p className="text-xs text-white/50">{tipoLabel(spec.tipo_informe)}{spec.periodo ? ` · ${spec.periodo}` : ""} · {spec.tablas.length} tabla(s) · {spec.graficos.length} gráfico(s) · {spec.fuentes.length} fuente(s) · estado {p.informe.estado}{p.informe.version_actual > 1 ? ` (v${p.informe.version_actual})` : ""}</p>
         </div>
         <button onClick={() => setAbierto((v) => !v)} className="shrink-0 rounded-lg bg-white/10 px-2 py-1 text-xs font-bold hover:bg-white/20">{abierto ? "Cerrar" : "Ver"}</button>
       </div>
+
+      {/* Integridad: qué pidió el admin vs qué tiene el borrador */}
+      {integ && integ.estado !== "completo" && (
+        <div className="mt-2 rounded-lg bg-amber-950/40 px-2 py-1.5 text-[11px] text-amber-200">
+          {integ.faltantes_labels.length > 0 && <div>⚠ Faltan componentes solicitados: <span className="font-bold">{integ.faltantes_labels.join(", ")}</span>.</div>}
+          {integ.formatos_faltantes.length > 0 && <div>⚠ Formatos pedidos no seleccionados: <span className="font-bold">{integ.formatos_faltantes.map((f) => FORMATO_LABEL[f] ?? f).join(", ")}</span>.</div>}
+          {puedeCompletar && <div className="mt-1"><button onClick={completar} disabled={busy} className="rounded-lg bg-white/15 px-2 py-1 text-[11px] font-bold hover:bg-white/25 disabled:opacity-50">{busy ? "Completando…" : "Completar desde los datos guardados"}</button> <span className="text-white/40">(no consume IA)</span></div>}
+        </div>
+      )}
+      {integ && integ.estado === "completo" && p.requisitos && <div className="mt-2 rounded-lg bg-emerald-950/40 px-2 py-1 text-[11px] text-emerald-300">✓ El borrador cumple lo solicitado.</div>}
 
       {/* Reconciliación */}
       {!rec.ok ? (
@@ -143,15 +180,19 @@ export default function InformePreview({ informeId }: { informeId: string }) {
           {/* Formatos + confirmar */}
           <div className="rounded-lg border border-white/10 p-2">
             <p className="mb-1 text-[11px] font-black uppercase text-white/40">Formatos a generar</p>
-            <div className="mb-2 flex flex-wrap gap-2">
-              {FORMATOS.map((f) => (
-                <label key={f} className="flex items-center gap-1 text-xs text-white/70">
-                  <input type="checkbox" checked={formatos.includes(f)} onChange={(e) => setFormatos((prev) => (e.target.checked ? [...prev, f] : prev.filter((x) => x !== f)))} /> {f.toUpperCase()}
-                </label>
-              ))}
+            <div className="mb-2 flex flex-wrap gap-3">
+              {FORMATOS.map((f) => {
+                const pedido = p.requisitos?.formatos?.includes(f);
+                return (
+                  <label key={f} className="flex items-center gap-1 text-xs text-white/70">
+                    <input type="checkbox" checked={formatos.includes(f)} onChange={(e) => toggleFormato(f, e.target.checked)} aria-label={FORMATO_LABEL[f]} /> {FORMATO_LABEL[f]}{pedido ? <span className="text-red-400" title="Solicitado en el pedido"> ★</span> : null}
+                  </label>
+                );
+              })}
             </div>
+            {bloqueadoParaGenerar && <p className="mb-1 text-[11px] text-amber-300">No se puede generar hasta completar lo solicitado{integ && integ.estado === "bloqueado" ? " (hay contradicciones de datos)" : ""}.</p>}
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => confirmar()} disabled={busy || !rec.ok || formatos.length === 0} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-black uppercase hover:bg-red-700 disabled:opacity-40">{busy ? "Generando…" : generado ? "Regenerar / nueva versión" : "Confirmar y generar"}</button>
+              <button onClick={() => confirmar()} disabled={busy || !rec.ok || formatos.length === 0 || bloqueadoParaGenerar} title={bloqueadoParaGenerar ? "Faltan requisitos solicitados o hay contradicciones" : undefined} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-black uppercase hover:bg-red-700 disabled:opacity-40">{busy ? "Generando…" : generado ? "Regenerar / nueva versión" : "Confirmar y generar"}</button>
               <button onClick={() => accion("papelera")} className="rounded-lg px-2 py-1 text-xs text-white/50 hover:text-red-400">Papelera</button>
             </div>
           </div>

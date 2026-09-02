@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminGuards";
 import { rateLimit, tooManyResponse } from "@/lib/rateLimit";
 import { IA_OWNER_ADMIN } from "@/lib/ia/config";
-import { obtenerPreview, editarBorrador } from "@/lib/ia/informes/informesServer";
+import { obtenerPreview, editarBorrador, actualizarFormatos } from "@/lib/ia/informes/informesServer";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -28,8 +28,14 @@ export async function PATCH(req: Request, ctx: Ctx) {
   if (!(await rateLimit("ia:informes:editar", 40, 60_000))) return tooManyResponse();
   const { id } = await ctx.params;
   if (!UUID_RE.test(id)) return NextResponse.json({ error: "ID inválido." }, { status: 400 });
-  let body: { spec?: unknown };
+  let body: { spec?: unknown; formatos?: unknown };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "JSON inválido." }, { status: 400 }); }
+  // Solo actualizar formatos seleccionados (sin editar el spec).
+  if (body.spec === undefined && Array.isArray(body.formatos)) {
+    const fr = await actualizarFormatos(id, IA_OWNER_ADMIN, body.formatos.map(String));
+    if (!fr.ok) return NextResponse.json({ error: fr.error }, { status: fr.status });
+    return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
+  }
   const r = await editarBorrador(id, IA_OWNER_ADMIN, body.spec);
   if (!r.ok) return NextResponse.json({ error: r.error, detalle: r.detalle }, { status: r.status });
   return NextResponse.json({ ok: true, version: r.version }, { headers: { "Cache-Control": "no-store" } });

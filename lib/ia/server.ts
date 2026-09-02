@@ -6,6 +6,7 @@ import { getLimites, getModelos, getProveedor, estimarCostoUSD, iaEstaConfigurad
 import { buscarConocimiento, listarDocumentosActivos, normalizar } from "@/lib/ia/docs/conocimientoServer";
 import { crearBorrador } from "@/lib/ia/informes/informesServer";
 import { NOMBRE_PREPARAR_INFORME } from "@/lib/ia/informes/informeTool";
+import { parsearRequisitos } from "@/lib/ia/informes/requisitos";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -160,7 +161,9 @@ export async function correrChat(params: { owner: string; conversacionId: string
   const specBorrador = res.terminalInforme ? res.borradorSpec : (ultimo ? (ultimo.resumen as { spec?: unknown }).spec : undefined);
   if (specBorrador !== undefined) {
     const snapshot = res.herramientas.filter((h) => h.nombre !== NOMBRE_PREPARAR_INFORME && h.ok && h.resumen).map((h) => ({ herramienta: h.nombre, resumen: h.resumen }));
-    const cb = await crearBorrador({ conversacionId, owner, ejecucionId: eje?.id ?? null, mensajeUsuarioId: userMsg.id, specRaw: specBorrador, snapshotFuentes: snapshot });
+    // Requisitos SOLICITADOS por el admin (componentes + formatos), reconocidos del pedido.
+    const requisitos = parsearRequisitos(pregunta);
+    const cb = await crearBorrador({ conversacionId, owner, ejecucionId: eje?.id ?? null, mensajeUsuarioId: userMsg.id, specRaw: specBorrador, snapshotFuentes: snapshot, requisitos });
     if (cb.ok) borrador = { informeId: cb.informeId, versionId: cb.versionId, version: cb.version };
   }
 

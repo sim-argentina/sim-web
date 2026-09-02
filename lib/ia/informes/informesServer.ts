@@ -12,6 +12,9 @@ import { reconciliar } from "@/lib/ia/informes/reconciliacion";
 import { renderFormato } from "@/lib/ia/informes/render/index";
 import { nombreDescarga, mimeDe } from "@/lib/ia/informes/nombreArchivo";
 import { rutaArchivo, subirArchivo, urlFirmadaArchivo, borrarArchivos, sha256 } from "@/lib/ia/informes/storage";
+import type { Requisitos } from "@/lib/ia/informes/requisitos";
+import { evaluarIntegridad } from "@/lib/ia/informes/integridad";
+import { completarInformeMetricas } from "@/lib/ia/informes/completar";
 
 const TZ = "America/Argentina/Cordoba";
 function ahoraCordoba(): string {
@@ -34,6 +37,7 @@ async function historial(informeId: string, versionId: string | null, accion: st
 // reutilizan el borrador existente en vez de duplicarlo. NO consume Claude.
 export async function crearBorrador(p: {
   conversacionId: string; owner: string; ejecucionId: string | null; mensajeUsuarioId?: string | null; specRaw: unknown; snapshotFuentes: unknown[];
+  requisitos?: Requisitos | null;
 }): Promise<{ ok: true; informeId: string; versionId: string; version: number; reutilizado?: boolean } | Fail> {
   // Idempotencia: si ya hay un borrador ACTIVO para este mensaje, reutilizarlo.
   if (p.mensajeUsuarioId) {
@@ -52,6 +56,7 @@ export async function crearBorrador(p: {
   const { data: inf, error: e1 } = await supabaseAdmin.from("ia_informes").insert({
     conversacion_id: p.conversacionId, owner: p.owner, ejecucion_id: p.ejecucionId, mensaje_usuario_id: p.mensajeUsuarioId ?? null,
     titulo: spec.titulo, tipo_informe: spec.tipo_informe, periodo: spec.periodo, incluye_pii: spec.incluye_pii, estado: "borrador", version_actual: 1,
+    requisitos: p.requisitos ?? null,
   }).select("id").single();
   if (e1 || !inf) {
     // Carrera con el índice único (conv, mensaje): reutilizar el que quedó.
@@ -62,8 +67,10 @@ export async function crearBorrador(p: {
     return { ok: false, status: 500, error: "No se pudo crear el informe." };
   }
 
+  // Formatos seleccionados por defecto = los solicitados; si no se pidió ninguno, PDF.
+  const formatosSel = (p.requisitos?.formatos?.length ? p.requisitos.formatos : ["pdf"]) as FormatoArchivo[];
   const { data: ver, error: e2 } = await supabaseAdmin.from("ia_informe_versiones").insert({
-    informe_id: inf.id, version: 1, spec, hash: hashSpec(spec), snapshot_fuentes: p.snapshotFuentes, fecha_corte: spec.fecha_corte, actor: p.owner, estado: "borrador",
+    informe_id: inf.id, version: 1, spec, hash: hashSpec(spec), snapshot_fuentes: p.snapshotFuentes, fecha_corte: spec.fecha_corte, actor: p.owner, estado: "borrador", formatos: formatosSel,
   }).select("id").single();
   if (e2 || !ver) return { ok: false, status: 500, error: "No se pudo crear la versión." };
 
@@ -92,14 +99,84 @@ export async function listarPorConversacion(conversacionId: string, owner: strin
   return { ok: true, informes: data ?? [] };
 }
 
-// ── Vista previa ──────────────────────────────────────────────────────────────
-export async function obtenerPreview(informeId: string, owner: string): Promise<{ ok: true; informe: unknown; version: unknown; spec: InformeSpec; reconciliacion: unknown; archivos: unknown[] } | Fail> {
+// ── Vista previa (con requisitos, integridad y formatos seleccionados) ────────
+export async function obtenerPreview(informeId: string, owner: string): Promise<{ ok: true; informe: unknown; version: unknown; spec: InformeSpec; reconciliacion: unknown; archivos: unknown[]; requisitos: Requisitos | null; formatos_seleccionados: FormatoArchivo[]; integridad: unknown } | Fail> {
   const c = await cargar(informeId, owner);
   if (!c || !c.ver) return { ok: false, status: 404, error: "Informe no encontrado." };
   const spec = c.ver.spec as InformeSpec;
   const rec = reconciliar(spec, (c.ver.snapshot_fuentes as unknown[]) ?? []);
+  const { count: nFuentes } = await supabaseAdmin.from("ia_informe_fuentes").select("id", { count: "exact", head: true }).eq("version_id", c.ver.id);
   const { data: archivos } = await supabaseAdmin.from("ia_archivos_generados").select("id, formato, nombre_descarga, mime, tamano_bytes, hash_sha256, incluye_pii, estado, created_at, version_id").eq("informe_id", informeId).order("created_at", { ascending: true });
-  return { ok: true, informe: { id: c.inf.id, titulo: c.inf.titulo, estado: c.inf.estado, version_actual: c.inf.version_actual, incluye_pii: c.inf.incluye_pii, conversacion_id: c.inf.conversacion_id }, version: { id: c.ver.id, version: c.ver.version, estado: c.ver.estado }, spec, reconciliacion: rec, archivos: archivos ?? [] };
+  const requisitos = (c.inf.requisitos as Requisitos | null) ?? null;
+  const formatos_seleccionados = ((c.ver.formatos as FormatoArchivo[] | null) ?? (requisitos?.formatos?.length ? requisitos.formatos : ["pdf"])) as FormatoArchivo[];
+  const integridad = requisitos
+    ? evaluarIntegridad({ spec, requisitos, formatosSeleccionados: formatos_seleccionados, fuentesVinculadas: nFuentes ?? 0, reconciliacion: rec })
+    : null;
+  return {
+    ok: true,
+    informe: { id: c.inf.id, titulo: c.inf.titulo, tipo_informe: c.inf.tipo_informe, periodo: c.inf.periodo, estado: c.inf.estado, version_actual: c.inf.version_actual, incluye_pii: c.inf.incluye_pii, conversacion_id: c.inf.conversacion_id },
+    version: { id: c.ver.id, version: c.ver.version, estado: c.ver.estado },
+    spec, reconciliacion: rec, archivos: archivos ?? [], requisitos, formatos_seleccionados, integridad,
+  };
+}
+
+// ── Completado DETERMINÍSTICO (sin Claude): crea una NUEVA versión con los componentes
+// faltantes construidos desde el snapshot real de las herramientas. Conserva la versión previa.
+export async function completarBorrador(informeId: string, owner: string): Promise<{ ok: true; version: number; agregados: string[] } | Fail> {
+  const c = await cargar(informeId, owner);
+  if (!c || !c.ver) return { ok: false, status: 404, error: "Informe no encontrado." };
+  if (["papelera", "eliminado", "descartado"].includes(c.inf.estado as string)) return { ok: false, status: 409, error: "El informe no admite completado en su estado actual." };
+  const requisitos = (c.inf.requisitos as Requisitos | null) ?? { componentes: [], formatos: [] };
+  const specBase = validarInforme(c.ver.spec);
+  if (!specBase.ok) return { ok: false, status: 400, error: "El borrador no es válido." };
+
+  // Idempotencia: si la versión actual ya cubre los componentes completables solicitados,
+  // NO crear otra versión (doble clic / reintento no duplican).
+  const { count: nF } = await supabaseAdmin.from("ia_informe_fuentes").select("id", { count: "exact", head: true }).eq("version_id", c.ver.id);
+  const integActual = evaluarIntegridad({ spec: specBase.spec, requisitos, formatosSeleccionados: (c.ver.formatos as FormatoArchivo[]) ?? [], fuentesVinculadas: nF ?? 0 });
+  const completablesFaltantes = integActual.faltantes.filter((f) => ["tablas", "graficos", "fuentes", "metodologia", "anexo", "periodo", "conclusiones"].includes(f));
+  if (completablesFaltantes.length === 0) {
+    return { ok: true, version: c.ver.version as number, agregados: [] };
+  }
+
+  // Determinar anio/mes + integrante desde la ejecución que originó el informe.
+  const ctx = await contextoMetricas(c.inf.ejecucion_id as string | null, c.inf.mensaje_usuario_id as string | null, c.inf.titulo as string);
+  if (!ctx) return { ok: false, status: 422, error: "No hay datos de métricas de un integrante para completar automáticamente. Falta el snapshot de consultar_metricas_equipo.", detalle: { faltante: "snapshot_metricas_equipo" } };
+
+  const comp = await completarInformeMetricas({ specBase: specBase.spec, anio: ctx.anio, mes: ctx.mes, nombreIntegrante: ctx.integrante, componentesRequeridos: requisitos.componentes });
+  if (!comp.ok) return { ok: false, status: 422, error: comp.motivo, detalle: { faltan: comp.faltan } };
+
+  // Nueva versión (no sobrescribe). formatos = solicitados (o los actuales).
+  const version = (c.ver.version as number) + 1;
+  const formatos = (requisitos.formatos?.length ? requisitos.formatos : ((c.ver.formatos as FormatoArchivo[] | null) ?? ["pdf"]));
+  const { data: nv, error } = await supabaseAdmin.from("ia_informe_versiones").insert({
+    informe_id: informeId, version, spec: comp.spec, hash: hashSpec(comp.spec), snapshot_fuentes: comp.snapshotFull, fecha_corte: comp.spec.fecha_corte, actor: owner, estado: "borrador", formatos, ediciones_manuales: null,
+  }).select("id").single();
+  if (error || !nv) return { ok: false, status: 500, error: "No se pudo crear la versión completada." };
+  await supabaseAdmin.from("ia_informes").update({ version_actual: version, estado: "borrador", updated_at: new Date().toISOString() }).eq("id", informeId);
+  // Vincular fuentes (auto).
+  if (comp.spec.fuentes.length > 0) await supabaseAdmin.from("ia_informe_fuentes").insert(comp.spec.fuentes.map((f) => ({ version_id: nv.id, modulo: f.modulo, periodo: f.periodo, registros: f.registros, actualizado: f.actualizado, herramienta: "consultar_metricas_equipo" })));
+  await historial(informeId, nv.id, "completar_deterministico", owner, { agregados: comp.agregados, integrante: ctx.integrante, periodo: `${ctx.anio}-${String(ctx.mes).padStart(2, "0")}`, sin_consumo_ia: true, version_anterior: c.ver.version, version_nueva: version });
+  return { ok: true, version, agregados: comp.agregados };
+}
+
+// Detecta {anio, mes, integrante} para el completado, desde la ejecución y el pedido.
+const NOMBRES_EQUIPO: Array<{ re: RegExp; nombre: string }> = [
+  { re: /\bfede(rico)?\b/i, nombre: "Federico" }, { re: /\bfran(cisco)?\b/i, nombre: "Francisco" }, { re: /\bram(iro|i)\b/i, nombre: "Ramiro" },
+];
+async function contextoMetricas(ejecucionId: string | null, mensajeUsuarioId: string | null, titulo: string): Promise<{ anio: number; mes: number; integrante: string } | null> {
+  let anio: number | undefined, mes: number | undefined;
+  if (ejecucionId) {
+    const { data: he } = await supabaseAdmin.from("ia_herramientas_ejecuciones").select("herramienta, params").eq("ejecucion_id", ejecucionId).eq("herramienta", "consultar_metricas_equipo");
+    const params = (he ?? []).map((x) => x.params as { anio?: number; mes?: number }).find((x) => x?.anio && x?.mes);
+    if (params) { anio = Number(params.anio); mes = Number(params.mes); }
+  }
+  // Integrante: del pedido del usuario o del título.
+  let texto = titulo;
+  if (mensajeUsuarioId) { const { data: msg } = await supabaseAdmin.from("ia_mensajes").select("contenido").eq("id", mensajeUsuarioId).maybeSingle(); if (msg?.contenido) texto = `${msg.contenido} ${titulo}`; }
+  const integrante = NOMBRES_EQUIPO.find((n) => n.re.test(texto))?.nombre;
+  if (!anio || !mes || !integrante) return null;
+  return { anio, mes, integrante };
 }
 
 // ── Editar borrador (persistente + auditado). Si la versión ya está generada,
@@ -135,6 +212,15 @@ export async function editarBorrador(informeId: string, owner: string, specRaw: 
   return { ok: true, versionId, version };
 }
 
+// Persistir la selección de formatos en la versión actual (se restaura al recargar).
+export async function actualizarFormatos(informeId: string, owner: string, formatos: string[]): Promise<{ ok: true } | Fail> {
+  const c = await cargar(informeId, owner);
+  if (!c || !c.ver) return { ok: false, status: 404, error: "Informe no encontrado." };
+  const fs = [...new Set(formatos)].filter((f): f is FormatoArchivo => (FORMATOS_VALIDOS as readonly string[]).includes(f));
+  await supabaseAdmin.from("ia_informe_versiones").update({ formatos: fs }).eq("id", c.ver.id);
+  return { ok: true };
+}
+
 // Snapshot compacto para el historial (evita jsonb gigantes).
 function recortarSpec(s: InformeSpec) {
   return { titulo: s.titulo, resumen_ejecutivo: s.resumen_ejecutivo.slice(0, 500), tablas: s.tablas.map((t) => ({ titulo: t.titulo, filas: t.filas.length })), graficos: s.graficos.map((g) => g.titulo), incluye_pii: s.incluye_pii };
@@ -156,6 +242,8 @@ export async function confirmarYGenerar(p: { informeId: string; owner: string; f
   const formatos = [...new Set(p.formatos)].filter((f): f is FormatoArchivo => (FORMATOS_VALIDOS as readonly string[]).includes(f));
   if (formatos.length === 0) return { ok: false, status: 400, error: "Elegí al menos un formato válido." };
   if (formatos.length > lim.formatosPorConfirmacion) return { ok: false, status: 400, error: `Máximo ${lim.formatosPorConfirmacion} formatos por confirmación.` };
+  // Persistir la selección de formatos en la versión (se restaura al recargar).
+  await supabaseAdmin.from("ia_informe_versiones").update({ formatos }).eq("id", c.ver.id);
 
   const spec = validarInforme(c.ver.spec);
   if (!spec.ok) return { ok: false, status: 400, error: "El borrador no es válido.", detalle: spec.errores };
@@ -165,6 +253,17 @@ export async function confirmarYGenerar(p: { informeId: string; owner: string; f
   const rec = reconciliar(spec.spec, (c.ver.snapshot_fuentes as unknown[]) ?? []);
   await supabaseAdmin.from("ia_informe_versiones").update({ reconciliacion: rec }).eq("id", c.ver.id);
   if (!rec.ok) return { ok: false, status: 409, error: "El contenido numérico no reconcilia con las fuentes. No se generó el archivo.", detalle: rec };
+
+  // GATE de integridad: si el pedido tenía requisitos, no se genera si faltan componentes
+  // solicitados o los formatos pedidos no están seleccionados.
+  const requisitos = (c.inf.requisitos as Requisitos | null) ?? null;
+  if (requisitos) {
+    const { count: nFuentes } = await supabaseAdmin.from("ia_informe_fuentes").select("id", { count: "exact", head: true }).eq("version_id", c.ver.id);
+    const integ = evaluarIntegridad({ spec: spec.spec, requisitos, formatosSeleccionados: formatos, fuentesVinculadas: nFuentes ?? 0, reconciliacion: rec });
+    if (integ.estado !== "completo") {
+      return { ok: false, status: 409, error: "El informe no cumple todo lo solicitado; no se puede generar.", detalle: { integridad: integ } };
+    }
+  }
   if (spec.spec.cambios_manuales.length > 0 && !p.confirmarManuales) return { ok: false, status: 428, error: "El informe tiene valores modificados manualmente. Requiere confirmación adicional.", detalle: { cambios_manuales: spec.spec.cambios_manuales } };
 
   // Idempotencia / lock de concurrencia.
