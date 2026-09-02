@@ -21,6 +21,20 @@ export function nombreDescarga(opts: { tipoInforme: string; periodo?: string | n
   return `informe_${tipo}${periodo}_v${opts.version}.${opts.formato}`;
 }
 
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+
+// Nombre de descarga AMIGABLE: informe-metricas-<sujeto>-<mes>-<anio>-v<version>.<ext>
+// Determinístico, breve, sin enums técnicos, sin IDs, sin repetir fechas, sin PII sensible.
+export function nombreDescargaAmigable(opts: { tipoInforme: string; sujeto?: string | null; periodo?: string | null; version: number; formato: FormatoArchivo }): string {
+  const partes = ["informe"];
+  if (opts.sujeto) partes.push("metricas", slugSeguro(opts.sujeto, 24));
+  else partes.push(slugSeguro(opts.tipoInforme.replace(/_/g, "-"), 30));
+  const m = /(\d{4})-(\d{2})/.exec(opts.periodo ?? "");
+  if (m) partes.push(MESES[Number(m[2]) - 1] ?? m[2], m[1]);
+  partes.push(`v${opts.version}`);
+  return `${partes.join("-")}.${opts.formato}`;
+}
+
 const MIME: Record<FormatoArchivo, string> = {
   pdf: "application/pdf",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

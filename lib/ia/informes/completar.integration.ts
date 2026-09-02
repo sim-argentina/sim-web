@@ -24,10 +24,12 @@ async function main() {
   assert.ok(s.metodologia && s.metodologia.length > 50, "metodología presente");
   assert.equal(s.anexo.length, 1, "anexo presente");
 
-  // §12.16 194 h de Federico conservadas.
+  // §12.16 194 h de Federico conservadas. 4C.3: el valor es NÚMERO crudo (tipable en Excel)
+  // y la unidad va en columna aparte ("h"); no un string "194 h".
   const indic = s.tablas[0];
   const horas = indic.filas.find((f) => String(f[0]).includes("Horas"));
-  assert.equal(horas?.[1], "194 h", "194 h desde el snapshot real");
+  assert.equal(horas?.[1], 194, "194 (número crudo) desde el snapshot real");
+  assert.equal(horas?.[2], "h", "unidad h en columna aparte (no string '194 h')");
 
   // §12.7/12.11 Gráficos desde las mismas cifras; unidades NO mezcladas.
   const gTurnos = s.graficos.find((g) => /turnos/i.test(g.titulo));

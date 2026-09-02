@@ -71,3 +71,33 @@ export function unidadDe(tipo: TipoColumna): string {
 export function formatearFila(fila: CeldaValor[], columnas: ColumnaTabla[]): string[] {
   return columnas.map((c, i) => formatearCelda(fila[i] ?? null, c.tipo));
 }
+
+// ── Formateo por UNIDAD (para tablas de indicadores con valor numérico crudo + unidad) ──
+// Mapea la etiqueta de unidad a un tipo de columna para reutilizar el formateo.
+function tipoDeUnidad(unidad: string): TipoColumna {
+  const u = (unidad || "").toLowerCase();
+  if (u === "ars" || u === "$") return "ars";
+  if (u === "usd" || u === "us$") return "usd";
+  if (u === "%") return "porcentaje";
+  if (u === "h" || u === "hs" || u === "horas") return "horas";
+  if (u === "min" || u === "minutos") return "minutos";
+  if (u === "turnos" || u === "personas" || u === "operaciones" || u === "sesiones") return "entero";
+  return "decimal";
+}
+// Display: número crudo formateado según su unidad. Para 'entero' con decimales (operaciones
+// 209,5) usa decimal; ARS enteros sin decimales, ARS con decimales con 2.
+export function formatearPorUnidad(valor: CeldaValor, unidad: string): string {
+  if (!esNum(valor)) return valor == null ? "—" : String(valor);
+  const u = (unidad || "").toLowerCase();
+  if (u === "ars" || u === "$") return valor % 1 === 0 ? `$ ${nAR(valor, 0)}` : `$ ${nAR(valor, 2)}`;
+  if (u === "operaciones") return nAR(valor, valor % 1 === 0 ? 0 : 1);
+  return formatearCelda(valor, tipoDeUnidad(unidad));
+}
+// Código de formato numérico de Excel para una unidad.
+export function zPorUnidad(valor: CeldaValor, unidad: string): string {
+  const u = (unidad || "").toLowerCase();
+  if (u === "ars" || u === "$") return esNum(valor) && valor % 1 === 0 ? '"$ "#,##0' : '"$ "#,##0.00';
+  if (u === "operaciones") return "#,##0.0";
+  if (u === "%") return "0.0%";
+  return "#,##0";
+}

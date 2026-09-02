@@ -10,11 +10,11 @@ import { validarInforme, type InformeSpec } from "@/lib/ia/informes/schema";
 import { getLimitesInforme, FORMATOS_VALIDOS, type FormatoArchivo } from "@/lib/ia/informes/limites";
 import { reconciliar } from "@/lib/ia/informes/reconciliacion";
 import { renderFormato } from "@/lib/ia/informes/render/index";
-import { nombreDescarga, mimeDe } from "@/lib/ia/informes/nombreArchivo";
+import { nombreDescargaAmigable, mimeDe } from "@/lib/ia/informes/nombreArchivo";
 import { rutaArchivo, subirArchivo, urlFirmadaArchivo, borrarArchivos, sha256 } from "@/lib/ia/informes/storage";
 import type { Requisitos } from "@/lib/ia/informes/requisitos";
 import { evaluarIntegridad } from "@/lib/ia/informes/integridad";
-import { completarInformeMetricas } from "@/lib/ia/informes/completar";
+import { completarInformeMetricas, armarDesde, type DatosMetricas, type MetaInforme } from "@/lib/ia/informes/completar";
 
 const TZ = "America/Argentina/Cordoba";
 function ahoraCordoba(): string {
@@ -164,6 +164,10 @@ export async function completarBorrador(informeId: string, owner: string): Promi
 const NOMBRES_EQUIPO: Array<{ re: RegExp; nombre: string }> = [
   { re: /\bfede(rico)?\b/i, nombre: "Federico" }, { re: /\bfran(cisco)?\b/i, nombre: "Francisco" }, { re: /\bram(iro|i)\b/i, nombre: "Ramiro" },
 ];
+// Sujeto (integrante) del informe, para el nombre de descarga amigable. Sin PII sensible.
+function detectarSujeto(texto: string | null | undefined): string | null {
+  return NOMBRES_EQUIPO.find((n) => n.re.test(texto ?? ""))?.nombre ?? null;
+}
 async function contextoMetricas(ejecucionId: string | null, mensajeUsuarioId: string | null, titulo: string): Promise<{ anio: number; mes: number; integrante: string } | null> {
   let anio: number | undefined, mes: number | undefined;
   if (ejecucionId) {
@@ -300,7 +304,7 @@ export async function confirmarYGenerar(p: { informeId: string; owner: string; f
       const up = await subirArchivo(path, new Uint8Array(buf), mimeDe(formato));
       if (!up.ok) throw new Error("No se pudo subir el archivo.");
       subidos.push(path);
-      const nombre = nombreDescarga({ tipoInforme: spec.spec.tipo_informe, periodo: spec.spec.periodo, version: ctx.version, formato });
+      const nombre = nombreDescargaAmigable({ tipoInforme: spec.spec.tipo_informe, sujeto: detectarSujeto(c.inf.titulo as string), periodo: spec.spec.periodo, version: ctx.version, formato });
       const { data: reg, error } = await supabaseAdmin.from("ia_archivos_generados").upsert({
         version_id: c.ver.id, informe_id: p.informeId, formato, storage_path: path, nombre_descarga: nombre, mime: mimeDe(formato), tamano_bytes: buf.length, hash_sha256: sha256(new Uint8Array(buf)), incluye_pii: spec.spec.incluye_pii, estado: "ok",
       }, { onConflict: "version_id,formato" }).select("id, formato, nombre_descarga, mime, tamano_bytes, hash_sha256").single();
@@ -318,6 +322,81 @@ export async function confirmarYGenerar(p: { informeId: string; owner: string; f
   await supabaseAdmin.from("ia_informes").update({ estado: "generado", updated_at: new Date().toISOString() }).eq("id", p.informeId);
   await historial(p.informeId, c.ver.id, "generar", p.owner, { formatos, generadoISO: ctx.generadoISO, incluye_pii: spec.spec.incluye_pii, cambios_manuales: spec.spec.cambios_manuales.length });
   return { ok: true, version: ctx.version, archivos, reconciliacion: rec };
+}
+
+// ── Reparación de RENDERIZADO (4C.3): v2 → v3 desde el snapshot CONGELADO ─────
+// NO re-ejecuta consultar_metricas_equipo, NO consume Claude, NO altera datos de negocio.
+// Usa exclusivamente el snapshot congelado de la versión origen (misma data, mismos números)
+// y sólo corrige presentación: corte único, PDF/Excel profesionales, conclusiones
+// determinísticas, nombres amigables. Conserva la v2 y sus archivos. Idempotente
+// (correr dos veces NO crea v4 ni duplica archivos/historial).
+type Cronograma = { estado?: string | null; dias?: number | null; cerrados?: number | null };
+function cronogramaDesdeMetodologia(metodologia: string | null | undefined): Cronograma {
+  const m = /estado\s+(\w+)(?:\s*\((\d+)\s*d[ií]as,\s*(\d+)\s*cerrados\))?/i.exec(metodologia ?? "");
+  if (!m) return { estado: "confirmado", dias: null, cerrados: null };
+  return { estado: m[1] ?? "confirmado", dias: m[2] != null ? Number(m[2]) : null, cerrados: m[3] != null ? Number(m[3]) : null };
+}
+
+export async function repararRenderizadoV3(p: { informeId: string; owner: string }): Promise<
+  { ok: true; version: number; yaExistia: boolean; archivos: Array<{ id: string; formato: string; nombre_descarga: string; mime: string; tamano_bytes: number; hash_sha256: string }> } | Fail
+> {
+  const c = await cargar(p.informeId, p.owner);
+  if (!c || !c.ver) return { ok: false, status: 404, error: "Informe no encontrado." };
+  if (["papelera", "eliminado", "descartado"].includes(c.inf.estado as string)) return { ok: false, status: 409, error: "El informe no admite reparación en su estado actual." };
+
+  // Idempotencia: si ya se corrigió el renderizado, devolver la versión existente sin crear otra.
+  const { data: hechos } = await supabaseAdmin.from("ia_informe_historial")
+    .select("version_id, detalle").eq("informe_id", p.informeId).eq("accion", "correccion_renderizado")
+    .order("created_at", { ascending: false }).limit(1);
+  if (hechos && hechos.length > 0) {
+    const versionNueva = Number((hechos[0].detalle as { version_nueva?: number } | null)?.version_nueva ?? c.inf.version_actual);
+    const { data: verR } = await supabaseAdmin.from("ia_informe_versiones").select("id").eq("informe_id", p.informeId).eq("version", versionNueva).maybeSingle();
+    const { data: archivos } = await supabaseAdmin.from("ia_archivos_generados").select("id, formato, nombre_descarga, mime, tamano_bytes, hash_sha256").eq("version_id", (verR?.id as string) ?? "").eq("estado", "ok");
+    return { ok: true, version: versionNueva, yaExistia: true, archivos: (archivos ?? []) as never };
+  }
+
+  // Snapshot CONGELADO de la versión origen (la actual, p.ej. v2 generada).
+  const snap = ((c.ver.snapshot_fuentes as Array<{ datos?: DatosMetricas; corte?: string; periodo?: string; integrante?: string; registros?: { stand: number; reservas: number } }>) ?? [])[0];
+  if (!snap?.datos || !snap.corte || !snap.periodo) return { ok: false, status: 422, error: "La versión no tiene un snapshot congelado de métricas para reparar.", detalle: { faltante: "snapshot_datos" } };
+  const mSem = /(\d{4})-(\d{2})/.exec(snap.periodo);
+  if (!mSem) return { ok: false, status: 422, error: "El snapshot no tiene un período válido." };
+  const anio = Number(mSem[1]), mes = Number(mSem[2]);
+  // Corte único, presentado sin la 'T' ISO ("2026-09-01T23:20" → "2026-09-01 23:20").
+  const corte = String(snap.corte).replace("T", " ");
+
+  const specBaseVal = validarInforme(c.ver.spec);
+  if (!specBaseVal.ok) return { ok: false, status: 400, error: "La versión origen no es válida." };
+  // Forzar conclusiones DETERMINÍSTICAS (descartar las de la versión previa).
+  const specBase = { ...specBaseVal.spec, conclusiones: [] as string[] };
+  const meta: MetaInforme = {
+    integrante: snap.integrante || detectarSujeto(c.inf.titulo as string) || "el integrante",
+    anio, mes, corte,
+    registros: { stand: snap.registros?.stand ?? 0, reservas: snap.registros?.reservas ?? 0 },
+    cronograma: cronogramaDesdeMetodologia(specBaseVal.spec.metodologia),
+  };
+  const requisitos = (c.inf.requisitos as Requisitos | null) ?? { componentes: [], formatos: [] };
+  const armado = armarDesde(specBase, snap.datos, meta, requisitos.componentes);
+  if (!armado.ok) return { ok: false, status: 422, error: armado.motivo, detalle: { faltan: armado.faltan } };
+
+  // Nueva versión v3 (conserva la origen). MISMO snapshot congelado (misma data/números).
+  const version = (c.ver.version as number) + 1;
+  const formatos = ((c.ver.formatos as FormatoArchivo[] | null) ?? (requisitos.formatos?.length ? requisitos.formatos : ["pdf", "xlsx"])) as FormatoArchivo[];
+  const { data: nv, error: eNv } = await supabaseAdmin.from("ia_informe_versiones").insert({
+    informe_id: p.informeId, version, spec: armado.spec, hash: hashSpec(armado.spec), snapshot_fuentes: c.ver.snapshot_fuentes,
+    fecha_corte: armado.spec.fecha_corte, actor: p.owner, estado: "borrador", formatos, ediciones_manuales: null,
+  }).select("id").single();
+  if (eNv || !nv) return { ok: false, status: 500, error: "No se pudo crear la versión v3." };
+  await supabaseAdmin.from("ia_informes").update({ version_actual: version, estado: "borrador", updated_at: new Date().toISOString() }).eq("id", p.informeId);
+  if (armado.spec.fuentes.length > 0) await supabaseAdmin.from("ia_informe_fuentes").insert(armado.spec.fuentes.map((f) => ({ version_id: nv.id, modulo: f.modulo, periodo: f.periodo, registros: f.registros, actualizado: f.actualizado, herramienta: "consultar_metricas_equipo" })));
+  await historial(p.informeId, nv.id, "correccion_renderizado", p.owner, {
+    version_origen: c.ver.version, version_nueva: version, mismo_snapshot: true, unificacion_corte: corte,
+    correccion_pdf: true, correccion_excel: true, conclusiones_deterministicas: true, nombres_amigables: true, sin_consumo_ia: true,
+  });
+
+  // Generar los archivos de la v3 (nombres amigables + rutas nuevas; NO tocan la v2).
+  const gen = await confirmarYGenerar({ informeId: p.informeId, owner: p.owner, formatos, confirmarPii: c.inf.incluye_pii as boolean, confirmarManuales: true });
+  if (!gen.ok) return gen;
+  return { ok: true, version, yaExistia: false, archivos: gen.archivos };
 }
 
 // ── Listar versiones ──────────────────────────────────────────────────────────

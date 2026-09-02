@@ -77,6 +77,12 @@ function etiquetasX(cats: string[]): string {
   }).join("");
 }
 
+// Valor sobre la barra, formateado según la unidad de la serie (ARS con $, resto es-AR).
+function valorBarra(v: number, unidad?: string | null): string {
+  if ((unidad || "").toUpperCase() === "ARS") return `$ ${Math.round(v).toLocaleString("es-AR")}`;
+  return v.toLocaleString("es-AR", { maximumFractionDigits: 1 });
+}
+
 function barrasSVG(g: Grafico): string {
   const todos = g.series.flatMap((s) => s.valores);
   const max = ejeMax(Math.max(1, ...todos.map((v) => Math.abs(v))));
@@ -90,9 +96,16 @@ function barrasSVG(g: Grafico): string {
       const x = ML + grupo * ci + grupo * 0.1 + bw * si;
       const y = MT + PH - h;
       barras += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${c}"/>`;
+      // Valor SIEMPRE visible sobre la barra (aunque sea muy chica, ej. Reservas vs Stand).
+      const cx = x + bw / 2;
+      const ty = Math.max(MT + 14, y - 6);
+      barras += `<text x="${cx.toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" font-family="sans-serif" font-size="15" font-weight="bold" fill="${SIM.negro}">${esc(valorBarra(v, s.unidad))}</text>`;
     });
   });
-  return encabezado(g.titulo) + ejeY(max) + barras + etiquetasX(g.categorias) + leyenda(g.series.map((s) => s.nombre));
+  // Unidad como subtítulo del eje; leyenda SOLO si hay más de una serie.
+  const unidad = g.series[0]?.unidad ? `<text x="${ML}" y="${MT + PH + 42}" font-family="sans-serif" font-size="12" fill="${SIM.grisTexto}">Unidad: ${esc(String(g.series[0].unidad))}</text>` : "";
+  const ley = ns > 1 ? leyenda(g.series.map((s) => s.nombre)) : "";
+  return encabezado(g.titulo) + ejeY(max) + barras + etiquetasX(g.categorias) + unidad + ley;
 }
 
 function lineasSVG(g: Grafico): string {
