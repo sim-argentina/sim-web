@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import SafeMarkdown from "./SafeMarkdown";
 import Conocimiento from "./Conocimiento";
 import SaldoCreditos, { type Resumen as SaldoResumen } from "./SaldoCreditos";
+import InformePreview from "./InformePreview";
 
 type Adjunto = { id: string; nombre_original: string; estado_procesamiento: string; metodo_extraccion: string; advertencias?: string[] | null; promovido_documento_id?: string | null };
 
@@ -31,6 +32,7 @@ export default function IAChat() {
   const [verPapelera, setVerPapelera] = useState(false);
   const [activa, setActiva] = useState<string | null>(null);
   const [mensajes, setMensajes] = useState<Mensaje[]>([]);
+  const [informes, setInformes] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [paso, setPaso] = useState(0);
@@ -77,14 +79,21 @@ export default function IAChat() {
     if (!r.ok) return;
     const c = (await r.json()).conversacion as Conv;
     setConvs((prev) => [c, ...prev]);
-    setActiva(c.id); setMensajes([]); setAdjuntos([]); setError(null); enfocar();
+    setActiva(c.id); setMensajes([]); setAdjuntos([]); setInformes([]); setError(null); enfocar();
   }
   async function abrir(id: string) {
     setActiva(id); setError(null);
     const r = await fetch(`/api/admin/ia/conversaciones/${id}`, { cache: "no-store" });
     if (r.ok) setMensajes((await r.json()).mensajes ?? []);
     cargarAdjuntos(id);
+    cargarInformes(id);
     enfocar();
+  }
+
+  async function cargarInformes(id: string) {
+    const r = await fetch(`/api/admin/ia/informes?conversacion_id=${id}`, { cache: "no-store" }).catch(() => null);
+    if (r && r.ok) setInformes((((await r.json()).informes ?? []) as { id: string }[]).map((x) => x.id));
+    else setInformes([]);
   }
 
   async function cargarAdjuntos(id: string) {
@@ -159,7 +168,7 @@ export default function IAChat() {
   async function eliminar(id: string) {
     await fetch(`/api/admin/ia/conversaciones/${id}`, { method: "DELETE" });
     setConvs((p) => p.filter((c) => c.id !== id));
-    if (activa === id) { setActiva(null); setMensajes([]); }
+    if (activa === id) { setActiva(null); setMensajes([]); setInformes([]); }
   }
   async function renombrar(id: string) {
     const titulo = prompt("Nuevo título:");
@@ -203,6 +212,7 @@ export default function IAChat() {
         return;
       }
       setMensajes((m) => [...m, { id: j.mensajeId, rol: "assistant", contenido: j.texto, modelo: j.modelo, clase_modelo: j.claseModelo, escalado: j.escalado, fuentes: j.fuentes, herramientas: j.herramientas, estado: j.estado }]);
+      if (j.borrador?.informeId) setInformes((prev) => (prev.includes(j.borrador.informeId) ? prev : [...prev, j.borrador.informeId]));
       cargarConvs(); cargarSaldo();
     } catch {
       setError("Error de red."); setInput(pregunta);
@@ -317,6 +327,8 @@ export default function IAChat() {
                 </div>
               </div>
             ))}
+
+            {informes.map((id) => <InformePreview key={id} informeId={id} />)}
 
             {enviando && (
               <div className="flex justify-start">

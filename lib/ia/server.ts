@@ -4,6 +4,8 @@ import { ejecutarChat } from "@/lib/ia/orchestrator";
 import { crearProvider } from "@/lib/ia/providerFactory";
 import { getLimites, getModelos, getProveedor, estimarCostoUSD, iaEstaConfigurada, variablesFaltantes } from "@/lib/ia/config";
 import { buscarConocimiento, listarDocumentosActivos, normalizar } from "@/lib/ia/docs/conocimientoServer";
+import { crearBorrador } from "@/lib/ia/informes/informesServer";
+import { NOMBRE_PREPARAR_INFORME } from "@/lib/ia/informes/informeTool";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -14,7 +16,7 @@ const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimi
 const CONTEXTO_MAX_MENSAJES = 12;
 const CONTEXTO_MAX_CHARS = 12000;
 
-export type CorrerOk = { ok: true; mensajeId: string; texto: string; fuentes: unknown; modelo: string; claseModelo: string; escalado: boolean; estado: string; herramientas: unknown; uso: { tokensIn: number; tokensOut: number }; duplicado?: boolean };
+export type CorrerOk = { ok: true; mensajeId: string; texto: string; fuentes: unknown; modelo: string; claseModelo: string; escalado: boolean; estado: string; herramientas: unknown; uso: { tokensIn: number; tokensOut: number }; duplicado?: boolean; borrador?: { informeId: string; versionId: string; version: number } | null };
 export type CorrerFail = { ok: false; status: number; error: string; motivo?: string };
 
 function hoyISO(): string {
@@ -146,6 +148,20 @@ export async function correrChat(params: { owner: string; conversacionId: string
     await supabaseAdmin.from("ia_herramientas_ejecuciones").insert(res.herramientas.map((h) => ({ ejecucion_id: eje.id, herramienta: h.nombre, params: h.params, resumen: h.resumen, ok: h.ok, error: h.error ?? null, duracion_ms: h.duracion_ms })));
   }
 
+  // ── Bloque 4C — Si el modelo pidió preparar un informe, el SERVIDOR crea el
+  // borrador vinculado a esta conversación/ejecución, con el snapshot REAL de las
+  // herramientas de datos que corrieron (para reconciliar). El modelo no toca nada.
+  let borrador: { informeId: string; versionId: string; version: number } | null = null;
+  const pedidosInforme = res.herramientas.filter((h) => h.nombre === NOMBRE_PREPARAR_INFORME && h.ok && (h.resumen as { es_preparar_informe?: boolean } | null)?.es_preparar_informe);
+  const ultimo = pedidosInforme[pedidosInforme.length - 1];
+  if (ultimo && res.estado === "completa") {
+    const spec = (ultimo.resumen as { spec?: unknown }).spec;
+    // Snapshot de grounding: resúmenes de las herramientas de DATOS (no el propio preparar_informe).
+    const snapshot = res.herramientas.filter((h) => h.nombre !== NOMBRE_PREPARAR_INFORME && h.ok && h.resumen).map((h) => ({ herramienta: h.nombre, resumen: h.resumen }));
+    const cb = await crearBorrador({ conversacionId, owner, ejecucionId: eje?.id ?? null, specRaw: spec, snapshotFuentes: snapshot });
+    if (cb.ok) borrador = { informeId: cb.informeId, versionId: cb.versionId, version: cb.version };
+  }
+
   const contenido = res.estado === "completa" ? res.texto : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`;
   const { data: asstMsg } = await supabaseAdmin.from("ia_mensajes").insert({
     conversacion_id: conversacionId, rol: "assistant", contenido, modelo: res.modelo, proveedor: getProveedor(),
@@ -161,5 +177,5 @@ export async function correrChat(params: { owner: string; conversacionId: string
   if (!conv.titulo) patch.titulo = tituloAuto(pregunta);
   await supabaseAdmin.from("ia_conversaciones").update(patch).eq("id", conversacionId);
 
-  return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: res.escalado, estado: res.estado, herramientas: res.herramientas, uso: res.uso };
+  return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: res.escalado, estado: res.estado, herramientas: res.herramientas, uso: res.uso, borrador };
 }

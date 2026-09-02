@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentAdminRole } from "@/lib/adminGuards";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { borrar } from "@/lib/ia/docs/storage";
+import { limpiarStorageDeConversaciones } from "@/lib/ia/informes/informesServer";
 
 // Purga definitiva de la papelera (> 30 días). Endpoint PROTEGIDO: lo dispara el Cron
 // de Vercel (GET con `Authorization: Bearer ${CRON_SECRET}`), o un admin manualmente
@@ -24,6 +25,9 @@ async function purgar() {
     const { data: adjs } = await supabaseAdmin.from("ia_adjuntos_conversacion").select("storage_path, promovido_documento_id").in("conversacion_id", ids);
     const paths = (adjs ?? []).filter((a) => a.storage_path && !a.promovido_documento_id).map((a) => a.storage_path as string);
     if (paths.length > 0) await borrar(paths);
+    // Bloque 4C: limpiar del Storage los archivos de informes de esas conversaciones
+    // (el cascade de la DB borra las filas ia_informes/*; el Storage se limpia acá).
+    await limpiarStorageDeConversaciones(ids);
   }
   const { data, error } = await supabaseAdmin.rpc("ia_purgar_papelera", { p_dias: DIAS_RETENCION });
   if (error) return NextResponse.json({ error: "No se pudo purgar." }, { status: 500 });

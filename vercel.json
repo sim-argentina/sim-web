@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/admin/ia/purga", "schedule": "0 4 * * *" },
+    { "path": "/api/admin/ia/informes/purga", "schedule": "30 4 * * *" },
     { "path": "/api/admin/ia/creditos/sincronizar", "schedule": "0 5 * * *" }
   ]
 }

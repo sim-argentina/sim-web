@@ -82,7 +82,10 @@ const nextConfig: NextConfig = {
   // @vercel/nft NO detecta al trazar la función; sin esto, Vercel poda ese archivo
   // y el análisis falla con "Setting up fake worker failed: Cannot find module
   // pdf.worker.mjs". Forzamos incluir todo el paquete en la función de análisis.
-  serverExternalPackages: ["pdfjs-dist"],
+  // Bloque 4C: paquetes con binarios nativos / dependencias dinámicas que NO deben
+  // bundlearse (se cargan desde node_modules en runtime Node.js). @resvg/resvg-js y
+  // sharp traen binarios por plataforma; docx/xlsx/jspdf se externalizan por prolijidad.
+  serverExternalPackages: ["pdfjs-dist", "@resvg/resvg-js", "sharp", "docx", "xlsx", "jspdf", "jspdf-autotable"],
   outputFileTracingIncludes: {
     "/api/admin/cronograma/importar/analizar": ["./node_modules/pdfjs-dist/**/*"],
   },
