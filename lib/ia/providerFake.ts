@@ -10,7 +10,7 @@ function estimarTokens(texto: string): number {
 }
 
 export type GuionTurno =
-  | { tipo: "texto"; texto: string; web?: WebTurno }
+  | { tipo: "texto"; texto: string; web?: WebTurno; stopReason?: string }
   | { tipo: "herramientas"; texto?: string; llamadas: Array<{ nombre: string; input: Record<string, unknown> }>; web?: WebTurno }
   | { tipo: "error"; mensaje: string; status?: number }
   | { tipo: "timeout" };
@@ -39,7 +39,7 @@ export class FakeProviderGuionado implements IAProvider {
     if (paso.tipo === "herramientas") {
       return { tipo: "herramientas", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: 10 }, llamadas: paso.llamadas.map((l, k) => ({ id: `fake-${this.i}-${k}`, nombre: l.nombre, input: l.input })), web };
     }
-    return { tipo: "texto", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: estimarTokens(paso.texto) }, web };
+    return { tipo: "texto", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: estimarTokens(paso.texto) }, web, stopReason: paso.stopReason ?? "end_turn" };
   }
 }
 

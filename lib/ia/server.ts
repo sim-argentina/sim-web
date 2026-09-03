@@ -228,24 +228,28 @@ export async function correrChat(params: { owner: string; conversacionId: string
   // 4D.1/4D.2 — Validación DETERMINÍSTICA previa a publicar (respuestas mixtas con búsqueda web).
   // NO destructiva y con conciencia de polaridad (no marca lo ya negado/correcto). Si la respuesta
   // quedó truncada (integridad), se avisa en vez de dejar una viñeta huérfana sin explicación.
-  let notaValidacion = "";
-  if (!borrador && validacion) {
-    notaValidacion = validacion.notas;
-    if (!validacion.integridad.ok && validacion.integridad.problemas.some((p) => p === "truncado_al_final" || p === "vineta_cortada" || p === "parrafo_cortado")) {
-      notaValidacion += "\n\n_La respuesta puede haber quedado incompleta. Pedí que la continúe o reformulá para acotar el alcance._";
-    }
-  }
+  // Salvedades reales (solo cuando NO se reemplaza por truncamiento; ese caso se maneja aparte).
+  const notaValidacion = !borrador && validacion ? validacion.notas : "";
+  // 4D.3 — INTEGRIDAD FUERTE: si la síntesis se cortó por límite de salida (max_tokens) o quedó
+  // estructuralmente truncada, NUNCA se publica el fragmento parcial. Se muestra un mensaje local
+  // íntegro; las fuentes (internas/externas) siguen visibles y el parcial queda SOLO en auditoría.
+  const truncado = !borrador && res.estado === "completa" && (res.truncado === true || (validacion != null && !validacion.integridad.ok && validacion.integridad.problemas.some((p) => p === "truncado_al_final" || p === "vineta_cortada" || p === "parrafo_cortado")));
+  const MSG_TRUNCADO = "No pude completar la respuesta dentro del límite de esta consulta. Abajo tenés las fuentes que encontré (internas y externas). Volvé a preguntar acotando el alcance —por ejemplo, enfocándote en una sola categoría o dimensión— y la desarrollo completa.";
   const contenido = borrador
     ? (huboTimeoutPosterior
         ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos."
         : res.texto)
-    : (res.estado === "completa" ? res.texto + notaValidacion + notaWebNoDisp : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
+    : (truncado ? MSG_TRUNCADO
+      : res.estado === "completa" ? res.texto + notaValidacion + notaWebNoDisp
+      : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
   // El mensaje se marca 'completa' si hay borrador (la UI muestra la vista previa, no un error).
   const estadoMensaje = borrador ? "completa" : res.estado;
   const { data: asstMsg } = await supabaseAdmin.from("ia_mensajes").insert({
     conversacion_id: conversacionId, rol: "assistant", contenido, modelo: res.modelo, proveedor: getProveedor(),
     clase_modelo: res.claseModelo, motivo_router: res.motivoRouter, escalado: res.escalado,
-    tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, fuentes: fuentesFinales, herramientas: res.herramientas, estado: estadoMensaje, error: huboTimeoutPosterior ? res.error ?? null : (borrador ? null : res.error ?? null),
+    tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, fuentes: fuentesFinales, herramientas: res.herramientas, estado: estadoMensaje,
+    // El parcial truncado queda SOLO en auditoría (nunca visible al usuario).
+    error: truncado ? `truncado_max_tokens: ${(res.texto || "").slice(0, 4000)}` : (huboTimeoutPosterior ? res.error ?? null : (borrador ? null : res.error ?? null)),
     busquedas_web: res.web.busquedasFacturables,
   }).select("id").single();
 

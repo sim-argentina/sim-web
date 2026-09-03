@@ -19,9 +19,11 @@ export type WebTurno = { busquedasFacturables: number; fuentes: FuenteWeb[]; err
 // `rawContent` son los bloques CRUDOS del proveedor (opacos): se conservan para poder
 // continuar el turno del asistente sin perder bloques cifrados (server_tool_use /
 // web_search_tool_result / citas) cuando además hay herramientas internas.
+// `stopReason` del proveedor (p. ej. "end_turn", "max_tokens", "tool_use", "pause_turn"):
+// permite detectar truncamiento por límite de salida ANTES de publicar (Bloque 4D.3).
 export type TurnoProveedor =
-  | { tipo: "texto"; texto: string; uso: Uso; web?: WebTurno; rawContent?: unknown[] }
-  | { tipo: "herramientas"; texto?: string; llamadas: LlamadaHerramienta[]; uso: Uso; web?: WebTurno; rawContent?: unknown[] };
+  | { tipo: "texto"; texto: string; uso: Uso; web?: WebTurno; rawContent?: unknown[]; stopReason?: string }
+  | { tipo: "herramientas"; texto?: string; llamadas: LlamadaHerramienta[]; uso: Uso; web?: WebTurno; rawContent?: unknown[]; stopReason?: string };
 
 // Historial neutral que el orquestador mantiene y pasa al proveedor.
 export type HistorialTurno =
@@ -33,7 +35,12 @@ export type HerramientaDef = { nombre: string; descripcion: string; schema: Reco
 
 // Habilitación de búsqueda web (Bloque 4D). La DECISIÓN es determinística y externa
 // al proveedor; acá solo se le indica si puede usar la herramienta y con qué tope.
-export type WebSearchParam = { habilitado: boolean; maxUsos: number; version: string };
+export type WebSearchParam = {
+  habilitado: boolean; maxUsos: number; version: string;
+  // Bloque 4D.3 — capacidades modernas (solo si el modelo/config las soportan).
+  filtradoDinamico?: boolean; responseInclusionExcluded?: boolean;
+  ubicacion?: { type: "approximate"; city?: string; region?: string; country?: string; timezone?: string };
+};
 
 export type GenerarParams = {
   modelo: string;

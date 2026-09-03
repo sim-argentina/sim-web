@@ -5,6 +5,7 @@ import { SYSTEM_PROMPT } from "@/lib/ia/systemPrompt";
 import { elegirModelo, debeEscalar } from "@/lib/ia/router";
 import { HERRAMIENTAS, defsParaProveedor, ToolParamError, type ToolFuente } from "@/lib/ia/tools";
 import { dedupFuentesWeb, type FuenteWeb } from "@/lib/ia/web/fuentes";
+import { capacidadesWeb, UBICACION_BUSQUEDA } from "@/lib/ia/web/capacidades";
 
 // IA SIM · Bloque 4A — Orquestador determinístico del chat. Corre el loop
 // proveedor ↔ herramientas con TODAS las guardas (rondas, herramientas por ronda,
@@ -30,6 +31,9 @@ export type EjecucionResultado = {
   // se detiene acá (sin otra llamada a Claude) y el servidor persiste el borrador.
   terminalInforme?: boolean;
   borradorSpec?: unknown;
+  // Bloque 4D.3 — la síntesis final se cortó por límite de salida (stop_reason=max_tokens):
+  // el servidor NO debe publicar el texto parcial (integridad fuerte).
+  truncado?: boolean;
   // Bloque 4D — búsqueda web (server tool de Anthropic).
   web: {
     habilitada: boolean;      // se ofreció la herramienta al modelo
@@ -114,7 +118,9 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
       // Ofrecer web solo si está habilitada y queda presupuesto (y no fue degradada por 400).
       const restanteWeb = Math.max(0, presupuestoWeb - webBusquedas);
       const ofrecerWeb = webHabilitadaGeneral && !webDegradada && restanteWeb > 0;
-      const webParam: WebSearchParam | undefined = ofrecerWeb ? { habilitado: true, maxUsos: restanteWeb, version: webConf!.version } : undefined;
+      // Capacidades resueltas por el MODELO actual (versión básica salvo config moderna explícita).
+      const cap = capacidadesWeb(modelo);
+      const webParam: WebSearchParam | undefined = ofrecerWeb ? { habilitado: true, maxUsos: restanteWeb, version: cap.version, filtradoDinamico: cap.filtradoDinamico, responseInclusionExcluded: cap.responseInclusionExcluded, ubicacion: UBICACION_BUSQUEDA } : undefined;
 
       let turno;
       try {
@@ -138,7 +144,7 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
       acumular(turno);
 
       if (turno.tipo === "texto") {
-        return fin({ estado: "completa", texto: turno.texto });
+        return fin({ estado: "completa", texto: turno.texto, truncado: turno.stopReason === "max_tokens" });
       }
 
       // Turno con herramientas

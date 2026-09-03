@@ -135,8 +135,13 @@ export class AnthropicProvider implements IAProvider {
   async generar(params: GenerarParams): Promise<TurnoProveedor> {
     const tools: unknown[] = params.herramientas.map((h) => ({ name: h.nombre, description: h.descripcion, input_schema: h.schema }));
     // Herramienta oficial de búsqueda web (server tool). La ejecuta Anthropic inline.
+    // Localizada en Córdoba (acota resultados) y, si el modelo/config lo permiten,
+    // response_inclusion:"excluded" para no reenviar los bloques brutos.
     if (params.webSearch?.habilitado) {
-      tools.push({ type: params.webSearch.version, name: "web_search", max_uses: params.webSearch.maxUsos });
+      const w: Record<string, unknown> = { type: params.webSearch.version, name: "web_search", max_uses: params.webSearch.maxUsos };
+      if (params.webSearch.ubicacion) w.user_location = params.webSearch.ubicacion;
+      if (params.webSearch.responseInclusionExcluded) w.response_inclusion = "excluded";
+      tools.push(w);
     }
     const messages = traducirHistorial(params.historial);
     const inicio = Date.now();
@@ -178,8 +183,8 @@ export class AnthropicProvider implements IAProvider {
     const llamadas: LlamadaHerramienta[] = ultimoContent.filter((b) => b.type === "tool_use").map((b) => ({ id: b.id!, nombre: b.name!, input: (b.input ?? {}) as Record<string, unknown> }));
     const texto = ultimoContent.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim();
 
-    if (llamadas.length > 0) return { tipo: "herramientas", texto: texto || undefined, llamadas, uso, web, rawContent: ultimoContent };
-    return { tipo: "texto", texto, uso, web, rawContent: ultimoContent };
+    if (llamadas.length > 0) return { tipo: "herramientas", texto: texto || undefined, llamadas, uso, web, rawContent: ultimoContent, stopReason: stop };
+    return { tipo: "texto", texto, uso, web, rawContent: ultimoContent, stopReason: stop };
   }
 
   // OCR / visión: envía imágenes o un PDF (document) y pide un JSON estructurado.
