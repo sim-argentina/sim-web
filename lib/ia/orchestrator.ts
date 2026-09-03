@@ -34,6 +34,10 @@ export type EjecucionResultado = {
   // Bloque 4D.3 — la síntesis final se cortó por límite de salida (stop_reason=max_tokens):
   // el servidor NO debe publicar el texto parcial (integridad fuerte).
   truncado?: boolean;
+  // Bloque 4D.4 — el request se abortó por timeout SIN usage final: el consumo del último intento
+  // es DESCONOCIDO (el proveedor pudo cobrar). Los tokens registrados son solo lo CONOCIDO.
+  usoDesconocido?: boolean;
+  faseFallo?: string;
   // Bloque 4D — búsqueda web (server tool de Anthropic).
   web: {
     habilitada: boolean;      // se ofreció la herramienta al modelo
@@ -62,6 +66,8 @@ export type EjecutarChatParams = {
   herramientasPermitidas?: string[];
   // Bloque 4D.2 — override del máximo de tokens de salida (evita truncar síntesis complejas).
   maxTokensSalida?: number;
+  // Bloque 4D.4 — presupuesto de tiempo del proveedor para consultas con web (< máx de la ruta).
+  webTimeoutMs?: number;
 };
 
 export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResultado> {
@@ -124,11 +130,14 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
 
       let turno;
       try {
+        // Con web activa se usa el presupuesto web (menor que el máx de la ruta) para dejar margen
+        // a la persistencia; sin web, el tiempo restante del orquestador.
+        const budgetProveedor = ofrecerWeb && p.webTimeoutMs ? Math.min(p.webTimeoutMs, restante()) : restante();
         turno = await p.provider.generar({
           modelo, system, historial,
           herramientas: permitirHerramientas ? defsParaProveedor(p.herramientasPermitidas) : [],
           maxTokensSalida: Math.min(p.maxTokensSalida ?? p.limites.tokensSalidaMax, 8000),
-          timeoutMs: Math.max(1000, restante()),
+          timeoutMs: Math.max(1000, budgetProveedor),
           webSearch: webParam,
         });
       } catch (e) {
@@ -204,6 +213,9 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
     }
   } catch (e) {
     const msg = e instanceof IAProviderError ? e.message : "Error del proveedor de IA.";
-    return fin({ estado: "error", texto: "", error: msg });
+    // 4D.4 — timeout (504) del proveedor: el request se abortó SIN usage final del último intento.
+    // Lo acumulado (tokensIn/Out) es lo CONOCIDO; el resto es DESCONOCIDO (el proveedor pudo cobrar).
+    const esTimeout = e instanceof IAProviderError && e.status === 504;
+    return fin({ estado: "error", texto: "", error: msg, usoDesconocido: esTimeout, faseFallo: esTimeout ? `llamada_proveedor_ronda_${rondas}${webHabilitadaGeneral ? "_web" : ""}` : undefined });
   }
 }

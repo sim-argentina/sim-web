@@ -15,6 +15,7 @@ import { sanitizarConsultaWeb } from "@/lib/ia/web/sanitizar";
 import { validarRespuestaMixta, VALIDADOR_VERSION, type ResultadoValidacion } from "@/lib/ia/web/validacion";
 import { mesFinalizadoMencionado } from "@/lib/ia/periodo";
 import { seleccionarHerramientas } from "@/lib/ia/herramientasIntencion";
+import { capacidadesWeb } from "@/lib/ia/web/capacidades";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -146,7 +147,7 @@ export async function correrChat(params: { owner: string; conversacionId: string
   // ampliada SOLO para síntesis web/competitiva (evita truncar sin inflar consultas simples).
   const herramientasPermitidas = seleccionarHerramientas(pregunta, { conocimientoRelevante: relevantes.length > 0 });
   const maxTokensSalida = webActiva ? 2500 : limites.tokensSalidaMax;
-  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParam, herramientasPermitidas, maxTokensSalida });
+  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParam, herramientasPermitidas, maxTokensSalida, webTimeoutMs: limites.webTimeoutMs });
 
   // Costo = tokens + búsquedas web (VERSIONADO). El total se congela en la ejecución, así el
   // saldo dinámico (4B.5.1) descuenta la búsqueda UNA sola vez junto con los tokens.
@@ -173,9 +174,13 @@ export async function correrChat(params: { owner: string; conversacionId: string
     tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, rondas: res.rondas, duracion_ms: res.duracion_ms, estado: res.estado, error: res.error ?? null,
     busqueda_previa: busquedaPrevia,
     // Costo por ejecución CONGELADO (tokens + web) con las versiones de precios vigentes.
+    // 4D.4 — si el request se abortó sin usage final, el consumo es DESCONOCIDO (no se afirma 0
+    // confirmado); se registra solo lo CONOCIDO y queda pendiente de conciliación.
     costo_estimado: costoTotal, precios_version: PRECIOS_VERSION,
     busquedas_web: res.web.busquedasFacturables, costo_busquedas_usd: costoWeb, precios_web_version: PRECIOS_WEB_VERSION,
+    uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.faseFallo ?? null,
   }).select("id").single();
+  const refDiag = (eje?.id ?? userMsg.id).slice(0, 8); // referencia corta correlacionable (no UUID completo)
   if (eje?.id && res.herramientas.length > 0) {
     await supabaseAdmin.from("ia_herramientas_ejecuciones").insert(res.herramientas.map((h) => ({ ejecucion_id: eje.id, herramienta: h.nombre, params: h.params, resumen: h.resumen, ok: h.ok, error: h.error ?? null, duracion_ms: h.duracion_ms })));
   }
@@ -183,7 +188,7 @@ export async function correrChat(params: { owner: string; conversacionId: string
   // ── Bloque 4D — auditoría de la búsqueda web (una fila por ejecución que habilitó internet)
   // + fuentes externas citadas (procedencia de Anthropic; sin páginas completas ni duplicados).
   if (webActiva || res.web.busquedasFacturables > 0 || (res.web.fuentes.length > 0)) {
-    const estadoWeb = res.web.error ? "error" : res.web.busquedasFacturables === 0 && res.web.fuentes.length === 0 ? "vacio" : "ok";
+    const estadoWeb = (res.estado !== "completa" || res.usoDesconocido) ? "error" : res.web.error ? "error" : res.web.busquedasFacturables === 0 && res.web.fuentes.length === 0 ? "vacio" : "ok";
     const { data: bw } = await supabaseAdmin.from("ia_busquedas_web").insert({
       conversacion_id: conversacionId, mensaje_usuario_id: userMsg.id, ejecucion_id: eje?.id ?? null,
       motivo: decWeb.motivo, explicita: decWeb.explicita, proveedor: getProveedor(), modelo: res.modelo,
@@ -193,7 +198,7 @@ export async function correrChat(params: { owner: string; conversacionId: string
       // 4D.2 — auditoría de validación y consumo.
       validador_version: VALIDADOR_VERSION, fuentes_recibidas: res.web.fuentes.length,
       salvedades: validacion?.advertencias.length ?? 0, herramientas_ofrecidas: herramientasPermitidas.length + (webActiva ? 1 : 0),
-      integridad_ok: validacion?.integridad.ok ?? null,
+      integridad_ok: validacion?.integridad.ok ?? null, uso_desconocido: res.usoDesconocido ?? false,
     }).select("id").single();
     if (bw?.id && res.web.fuentes.length > 0) {
       // Dedup por URL dentro de la ejecución (índice único lo garantiza; upsert ignora repetidos).
@@ -235,13 +240,26 @@ export async function correrChat(params: { owner: string; conversacionId: string
   // íntegro; las fuentes (internas/externas) siguen visibles y el parcial queda SOLO en auditoría.
   const truncado = !borrador && res.estado === "completa" && (res.truncado === true || (validacion != null && !validacion.integridad.ok && validacion.integridad.problemas.some((p) => p === "truncado_al_final" || p === "vineta_cortada" || p === "parrafo_cortado")));
   const MSG_TRUNCADO = "No pude completar la respuesta dentro del límite de esta consulta. Abajo tenés las fuentes que encontré (internas y externas). Volvé a preguntar acotando el alcance —por ejemplo, enfocándote en una sola categoría o dimensión— y la desarrollo completa.";
+  // 4D.4 — timeout: mensaje local honesto, con referencia corta y aviso de consumo pendiente de
+  // conciliación si el uso quedó desconocido. Sin reintento automático ni respuesta parcial.
+  const esTimeout = res.estado !== "completa" && /timeout|tard[óo] demasiado/i.test(res.error ?? "");
+  const msgTimeout = `La búsqueda tardó más de lo permitido y no publiqué una respuesta incompleta. No se reintentó automáticamente. Referencia: ${refDiag}.${res.usoDesconocido ? "\n\nEl proveedor no devolvió el detalle final de uso; el posible consumo de este intento queda pendiente de conciliación." : ""}`;
   const contenido = borrador
     ? (huboTimeoutPosterior
         ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos."
         : res.texto)
     : (truncado ? MSG_TRUNCADO
       : res.estado === "completa" ? res.texto + notaValidacion + notaWebNoDisp
+      : esTimeout ? msgTimeout
       : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
+
+  // Diagnóstico estructurado server-side (sin secretos: nunca pregunta completa, prompt, keys,
+  // resultados web ni bloques cifrados). Correlacionable por refDiag con la DB.
+  if (webActiva || res.estado !== "completa") {
+    try {
+      console.log(JSON.stringify({ ia_diag: { ref: refDiag, estado: res.estado, modelo: res.modelo, clase: res.claseModelo, web_activa: webActiva, web_version: capacidadesWeb(res.modelo).version, moderno: capacidadesWeb(res.modelo).version !== "web_search_20250305", response_excluded: capacidadesWeb(res.modelo).responseInclusionExcluded, rondas: res.rondas, busquedas: res.web.busquedasFacturables, uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.faseFallo ?? null, duracion_ms: res.duracion_ms, error_code: res.error ? (esTimeout ? "timeout" : "error") : null } }));
+    } catch { /* logging best-effort */ }
+  }
   // El mensaje se marca 'completa' si hay borrador (la UI muestra la vista previa, no un error).
   const estadoMensaje = borrador ? "completa" : res.estado;
   const { data: asstMsg } = await supabaseAdmin.from("ia_mensajes").insert({

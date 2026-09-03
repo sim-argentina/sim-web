@@ -25,7 +25,8 @@ const SUGERIDAS = [
   "¿Qué anomalías detectás este mes?",
   "Hacé un FODA de SIM con los datos disponibles.",
 ];
-const PASOS = ["Analizando la pregunta…", "Consultando los módulos…", "Preparando respuesta…"];
+// Estados de progreso indeterminado (no afirman fases exactas del servidor).
+const PASOS = ["Preparando la consulta…", "Consultando fuentes…", "Analizando resultados…", "Finalizando la respuesta…"];
 
 export default function IAChat() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -38,6 +39,7 @@ export default function IAChat() {
   const [input, setInput] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [paso, setPaso] = useState(0);
+  const [segundos, setSegundos] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [saldo, setSaldo] = useState<SaldoResumen | null>(null);
   const [fuentesAbiertas, setFuentesAbiertas] = useState<Record<string, boolean>>({});
@@ -68,10 +70,12 @@ export default function IAChat() {
   }, [cargarConvs, cargarSaldo]);
 
   useEffect(() => {
-    if (!enviando) return;
-    setPaso(0);
-    const t = setInterval(() => setPaso((p) => (p + 1) % PASOS.length), 1500);
-    return () => clearInterval(t);
+    if (!enviando) { setSegundos(0); return; }
+    setPaso(0); setSegundos(0);
+    const inicio = Date.now();
+    const t = setInterval(() => setPaso((p) => (p + 1) % PASOS.length), 1800);
+    const s = setInterval(() => setSegundos(Math.floor((Date.now() - inicio) / 1000)), 1000);
+    return () => { clearInterval(t); clearInterval(s); };
   }, [enviando]);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [mensajes, enviando]);
@@ -361,6 +365,8 @@ export default function IAChat() {
               <div className="flex justify-start">
                 <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/60">
                   <span className="inline-block animate-pulse">{PASOS[paso]}</span>
+                  <span className="ml-2 tabular-nums text-white/35">{segundos}s</span>
+                  {segundos >= 25 && <span className="ml-2 text-[11px] text-white/35">(una búsqueda web puede tardar hasta ~50s)</span>}
                 </div>
               </div>
             )}

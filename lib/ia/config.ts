@@ -11,6 +11,9 @@ export type IALimites = {
   rondasHerramientasMax: number;
   herramientasPorRespuestaMax: number;
   tiempoEjecucionMsMax: number;
+  // Presupuesto de tiempo del PROVEEDOR para consultas con búsqueda web (Bloque 4D.4). Debe ser
+  // MENOR que el máximo de la ruta/Vercel para dejar margen a persistencia, validación y respuesta.
+  webTimeoutMs: number;
   tokensMesMax: number; // presupuesto mensual (input+output)
 };
 
@@ -29,6 +32,9 @@ export function getLimites(): IALimites {
     rondasHerramientasMax: num("IA_RONDAS_MAX", 6),
     herramientasPorRespuestaMax: num("IA_HERRAMIENTAS_MAX", 8),
     tiempoEjecucionMsMax: num("IA_TIEMPO_MS_MAX", 60000),
+    // 50s deja ~10s dentro del máximo de 60s de la función (plan Hobby) para persistir el
+    // resultado (incluido el estado de timeout) y responder por HTTP sin que Vercel corte antes.
+    webTimeoutMs: num("IA_WEB_TIMEOUT_MS", 50000),
     tokensMesMax: num("IA_TOKENS_MES_MAX", 5_000_000),
   };
 }

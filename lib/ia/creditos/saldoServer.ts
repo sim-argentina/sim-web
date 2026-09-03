@@ -41,19 +41,20 @@ async function consumoMesVigente() {
   const { desde, hasta } = rangoMes(mes);
   const d0 = `${desde}T00:00:00-03:00`, d1 = `${hasta}T00:00:00-03:00`;
   const [{ data: ej }, { data: ocr }] = await Promise.all([
-    supabaseAdmin.from("ia_ejecuciones").select("tokens_in, tokens_out, costo_estimado, busquedas_web, costo_busquedas_usd").neq("proveedor", "fake").gte("created_at", d0).lt("created_at", d1),
+    supabaseAdmin.from("ia_ejecuciones").select("tokens_in, tokens_out, costo_estimado, busquedas_web, costo_busquedas_usd, uso_desconocido").neq("proveedor", "fake").gte("created_at", d0).lt("created_at", d1),
     supabaseAdmin.from("ia_ocr_resultados").select("tokens_in, tokens_out, costo_estimado").neq("proveedor", "fake").gte("created_at", d0).lt("created_at", d1),
   ]);
-  let tin = 0, tout = 0, costoNano = 0n, busquedasWeb = 0, costoWebNano = 0n;
+  let tin = 0, tout = 0, costoNano = 0n, busquedasWeb = 0, costoWebNano = 0n, usoDesconocido = 0;
   for (const r of [...(ej ?? []), ...(ocr ?? [])]) {
     tin += Number(r.tokens_in || 0); tout += Number(r.tokens_out || 0);
     costoNano += textoANano(r.costo_estimado);
     busquedasWeb += Number((r as { busquedas_web?: number }).busquedas_web || 0);
     costoWebNano += textoANano((r as { costo_busquedas_usd?: unknown }).costo_busquedas_usd);
+    if ((r as { uso_desconocido?: boolean }).uso_desconocido) usoDesconocido++;
   }
   const tokensTotal = tin + tout;
   const limite = getLimites().tokensMesMax;
-  return { periodo: mes, tokens_total: tokensTotal, costo_usd: formatoUSD(costoNano), costo_nano: costoNano, limite_tokens_mes: limite, porcentaje_tope: limite > 0 ? Math.round((tokensTotal / limite) * 100) : 0, busquedas_web: busquedasWeb, costo_web_usd: formatoUSD(costoWebNano) };
+  return { periodo: mes, tokens_total: tokensTotal, costo_usd: formatoUSD(costoNano), costo_nano: costoNano, limite_tokens_mes: limite, porcentaje_tope: limite > 0 ? Math.round((tokensTotal / limite) * 100) : 0, busquedas_web: busquedasWeb, costo_web_usd: formatoUSD(costoWebNano), intentos_uso_desconocido: usoDesconocido };
 }
 
 // ── Costo interno por MES (Córdoba) para el detalle (solo estimado) ──────────
@@ -198,7 +199,7 @@ export async function resumenSaldo() {
       ultimo_saldo_real: conc && (calc.modo === "conciliado" || calc.modo === "conciliacion_pendiente") ? { usd: formatoUSD(textoANano(conc.saldo_observado_usd)), fecha: conc.created_at } : null,
       gastado_desde_usd: calc.modo === "conciliado" ? formatoUSD(calc.cNano - calc.bNano < 0n ? 0n : calc.cNano - calc.bNano) : null,
     },
-    consumo_mes: { periodo: consumoMes.periodo, tokens_total: consumoMes.tokens_total, costo_estimado_usd: consumoMes.costo_usd, porcentaje_tope: consumoMes.porcentaje_tope, busquedas_web: consumoMes.busquedas_web, costo_web_usd: consumoMes.costo_web_usd },
+    consumo_mes: { periodo: consumoMes.periodo, tokens_total: consumoMes.tokens_total, costo_estimado_usd: consumoMes.costo_usd, porcentaje_tope: consumoMes.porcentaje_tope, busquedas_web: consumoMes.busquedas_web, costo_web_usd: consumoMes.costo_web_usd, intentos_uso_desconocido: consumoMes.intentos_uso_desconocido },
     sincronizacion: {
       estado: sync?.estado ?? "sin_sincronizacion_oficial",
       configurada: Boolean(getAdminKey()),

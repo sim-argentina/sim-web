@@ -7,6 +7,11 @@ import { IA_OWNER_ADMIN, getLimites } from "@/lib/ia/config";
 type Ctx = { params: Promise<{ id: string }> };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// 4D.4 — máximo de duración de la función (plan Hobby: 60s). El presupuesto del proveedor con
+// web (IA_WEB_TIMEOUT_MS, 50s) es MENOR, dejando margen a persistencia y respuesta. Coordinar con
+// el plan real: si se sube el plan de Vercel, subir aquí y IA_WEB_TIMEOUT_MS en consecuencia.
+export const maxDuration = 60;
+
 // Enviar un mensaje del admin y obtener la respuesta de IA SIM (no streaming).
 // Idempotencia por 'idempotency_key' para evitar doble cobro/guardado por doble clic.
 export async function POST(req: Request, { params }: Ctx) {

@@ -120,7 +120,8 @@ export class AnthropicProvider implements IAProvider {
         signal: ctrl.signal,
       });
     } catch (e) {
-      throw new IAProviderError((e as Error)?.name === "AbortError" ? "El proveedor tardó demasiado (timeout)." : "No se pudo contactar al proveedor de IA.");
+      // Timeout (abort) → status 504 para que el orquestador lo distinga (uso desconocido).
+      throw new IAProviderError((e as Error)?.name === "AbortError" ? "El proveedor tardó demasiado (timeout)." : "No se pudo contactar al proveedor de IA.", (e as Error)?.name === "AbortError" ? 504 : 502);
     } finally {
       clearTimeout(timer);
     }
