@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarioFinanciero, SaludFinanciera } from "./CalendarioFinanciero";
+import type { InformeDeuda } from "./informePdf";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -1102,7 +1103,14 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
         const md = await mr.json();
         if (mr.ok && md.metricas) metricas = { ...md.metricas, turnos: md.contexto?.turnos ?? null };
       } catch { /* el informe se genera igual sin métricas */ }
-      generarInformePdf({ mes, mesLabel: labelMes(mes), cierre: cierreData, metricas });
+      // Deuda viva para el bloque de financiamiento del informe (opcional).
+      let deudas: InformeDeuda[] | undefined;
+      try {
+        const dr = await fetch("/api/admin/finanzas/deudas", { cache: "no-store" });
+        const dd = await dr.json();
+        if (dr.ok && Array.isArray(dd.deudas)) deudas = dd.deudas as InformeDeuda[];
+      } catch { /* el informe se genera igual sin deudas */ }
+      generarInformePdf({ mes, mesLabel: labelMes(mes), cierre: cierreData, metricas, deudas });
     } catch (e) {
       console.error(e); alert("No se pudo generar el informe PDF.");
     } finally { setGenerando(false); }
@@ -1119,7 +1127,7 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
       onHecho();
       // Informe automático al cerrar (no bloquea el cierre si falla).
       const cerradoData: CierreApi = {
-        ...cierre!, estado: d.estado || "cerrado",
+        ...cierre!, estado: d.estado || "cerrado", observaciones: obs || null,
         saldo_real_guardado: realGeneral, saldo_real_efectivo: efNum, saldo_real_mp: mpNum,
         diferencia_guardada: difGeneral, diferencia_efectivo: difEf, diferencia_mp: difMp,
       };
