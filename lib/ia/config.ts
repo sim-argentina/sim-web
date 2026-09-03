@@ -23,6 +23,32 @@ function num(name: string, def: number): number {
   return Number.isFinite(n) && n > 0 ? n : def;
 }
 
+// Máximo de duración de la Function de chat (segundos). Vercel Hobby + Fluid Compute admite 300s.
+// DEBE coincidir con `export const maxDuration` de la ruta del chat (Next.js lo lee estático allí).
+export const ROUTE_MAX_SEG = num("IA_ROUTE_MAX_SEG", 300);
+// Margen reservado antes del límite de la Function para persistir el resultado (incluido el estado
+// de timeout), validar y responder por HTTP.
+const MARGEN_MS = 40000;
+
+// Presupuesto de tiempo de la búsqueda web MODERNA, VALIDADO contra el límite de la Function.
+// - default seguro si no está IA_WEB_TIMEOUT_MS;
+// - rango mínimo/máximo: [30s, ROUTE_MAX_SEG - margen];
+// - rechaza (marca inválido) un timeout >= al límite de la Function (no dejaría margen).
+export function getPresupuestoWeb(): { timeoutMs: number; maxDurationSeg: number; margenMs: number; valido: boolean; motivo?: string; crudoMs?: number } {
+  const maxMs = ROUTE_MAX_SEG * 1000;
+  const maxWeb = Math.max(30000, maxMs - MARGEN_MS); // p.ej. 260000
+  const crudo = process.env.IA_WEB_TIMEOUT_MS;
+  const defaultMs = Math.min(250000, maxWeb);
+  if (crudo == null || crudo.trim() === "") return { timeoutMs: defaultMs, maxDurationSeg: ROUTE_MAX_SEG, margenMs: MARGEN_MS, valido: true };
+  const raw = Number(crudo);
+  if (!Number.isFinite(raw) || raw <= 0) return { timeoutMs: defaultMs, maxDurationSeg: ROUTE_MAX_SEG, margenMs: MARGEN_MS, valido: false, motivo: "IA_WEB_TIMEOUT_MS no numérico; se usa el default seguro", crudoMs: undefined };
+  if (raw >= maxMs) return { timeoutMs: maxWeb, maxDurationSeg: ROUTE_MAX_SEG, margenMs: MARGEN_MS, valido: false, motivo: `IA_WEB_TIMEOUT_MS (${raw}ms) >= límite de la Function (${maxMs}ms); se usa el máximo seguro`, crudoMs: raw };
+  // Mínimo 1s (solo evita 0/negativos); la protección importante es el MÁXIMO < límite de la Function.
+  const timeoutMs = Math.max(1000, Math.min(raw, maxWeb));
+  return { timeoutMs, maxDurationSeg: ROUTE_MAX_SEG, margenMs: MARGEN_MS, valido: true, crudoMs: raw };
+}
+function presupuestoWebValidado(): number { return getPresupuestoWeb().timeoutMs; }
+
 export function getLimites(): IALimites {
   return {
     mensajesPorMinuto: num("IA_MSG_POR_MINUTO", 6),
@@ -32,9 +58,10 @@ export function getLimites(): IALimites {
     rondasHerramientasMax: num("IA_RONDAS_MAX", 6),
     herramientasPorRespuestaMax: num("IA_HERRAMIENTAS_MAX", 8),
     tiempoEjecucionMsMax: num("IA_TIEMPO_MS_MAX", 60000),
-    // 50s deja ~10s dentro del máximo de 60s de la función (plan Hobby) para persistir el
-    // resultado (incluido el estado de timeout) y responder por HTTP sin que Vercel corte antes.
-    webTimeoutMs: num("IA_WEB_TIMEOUT_MS", 50000),
+    // Presupuesto de la búsqueda web MODERNA. Vercel Hobby + Fluid Compute admite Functions de
+    // hasta 300s (ver ROUTE_MAX_SEG); dejamos ~40s de margen para persistencia/respuesta HTTP.
+    // Default seguro en el código (no hace falta setear la env). Clamp validado en getPresupuestoWeb.
+    webTimeoutMs: presupuestoWebValidado(),
     tokensMesMax: num("IA_TOKENS_MES_MAX", 5_000_000),
   };
 }

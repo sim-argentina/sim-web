@@ -366,7 +366,7 @@ export default function IAChat() {
                 <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/60">
                   <span className="inline-block animate-pulse">{PASOS[paso]}</span>
                   <span className="ml-2 tabular-nums text-white/35">{segundos}s</span>
-                  {segundos >= 25 && <span className="ml-2 text-[11px] text-white/35">(una búsqueda web puede tardar hasta ~50s)</span>}
+                  {segundos >= 25 && <span className="ml-2 text-[11px] text-white/35">(una investigación web puede tardar unos minutos)</span>}
                 </div>
               </div>
             )}

@@ -68,6 +68,10 @@ export type EjecutarChatParams = {
   maxTokensSalida?: number;
   // Bloque 4D.4 — presupuesto de tiempo del proveedor para consultas con web (< máx de la ruta).
   webTimeoutMs?: number;
+  // Bloque 4D.4.1 — presupuesto TOTAL del orquestador para esta consulta (para web se extiende
+  // por encima del tope general de 60s; sin él, usa limites.tiempoEjecucionMsMax). Levanta el
+  // AbortController "oculto" de 60s para las búsquedas web modernas.
+  tiempoTotalMs?: number;
 };
 
 export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResultado> {
@@ -96,7 +100,9 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
   let webError: string | undefined;
   let webDegradada = false; // si el proveedor rechazó la web (400) y se siguió sin ella
 
-  const restante = () => p.limites.tiempoEjecucionMsMax - (Date.now() - inicio);
+  // Presupuesto TOTAL de la ejecución: para web se usa el presupuesto extendido (no el tope de 60s).
+  const tiempoTotal = p.tiempoTotalMs ?? p.limites.tiempoEjecucionMsMax;
+  const restante = () => tiempoTotal - (Date.now() - inicio);
   const construirWeb = (): EjecucionResultado["web"] => ({
     habilitada: webHabilitadaGeneral, explicita: Boolean(webConf?.explicita),
     motivo: webConf?.motivo ?? "sin_web", busquedasFacturables: webBusquedas,

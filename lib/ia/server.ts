@@ -2,7 +2,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { HistorialTurno } from "@/lib/ia/provider";
 import { ejecutarChat } from "@/lib/ia/orchestrator";
 import { crearProvider } from "@/lib/ia/providerFactory";
-import { getLimites, getModelos, getProveedor, estimarCostoUSD, iaEstaConfigurada, variablesFaltantes, PRECIOS_VERSION } from "@/lib/ia/config";
+import { getLimites, getModelos, getProveedor, estimarCostoUSD, iaEstaConfigurada, variablesFaltantes, PRECIOS_VERSION, getPresupuestoWeb } from "@/lib/ia/config";
 import { buscarConocimiento, listarDocumentosActivos, normalizar } from "@/lib/ia/docs/conocimientoServer";
 import { crearBorrador } from "@/lib/ia/informes/informesServer";
 import { NOMBRE_PREPARAR_INFORME } from "@/lib/ia/informes/informeTool";
@@ -147,7 +147,9 @@ export async function correrChat(params: { owner: string; conversacionId: string
   // ampliada SOLO para síntesis web/competitiva (evita truncar sin inflar consultas simples).
   const herramientasPermitidas = seleccionarHerramientas(pregunta, { conocimientoRelevante: relevantes.length > 0 });
   const maxTokensSalida = webActiva ? 2500 : limites.tokensSalidaMax;
-  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParam, herramientasPermitidas, maxTokensSalida, webTimeoutMs: limites.webTimeoutMs });
+  // 4D.4.1 — para web, el presupuesto TOTAL del orquestador se extiende al presupuesto web (~250s,
+  // < maxDuration 300s), levantando el tope general de 60s. Las consultas internas usan el general.
+  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParam, herramientasPermitidas, maxTokensSalida, webTimeoutMs: limites.webTimeoutMs, tiempoTotalMs: webActiva ? limites.webTimeoutMs : undefined });
 
   // Costo = tokens + búsquedas web (VERSIONADO). El total se congela en la ejecución, así el
   // saldo dinámico (4B.5.1) descuenta la búsqueda UNA sola vez junto con los tokens.
@@ -257,7 +259,8 @@ export async function correrChat(params: { owner: string; conversacionId: string
   // resultados web ni bloques cifrados). Correlacionable por refDiag con la DB.
   if (webActiva || res.estado !== "completa") {
     try {
-      console.log(JSON.stringify({ ia_diag: { ref: refDiag, estado: res.estado, modelo: res.modelo, clase: res.claseModelo, web_activa: webActiva, web_version: capacidadesWeb(res.modelo).version, moderno: capacidadesWeb(res.modelo).version !== "web_search_20250305", response_excluded: capacidadesWeb(res.modelo).responseInclusionExcluded, rondas: res.rondas, busquedas: res.web.busquedasFacturables, uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.faseFallo ?? null, duracion_ms: res.duracion_ms, error_code: res.error ? (esTimeout ? "timeout" : "error") : null } }));
+      const presupuesto = getPresupuestoWeb();
+      console.log(JSON.stringify({ ia_diag: { ref: refDiag, estado: res.estado, modelo: res.modelo, clase: res.claseModelo, web_activa: webActiva, web_version: capacidadesWeb(res.modelo).version, moderno: capacidadesWeb(res.modelo).version !== "web_search_20250305", response_excluded: capacidadesWeb(res.modelo).responseInclusionExcluded, web_timeout_ms: limites.webTimeoutMs, route_max_seg: presupuesto.maxDurationSeg, config_web_valida: presupuesto.valido, rondas: res.rondas, busquedas: res.web.busquedasFacturables, uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.faseFallo ?? null, duracion_ms: res.duracion_ms, error_code: res.error ? (esTimeout ? "timeout" : "error") : null } }));
     } catch { /* logging best-effort */ }
   }
   // El mensaje se marca 'completa' si hay borrador (la UI muestra la vista previa, no un error).
