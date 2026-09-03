@@ -1,3 +1,8 @@
+// 4D.5 — este test ejercita específicamente el flujo LEGADO de búsqueda nativa de Anthropic
+// (rama "anthropic", no default desde 4D.5; ver lib/ia/web/config.getWebProveedor). Se fija
+// ANTES de importar server.ts, que lee la env al resolver getWebProveedor() en cada llamada.
+process.env.IA_WEB_PROVEEDOR = "anthropic";
+
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { correrChat } from "@/lib/ia/server";
@@ -39,8 +44,9 @@ async function main() {
     console.log("OK — integridad4d3: truncamiento max_tokens NO publica el parcial ('No tengo en'), muestra mensaje local íntegro, conserva el parcial en auditoría y las fuentes; respuesta completa se publica normal.");
   } finally {
     await limpiar(convId);
+    delete process.env.IA_WEB_PROVEEDOR;
     const { count } = await supabaseAdmin.from("ia_conversaciones").select("id", { count: "exact", head: true }).eq("owner", OWNER);
     console.log("Limpieza ZZTEST verificada:", (count ?? 0) === 0);
   }
 }
-main().catch(async (e) => { console.error(e); await limpiar(); process.exit(1); });
+main().catch(async (e) => { console.error(e); await limpiar(); delete process.env.IA_WEB_PROVEEDOR; process.exit(1); });

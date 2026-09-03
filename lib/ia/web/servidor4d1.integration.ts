@@ -1,3 +1,7 @@
+// 4D.5 — este test ejercita el flujo LEGADO de búsqueda nativa de Anthropic (rama "anthropic",
+// no default desde 4D.5). Se fija antes de importar server.ts.
+process.env.IA_WEB_PROVEEDOR = "anthropic";
+
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { correrChat } from "@/lib/ia/server";
@@ -55,4 +59,4 @@ async function main() {
     console.log("Limpieza ZZTEST verificada:", (count ?? 0) === 0);
   }
 }
-main().catch(async (e) => { console.error(e); await limpiar(); process.exit(1); });
+main().finally(() => { delete process.env.IA_WEB_PROVEEDOR; }).catch(async (e) => { console.error(e); await limpiar(); process.exit(1); });

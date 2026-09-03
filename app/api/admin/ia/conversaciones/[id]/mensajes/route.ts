@@ -30,12 +30,17 @@ export async function POST(req: Request, { params }: Ctx) {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const pregunta = typeof body.pregunta === "string" ? body.pregunta.trim() : "";
   const idem = typeof body.idempotency_key === "string" ? body.idempotency_key.slice(0, 100) : null;
+  // 4D.5 — acción explícita del administrador sobre la búsqueda web: "forzar" (ignorar caché,
+  // solo tras un click de "Buscar de nuevo") o "ampliar" (presupuesto mayor, solo tras confirmar
+  // el modal de investigación ampliada). Nunca se infiere del texto: el cliente la envía.
+  const webAccionRaw = body.web_accion;
+  const webAccion = webAccionRaw === "forzar" || webAccionRaw === "ampliar" ? webAccionRaw : "normal";
   const { tokensEntradaMax } = getLimites();
   if (!pregunta) return NextResponse.json({ error: "Escribí una pregunta." }, { status: 400 });
   // Cota grosera de tokens de entrada (~4 chars/token) para no exceder el límite.
   if (pregunta.length > tokensEntradaMax * 4) return NextResponse.json({ error: "La pregunta es demasiado larga." }, { status: 400 });
 
-  const res = await correrChat({ owner: IA_OWNER_ADMIN, conversacionId: id, pregunta, idempotencyKey: idem });
+  const res = await correrChat({ owner: IA_OWNER_ADMIN, conversacionId: id, pregunta, idempotencyKey: idem, webAccion });
   if (!res.ok) return NextResponse.json({ error: res.error, motivo: res.motivo }, { status: res.status });
   return NextResponse.json(res, { status: 200 });
 }

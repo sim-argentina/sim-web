@@ -1,7 +1,10 @@
-// Tiempos cortos para el fake (antes de importar config/server).
+// Tiempos cortos para el fake (antes de importar config/server). 4D.5 — este test valida el
+// timeout a nivel PROVEEDOR/orquestador (agnóstico de Tavily); usa la rama legada "anthropic"
+// para que el timeout ocurra DURANTE la llamada a Claude (no antes, por falta de Tavily).
 process.env.IA_PROVIDER = "fake";
 process.env.IA_TIEMPO_MS_MAX = "3000";
 process.env.IA_WEB_TIMEOUT_MS = "1500";
+process.env.IA_WEB_PROVEEDOR = "anthropic";
 
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";

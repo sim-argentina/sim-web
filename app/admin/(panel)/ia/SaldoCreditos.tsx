@@ -13,7 +13,7 @@ type PorMes = { mes: string; estimado_usd: string; oficial_usd: string | null };
 type Alerta = { nivel: "info" | "warn" | "critico"; codigo: string; texto: string };
 export type Resumen = {
   saldo: { modo: string; etiqueta_modo: string; saldo_display: string; saldo_usd: string; referencia_usd: string; porcentaje: number | null; color: "ok" | "warn" | "critico"; creditos_registrados_usd: string; ultimo_saldo_real: { usd: string; fecha: string } | null; gastado_desde_usd: string | null };
-  consumo_mes: { periodo: string; tokens_total: number; costo_estimado_usd: string; porcentaje_tope: number; busquedas_web?: number; costo_web_usd?: string; intentos_uso_desconocido?: number };
+  consumo_mes: { periodo: string; tokens_total: number; costo_estimado_usd: string; porcentaje_tope: number; busquedas_web?: number; costo_web_usd?: string; intentos_uso_desconocido?: number; creditos_busqueda_tavily?: number; cache_hits_tavily?: number };
   sincronizacion: { estado: string; configurada: boolean; variable_requerida: string | null; ultimo_intento: string | null; ultimo_exito: string | null; ultimo_error: string | null };
   alertas: Alerta[];
   detalle: {
@@ -154,8 +154,10 @@ function Detalle({ r, recargar }: { r: Resumen; recargar: () => void }) {
       <section>
         <h4 className="mb-1 font-black uppercase tracking-wider text-white/40">Este mes ({mesLargo(r.consumo_mes.periodo)})</h4>
         <div className="flex items-center justify-between py-0.5 text-white/60"><span>Tokens</span><span className="tabular-nums">{r.consumo_mes.tokens_total.toLocaleString("es-AR")}</span></div>
-        <div className="flex items-center justify-between py-0.5 text-white/60"><span>Búsquedas web</span><span className="tabular-nums">{r.consumo_mes.busquedas_web ?? 0}{(r.consumo_mes.busquedas_web ?? 0) > 0 ? ` · ~${usd(r.consumo_mes.costo_web_usd ?? "0")}` : ""}</span></div>
-        <div className="flex items-center justify-between py-0.5 text-white/60"><span>Costo total estimado</span><span className="tabular-nums">~{usd(r.consumo_mes.costo_estimado_usd)}</span></div>
+        {/* 4D.5 — Tavily: créditos de búsqueda, SEPARADOS del saldo de Anthropic (no se restan). */}
+        <div className="flex items-center justify-between py-0.5 text-white/60"><span>Búsquedas web (Tavily)</span><span className="tabular-nums">{r.consumo_mes.busquedas_web ?? 0}{(r.consumo_mes.cache_hits_tavily ?? 0) > 0 ? ` · ${r.consumo_mes.cache_hits_tavily} con caché` : ""}</span></div>
+        <div className="flex items-center justify-between py-0.5 text-white/60"><span>Créditos de búsqueda</span><span className="tabular-nums">{r.consumo_mes.creditos_busqueda_tavily ?? 0}</span></div>
+        <div className="flex items-center justify-between py-0.5 text-white/60"><span>Costo Claude (tokens{(r.consumo_mes.busquedas_web ?? 0) > 0 && Number(r.consumo_mes.costo_web_usd) > 0 ? " + web nativa" : ""})</span><span className="tabular-nums">~{usd(r.consumo_mes.costo_estimado_usd)}</span></div>
         {(r.consumo_mes.intentos_uso_desconocido ?? 0) > 0 && (
           <div className="mt-1 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300/90">{r.consumo_mes.intentos_uso_desconocido} intento(s) con consumo desconocido (búsqueda cortada por tiempo): posible costo pendiente de conciliación.</div>
         )}

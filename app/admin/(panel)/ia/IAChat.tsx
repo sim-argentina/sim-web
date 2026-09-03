@@ -12,7 +12,7 @@ type Adjunto = { id: string; nombre_original: string; estado_procesamiento: stri
 
 type Fuente = { tipo?: "interna" | "externa"; modulo: string; periodo?: string; registros?: number; estadoMes?: string; exclusiones?: number; actualizado?: string; url?: string; titulo?: string | null; dominio?: string | null; fragmento?: string | null; fecha_pagina?: string | null };
 type Herr = { nombre: string; ok: boolean; error?: string };
-type Mensaje = { id: string; rol: "user" | "assistant"; contenido: string; modelo?: string; clase_modelo?: string; escalado?: boolean; fuentes?: Fuente[]; herramientas?: Herr[]; estado?: string; busquedas_web?: number };
+type Mensaje = { id: string; rol: "user" | "assistant"; contenido: string; modelo?: string; clase_modelo?: string; escalado?: boolean; fuentes?: Fuente[]; herramientas?: Herr[]; estado?: string; busquedas_web?: number; web_cache_hit?: boolean; web_creditos?: number; pregunta_previa?: string };
 
 const esExterna = (f: Fuente) => f.tipo === "externa" || (typeof f.url === "string" && /^https?:\/\//i.test(f.url));
 type Conv = { id: string; titulo: string | null; updated_at?: string };
@@ -193,9 +193,11 @@ export default function IAChat() {
     cargarConvs();
   }
 
-  async function enviar(texto?: string) {
+  async function enviar(texto?: string, webAccion?: "forzar" | "ampliar") {
     const pregunta = (texto ?? input).trim();
     if (!pregunta || enviando) return;
+    // 4D.5 — "Ampliar investigación" requiere confirmación explícita, con el presupuesto a la vista.
+    if (webAccion === "ampliar" && !window.confirm("Investigación ampliada: hasta 1 búsqueda web (con más profundidad de síntesis), costo estimado de Claude hasta ~US$0,60. ¿Confirmás?")) return;
     setError(null);
     let convId = activa;
     if (!convId) {
@@ -209,7 +211,7 @@ export default function IAChat() {
     setMensajes((m) => [...m, userMsg]);
     setInput(""); setEnviando(true);
     try {
-      const r = await fetch(`/api/admin/ia/conversaciones/${convId}/mensajes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pregunta, idempotency_key: idem }) });
+      const r = await fetch(`/api/admin/ia/conversaciones/${convId}/mensajes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pregunta, idempotency_key: idem, web_accion: webAccion }) });
       const j = await r.json();
       if (!r.ok) {
         setError(j?.error || "No se pudo responder.");
@@ -218,7 +220,7 @@ export default function IAChat() {
         cargarInformes(convId); // por si quedó un borrador persistido pese al error
         return;
       }
-      setMensajes((m) => [...m, { id: j.mensajeId, rol: "assistant", contenido: j.texto, modelo: j.modelo, clase_modelo: j.claseModelo, escalado: j.escalado, fuentes: j.fuentes, herramientas: j.herramientas, estado: j.estado, busquedas_web: j.busquedasWeb }]);
+      setMensajes((m) => [...m, { id: j.mensajeId, rol: "assistant", contenido: j.texto, modelo: j.modelo, clase_modelo: j.claseModelo, escalado: j.escalado, fuentes: j.fuentes, herramientas: j.herramientas, estado: j.estado, busquedas_web: j.busquedasWeb, web_cache_hit: j.webCacheHit, web_creditos: j.webCreditos, pregunta_previa: pregunta }]);
       if (j.borrador?.informeId) setInformes((prev) => (prev.includes(j.borrador.informeId) ? prev : [...prev, j.borrador.informeId]));
       else cargarInformes(convId); // recuperar cualquier borrador vinculado (éxito/timeout posterior)
       cargarConvs(); cargarSaldo();
@@ -343,7 +345,18 @@ export default function IAChat() {
                       <div className="mt-2 flex flex-wrap items-center gap-3">
                         <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase text-white/40">{m.clase_modelo === "potente" ? "Modelo potente" : "Modelo económico"}{m.escalado ? " · escalado" : ""}</span>
                         {(m.busquedas_web ?? 0) > 0 && (
-                          <span className="rounded-full bg-red-600/20 px-2 py-0.5 text-[10px] uppercase text-red-300">Búsqueda web · {m.busquedas_web} {m.busquedas_web === 1 ? "consulta" : "consultas"}</span>
+                          <span className="rounded-full bg-red-600/20 px-2 py-0.5 text-[10px] uppercase text-red-300">Búsqueda web · Tavily · {m.busquedas_web} {m.busquedas_web === 1 ? "búsqueda" : "búsquedas"}{typeof m.web_creditos === "number" ? ` · ${m.web_creditos} créditos` : ""}</span>
+                        )}
+                        {m.web_cache_hit && (
+                          <span className="flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[10px] uppercase text-white/40">
+                            Fuentes web reutilizadas
+                            {m.pregunta_previa && (
+                              <button onClick={() => enviar(m.pregunta_previa, "forzar")} className="normal-case text-red-300 hover:text-red-200" title="Repetir la búsqueda web (no usa caché)">🔄 Buscar de nuevo</button>
+                            )}
+                          </span>
+                        )}
+                        {/^Este an[aá]lisis supera el presupuesto configurado/.test(m.contenido) && m.pregunta_previa && (
+                          <button onClick={() => enviar(m.pregunta_previa, "ampliar")} className="rounded-full bg-red-600/20 px-2 py-0.5 text-[10px] uppercase text-red-300 hover:bg-red-600/30">Ampliar investigación</button>
                         )}
                         {!m.id.startsWith("tmp-") && (
                           <>

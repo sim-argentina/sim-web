@@ -52,7 +52,10 @@ for (const ruta of rutas) {
   const orq = read("lib/ia/orchestrator.ts");
   assert.ok(/const system = SYSTEM_PROMPT;/.test(orq), "orquestador: system estático (no concatena contenido dinámico)");
   assert.ok(/contextoUsuario/.test(orq), "orquestador: el contexto va como turno de usuario");
-  assert.ok(/defsParaProveedor\(\)/.test(orq) && !/economico[^]*herramientas: \[\]/.test(orq), "orquestador ofrece todas las herramientas (no las quita por modelo)");
+  // Desde 4D.2, defsParaProveedor recibe un subconjunto por INTENCIÓN de la consulta (no por
+  // clase de modelo): el económico y el potente reciben el MISMO criterio de selección.
+  assert.ok(/defsParaProveedor\(/.test(orq), "orquestador llama a defsParaProveedor");
+  assert.ok(!/econom[ií]co[^]*herramientas:\s*\[\]/.test(orq) && !/clase\s*===?\s*["']econom/.test(orq), "las herramientas NO se vacían arbitrariamente por clase de modelo (económico vs potente)");
 }
 
 // FTS OR: una pregunta natural no exige TODOS los términos.
