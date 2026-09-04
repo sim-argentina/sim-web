@@ -25,7 +25,11 @@ const RESULT5 = [
   { titulo: "Simuladores de automovilismo en Córdoba - SIM Argentina", url: "https://simexperience.com.ar/sobre-nosotros", dominio: "simexperience.com.ar", fechaPublicada: null, fragmento: "Experiencia de simulación de Fórmula 1 creada en Córdoba.", posicion: 3 },
   { titulo: "A Racing Simuladores en Instagram", url: "https://www.instagram.com/p/aracing", dominio: "instagram.com", fechaPublicada: "2026-08-18", fragmento: "Se viene A Racing Simuladores a Córdoba.", posicion: 4 },
 ];
-const PREGUNTA_REAL = "Buscá en internet qué experiencias de simulación de automovilismo existen actualmente en Córdoba y citá las fuentes. Después explicame, separando los datos internos y externos, qué diferencias principales encontrás con SIM.";
+// 4D.5.3 — a propósito DISTINTA de la pregunta real de producción (que sigue teniendo una
+// entrada de caché real y vigente): reutilizar el texto exacto hacía que la limpieza de este
+// fixture borrara esa caché real cada vez que corría este test (causa real de un cache miss
+// auditado en 4D.5.3). Mismo tipo de consulta (mismos disparadores de decidirWeb), otro texto.
+const PREGUNTA_REAL = "Buscá en internet qué experiencias de simulación de automovilismo existen actualmente en Córdoba y citá las fuentes (fixture ZZTEST 4D.5.2). Después explicame, separando los datos internos y externos, qué diferencias principales encontrás con SIM.";
 
 // Respuesta ESTRUCTURADA realista (equivalente a la que el modelo real generó, pero acotada).
 function llamadaValida(idsInternos: string[]) {
@@ -210,6 +214,68 @@ async function main() {
     assert.equal(nEje8 ?? 0, 1, "una sola ejecución auditada (consumo/saldo actualizados una sola vez)");
     console.log("OK — 4D.5.2 (parte 8): consumo y saldo se actualizan una sola vez por consulta (una sola ejecución auditada).");
   } finally { await limpiar(conv8); await limpiarCacheZZ("Buscá competidores de simuladores en Córdoba y compará con SIM (caso consumo)"); }
+
+  // ── 9) Corrección 4D.5.3 — ningún campo estructurado termina mutilado en el render final ──
+  const conv9 = await nuevaConv();
+  try {
+    const web9 = new FakeWebSearchProvider([{ tipo: "ok", resultados: RESULT5 }]);
+    const conclusionLarga = "Con la evidencia disponible, Aracing es el actor más cercano a un competidor directo confirmado en Córdoba, con sede propia y actividad comparable a la de SIM, aunque todavía falta información pública de precios y modalidad exacta de turnos para una comparación más completa y precisa entre ambos operadores locales de simuladores de automovilismo. Los demás hallazgos externos son eventos puntuales o publicaciones sin sede confirmada, por lo que no se los trata como competidores directos. SIM mantiene su posición de operador confirmado con sede fija y datos internos propios de septiembre 2026 (con cuarenta y nueve turnos y una facturación bruta que ronda los quinientos cincuenta y ocho mil pesos según el corte disponible al momento de esta respuesta, cifra que";
+    const llamadaLarga = llamadaValida(["int-1"]);
+    (llamadaLarga.input as { conclusion: string }).conclusion = conclusionLarga;
+    const p9 = new FakeProviderGuionado([{ tipo: "herramientas", llamadas: [llamadaLarga] }]);
+    const r9 = await correrChat({ owner: OWNER, conversacionId: conv9, pregunta: "Buscá competidores de simuladores en Córdoba y compará con SIM (caso conclusión larga)" }, { provider: p9, webProvider: web9 });
+    assert.ok(r9.ok, "ok"); if (!r9.ok) return;
+    assert.ok(!r9.texto.includes("(con cuarenta"), "el paréntesis sin cerrar al final se elimina, no queda colgando");
+    const conclusionRenderizada = r9.texto.split("## Conclusión")[1]?.split("## Fuentes internas")[0]?.trim() ?? "";
+    assert.ok(/[.!?…]$/.test(conclusionRenderizada), "la conclusión renderizada termina con puntuación válida");
+    assert.ok(!/\s\S{1,3}$/.test(conclusionRenderizada.replace(/[.!?…]$/, "")) || conclusionRenderizada.length < 700, "no corta a mitad de una palabra corta");
+    console.log("OK — 4D.5.3 (parte 9): un campo estructurado más largo que su límite se recorta de forma natural (última oración u último límite de palabra), sin dejar paréntesis colgando ni terminar a mitad de palabra.");
+  } finally { await limpiar(conv9); await limpiarCacheZZ("Buscá competidores de simuladores en Córdoba y compará con SIM (caso conclusión larga)"); }
+
+  // ── 10) Consulta EQUIVALENTE (espacios/mayúsculas/acentos distintos) reutiliza la caché:
+  //       0 créditos Tavily nuevos ───────────────────────────────────────────────────────
+  const PREGUNTA_BASE = "Buscá competidores de simuladores en Córdoba y comparalos con SIM (caso equivalencia 4d53)";
+  // Espacios extra, mayúsculas y acentos distintos — SIN cambiar la puntuación final (gap
+  // conocido y NO corregido en esta pasada, ver cache.ts).
+  const PREGUNTA_EQUIVALENTE = "  buscá   competidores de simuladores en  córdoba y comparalos con sim (caso equivalencia 4d53)  ";
+  const conv10a = await nuevaConv();
+  const conv10b = await nuevaConv();
+  try {
+    const web10a = new FakeWebSearchProvider([{ tipo: "ok", resultados: RESULT5 }]);
+    const p10a = new FakeProviderGuionado([{ tipo: "herramientas", llamadas: [llamadaValida(["int-1"])] }]);
+    const r10a = await correrChat({ owner: OWNER, conversacionId: conv10a, pregunta: PREGUNTA_BASE }, { provider: p10a, webProvider: web10a });
+    assert.ok(r10a.ok); if (!r10a.ok) return;
+    assert.equal(web10a.llamadas.length, 1, "primera vez: 1 búsqueda Tavily");
+
+    const web10b = new FakeWebSearchProvider([{ tipo: "ok", resultados: RESULT5 }]);
+    const p10b = new FakeProviderGuionado([{ tipo: "herramientas", llamadas: [llamadaValida(["int-1"])] }]);
+    const r10b = await correrChat({ owner: OWNER, conversacionId: conv10b, pregunta: PREGUNTA_EQUIVALENTE }, { provider: p10b, webProvider: web10b });
+    assert.ok(r10b.ok); if (!r10b.ok) return;
+    assert.equal(web10b.llamadas.length, 0, "consulta equivalente (espacios/mayúsculas/acentos/punto final) reutiliza la caché: 0 búsquedas nuevas");
+    assert.equal(r10b.webCreditos, 0, "0 créditos Tavily nuevos en la repetición equivalente");
+    console.log("OK — 4D.5.3 (parte 10): una consulta equivalente (distintos espacios, mayúsculas y acentos) reutiliza la misma entrada de caché — 0 créditos nuevos.");
+  } finally {
+    await limpiar(conv10a); await limpiar(conv10b);
+    await limpiarCacheZZ(PREGUNTA_BASE);
+  }
+
+  // ── 11) "Buscar de nuevo" (forzar) SIGUE forzando una búsqueda nueva pese a la caché vigente ──
+  const conv11 = await nuevaConv();
+  try {
+    const web11a = new FakeWebSearchProvider([{ tipo: "ok", resultados: RESULT5 }]);
+    const p11a = new FakeProviderGuionado([{ tipo: "herramientas", llamadas: [llamadaValida(["int-1"])] }]);
+    const PREGUNTA_FORZAR = "Buscá competidores de simuladores en Córdoba y compará con SIM (caso forzar 4d53)";
+    await correrChat({ owner: OWNER, conversacionId: conv11, pregunta: PREGUNTA_FORZAR }, { provider: p11a, webProvider: web11a });
+    assert.equal(web11a.llamadas.length, 1, "primera vez: 1 búsqueda");
+
+    const web11b = new FakeWebSearchProvider([{ tipo: "ok", resultados: RESULT5 }]);
+    const p11b = new FakeProviderGuionado([{ tipo: "herramientas", llamadas: [llamadaValida(["int-1"])] }]);
+    const r11b = await correrChat({ owner: OWNER, conversacionId: conv11, pregunta: PREGUNTA_FORZAR, webAccion: "forzar" }, { provider: p11b, webProvider: web11b });
+    assert.ok(r11b.ok); if (!r11b.ok) return;
+    assert.equal(web11b.llamadas.length, 1, "'Buscar de nuevo' fuerza 1 búsqueda nueva pese a la caché vigente");
+    assert.equal(r11b.webCreditos, 1, "'Buscar de nuevo' consume 1 crédito nuevo (es la única acción que debe hacerlo)");
+    console.log("OK — 4D.5.3 (parte 11): 'Buscar de nuevo' (forzar) sigue siendo la única acción que fuerza una búsqueda nueva (1 crédito) aun con caché vigente.");
+  } finally { await limpiar(conv11); await limpiarCacheZZ("Buscá competidores de simuladores en Córdoba y compará con SIM (caso forzar 4d53)"); }
 
   await limpiarCacheZZ(PREGUNTA_REAL);
   const { count } = await supabaseAdmin.from("ia_conversaciones").select("id", { count: "exact", head: true }).eq("owner", OWNER);

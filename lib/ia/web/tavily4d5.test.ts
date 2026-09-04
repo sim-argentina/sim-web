@@ -21,6 +21,13 @@ async function main() {
   assert.equal(k1, k2, "misma consulta (normalizada) → misma clave");
   const k3 = claveCacheWeb({ consulta: "Simuladores en Córdoba", proveedor: "tavily", localizacion: "Cordoba,AR", maxResultados: 3 });
   assert.notEqual(k1, k3, "distinto maxResultados → distinta clave");
+  // 4D.5.3 — auditado explícitamente: espacios/mayúsculas/acentos YA producen la misma clave
+  // (arriba). La puntuación FINAL todavía puede diferir (gap conocido, documentado en cache.ts):
+  // no se corrige en esta pasada porque invalidaría la entrada real y vigente de la consulta que
+  // se está protegiendo (termina en un punto), forzando un crédito Tavily más al repetirla.
+  const kConSignos = claveCacheWeb({ consulta: "buscá competidores en córdoba y comparalos con sim", proveedor: "tavily", localizacion: "Cordoba,AR", maxResultados: 5 });
+  const kMayusEspacios = claveCacheWeb({ consulta: "  BUSCÁ   Competidores En   CÓRDOBA y comparalos con SIM  ", proveedor: "tavily", localizacion: "Cordoba,AR", maxResultados: 5 });
+  assert.equal(kConSignos, kMayusEspacios, "espacios extra/mayúsculas/acentos no cambian la clave (sin puntuación final de por medio)");
 
   // ── TTL por temática ──────────────────────────────────────────────────────────────────
   assert.equal(ttlSegundosPorMotivo("tema_externo:competencia"), 7 * 86400, "competencia = 7 días");

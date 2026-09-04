@@ -7,6 +7,7 @@
 // ofreció (nunca URLs/nombres de fuente inventados).
 
 import { clasificarEntidad, type ClaseEntidad } from "@/lib/ia/entidad";
+import { recortarNatural } from "@/lib/ia/web/recorteNatural";
 
 export const NOMBRE_EMITIR_ANALISIS_WEB = "emitir_analisis_web";
 
@@ -113,9 +114,14 @@ export type ResultadoValidacionAnalisis = { ok: true; spec: AnalisisWebValidado 
 function esObj(v: unknown): v is Record<string, unknown> { return typeof v === "object" && v !== null && !Array.isArray(v); }
 function esStr(v: unknown): v is string { return typeof v === "string"; }
 function arr(v: unknown): unknown[] { return Array.isArray(v) ? v : []; }
-// Una sola línea: evita que el modelo inyecte saltos que rompan listas/tablas/encabezados
-// al insertarse en el Markdown construido por el servidor.
-function unaLinea(v: unknown, max: number): string { return esStr(v) ? v.replace(/\s*\r?\n\s*/g, " ").trim().slice(0, max) : ""; }
+// Una sola línea (evita que el modelo inyecte saltos que rompan listas/tablas/encabezados al
+// insertarse en el Markdown construido por el servidor) y recorte NATURAL si excede el máximo
+// (4D.5.3 — nunca a mitad de palabra/número/oración; ver recorteNatural.ts). Se aplica a TODOS
+// los campos de texto libre del esquema, no solo a conclusion.
+function unaLinea(v: unknown, max: number): string {
+  const limpio = esStr(v) ? v.replace(/\s*\r?\n\s*/g, " ").trim() : "";
+  return recortarNatural(limpio, max);
+}
 function soloBool(v: unknown): boolean { return v === true; }
 
 // Valida y NORMALIZA la salida estructurada del modelo. RECHAZA (no publica nada parcial) ante:

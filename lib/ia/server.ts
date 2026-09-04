@@ -487,7 +487,11 @@ export async function correrChat(
       clase_modelo: res.claseModelo, motivo_router: "analisis_web_estructurado", escalado: false,
       tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, rondas: res.estado === "completa" ? 1 : 0, duracion_ms: res.duracion_ms,
       estado: res.estado === "completa" ? "completa" : "error", error: res.estado === "bloqueada" ? (res.errores?.join(" | ") ?? res.motivoBloqueo ?? null) : null,
-      busqueda_previa: { ...busquedaPrevia, datos_internos_disponibles: internas.length, datos_internos_citados: internasCitadas.length, fuentes_externas_disponibles: externas.length, fuentes_externas_citadas: externasCitadas.length, salida_estructurada: true },
+      // 4D.5.3 — se conserva el payload CRUDO (pre-validación) + las fuentes ofrecidas: permite
+      // reparar una respuesta futura (ej. un recorte a mitad de palabra corregido después)
+      // re-renderizando localmente con el validador/render vigentes, SIN volver a llamar a
+      // Claude ni a Tavily. No es negocio ni consumo: es solo auditoría/reparabilidad.
+      busqueda_previa: { ...busquedaPrevia, datos_internos_disponibles: internas.length, datos_internos_citados: internasCitadas.length, fuentes_externas_disponibles: externas.length, fuentes_externas_citadas: externasCitadas.length, salida_estructurada: true, crudo_estructurado: res.crudo ?? null, fuentes_internas_ofrecidas: internas, fuentes_externas_ofrecidas: externas },
       costo_estimado: costoTotal, precios_version: PRECIOS_VERSION,
       busquedas_web: webAudit && !webAudit.cacheHit && webAudit.intentado ? 1 : 0, costo_busquedas_usd: 0, precios_web_version: webAudit ? TAVILY_CREDITOS_VERSION : null,
       uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.estado === "bloqueada" ? res.motivoBloqueo ?? null : null,
