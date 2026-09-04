@@ -30,6 +30,19 @@ function main() {
   assert.ok(iTrunc.problemas.includes("vineta_cortada"), "viñeta cortada detectada");
   const completa = "Datos internos de SIM:\n- Stand: 489 operaciones, 814 personas.\n- Reservas web: 8 turnos.\n\nConclusión: no hay evidencia suficiente para confirmar un competidor directo.";
   assert.equal(verificarIntegridadMarkdown(completa).ok, true, "respuesta completa pasa integridad");
+  // Corrección 4D.5.1 — fixture con el texto REAL (recortado a 4000 chars por auditoría) de la
+  // ejecución d5275e4f-6c69-40e5-bff1-652b87d2c803, cortada por stop_reason=max_tokens a mitad
+  // de una oración: debe detectarse como truncada (párrafo/final cortado), no falso positivo.
+  const colaReal = "**No es comparable** poner en una misma fila la facturación de SIM con \"12 simuladores\" de Aracing: son unidades distintas (pesos vs. cantidad de equipamiento) y no hay forma de";
+  const iReal = verificarIntegridadMarkdown(colaReal);
+  assert.equal(iReal.ok, false, "detecta el corte real de la ejecución auditada (mitad de oración)");
+  assert.ok(iReal.problemas.includes("parrafo_cortado") || iReal.problemas.includes("truncado_al_final"), "marca párrafo/final cortado en el caso real");
+  // Tabla genuinamente completa (misma cantidad de columnas en cada fila) → sin falso positivo.
+  const tablaCompleta = "| Actor | Tipo |\n| --- | --- |\n| SIM | Interno |\n| Aracing | Potencial |";
+  assert.equal(verificarIntegridadMarkdown(tablaCompleta).ok, true, "tabla completa (filas parejas) no produce falso positivo");
+  // Tabla con una fila realmente incompleta (menos columnas que el encabezado) → se detecta.
+  const tablaCortada = "| Actor | Tipo | Ciudad |\n| --- | --- | --- |\n| SIM | Interno |";
+  assert.ok(verificarIntegridadMarkdown(tablaCortada).problemas.includes("tabla_filas_desparejas"), "fila de tabla incompleta se detecta");
   // El validador NUNCA recorta: la salida conserva el texto original + (si hay) notas al final.
   const v = validarRespuestaMixta(completa, { periodoFinalizado: true, hayBenchmarkCompetidores: false });
   assert.equal(v.advertencias.length, 0, "respuesta correcta sin advertencias (sin nota)");

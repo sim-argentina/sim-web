@@ -24,9 +24,11 @@ export class FakeProviderGuionado implements IAProvider {
   // Registra los últimos params (para verificar si se ofreció la herramienta web y el presupuesto).
   ultimoWebSearch?: GenerarParams["webSearch"];
   ultimoTimeoutMs?: number;
+  ultimoMaxTokensSalida?: number;
   async generar(params: GenerarParams): Promise<TurnoProveedor> {
     this.ultimoWebSearch = params.webSearch;
     this.ultimoTimeoutMs = params.timeoutMs;
+    this.ultimoMaxTokensSalida = params.maxTokensSalida;
     const paso = this.guion[this.i] ?? { tipo: "texto", texto: "(fin del guión)" };
     this.i++;
     if (paso.tipo === "error") throw new IAProviderError(paso.mensaje, paso.status ?? 502);

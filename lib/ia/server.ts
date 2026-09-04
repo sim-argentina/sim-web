@@ -23,6 +23,7 @@ import { claveCacheWeb } from "@/lib/ia/web/cache";
 import { buscarEnCacheWeb, guardarEnCacheWeb } from "@/lib/ia/web/cacheServer";
 import { ttlSegundosPorMotivo } from "@/lib/ia/web/ttl";
 import { sanearYAcotarResultados, construirContextoWebUsuario } from "@/lib/ia/web/contextoWeb";
+import { construirResumenInternoCompacto } from "@/lib/ia/web/resumenInterno";
 import { estimarPresupuesto, evaluarPresupuesto, PRESUPUESTO_ESTANDAR, PRESUPUESTO_AMPLIADO } from "@/lib/ia/web/presupuesto";
 import { TAVILY_CREDITOS_VERSION } from "@/lib/ia/web/providerTavily";
 import { elegirModelo } from "@/lib/ia/router";
@@ -324,6 +325,17 @@ export async function correrChat(
     }
   }
 
+  // ── Resumen interno compacto (Corrección 4D.5.1): solo para consultas mixtas (contexto web
+  // efectivamente construido). Precomputa mes vigente + empleados con las MISMAS herramientas
+  // ya registradas, para reducir la ronda extra de tool-calling del caso típico (auditado: 3
+  // herramientas en 1 ronda antes de la síntesis). El modelo conserva las herramientas por si
+  // necesita otro período o más detalle. Degrada limpio a undefined si falla.
+  let contextoInternoCompacto: string | undefined;
+  if (contextoWebUsuario) {
+    const resumen = await construirResumenInternoCompacto();
+    if (resumen) contextoInternoCompacto = resumen.texto;
+  }
+
   // ── Presupuesto PREVIO (§7): se estima ANTES de llamar a Claude, solo si hay contexto web ──
   let bloqueado: { motivo: "no_configurada" | "deshabilitada_global" | "presupuesto_excedido"; estim?: { tokensInEstimados: number; costoProyectadoUsd: number } } | null = null;
   const cfgPresupuesto = webAccion === "ampliar" ? PRESUPUESTO_AMPLIADO : PRESUPUESTO_ESTANDAR;
@@ -344,7 +356,7 @@ export async function correrChat(
 
     const intentar = () => {
       const historialChars = historialUsado.reduce((a, h) => a + (h.rol !== "tool" ? (h.texto || "").length : 0), 0);
-      const contextoInternoChars = contextoConocimiento ? contextoConocimiento.length : 0;
+      const contextoInternoChars = (contextoConocimiento?.length ?? 0) + (contextoInternoCompacto?.length ?? 0);
       const estim = estimarPresupuesto({ modelo: modeloElegido, systemPromptChars: SYSTEM_PROMPT.length, toolsJsonChars, historialChars, contextoInternoChars, contextoWebChars: contextoWebActual.length, maxTokensSalida: cfgPresupuesto.maxTokensSalida });
       return { estim, evalua: evaluarPresupuesto(estim, cfgPresupuesto) };
     };
@@ -359,6 +371,12 @@ export async function correrChat(
     }
     if (!evalua.ok && historialUsado.length > 4) {
       historialUsado = historialUsado.slice(-4);
+      ({ estim, evalua } = intentar());
+    }
+    // 3) último recurso: soltar el resumen interno precomputado (el modelo puede seguir
+    // pidiendo esos mismos datos por herramienta; no se pierde capacidad, solo la ronda ahorrada).
+    if (!evalua.ok && contextoInternoCompacto) {
+      contextoInternoCompacto = undefined;
       ({ estim, evalua } = intentar());
     }
     if (!evalua.ok) {
@@ -387,7 +405,7 @@ export async function correrChat(
       conversacion_id: conversacionId, mensaje_id: userMsg.id, modelo: modeloElegido, proveedor: getProveedor(),
       clase_modelo: claseElegida, motivo_router: bloqueado.motivo, escalado: false,
       tokens_in: 0, tokens_out: 0, rondas: 0, duracion_ms: webAudit?.duracionMs ?? 0, estado: "bloqueada_presupuesto", error: contenido,
-      busqueda_previa: busquedaPrevia, costo_estimado: 0, precios_version: PRECIOS_VERSION,
+      busqueda_previa: { ...busquedaPrevia, contexto_interno_compacto_enviado: !!contextoInternoCompacto }, costo_estimado: 0, precios_version: PRECIOS_VERSION,
       busquedas_web: webAudit && !webAudit.cacheHit && webAudit.intentado ? 1 : 0, costo_busquedas_usd: 0, precios_web_version: TAVILY_CREDITOS_VERSION,
       uso_desconocido: false, fase_fallo: bloqueado.motivo,
     }).select("id").single();
@@ -423,7 +441,7 @@ export async function correrChat(
   }
 
   // ── Llamar a Claude: SIN la herramienta nativa web_search (nunca ofrecida en esta rama) ──
-  const contextoUsuario = [contextoConocimiento, contextoWebUsuario].filter(Boolean).join("\n\n") || undefined;
+  const contextoUsuario = [contextoConocimiento, contextoInternoCompacto, contextoWebUsuario].filter(Boolean).join("\n\n") || undefined;
   const maxTokensSalida = contextoWebUsuario ? cfgPresupuesto.maxTokensSalida : limites.tokensSalidaMax;
   const webParamDeshabilitado = { habilitar: false, explicita: false, motivo: "proveedor_tavily", maxUsos: 0, version: getWebToolVersion() };
   const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParamDeshabilitado, herramientasPermitidas, maxTokensSalida });
@@ -445,7 +463,7 @@ export async function correrChat(
     conversacion_id: conversacionId, mensaje_id: userMsg.id, modelo: res.modelo, proveedor: getProveedor(),
     clase_modelo: res.claseModelo, motivo_router: res.motivoRouter, escalado: res.escalado,
     tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, rondas: res.rondas, duracion_ms: res.duracion_ms, estado: res.estado, error: res.error ?? null,
-    busqueda_previa: busquedaPrevia,
+    busqueda_previa: { ...busquedaPrevia, contexto_interno_compacto_enviado: !!contextoInternoCompacto },
     costo_estimado: costoTotal, precios_version: PRECIOS_VERSION,
     busquedas_web: webAudit && !webAudit.cacheHit && webAudit.intentado ? 1 : 0, costo_busquedas_usd: 0, precios_web_version: webAudit ? TAVILY_CREDITOS_VERSION : null,
     uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.faseFallo ?? null,
@@ -490,7 +508,10 @@ export async function correrChat(
   const huboTimeoutPosterior = borrador != null && res.estado !== "completa";
   const notaValidacion = !borrador && validacion ? validacion.notas : "";
   const truncado = !borrador && res.estado === "completa" && (res.truncado === true || (validacion != null && !validacion.integridad.ok && validacion.integridad.problemas.some((p) => p === "truncado_al_final" || p === "vineta_cortada" || p === "parrafo_cortado")));
-  const MSG_TRUNCADO = "No pude completar la respuesta dentro del límite de esta consulta. Abajo tenés las fuentes que encontré (internas y externas). Volvé a preguntar acotando el alcance —por ejemplo, enfocándote en una sola categoría o dimensión— y la desarrollo completa.";
+  // 4D.5.1 — el mensaje NO debe sugerir repetir una consulta que ya tuvo costo (búsqueda Tavily
+  // + llamada a Claude): apunta a "Ampliar investigación", que reutiliza la caché de Tavily (0
+  // créditos nuevos) y le da a Claude más presupuesto de salida para la MISMA base ya reunida.
+  const MSG_TRUNCADO = `No pude terminar esta respuesta dentro del presupuesto estándar de esta consulta. Abajo tenés las fuentes que ya encontré (internas y externas): se conservan. Usá "Ampliar investigación" para terminar el mismo análisis con más margen, reutilizando las fuentes ya encontradas (sin volver a buscar en internet). Referencia: ${refDiag}.`;
   const esTimeout = res.estado !== "completa" && /timeout|tard[óo] demasiado/i.test(res.error ?? "");
   const msgTimeout = `La búsqueda tardó más de lo permitido y no publiqué una respuesta incompleta. No se reintentó automáticamente. Referencia: ${refDiag}.${res.usoDesconocido ? "\n\nEl proveedor no devolvió el detalle final de uso; el posible consumo de este intento queda pendiente de conciliación." : ""}`;
   const contenido = borrador

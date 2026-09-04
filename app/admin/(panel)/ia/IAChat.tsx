@@ -355,7 +355,7 @@ export default function IAChat() {
                             )}
                           </span>
                         )}
-                        {/^Este an[aá]lisis supera el presupuesto configurado/.test(m.contenido) && m.pregunta_previa && (
+                        {/^(Este an[aá]lisis supera el presupuesto configurado|No pude terminar esta respuesta dentro del presupuesto est[aá]ndar)/.test(m.contenido) && m.pregunta_previa && (
                           <button onClick={() => enviar(m.pregunta_previa, "ampliar")} className="rounded-full bg-red-600/20 px-2 py-0.5 text-[10px] uppercase text-red-300 hover:bg-red-600/30">Ampliar investigación</button>
                         )}
                         {!m.id.startsWith("tmp-") && (
