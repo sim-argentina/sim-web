@@ -13,18 +13,20 @@ export type PresupuestoConfig = {
 };
 
 // Estándar: 1 búsqueda, 2 rondas, ≤25k tokens de entrada estimados, ≤US$0,15.
-// maxTokensSalida=3200 (Corrección 4D.5.1): la ejecución real auditada (20.033 in / 2.692 out,
-// stop_reason=max_tokens con el tope previo de 2000) demostró que un análisis competitivo bien
-// fundamentado (5 fuentes + datos internos + clasificación por actor + tabla + conclusión) no
-// entra en 2000 tokens de salida. En el PEOR caso (25.000 in de tope + 3200 out de tope) el
-// costo proyectado es 25000*3/1e6 + 3200*15/1e6 = US$0,123 ≤ US$0,15: sigue dentro del techo de
-// costo sin tocarlo. El contrato de respuesta compacta del prompt (ver systemPrompt.ts) acota el
-// contenido para que, en el caso típico, no haga falta llegar a ese tope.
-export const PRESUPUESTO_ESTANDAR: PresupuestoConfig = { maxBusquedas: 1, maxRondas: 2, maxTokensInEstimados: 25000, maxTokensSalida: 3200, maxCostoUsd: 0.15 };
-// Ampliado: requiere confirmación EXPLÍCITA del administrador (ver server.ts). Mismo tope de 1
-// búsqueda por respuesta (evita el patrón que causó la ejecución cara); más margen de síntesis.
-// Peor caso: 60000*3/1e6 + 4000*15/1e6 = US$0,24 ≤ US$0,6.
-export const PRESUPUESTO_AMPLIADO: PresupuestoConfig = { maxBusquedas: 1, maxRondas: 4, maxTokensInEstimados: 60000, maxTokensSalida: 4000, maxCostoUsd: 0.6 };
+// maxTokensSalida=2600 (Corrección 4D.5.2): 4D.5.1 subió el tope de salida a 3200 confiando en
+// que el modelo respetara un "contrato de respuesta compacta" en Markdown LIBRE — la ejecución
+// real 192ef058 (11.781 in / 3.200 out) demostró que ese contrato es un pedido, no una garantía:
+// el modelo volvió a agotar el tope, esta vez el nuevo. 4D.5.2 reemplaza el Markdown libre por
+// una salida ESTRUCTURADA con longitudes acotadas por campo (ver analisisWebSchema.ts): el peor
+// caso teórico del esquema (5 actores + 6 filas de comparación + textos al máximo) son ~2.000-
+// 2.200 tokens de JSON: 2.600 deja margen sin depender de que el modelo "se comporte". Peor caso
+// de costo (25.000 in de tope + 2.600 out de tope): 25000*3/1e6 + 2600*15/1e6 = US$0,114 ≤ US$0,15.
+export const PRESUPUESTO_ESTANDAR: PresupuestoConfig = { maxBusquedas: 1, maxRondas: 2, maxTokensInEstimados: 25000, maxTokensSalida: 2600, maxCostoUsd: 0.15 };
+// Ampliado: requiere confirmación EXPLÍCITA del administrador ANTES de cualquier consumo (ver
+// IAChat.tsx, botón de investigación profunda — ya no aparece como rescate automático de una
+// consulta estándar). Mismo esquema acotado (mismo tope de salida); más margen de entrada/costo
+// para conversaciones largas. Peor caso: 60000*3/1e6 + 2600*15/1e6 = US$0,219 ≤ US$0,6.
+export const PRESUPUESTO_AMPLIADO: PresupuestoConfig = { maxBusquedas: 1, maxRondas: 4, maxTokensInEstimados: 60000, maxTokensSalida: 2600, maxCostoUsd: 0.6 };
 
 const tk = (chars: number) => Math.ceil(Math.max(0, chars) / 4);
 

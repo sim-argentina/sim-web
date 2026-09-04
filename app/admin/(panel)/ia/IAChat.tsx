@@ -355,9 +355,6 @@ export default function IAChat() {
                             )}
                           </span>
                         )}
-                        {/^(Este an[aá]lisis supera el presupuesto configurado|No pude terminar esta respuesta dentro del presupuesto est[aá]ndar)/.test(m.contenido) && m.pregunta_previa && (
-                          <button onClick={() => enviar(m.pregunta_previa, "ampliar")} className="rounded-full bg-red-600/20 px-2 py-0.5 text-[10px] uppercase text-red-300 hover:bg-red-600/30">Ampliar investigación</button>
-                        )}
                         {!m.id.startsWith("tmp-") && (
                           <>
                             <button onClick={() => feedback(m.id, "util")} className="hover:text-green-400">👍 Útil</button>
@@ -432,6 +429,17 @@ export default function IAChat() {
                 {enviando ? "…" : "Enviar"}
               </button>
             </div>
+            {/* 4D.5.2 — "investigación profunda" es un pedido EXPLÍCITO del administrador, con
+                confirmación previa antes de cualquier consumo; ya no aparece como rescate
+                automático de una consulta estándar que falló (esa consulta ya no falla así). */}
+            <button
+              onClick={() => enviar(input, "ampliar")}
+              disabled={enviando || !input.trim()}
+              title="Mismo análisis, con más margen de presupuesto (hasta ~US$0,60). Requiere confirmación."
+              className="mt-2 text-[11px] uppercase text-white/30 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Investigación profunda (opcional, con confirmación)
+            </button>
           </div>
           </>
           )}

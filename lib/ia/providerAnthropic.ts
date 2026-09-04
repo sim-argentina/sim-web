@@ -144,6 +144,9 @@ export class AnthropicProvider implements IAProvider {
       if (params.webSearch.responseInclusionExcluded) w.response_inclusion = "excluded";
       tools.push(w);
     }
+    // Bloque 4D.5.2 — tool_choice fuerza el uso de UNA herramienta específica (síntesis
+    // estructurada terminal): el modelo no puede responder con texto libre ni elegir otra tool.
+    const toolChoice = params.toolChoice ? { type: "tool", name: params.toolChoice.nombre } : undefined;
     const messages = traducirHistorial(params.historial);
     const inicio = Date.now();
 
@@ -157,7 +160,8 @@ export class AnthropicProvider implements IAProvider {
     // Se re-envía el contenido del asistente VERBATIM (con bloques cifrados) hasta cerrar.
     for (let i = 0; i < MAX_PAUSE_TURNS; i++) {
       const restante = Math.max(1000, params.timeoutMs - (Date.now() - inicio));
-      const body = { model: params.modelo, max_tokens: params.maxTokensSalida, system: params.system, messages, tools };
+      const body: Record<string, unknown> = { model: params.modelo, max_tokens: params.maxTokensSalida, system: params.system, messages, tools };
+      if (toolChoice) body.tool_choice = toolChoice;
       const json = await this.postMensajes(body, restante);
       const uso = usoDesde(json.usage);
       tokensIn += uso.tokensIn; tokensOut += uso.tokensOut;

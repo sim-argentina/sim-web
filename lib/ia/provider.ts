@@ -42,6 +42,11 @@ export type WebSearchParam = {
   ubicacion?: { type: "approximate"; city?: string; region?: string; country?: string; timezone?: string };
 };
 
+// Bloque 4D.5.2 — fuerza al proveedor a usar UNA herramienta específica (tool_choice) en vez de
+// dejarlo elegir libremente entre texto u herramientas. Se usa para la síntesis estructurada
+// terminal del análisis web (nunca texto libre, nunca otra herramienta).
+export type ToolChoiceParam = { nombre: string };
+
 export type GenerarParams = {
   modelo: string;
   system: string;
@@ -50,6 +55,7 @@ export type GenerarParams = {
   maxTokensSalida: number;
   timeoutMs: number;
   webSearch?: WebSearchParam;
+  toolChoice?: ToolChoiceParam;
 };
 
 // ── Visión / OCR (Bloque 4B.1) ────────────────────────────────────────────────

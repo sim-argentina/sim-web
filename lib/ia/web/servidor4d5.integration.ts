@@ -6,6 +6,19 @@ import { FakeWebSearchProvider } from "@/lib/ia/web/providerWebFake";
 import { claveCacheWeb } from "@/lib/ia/web/cache";
 import { sanitizarConsultaWeb } from "@/lib/ia/web/sanitizar";
 import { LIMITES_TAVILY } from "@/lib/ia/web/config";
+import { NOMBRE_EMITIR_ANALISIS_WEB } from "@/lib/ia/web/analisisWebSchema";
+
+// 4D.5.2 — desde esta corrección, una consulta mixta (con contexto web) va por el flujo
+// ESTRUCTURADO (tool_choice forzado a emitir_analisis_web), no por texto libre. Este helper
+// arma una llamada mínima válida (referencia RESULT[0] = "ext-1") para esos escenarios.
+const emitirValido = (frase: string) => ({
+  nombre: NOMBRE_EMITIR_ANALISIS_WEB,
+  input: {
+    respuesta_directa: frase, datos_internos_ids: [],
+    actores_externos: [{ nombre: "Sim Cordoba (resultado externo)", evidencia: "Fuente externa encontrada.", fuente_ids: ["ext-1"], actividad_comparable: true, ubicacion_cordoba: true, vigencia_reciente: true, es_fabricante: false, es_red_nacional: false, es_evento: false }],
+    comparacion: [], no_determinable: [], conclusion: "Sin datos suficientes para una comparación cuantitativa.",
+  },
+});
 
 // Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/web/servidor4d5.integration.ts
 // ZZTEST (no toca datos reales). TAVILY_API_KEY debe estar AUSENTE del entorno real (se inyecta
@@ -50,7 +63,7 @@ async function main() {
 
     // ── 2) Externa: UNA búsqueda Tavily, fuentes separadas interna/externa, sin web nativa ──
     const web2 = new FakeWebSearchProvider([{ tipo: "ok", resultados: RESULT }]);
-    const p2 = new FakeProviderGuionado([{ tipo: "texto", texto: "En Córdoba hay opciones de simulación de automovilismo." }]);
+    const p2 = new FakeProviderGuionado([{ tipo: "herramientas", llamadas: [emitirValido("En Córdoba hay opciones de simulación de automovilismo.")] }]);
     const PREGUNTA_EXT = PREGUNTA_EXT_TXT;
     const r2 = await correrChat({ owner: OWNER, conversacionId: convId, pregunta: PREGUNTA_EXT, idempotencyKey: "zz-ext-1" }, { provider: p2, webProvider: web2 });
     assert.ok(r2.ok, "externa ok"); if (!r2.ok) return;
@@ -69,7 +82,7 @@ async function main() {
     assert.equal(Number(bwConv!.creditos_busqueda), 1, "1 crédito Tavily auditado");
 
     // ── 3) Misma consulta de nuevo: CACHE HIT, cero búsquedas Tavily nuevas ──────────────
-    const p3 = new FakeProviderGuionado([{ tipo: "texto", texto: "En Córdoba hay opciones (respuesta con evidencia reutilizada)." }]);
+    const p3 = new FakeProviderGuionado([{ tipo: "herramientas", llamadas: [emitirValido("En Córdoba hay opciones (respuesta con evidencia reutilizada).")] }]);
     const r3 = await correrChat({ owner: OWNER, conversacionId: convId, pregunta: PREGUNTA_EXT }, { provider: p3, webProvider: web2 });
     assert.ok(r3.ok, "repetición ok"); if (!r3.ok) return;
     assert.equal(web2.llamadas.length, 1, "SIGUE en 1: la 2ª vez usó caché, cero búsquedas nuevas");
@@ -78,7 +91,7 @@ async function main() {
 
     // ── 4) Doble clic / idempotencia: mismo key → duplicado, sin nueva búsqueda ──────────
     const web4 = new FakeWebSearchProvider([{ tipo: "ok", resultados: RESULT }]);
-    const p4 = new FakeProviderGuionado([{ tipo: "texto", texto: "otra vez" }]);
+    const p4 = new FakeProviderGuionado([{ tipo: "herramientas", llamadas: [emitirValido("otra vez")] }]);
     const r4 = await correrChat({ owner: OWNER, conversacionId: convId, pregunta: PREGUNTA_EXT, idempotencyKey: "zz-ext-1" }, { provider: p4, webProvider: web4 });
     assert.ok(r4.ok && (r4 as { duplicado?: boolean }).duplicado, "duplicado por idempotency_key");
     assert.equal(web4.llamadas.length, 0, "idempotencia: ni siquiera se intenta buscar de nuevo");

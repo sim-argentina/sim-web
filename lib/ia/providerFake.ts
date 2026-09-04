@@ -11,7 +11,7 @@ function estimarTokens(texto: string): number {
 
 export type GuionTurno =
   | { tipo: "texto"; texto: string; web?: WebTurno; stopReason?: string }
-  | { tipo: "herramientas"; texto?: string; llamadas: Array<{ nombre: string; input: Record<string, unknown> }>; web?: WebTurno }
+  | { tipo: "herramientas"; texto?: string; llamadas: Array<{ nombre: string; input: Record<string, unknown> }>; web?: WebTurno; stopReason?: string }
   | { tipo: "error"; mensaje: string; status?: number }
   | { tipo: "timeout" };
 
@@ -25,10 +25,16 @@ export class FakeProviderGuionado implements IAProvider {
   ultimoWebSearch?: GenerarParams["webSearch"];
   ultimoTimeoutMs?: number;
   ultimoMaxTokensSalida?: number;
+  ultimoToolChoice?: GenerarParams["toolChoice"];
+  ultimoHerramientasOfrecidas?: string[];
+  llamadasGenerar = 0; // cuántas veces se llamó a generar() (verificar "una sola síntesis")
   async generar(params: GenerarParams): Promise<TurnoProveedor> {
+    this.llamadasGenerar++;
     this.ultimoWebSearch = params.webSearch;
     this.ultimoTimeoutMs = params.timeoutMs;
     this.ultimoMaxTokensSalida = params.maxTokensSalida;
+    this.ultimoToolChoice = params.toolChoice;
+    this.ultimoHerramientasOfrecidas = params.herramientas.map((h) => h.nombre);
     const paso = this.guion[this.i] ?? { tipo: "texto", texto: "(fin del guión)" };
     this.i++;
     if (paso.tipo === "error") throw new IAProviderError(paso.mensaje, paso.status ?? 502);
@@ -41,7 +47,7 @@ export class FakeProviderGuionado implements IAProvider {
       return { tipo: "texto", texto: "(sin más herramientas disponibles) respuesta final.", uso: { tokensIn: inTok, tokensOut: 8 }, web };
     }
     if (paso.tipo === "herramientas") {
-      return { tipo: "herramientas", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: 10 }, llamadas: paso.llamadas.map((l, k) => ({ id: `fake-${this.i}-${k}`, nombre: l.nombre, input: l.input })), web };
+      return { tipo: "herramientas", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: 10 }, llamadas: paso.llamadas.map((l, k) => ({ id: `fake-${this.i}-${k}`, nombre: l.nombre, input: l.input })), web, stopReason: paso.stopReason ?? "tool_use" };
     }
     return { tipo: "texto", texto: paso.texto, uso: { tokensIn: inTok, tokensOut: estimarTokens(paso.texto) }, web, stopReason: paso.stopReason ?? "end_turn" };
   }
