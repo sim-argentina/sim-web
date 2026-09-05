@@ -40,6 +40,18 @@ export function minutosDeReserva(duracion: number, simuladores: number): number 
   return Number(duracion) * Number(simuladores);
 }
 
+// Saldo legible: los minutos siguen siendo la unidad real, pero "150 minutos" se
+// entiende peor que "2 h 30 min".
+export function minutosATexto(minutos: number): string {
+  const m = Math.max(0, Math.trunc(Number(minutos) || 0));
+  if (m === 0) return "0 min";
+  const h = Math.floor(m / 60);
+  const resto = m % 60;
+  if (h === 0) return `${resto} min`;
+  if (resto === 0) return `${h} h`;
+  return `${h} h ${resto} min`;
+}
+
 export function duracionValida(d: unknown): d is DuracionMensualidad {
   return (DURACIONES_MENSUALIDAD as readonly number[]).includes(Number(d));
 }

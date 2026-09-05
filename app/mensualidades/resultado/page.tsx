@@ -2,8 +2,8 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { CheckCircle2, Clock3, XCircle, Copy, Check, RefreshCw } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { CheckCircle2, Clock3, XCircle, Copy, Check, RefreshCw, ArrowRight } from "lucide-react";
 
 // Resultado de una compra de Mensualidad (Bloque M3).
 //
@@ -44,7 +44,21 @@ function ResultadoContenido() {
   const [noExiste, setNoExiste] = useState(false);
   const [intentos, setIntentos] = useState(0);
   const [copiado, setCopiado] = useState(false);
+  const [yendo, setYendo] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const router = useRouter();
+
+  // "Ver mi mensualidad": si ya hay sesión abierta, entra directo; si no, manda
+  // al formulario de identificación. El token del pago nunca crea sesión.
+  async function irAMiMensualidad() {
+    setYendo(true);
+    try {
+      const res = await fetch("/api/mensualidades/mi-plan", { cache: "no-store" });
+      router.push(res.ok ? "/mensualidades/mi-plan" : "/mensualidades#mi-mensualidad");
+    } catch {
+      router.push("/mensualidades#mi-mensualidad");
+    }
+  }
 
   const consultar = useCallback(async () => {
     if (!token) { setNoExiste(true); setCargando(false); return; }
@@ -171,6 +185,18 @@ function ResultadoContenido() {
             )}
           </p>
         )}
+
+        {/* El token del pago NO autentica: si no hay sesión, se pide el código y
+            el teléfono en el formulario de identificación. */}
+        <button
+          type="button"
+          onClick={irAMiMensualidad}
+          disabled={yendo}
+          className="mt-7 inline-flex items-center gap-2 rounded-2xl bg-red-600 px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:bg-red-500 disabled:opacity-40"
+        >
+          <ArrowRight className="h-4 w-4" />
+          {yendo ? "Abriendo..." : "Ver mi mensualidad"}
+        </button>
 
         <p className="mt-6 text-sm text-zinc-500">
           La mensualidad se puede usar hasta las 23:59 del día de vencimiento.

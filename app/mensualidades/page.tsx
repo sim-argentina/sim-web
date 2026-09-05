@@ -5,6 +5,7 @@ import { pageMetadata } from "@/lib/seo";
 import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import { getPlanesActivos } from "@/lib/mensualidadesCompra";
 import CompraMensualidad from "./CompraMensualidad";
+import IdentificarMensualidad from "./IdentificarMensualidad";
 
 // Compra pública de Mensualidades SIM (Bloque M3).
 // La ruta entera está detrás de la flag server-side MENSUALIDADES_ENABLED: sin
@@ -63,6 +64,9 @@ export default async function MensualidadesPage() {
         ) : (
           <CompraMensualidad planes={planes} />
         )}
+
+        {/* Acceso para quien ya compró: código + teléfono, sin cuentas. */}
+        <IdentificarMensualidad />
       </section>
     </main>
   );
