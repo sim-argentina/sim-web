@@ -10,28 +10,49 @@ import {
   Gift,
   ArrowRight,
 } from "lucide-react";
+import { mensualidadesHabilitadas } from "@/lib/featureFlags";
+
+// Pantalla selectora pública "Viví SIM". Antes vivía en /reservas-gift-cards
+// (esa ruta ahora redirige acá con 308 desde next.config.ts). La card de
+// Mensualidades solo se renderiza si MENSUALIDADES_ENABLED === "true" en el
+// servidor: sin la variable, la pantalla es exactamente la de siempre.
+//
+// La flag se evalúa por request (no en build) gracias a force-dynamic, así que
+// activarla en Vercel no necesita un redeploy.
+export const dynamic = "force-dynamic";
 
 export const metadata = pageMetadata({
-  title: "Reservá o regalá simuladores de F1 en Córdoba",
+  title: "Viví SIM — Reservá o regalá simuladores de F1 en Córdoba",
   description:
     "Elegí tu experiencia SIM Argentina: reservá tu turno en los simuladores de F1 o regalá una gift card. Simuladores profesionales en Nuevo Centro Shopping, Córdoba.",
-  path: "/reservas-gift-cards",
+  path: "/vivi-sim",
 });
 
 type Stat = { icon: React.ReactNode; label: string; value: string };
 
-function StatRow({ stats }: { stats: Stat[] }) {
+// `compacto` = grilla de 3 cards: la columna de cada stat baja de ~157px a ~79px,
+// así que los valores largos ($30.000) necesitan menos cuerpo y menos gutter para
+// no desbordar. Con 2 cards queda exactamente como estaba en producción.
+function StatRow({ stats, compacto }: { stats: Stat[]; compacto: boolean }) {
+  const pad = compacto ? "px-3 lg:px-2" : "px-3";
+  const label = compacto
+    ? "text-[9px] md:text-[10px] lg:text-[9px]"
+    : "text-[9px] md:text-[10px]";
+  const valor = compacto
+    ? "text-lg md:text-2xl lg:text-base xl:text-lg"
+    : "text-lg md:text-2xl";
+
   return (
     <div className="grid grid-cols-3 divide-x divide-white/10">
       {stats.map((s) => (
-        <div key={s.label} className="px-3 first:pl-0 last:pr-0">
+        <div key={s.label} className={`${pad} first:pl-0 last:pr-0`}>
           <div className="mb-2 flex items-center gap-1.5 text-red-500">
             {s.icon}
-            <span className="text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500 md:text-[10px]">
+            <span className={`font-black uppercase tracking-[0.12em] text-zinc-500 ${label}`}>
               {s.label}
             </span>
           </div>
-          <div className="text-lg font-black leading-none text-white md:text-2xl">
+          <div className={`font-black leading-none text-white ${valor}`}>
             {s.value}
           </div>
         </div>
@@ -45,9 +66,11 @@ function ExperienceCard({
   image,
   imageAlt,
   badge,
-  titleLines,
+  title,
+  titleClass,
   subtitle,
   stats,
+  compacto,
   cta,
   ctaVariant,
   priority,
@@ -56,9 +79,11 @@ function ExperienceCard({
   image: string;
   imageAlt: string;
   badge: string;
-  titleLines: [string, string];
+  title: string;
+  titleClass: string;
   subtitle: string;
   stats: Stat[];
+  compacto: boolean;
   cta: string;
   ctaVariant: "primary" | "secondary";
   priority?: boolean;
@@ -75,7 +100,7 @@ function ExperienceCard({
           alt={imageAlt}
           fill
           priority={priority}
-          sizes="(max-width: 768px) 100vw, 50vw"
+          sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
           className="object-cover transition-transform duration-[900ms] ease-out group-hover:scale-[1.07]"
         />
         {/* Funde la imagen hacia el cuerpo de la card */}
@@ -108,22 +133,26 @@ function ExperienceCard({
 
       {/* ── Cuerpo ── */}
       <div className="relative z-10 -mt-16 flex flex-1 flex-col px-6 pb-6 md:px-7 md:pb-7">
-        <h2 className="bg-gradient-to-b from-white via-zinc-200 to-zinc-500 bg-clip-text text-4xl font-black uppercase italic leading-[0.84] tracking-tight text-transparent drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)] md:text-5xl">
-          {titleLines[0]}
-          <br />
-          {titleLines[1]}
+        <h2
+          className={`bg-gradient-to-b from-white via-zinc-200 to-zinc-500 bg-clip-text font-black uppercase italic leading-[0.84] tracking-tight text-transparent drop-shadow-[0_2px_10px_rgba(0,0,0,0.6)] [overflow-wrap:anywhere] ${titleClass}`}
+        >
+          {title}
         </h2>
 
-        <div className="mt-3 flex items-center gap-2">
-          <span className="h-4 w-[3px] -skew-x-[20deg] bg-red-600" />
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-zinc-400 md:text-sm">
+        {/* flex-1: la descripción absorbe la diferencia de largo entre cards, así
+            los stats y el CTA quedan siempre a la misma altura en las tres. */}
+        <div className="mt-3 flex flex-1 items-start gap-2">
+          <span className="mt-[3px] h-4 w-[3px] shrink-0 -skew-x-[20deg] bg-red-600" />
+          {/* min-h de 3 líneas: apiladas en móvil las tres cards quedan de la
+              misma altura aunque las descripciones tengan largos distintos. */}
+          <p className="min-h-[3lh] text-xs font-bold uppercase tracking-[0.12em] text-zinc-400 md:text-sm">
             {subtitle}
           </p>
         </div>
 
         <div className="my-5 h-px bg-white/10" />
 
-        <StatRow stats={stats} />
+        <StatRow stats={stats} compacto={compacto} />
 
         <div
           className={`mt-7 flex items-center justify-between rounded-2xl px-5 py-4 transition-all duration-300 ${
@@ -135,7 +164,7 @@ function ExperienceCard({
           <span className="text-sm font-black uppercase tracking-[0.18em] text-white">
             {cta}
           </span>
-          <ArrowRight className="h-5 w-5 text-white transition-transform duration-300 group-hover:translate-x-1.5" />
+          <ArrowRight className="h-5 w-5 shrink-0 text-white transition-transform duration-300 group-hover:translate-x-1.5" />
         </div>
 
         {/* Kerb / rayas de carrera en las esquinas inferiores */}
@@ -152,8 +181,25 @@ function ExperienceCard({
   );
 }
 
-export default function ReservasGiftCardsPage() {
+export default function ViviSimPage() {
   const iconCls = "h-3.5 w-3.5";
+  const conMensualidades = mensualidadesHabilitadas();
+
+  // Con las tres opciones visibles la grilla pasa a 3 columnas en lg (nunca deja
+  // una card huérfana en una fila) y el título baja de escala en los anchos donde
+  // la card es angosta: "Mensualidades" es una sola palabra y no puede partirse.
+  const grid = conMensualidades ? "lg:grid-cols-3" : "md:grid-cols-2";
+  // Medido sobre la tipografía real: "Mensualidades" ocupa ~9.26× el font-size.
+  // Los tamaños de abajo lo dejan siempre en una línea (320px: 24px→222 de 240
+  // disponibles · lg 1024: 24px→222 de 238 · xl: 28px→259 de 284).
+  const tituloCls = conMensualidades
+    ? "text-2xl sm:text-4xl md:text-5xl lg:text-2xl xl:text-[1.75rem]"
+    : "text-4xl md:text-5xl";
+
+  // Con las tres cards, todas comparten el mismo destaque (ninguna domina). Con
+  // solo dos se conserva la jerarquía que ya tiene producción.
+  const variante = (actual: "primary" | "secondary"): "primary" | "secondary" =>
+    conMensualidades ? "primary" : actual;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-black text-white">
@@ -169,22 +215,25 @@ export default function ReservasGiftCardsPage() {
             <span className="h-px w-6 bg-red-600" />
           </p>
           <h1 className="text-4xl font-black uppercase leading-[0.92] tracking-tight md:text-7xl">
-            Acelerá tu <span className="text-red-600">adrenalina</span>
+            Viví <span className="text-red-600">SIM</span>
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-base leading-8 text-zinc-400 md:text-lg">
-            Reservá tu experiencia en pista o regalá un día inolvidable al
-            volante de un simulador profesional de Fórmula 1.
+            {conMensualidades
+              ? "Reservá tu experiencia en pista, comprá horas por adelantado o regalá un día inolvidable al volante de un simulador profesional de Fórmula 1."
+              : "Reservá tu experiencia en pista o regalá un día inolvidable al volante de un simulador profesional de Fórmula 1."}
           </p>
         </div>
 
         {/* Cards */}
-        <div className="mt-12 grid items-stretch gap-6 md:grid-cols-2 lg:gap-8">
+        <div className={`mt-12 grid items-stretch gap-6 ${grid} lg:gap-8`}>
           <ExperienceCard
             href="/reservas"
             image="/sim-hero.jpg"
             imageAlt="Cockpit de simulador SIM Argentina"
             badge="Experiencia F1"
-            titleLines={["Reservar", "Experiencia"]}
+            title="Reservas"
+            titleClass={tituloCls}
+            compacto={conMensualidades}
             subtitle="Viví la pista en primera persona"
             priority
             stats={[
@@ -193,15 +242,37 @@ export default function ReservasGiftCardsPage() {
               { icon: <Zap className={iconCls} />, label: "Ranking", value: "En vivo" },
             ]}
             cta="Reservar ahora"
-            ctaVariant="primary"
+            ctaVariant={variante("primary")}
           />
+
+          {conMensualidades && (
+            <ExperienceCard
+              href="/mensualidades"
+              image="/sim-driver.jpg"
+              imageAlt="Piloto en un simulador de SIM Argentina"
+              badge="Plan prepago"
+              title="Mensualidades"
+              titleClass={tituloCls}
+              compacto={conMensualidades}
+              subtitle="Comprá horas, reservá cuando quieras y disfrutá SIM durante 30 días."
+              stats={[
+                { icon: <Clock3 className={iconCls} />, label: "Desde", value: "$30.000" },
+                { icon: <CalendarCheck className={iconCls} />, label: "Validez", value: "30 días" },
+                { icon: <Users className={iconCls} />, label: "Pilotos", value: "1-4" },
+              ]}
+              cta="Ver mensualidades"
+              ctaVariant={variante("primary")}
+            />
+          )}
 
           <ExperienceCard
             href="/gift-cards"
             image="/sim-giftcard.jpg"
             imageAlt="Gift Card SIM Argentina"
             badge="Regalo digital"
-            titleLines={["Regalá", "Adrenalina"]}
+            title="Gift Cards"
+            titleClass={tituloCls}
+            compacto={conMensualidades}
             subtitle="El regalo perfecto para fanáticos"
             stats={[
               { icon: <CalendarCheck className={iconCls} />, label: "Validez", value: "30 días" },
@@ -209,7 +280,7 @@ export default function ReservasGiftCardsPage() {
               { icon: <Gift className={iconCls} />, label: "Desde", value: "$12.000" },
             ]}
             cta="Comprar Gift Card"
-            ctaVariant="secondary"
+            ctaVariant={variante("secondary")}
           />
         </div>
       </section>

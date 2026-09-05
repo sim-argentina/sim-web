@@ -195,7 +195,7 @@ export default function GiftCardsPage() {
     <main className="min-h-screen bg-black text-white">
       <section className="mx-auto max-w-6xl px-4 py-10 md:px-6 lg:px-8">
         <Link
-          href="/reservas-gift-cards"
+          href="/vivi-sim"
           className="mb-8 inline-flex items-center gap-2 text-sm font-bold text-zinc-400 transition hover:text-white"
         >
           <ArrowLeft className="h-4 w-4" />

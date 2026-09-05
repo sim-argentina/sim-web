@@ -9,7 +9,7 @@ const RUTAS = [
   "/reservas",
   "/alquiler",
   "/gift-cards",
-  "/reservas-gift-cards",
+  "/vivi-sim",
   "/campeonatos",
   "/tienda",
   "/sobre-nosotros",

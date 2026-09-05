@@ -8,7 +8,7 @@ import { usePathname } from "next/navigation";
 
 const LINKS = [
   { href: "/",                    label: "Inicio"               },
-  { href: "/reservas-gift-cards", label: "Reservas / Gift Cards" },
+  { href: "/vivi-sim",            label: "Viví SIM"             },
   { href: "/campeonatos",         label: "Campeonatos"          },
   { href: "/alquiler",      label: "Alquiler"      },
   { href: "/viaja-con-sim", label: "Viaja con SIM" },

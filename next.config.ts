@@ -95,6 +95,18 @@ const nextConfig: NextConfig = {
     // que usan el resto de las imágenes.
     qualities: [75, 90],
   },
+  // La pantalla selectora pasó de /reservas-gift-cards a /vivi-sim (Bloque M1).
+  // 308 permanente: la URL vieja está indexada y linkeada desde afuera. NO toca
+  // /reservas ni /gift-cards, que siguen siendo los flujos reales.
+  async redirects() {
+    return [
+      {
+        source: "/reservas-gift-cards",
+        destination: "/vivi-sim",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {
