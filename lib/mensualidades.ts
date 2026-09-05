@@ -49,22 +49,113 @@ export function cantidadSimuladoresValida(n: unknown): boolean {
   return Number.isInteger(v) && v >= SIMULADORES_MIN && v <= SIMULADORES_MAX;
 }
 
-// Espejo exacto de public.mensualidad_normalizar_telefono.
-// Solo dígitos + limpieza de prefijos argentinos (00 / 54 / 9 / 0) y recorte a los
-// últimos 10. LIMITACIÓN CONOCIDA: no interpreta el "15" intermedio de los celulares
-// viejos, así que "0351 15-5123456" NO normaliza igual que "+54 9 351 512-3456".
-export function normalizarTelefono(tel: string | null | undefined): string {
-  let v = String(tel ?? "").replace(/[^0-9]/g, "");
-  if (v.startsWith("00") && v.length > 10) v = v.slice(2);
-  if (v.startsWith("54") && v.length > 10) v = v.slice(2);
-  if (v.startsWith("9") && v.length > 10) v = v.slice(1);
-  if (v.startsWith("0") && v.length > 10) v = v.slice(1);
-  if (v.length > 10) v = v.slice(-10);
-  return v;
+// ── Normalización argentina de teléfonos (M2.1) ─────────────────────────────
+// Espejo EXACTO de public.mensualidad_normalizar_telefono. Si cambia una, cambia
+// la otra: lib/mensualidades.integration.ts compara las dos contra la misma tabla
+// de casos.
+//
+// Forma canónica: el número nacional argentino de 10 dígitos, código de área +
+// número local, sin 0, sin 15 y sin +54 9. Ejemplo: 3515123456.
+//
+// El plan de numeración argentino tiene exactamente tres largos de código de área:
+//   · 2 dígitos → solo "11" (AMBA).
+//   · 3 dígitos → un conjunto fijo y conocido (AREAS_3_DIGITOS).
+//   · 4 dígitos → todo el resto, que siempre empieza con 2 o 3.
+// Como área + local = 10 SIEMPRE, el largo del área determina dónde termina y por
+// lo tanto dónde puede estar el "15" histórico: justo después del código de área.
+export const AREAS_3_DIGITOS: ReadonlySet<string> = new Set([
+  "220", "221", "223", "230", "236", "237", "249",
+  "260", "261", "263", "264", "266", "280", "291", "294", "297", "299",
+  "336", "341", "342", "343", "345", "348", "351", "353", "358",
+  "362", "364", "370", "376", "379", "380", "381", "383", "385", "387", "388",
+]);
+
+export const TELEFONO_CANONICO_RE = /^[0-9]{10}$/;
+
+// Símbolos de presentación aceptados. Cualquier otra cosa (letras incluidas) se rechaza.
+const SIMBOLOS_PERMITIDOS = /^[0-9+().\-\s]+$/;
+
+export type TelefonoRechazo =
+  | "vacio" | "simbolos_invalidos" | "mas_mal_ubicado" | "prefijo_extranjero"
+  | "largo_invalido" | "area_invalida" | "sin_15_en_el_borde";
+
+export type TelefonoNormalizado =
+  | { ok: true; valor: string }
+  | { ok: false; motivo: TelefonoRechazo };
+
+// Solo "11" mide 2; ningún código de área de 4 dígitos empieza con 1. Por eso la
+// interpretación es única y no hace falta elegir entre varias.
+function largoDeArea(d: string): number | null {
+  if (d.startsWith("11")) return 2;
+  if (d[0] === "1") return null;                       // 11 es el único que empieza con 1
+  if (AREAS_3_DIGITOS.has(d.slice(0, 3))) return 3;
+  if (d[0] === "2" || d[0] === "3") return 4;          // el resto del plan
+  return null;
 }
 
-export function telefonoNormalizadoValido(norm: string): boolean {
-  return /^[0-9]{8,15}$/.test(norm);
+function areaPlausible(d: string): boolean {
+  if (d.startsWith("11")) return true;
+  return d[0] === "2" || d[0] === "3";
+}
+
+// Devuelve el número canónico o el motivo del rechazo. Ante cualquier duda NO
+// adivina: prefiere rechazar antes que asociar la mensualidad a otra persona.
+export function normalizarTelefonoDetallado(tel: string | null | undefined): TelefonoNormalizado {
+  const crudo = String(tel ?? "").trim();
+  if (!crudo) return { ok: false, motivo: "vacio" };
+  if (!SIMBOLOS_PERMITIDOS.test(crudo)) return { ok: false, motivo: "simbolos_invalidos" };
+
+  const conMas = crudo.startsWith("+");
+  if ((crudo.match(/\+/g) ?? []).length > 1) return { ok: false, motivo: "mas_mal_ubicado" };
+  if (crudo.indexOf("+") > 0) return { ok: false, motivo: "mas_mal_ubicado" };
+
+  let d = crudo.replace(/[^0-9]/g, "");
+  if (!d) return { ok: false, motivo: "vacio" };
+
+  // Prefijo internacional. Si viene explícito (+ o 00), TIENE que ser Argentina.
+  if (conMas) {
+    if (!d.startsWith("54")) return { ok: false, motivo: "prefijo_extranjero" };
+    d = d.slice(2);
+  } else if (d.startsWith("00")) {
+    d = d.slice(2);
+    if (!d.startsWith("54")) return { ok: false, motivo: "prefijo_extranjero" };
+    d = d.slice(2);
+  } else if (d.startsWith("54") && d.length >= 12) {
+    // Ningún código de área argentino empieza con 5: solo puede ser el país.
+    d = d.slice(2);
+  }
+
+  // 9 móvil y 0 de trunk nacional: ningún código de área empieza con 0 ni con 9.
+  // El corte nunca baja de 10 dígitos, así que no puede comerse un área válida.
+  while (d.length > 10 && (d[0] === "0" || d[0] === "9")) d = d.slice(1);
+
+  if (d.length === 10) {
+    return areaPlausible(d) ? { ok: true, valor: d } : { ok: false, motivo: "area_invalida" };
+  }
+
+  if (d.length === 12) {
+    // 12 dígitos = 10 del número + el "15" histórico intercalado.
+    const area = largoDeArea(d);
+    if (area === null) return { ok: false, motivo: "area_invalida" };
+    // El 15 solo es válido en el borde del código de área. Si aparece en otro lado,
+    // se rechaza en vez de reubicarlo por conveniencia.
+    if (d.slice(area, area + 2) !== "15") return { ok: false, motivo: "sin_15_en_el_borde" };
+    const salida = d.slice(0, area) + d.slice(area + 2);
+    if (salida.length !== 10 || !areaPlausible(salida)) return { ok: false, motivo: "area_invalida" };
+    return { ok: true, valor: salida };
+  }
+
+  return { ok: false, motivo: "largo_invalido" };
+}
+
+// Atajo: el número canónico, o null si no es interpretable.
+export function normalizarTelefono(tel: string | null | undefined): string | null {
+  const r = normalizarTelefonoDetallado(tel);
+  return r.ok ? r.valor : null;
+}
+
+export function telefonoNormalizadoValido(norm: string | null | undefined): boolean {
+  return typeof norm === "string" && TELEFONO_CANONICO_RE.test(norm);
 }
 
 // Espejo exacto de public.mensualidad_normalizar_codigo.

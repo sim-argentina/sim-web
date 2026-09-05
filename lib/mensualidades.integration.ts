@@ -2,19 +2,22 @@ import { strict as assert } from "node:assert";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizarTelefono, simularCompra } from "@/lib/mensualidades";
+import { CASOS_TELEFONO } from "@/lib/mensualidadesTelefono.fixtures";
 
 // Integración de Mensualidades (Bloque M2) contra la DB REAL, con datos TEMPORALES
-// que se ELIMINAN al final. Teléfonos 9990xxxxxx (rango imposible en la realidad) y
-// external_reference marcadas, para no tocar datos de producción.
+// que se ELIMINAN al final. Teléfonos con área 2966 (Río Gallegos, fuera del área
+// de SIM) y external_reference marcadas, para no tocar datos de producción.
 // Ejecutar:
 //   node --env-file=.env.local --import tsx lib/mensualidades.integration.ts
 
 const MARCA = `zztest_${Date.now()}`;
 const creados = { compras: [] as string[], mensualidades: [] as string[] };
 
-const tel = (n: number) => `999${String(n).padStart(7, "0")}`;
+// Teléfonos de prueba con forma canónica REAL (M2.1 exige 10 dígitos válidos):
+// área 2966 (Río Gallegos, código de 4 dígitos) + local que empieza con 99. SIM
+// opera en Córdoba, así que no puede chocar con un titular de verdad.
 let seq = 0;
-const nuevoTel = () => tel((Date.now() % 1_000_000) * 10 + seq++);
+const nuevoTel = () => `296699${String((Date.now() % 10_000) * 10 + (seq++ % 10)).padStart(4, "0").slice(-4)}`;
 
 type Compra = {
   id: string; mensualidad_id: string | null; tipo: string | null;
@@ -228,13 +231,82 @@ async function main() {
   assert.equal((dupErr as { code?: string }).code, "23505", "T10 debe ser unique_violation");
   console.log("T10 código único OK");
 
-  // ── T11 · Teléfono normalizado: SQL y TypeScript coinciden ───────────────
-  const casos = ["+54 9 351 512-3456", "5493515123456", "0054 9 3515123456", "351 512 3456", "3515123456"];
-  for (const c of casos) {
-    const { data: sql } = await supabaseAdmin.rpc("mensualidad_normalizar_telefono", { p_tel: c });
-    assert.equal(sql, normalizarTelefono(c), `T11 SQL y TS difieren para "${c}": ${sql} vs ${normalizarTelefono(c)}`);
+  // ── T11 · Paridad SQL == TypeScript en TODA la tabla de casos (M2.1) ─────
+  for (const [entrada, esperado, nota] of CASOS_TELEFONO) {
+    const { data: sql, error } = await supabaseAdmin.rpc("mensualidad_normalizar_telefono", { p_tel: entrada });
+    if (error) throw new Error(`T11 SQL falló en "${entrada}": ${error.message}`);
+    const ts = normalizarTelefono(entrada);
+    assert.equal(sql ?? null, esperado, `T11 SQL ${nota} "${entrada}" → ${sql}`);
+    assert.equal(ts, esperado, `T11 TS ${nota} "${entrada}" → ${ts}`);
+    assert.equal(sql ?? null, ts, `T11 paridad rota en ${nota} "${entrada}": SQL=${sql} TS=${ts}`);
+    // Idempotencia también del lado SQL.
+    const { data: sql2 } = await supabaseAdmin.rpc("mensualidad_normalizar_telefono", { p_tel: sql ?? "" });
+    assert.equal(sql2 ?? null, sql ?? null, `T11 SQL no idempotente en "${entrada}"`);
   }
-  console.log("T11 teléfono normalizado OK (SQL == TS)");
+  console.log(`T11 paridad SQL == TS en ${CASOS_TELEFONO.length} casos, idempotente OK`);
+
+  // ── T19 · Renovación con formato viejo y después internacional ───────────
+  // El mismo número escrito de dos formas tiene que caer en la MISMA billetera.
+  const local = String(Date.now() % 1_000_000).padStart(6, "0").slice(-6);
+  const viejo = `0351 15-9${local}`;          // 0 + área 351 + 15 + local
+  const inter = `+54 9 351 9${local}`;        // +54 9 + área + local
+  const canon = `3519${local}`;
+  assert.equal(normalizarTelefono(viejo), canon, "T19 formato viejo");
+  assert.equal(normalizarTelefono(inter), canon, "T19 formato internacional");
+  await nuevaCompra({ slug: "1h", minutos: 60, precio: 30000, telefonoNorm: normalizarTelefono(viejo)!, ref: `${MARCA}_v1` });
+  const v1 = await aplicar(`${MARCA}_v1`, `${MARCA}_pay_v1`);
+  assert.equal(v1.tipo, "alta", "T19 la primera compra es alta");
+  await nuevaCompra({ slug: "1h", minutos: 60, precio: 30000, telefonoNorm: normalizarTelefono(inter)!, ref: `${MARCA}_v2` });
+  const v2 = await aplicar(`${MARCA}_v2`, `${MARCA}_pay_v2`);
+  assert.equal(v2.tipo, "renovacion", "T19 la segunda debe RENOVAR, no crear otra");
+  assert.equal(v2.mensualidad_id, v1.mensualidad_id, "T19 misma billetera");
+  const mViejo = await saldoDe(v1.mensualidad_id!);
+  const mInter = await saldoDe(v2.mensualidad_id!);
+  assert.equal(mInter.codigo, mViejo.codigo, "T19 mismo código");
+  assert.equal(mInter.saldo_minutos, 120, "T19 60 + 60 = 120");
+  const { data: billeterasV } = await supabaseAdmin
+    .from("mensualidades").select("id").eq("telefono_norm", canon);
+  assert.equal(billeterasV?.length, 1, "T19 una sola mensualidad para el número");
+  console.log("T19 renovación entre formatos OK");
+
+  // ── T20 · Concurrencia con DOS FORMATOS distintos del mismo número ───────
+  const local2 = String((Date.now() + 7) % 1_000_000).padStart(6, "0").slice(-6);
+  const fmtA = `0341 15-9${local2}`;
+  const fmtB = `+54 9 341 9${local2}`;
+  const canon2 = `3419${local2}`;
+  assert.equal(normalizarTelefono(fmtA), canon2);
+  assert.equal(normalizarTelefono(fmtB), canon2);
+  await nuevaCompra({ slug: "1h", minutos: 60, precio: 30000, telefonoNorm: normalizarTelefono(fmtA)!, ref: `${MARCA}_k1` });
+  await nuevaCompra({ slug: "1h", minutos: 60, precio: 30000, telefonoNorm: normalizarTelefono(fmtB)!, ref: `${MARCA}_k2` });
+  const [k1, k2] = await Promise.all([
+    aplicar(`${MARCA}_k1`, `${MARCA}_pay_k1`),
+    aplicar(`${MARCA}_k2`, `${MARCA}_pay_k2`),
+  ]);
+  const { data: billeterasK } = await supabaseAdmin
+    .from("mensualidades").select("id, saldo_minutos").eq("telefono_norm", canon2);
+  assert.equal(billeterasK?.length, 1, "T20 dos formatos concurrentes → una sola mensualidad");
+  assert.equal(k1.mensualidad_id, k2.mensualidad_id, "T20 ambas compras en la misma billetera");
+  assert.equal(billeterasK?.[0].saldo_minutos, 120, "T20 no se pierden minutos");
+  console.log("T20 concurrencia entre formatos OK");
+
+  // ── T21 · La RPC rechaza un telefono_norm no canónico ────────────────────
+  const { data: cRota } = await supabaseAdmin.from("mensualidad_compras").insert({
+    plan_slug: "1h", plan_nombre: "Plan 1h", plan_minutos: 60, plan_precio: 30000,
+    plan_vigencia_dias: 30, comprador_nombre: "Zz", comprador_apellido: "Test",
+    comprador_telefono: "0351 15-5123456", telefono_norm: "51551234",
+    comprador_email: `${MARCA}@test.local`, importe_bruto: 30000,
+    external_reference: `${MARCA}_nc1`,
+  }).select("id").single();
+  if (cRota) creados.compras.push(cRota.id);
+  const { error: ncErr } = await supabaseAdmin.rpc("mensualidad_aplicar_compra", {
+    p_external_reference: `${MARCA}_nc1`, p_mp_payment_id: `${MARCA}_pay_nc1`,
+    p_importe_bruto: null, p_comision_mp: null, p_importe_neto: null,
+  });
+  assert.ok(ncErr, "T21 la RPC debía rechazar un telefono_norm no canónico");
+  const { data: billeterasNC } = await supabaseAdmin
+    .from("mensualidades").select("id").eq("telefono_norm", "51551234");
+  assert.equal(billeterasNC?.length, 0, "T21 no debe crear billetera");
+  console.log("T21 guarda de teléfono canónico OK");
 
   // ── T12 · Saldo negativo imposible ────────────────────────────────────────
   const { error: negErr } = await supabaseAdmin

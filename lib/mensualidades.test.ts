@@ -2,9 +2,10 @@ import { strict as assert } from "node:assert";
 import {
   MAX_TRASLADO_MINUTOS, UNIDAD_MINUTOS, DURACIONES_MENSUALIDAD, CODIGO_RE,
   minutosDeReserva, duracionValida, cantidadSimuladoresValida,
-  normalizarTelefono, telefonoNormalizadoValido, normalizarCodigo,
-  estadoMensualidad, simularCompra,
+  normalizarTelefono, normalizarTelefonoDetallado, telefonoNormalizadoValido,
+  normalizarCodigo, estadoMensualidad, simularCompra,
 } from "@/lib/mensualidades";
+import { CASOS_TELEFONO } from "@/lib/mensualidadesTelefono.fixtures";
 
 // Ejecutar: npx tsx lib/mensualidades.test.ts
 // Reglas PURAS del producto. La contraparte contra la base real (RPC, constraints,
@@ -33,18 +34,38 @@ for (const n of [0, 5, -1, 1.5, "abc", null]) assert.ok(!cantidadSimuladoresVali
 assert.ok(cantidadSimuladoresValida("2"));
 assert.ok(duracionValida("30"));
 
-// ── Teléfono normalizado (mismo resultado que la función SQL) ───────────────
-assert.equal(normalizarTelefono("+54 9 351 512-3456"), "3515123456");
-assert.equal(normalizarTelefono("5493515123456"), "3515123456");
-assert.equal(normalizarTelefono("+5493515123456"), "3515123456");
-assert.equal(normalizarTelefono("00 54 9 3515123456"), "3515123456");
+// ── Normalización argentina de teléfonos (M2.1) ────────────────────────────
+// La misma tabla se corre contra la función SQL en mensualidades.integration.ts,
+// así que estos casos son también el contrato de paridad SQL/TypeScript.
+for (const [entrada, esperado, nota] of CASOS_TELEFONO) {
+  assert.equal(normalizarTelefono(entrada), esperado, `teléfono ${nota}: "${entrada}"`);
+  // Idempotencia: normalizar(normalizar(x)) === normalizar(x).
+  assert.equal(
+    normalizarTelefono(normalizarTelefono(entrada)), esperado,
+    `teléfono no idempotente (${nota}): "${entrada}"`
+  );
+}
+
+// Un valor ya canónico no se toca.
 assert.equal(normalizarTelefono("3515123456"), "3515123456");
-assert.equal(normalizarTelefono("351 512 3456"), "3515123456");
-assert.equal(normalizarTelefono(""), "");
-assert.equal(normalizarTelefono(null), "");
+assert.equal(normalizarTelefono("1112345678"), "1112345678");
+assert.equal(normalizarTelefono(null), null);
+
+// Motivos de rechazo explícitos (error controlado, no un valor inventado).
+assert.equal(normalizarTelefonoDetallado("351ABC3456").ok, false);
+assert.equal((normalizarTelefonoDetallado("351ABC3456") as { motivo: string }).motivo, "simbolos_invalidos");
+assert.equal((normalizarTelefonoDetallado("+1 555 123 4567") as { motivo: string }).motivo, "prefijo_extranjero");
+assert.equal((normalizarTelefonoDetallado("35112") as { motivo: string }).motivo, "largo_invalido");
+assert.equal((normalizarTelefonoDetallado("341512345615") as { motivo: string }).motivo, "sin_15_en_el_borde");
+assert.equal((normalizarTelefonoDetallado("1512345678") as { motivo: string }).motivo, "area_invalida");
+assert.equal(normalizarTelefonoDetallado("0351 15-5123456").ok, true);
+
+// El canónico son EXACTAMENTE 10 dígitos.
 assert.ok(telefonoNormalizadoValido("3515123456"));
-assert.ok(!telefonoNormalizadoValido("351512"), "menos de 8 dígitos es inválido");
+assert.ok(!telefonoNormalizadoValido("351512"), "menos de 10 dígitos es inválido");
+assert.ok(!telefonoNormalizadoValido("35151234567"), "más de 10 dígitos es inválido");
 assert.ok(!telefonoNormalizadoValido("35151234a6"));
+assert.ok(!telefonoNormalizadoValido(null));
 
 // ── Código: normalización sin ambigüedad ────────────────────────────────────
 assert.equal(normalizarCodigo("MEN-ABCD-2345"), "MEN-ABCD-2345");

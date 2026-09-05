@@ -62,23 +62,102 @@ as $$
   end;
 $$;
 
--- Normalización de teléfono: SOLO dígitos + limpieza de prefijos argentinos.
--- Es la clave de identidad para renovar (misma persona → misma billetera).
--- LIMITACIÓN CONOCIDA: no interpreta el "15" intermedio de los celulares viejos
--- ("0351 15-5123456" no normaliza igual que "+54 9 351 512-3456"). El formulario
--- público (M4) debe pedir el número en formato internacional, y el admin puede
--- corregir el teléfono con auditoría.
+-- Normalización ARGENTINA de teléfono (M2.1). Es la clave de identidad para
+-- renovar: misma persona → misma billetera. Espejo exacto de normalizarTelefono()
+-- en lib/mensualidades.ts.
+--
+-- Forma canónica: número nacional de 10 dígitos (código de área + local), sin 0,
+-- sin 15 y sin +54 9. Ejemplo: 3515123456.
+--
+-- El plan de numeración argentino tiene tres largos de código de área:
+--   · 2 dígitos → solo '11';
+--   · 3 dígitos → conjunto fijo y conocido (la lista de abajo);
+--   · 4 dígitos → todo el resto, que siempre empieza con 2 o 3.
+-- Como área + local = 10 SIEMPRE, el largo del área dice exactamente dónde puede
+-- estar el '15' histórico: pegado al final del código de área. La interpretación
+-- es única (ningún código de 4 dígitos empieza con 1, y '11' es el único de 2),
+-- así que no hay que elegir entre alternativas. Si el '15' no está en ese borde,
+-- se RECHAZA en vez de reubicarlo: asociar la mensualidad a otra persona es peor
+-- que pedir el número de nuevo. Devuelve NULL cuando no es interpretable.
 create or replace function public.mensualidad_normalizar_telefono(p_tel text)
 returns text
-language sql immutable
+language plpgsql immutable
 set search_path = public
 as $$
-  with d  as (select regexp_replace(coalesce(p_tel, ''), '[^0-9]', '', 'g') as v),
-       s1 as (select case when v like '00%' and length(v) > 10 then substr(v, 3) else v end as v from d),
-       s2 as (select case when v like '54%' and length(v) > 10 then substr(v, 3) else v end as v from s1),
-       s3 as (select case when v like '9%'  and length(v) > 10 then substr(v, 2) else v end as v from s2),
-       s4 as (select case when v like '0%'  and length(v) > 10 then substr(v, 2) else v end as v from s3)
-  select case when length(v) > 10 then right(v, 10) else v end from s4;
+declare
+  c_areas3 constant text[] := array[
+    '220','221','223','230','236','237','249',
+    '260','261','263','264','266','280','291','294','297','299',
+    '336','341','342','343','345','348','351','353','358',
+    '362','364','370','376','379','380','381','383','385','387','388'];
+  v_raw  text := btrim(coalesce(p_tel, ''));
+  v_mas  boolean;
+  d      text;
+  v_area integer;
+  v_out  text;
+begin
+  if v_raw = '' then return null; end if;
+
+  -- 1) Solo dígitos y símbolos de presentación. Letras y demás → rechazo.
+  if v_raw ~ '[^0-9+().\-[:space:]]' then return null; end if;
+  v_mas := left(v_raw, 1) = '+';
+  if length(v_raw) - length(replace(v_raw, '+', '')) > 1 then return null; end if;
+  if position('+' in v_raw) > 1 then return null; end if;
+
+  d := regexp_replace(v_raw, '[^0-9]', '', 'g');
+  if d = '' then return null; end if;
+
+  -- 2/3) Prefijo internacional: si viene explícito, tiene que ser Argentina (54).
+  if v_mas then
+    if left(d, 2) <> '54' then return null; end if;
+    d := substr(d, 3);
+  elsif left(d, 2) = '00' then
+    d := substr(d, 3);
+    if left(d, 2) <> '54' then return null; end if;
+    d := substr(d, 3);
+  elsif left(d, 2) = '54' and length(d) >= 12 then
+    -- Ningún código de área argentino empieza con 5: solo puede ser el país.
+    d := substr(d, 3);
+  end if;
+
+  -- 4/5) 9 móvil y 0 de trunk nacional. Ningún código de área empieza con 0 ni 9,
+  -- y el corte nunca baja de 10 dígitos, así que no puede comerse un área válida.
+  while length(d) > 10 and left(d, 1) in ('0', '9') loop
+    d := substr(d, 2);
+  end loop;
+
+  -- 7) Canónico: exactamente 10 dígitos.
+  if length(d) = 10 then
+    if left(d, 2) = '11' then return d; end if;
+    if left(d, 1) = '1' then return null; end if;   -- '11' es el único de 2 dígitos
+    if left(d, 1) in ('2', '3') then return d; end if;
+    return null;
+  end if;
+
+  -- 6) 12 dígitos = los 10 del número + el '15' histórico intercalado.
+  if length(d) = 12 then
+    if left(d, 2) = '11' then
+      v_area := 2;
+    elsif left(d, 1) = '1' then
+      return null;
+    elsif left(d, 3) = any (c_areas3) then
+      v_area := 3;
+    elsif left(d, 1) in ('2', '3') then
+      v_area := 4;
+    else
+      return null;
+    end if;
+
+    if substr(d, v_area + 1, 2) <> '15' then return null; end if;
+    v_out := left(d, v_area) || substr(d, v_area + 3);
+    if length(v_out) <> 10 then return null; end if;
+    if left(v_out, 2) <> '11' and left(v_out, 1) not in ('2', '3') then return null; end if;
+    return v_out;
+  end if;
+
+  -- 8/9) Nada de "tomar los últimos 10": cualquier otro largo se rechaza.
+  return null;
+end;
 $$;
 
 -- Normalización de código: mayúsculas, sin separadores, formato MEN-XXXX-XXXX.
@@ -462,6 +541,13 @@ begin
   end if;
   if v_compra.estado_pago <> 'pendiente' then
     raise exception 'compra_no_pendiente' using errcode = '22023';
+  end if;
+
+  -- (M2.1) La billetera se busca y se bloquea por telefono_norm: si no llegó en la
+  -- forma canónica de 10 dígitos, la identidad del titular no es confiable y una
+  -- renovación podría terminar en otra persona. Se corta acá.
+  if v_compra.telefono_norm !~ '^[0-9]{10}$' then
+    raise exception 'telefono_no_canonico' using errcode = '22023';
   end if;
 
   v_hoy   := (p_aprobado_at at time zone 'America/Argentina/Cordoba')::date;
