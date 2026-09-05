@@ -16,18 +16,23 @@
 -- Canónico = número nacional argentino de 10 dígitos (área + local), sin 0, sin 15
 -- y sin +54 9. El plan de numeración tiene tres largos de código de área:
 --   · 2 dígitos → solo '11';
---   · 3 dígitos → conjunto fijo (c_areas3);
+--   · 3 dígitos → conjunto fijo de 38 indicativos (c_areas3);
 --   · 4 dígitos → el resto, siempre empezando con 2 o 3.
--- Como área + local = 10 SIEMPRE, el largo del área determina el único borde donde
--- puede estar el '15'. La interpretación es ÚNICA por construcción: '11' es el
--- único código de 2 dígitos y ninguno de 4 empieza con 1, así que dos lecturas
--- distintas del mismo número son imposibles. Si el '15' no está en ese borde, se
--- devuelve NULL en lugar de reubicarlo: pedir el número de nuevo es preferible a
--- asociar la mensualidad a otra persona.
 --
--- Si la lista c_areas3 tuviera un faltante, ese número se leería como área de 4
--- dígitos, el '15' no caería en el borde y la función devolvería NULL. El modo de
--- falla es RECHAZAR, nunca asignar mal.
+-- FUENTE OFICIAL — verificada el 2026-09-05 (M2.2) contra ENACOM:
+--   https://www.enacom.gob.ar/indicativos-interurbanos_p143
+--   planilla 'archivo_20240521035456_1549.xls', hoja 'AREAS LOCALES 300'.
+-- 300 indicativos: 1 de dos dígitos, 38 de tres y 261 de cuatro. La verificación
+-- encontró que faltaba '298' (General Roca, Río Negro) y se agregó.
+-- Como área + local = 10 SIEMPRE, el '15' solo puede estar pegado al final del
+-- código de área. Los largos posibles se tratan como CANDIDATOS y decide dónde
+-- cae efectivamente el '15' (M2.2: 49 indicativos de 4 dígitos empiezan con uno de
+-- 3 válido, así que fijar el largo de antemano rompía esas localidades). Dos
+-- lecturas simultáneas son imposibles, y si las hubiera se rechaza. Si el '15' no
+-- queda en ningún borde válido, se devuelve NULL en lugar de reubicarlo: pedir el
+-- número de nuevo es preferible a asociar la mensualidad a otra persona.
+--
+-- Un indicativo desconocido tampoco se reinterpreta: se RECHAZA, nunca se asigna mal.
 --
 -- Espejo exacto de normalizarTelefono() en lib/mensualidades.ts. La paridad se
 -- verifica caso por caso en lib/mensualidades.integration.ts.
@@ -39,16 +44,18 @@ language plpgsql immutable
 set search_path = public
 as $$
 declare
+  -- ENACOM, hoja 'AREAS LOCALES 300' (verificado 2026-09-05): 38 indicativos.
   c_areas3 constant text[] := array[
     '220','221','223','230','236','237','249',
-    '260','261','263','264','266','280','291','294','297','299',
+    '260','261','263','264','266','280','291','294','297','298','299',
     '336','341','342','343','345','348','351','353','358',
     '362','364','370','376','379','380','381','383','385','387','388'];
-  v_raw  text := btrim(coalesce(p_tel, ''));
-  v_mas  boolean;
-  d      text;
-  v_area integer;
-  v_out  text;
+  v_raw   text := btrim(coalesce(p_tel, ''));
+  v_mas   boolean;
+  d       text;
+  v_cands integer[];
+  v_area  integer;
+  v_out   text;
 begin
   if v_raw = '' then return null; end if;
 
@@ -70,12 +77,12 @@ begin
     if left(d, 2) <> '54' then return null; end if;
     d := substr(d, 3);
   elsif left(d, 2) = '54' and length(d) >= 12 then
-    -- Ningún código de área argentino empieza con 5: solo puede ser el país.
+    -- Ningún indicativo argentino empieza con 5: solo puede ser el país.
     d := substr(d, 3);
   end if;
 
-  -- 4/5) 9 móvil y 0 de trunk nacional. Ningún código de área empieza con 0 ni 9,
-  -- y el corte nunca baja de 10 dígitos, así que no puede comerse un área válida.
+  -- 4/5) 9 móvil y 0 de trunk nacional. Ningún indicativo empieza con 0 ni 9, y el
+  -- corte nunca baja de 10 dígitos, así que no puede comerse un área válida.
   while length(d) > 10 and left(d, 1) in ('0', '9') loop
     d := substr(d, 2);
   end loop;
@@ -89,20 +96,20 @@ begin
   end if;
 
   -- 6) 12 dígitos = los 10 del número + el '15' histórico intercalado.
+  -- Los largos de área son CANDIDATOS, no una decisión previa: 49 de los 261
+  -- indicativos de 4 dígitos empiezan con uno de 3 válido (2202/220, 3489/348,
+  -- 2945/294…), así que quedarse con el primero que matchea rompería justo esas
+  -- localidades. Decide dónde cae el '15'. Dos lecturas simultáneas son
+  -- imposibles (área 3 exige d[5]='5' y área 4 exige d[5]='1'), pero si alguna vez
+  -- hubiera más de una, se rechaza en lugar de elegir en silencio.
   if length(d) = 12 then
-    if left(d, 2) = '11' then
-      v_area := 2;
-    elsif left(d, 1) = '1' then
-      return null;
-    elsif left(d, 3) = any (c_areas3) then
-      v_area := 3;
-    elsif left(d, 1) in ('2', '3') then
-      v_area := 4;
-    else
-      return null;
-    end if;
+    v_cands := '{}'::integer[];
+    if left(d, 2) = '11'            and substr(d, 3, 2) = '15' then v_cands := v_cands || 2; end if;
+    if left(d, 3) = any (c_areas3)  and substr(d, 4, 2) = '15' then v_cands := v_cands || 3; end if;
+    if left(d, 1) in ('2', '3')     and substr(d, 5, 2) = '15' then v_cands := v_cands || 4; end if;
+    if coalesce(array_length(v_cands, 1), 0) <> 1 then return null; end if;
+    v_area := v_cands[1];
 
-    if substr(d, v_area + 1, 2) <> '15' then return null; end if;
     v_out := left(d, v_area) || substr(d, v_area + 3);
     if length(v_out) <> 10 then return null; end if;
     if left(v_out, 2) <> '11' and left(v_out, 1) not in ('2', '3') then return null; end if;

@@ -59,13 +59,20 @@ export function cantidadSimuladoresValida(n: unknown): boolean {
 //
 // El plan de numeración argentino tiene exactamente tres largos de código de área:
 //   · 2 dígitos → solo "11" (AMBA).
-//   · 3 dígitos → un conjunto fijo y conocido (AREAS_3_DIGITOS).
+//   · 3 dígitos → un conjunto fijo (AREAS_3_DIGITOS, 38 indicativos).
 //   · 4 dígitos → todo el resto, que siempre empieza con 2 o 3.
 // Como área + local = 10 SIEMPRE, el largo del área determina dónde termina y por
 // lo tanto dónde puede estar el "15" histórico: justo después del código de área.
+//
+// FUENTE OFICIAL — verificada el 2026-09-05 contra ENACOM:
+//   https://www.enacom.gob.ar/indicativos-interurbanos_p143
+//   planilla "archivo_20240521035456_1549.xls", hoja "AREAS LOCALES 300".
+// La planilla trae 300 indicativos: 1 de dos dígitos (11), 38 de tres y 261 de
+// cuatro. Ninguno de cuatro empieza con 1 y todos arrancan con 1, 2 o 3, que es
+// exactamente lo que hace única la lectura del "15".
 export const AREAS_3_DIGITOS: ReadonlySet<string> = new Set([
   "220", "221", "223", "230", "236", "237", "249",
-  "260", "261", "263", "264", "266", "280", "291", "294", "297", "299",
+  "260", "261", "263", "264", "266", "280", "291", "294", "297", "298", "299",
   "336", "341", "342", "343", "345", "348", "351", "353", "358",
   "362", "364", "370", "376", "379", "380", "381", "383", "385", "387", "388",
 ]);
@@ -77,20 +84,22 @@ const SIMBOLOS_PERMITIDOS = /^[0-9+().\-\s]+$/;
 
 export type TelefonoRechazo =
   | "vacio" | "simbolos_invalidos" | "mas_mal_ubicado" | "prefijo_extranjero"
-  | "largo_invalido" | "area_invalida" | "sin_15_en_el_borde";
+  | "largo_invalido" | "area_invalida" | "sin_15_en_el_borde" | "ambiguo";
 
 export type TelefonoNormalizado =
   | { ok: true; valor: string }
   | { ok: false; motivo: TelefonoRechazo };
 
-// Solo "11" mide 2; ningún código de área de 4 dígitos empieza con 1. Por eso la
-// interpretación es única y no hace falta elegir entre varias.
-function largoDeArea(d: string): number | null {
-  if (d.startsWith("11")) return 2;
-  if (d[0] === "1") return null;                       // 11 es el único que empieza con 1
-  if (AREAS_3_DIGITOS.has(d.slice(0, 3))) return 3;
-  if (d[0] === "2" || d[0] === "3") return 4;          // el resto del plan
-  return null;
+// Largos de área POSIBLES para un número de 12 dígitos. Son candidatos, no una
+// decisión: 49 de los 261 indicativos de 4 dígitos empiezan con uno de 3 válido
+// (2202/220, 3489/348, 2945/294…), así que quedarse con el primero que matchea
+// rompería justo esas localidades. Se prueban todos y decide dónde cae el "15".
+function largosPosiblesDeArea(d: string): number[] {
+  const out: number[] = [];
+  if (d.startsWith("11")) out.push(2);                 // único indicativo de 2
+  if (AREAS_3_DIGITOS.has(d.slice(0, 3))) out.push(3);
+  if (d[0] === "2" || d[0] === "3") out.push(4);       // el resto del plan
+  return out;
 }
 
 function areaPlausible(d: string): boolean {
@@ -134,12 +143,19 @@ export function normalizarTelefonoDetallado(tel: string | null | undefined): Tel
   }
 
   if (d.length === 12) {
-    // 12 dígitos = 10 del número + el "15" histórico intercalado.
-    const area = largoDeArea(d);
-    if (area === null) return { ok: false, motivo: "area_invalida" };
-    // El 15 solo es válido en el borde del código de área. Si aparece en otro lado,
-    // se rechaza en vez de reubicarlo por conveniencia.
-    if (d.slice(area, area + 2) !== "15") return { ok: false, motivo: "sin_15_en_el_borde" };
+    // 12 dígitos = 10 del número + el "15" histórico intercalado. El "15" solo es
+    // válido pegado al final del código de área: se prueban los largos posibles y
+    // se acepta el único que lo tenga ahí.
+    const posibles = largosPosiblesDeArea(d);
+    if (posibles.length === 0) return { ok: false, motivo: "area_invalida" };
+    const candidatos = posibles.filter((a) => d.slice(a, a + 2) === "15");
+    // Dos lecturas válidas a la vez son imposibles (área 3 exige d[4]="5" y área 4
+    // exige d[4]="1"; área 2 exigiría un indicativo de 4 que empiece con 11 y no
+    // existe ninguno). Igual se comprueba: ante ambigüedad se rechaza, nunca se
+    // elige una en silencio.
+    if (candidatos.length > 1) return { ok: false, motivo: "ambiguo" };
+    if (candidatos.length === 0) return { ok: false, motivo: "sin_15_en_el_borde" };
+    const area = candidatos[0];
     const salida = d.slice(0, area) + d.slice(area + 2);
     if (salida.length !== 10 || !areaPlausible(salida)) return { ok: false, motivo: "area_invalida" };
     return { ok: true, valor: salida };

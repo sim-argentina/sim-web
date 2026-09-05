@@ -71,14 +71,21 @@ $$;
 --
 -- El plan de numeración argentino tiene tres largos de código de área:
 --   · 2 dígitos → solo '11';
---   · 3 dígitos → conjunto fijo y conocido (la lista de abajo);
+--   · 3 dígitos → conjunto fijo de 38 indicativos (la lista de abajo);
 --   · 4 dígitos → todo el resto, que siempre empieza con 2 o 3.
--- Como área + local = 10 SIEMPRE, el largo del área dice exactamente dónde puede
--- estar el '15' histórico: pegado al final del código de área. La interpretación
--- es única (ningún código de 4 dígitos empieza con 1, y '11' es el único de 2),
--- así que no hay que elegir entre alternativas. Si el '15' no está en ese borde,
--- se RECHAZA en vez de reubicarlo: asociar la mensualidad a otra persona es peor
--- que pedir el número de nuevo. Devuelve NULL cuando no es interpretable.
+--
+-- FUENTE OFICIAL — verificada el 2026-09-05 (M2.2) contra ENACOM:
+--   https://www.enacom.gob.ar/indicativos-interurbanos_p143
+--   planilla 'archivo_20240521035456_1549.xls', hoja 'AREAS LOCALES 300'.
+-- 300 indicativos: 1 de dos dígitos (11), 38 de tres y 261 de cuatro. Ninguno de
+-- cuatro empieza con 1 y todos arrancan con 1, 2 o 3.
+-- Como área + local = 10 SIEMPRE, el '15' histórico solo puede estar pegado al
+-- final del código de área. Los largos posibles se tratan como CANDIDATOS y decide
+-- dónde cae efectivamente el '15' (M2.2: 49 indicativos de 4 dígitos empiezan con
+-- uno de 3 válido, así que fijar el largo de antemano rompía esas localidades).
+-- Si el '15' no queda en ningún borde válido, se RECHAZA en vez de reubicarlo:
+-- asociar la mensualidad a otra persona es peor que pedir el número de nuevo.
+-- Devuelve NULL cuando no es interpretable.
 create or replace function public.mensualidad_normalizar_telefono(p_tel text)
 returns text
 language plpgsql immutable
@@ -87,14 +94,15 @@ as $$
 declare
   c_areas3 constant text[] := array[
     '220','221','223','230','236','237','249',
-    '260','261','263','264','266','280','291','294','297','299',
+    '260','261','263','264','266','280','291','294','297','298','299',
     '336','341','342','343','345','348','351','353','358',
     '362','364','370','376','379','380','381','383','385','387','388'];
-  v_raw  text := btrim(coalesce(p_tel, ''));
-  v_mas  boolean;
-  d      text;
-  v_area integer;
-  v_out  text;
+  v_raw   text := btrim(coalesce(p_tel, ''));
+  v_mas   boolean;
+  d       text;
+  v_cands integer[];
+  v_area  integer;
+  v_out   text;
 begin
   if v_raw = '' then return null; end if;
 
@@ -135,20 +143,17 @@ begin
   end if;
 
   -- 6) 12 dígitos = los 10 del número + el '15' histórico intercalado.
+  -- Los largos de área son CANDIDATOS, no una decisión previa: 49 de los 261
+  -- indicativos de 4 dígitos empiezan con uno de 3 válido (2202/220, 3489/348,
+  -- 2945/294…). Decide dónde cae el '15'; si hubiera más de una lectura, se rechaza.
   if length(d) = 12 then
-    if left(d, 2) = '11' then
-      v_area := 2;
-    elsif left(d, 1) = '1' then
-      return null;
-    elsif left(d, 3) = any (c_areas3) then
-      v_area := 3;
-    elsif left(d, 1) in ('2', '3') then
-      v_area := 4;
-    else
-      return null;
-    end if;
+    v_cands := '{}'::integer[];
+    if left(d, 2) = '11'            and substr(d, 3, 2) = '15' then v_cands := v_cands || 2; end if;
+    if left(d, 3) = any (c_areas3)  and substr(d, 4, 2) = '15' then v_cands := v_cands || 3; end if;
+    if left(d, 1) in ('2', '3')     and substr(d, 5, 2) = '15' then v_cands := v_cands || 4; end if;
+    if coalesce(array_length(v_cands, 1), 0) <> 1 then return null; end if;
+    v_area := v_cands[1];
 
-    if substr(d, v_area + 1, 2) <> '15' then return null; end if;
     v_out := left(d, v_area) || substr(d, v_area + 3);
     if length(v_out) <> 10 then return null; end if;
     if left(v_out, 2) <> '11' and left(v_out, 1) not in ('2', '3') then return null; end if;
@@ -272,7 +277,8 @@ create table if not exists public.mensualidades (
   constraint mensualidades_codigo_chk    check (codigo ~ '^MEN-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$'),
   constraint mensualidades_nombre_chk    check (btrim(titular_nombre) <> ''),
   constraint mensualidades_apellido_chk  check (btrim(titular_apellido) <> ''),
-  constraint mensualidades_telnorm_chk   check (telefono_norm ~ '^[0-9]{8,15}$'),
+  -- (M2.2) Canónico argentino: EXACTAMENTE 10 dígitos (área + local).
+  constraint mensualidades_telnorm_chk   check (telefono_norm ~ '^[0-9]{10}$'),
   constraint mensualidades_email_chk     check (position('@' in titular_email) > 1),
   -- El saldo NUNCA puede ser negativo y siempre es múltiplo de 15.
   constraint mensualidades_saldo_chk     check (saldo_minutos >= 0 and saldo_minutos % 15 = 0)
@@ -336,7 +342,8 @@ create table if not exists public.mensualidad_compras (
   constraint mensualidad_compras_plan_min_chk   check (plan_minutos > 0 and plan_minutos % 15 = 0),
   constraint mensualidad_compras_plan_prec_chk  check (plan_precio >= 0),
   constraint mensualidad_compras_plan_vig_chk   check (plan_vigencia_dias between 1 and 365),
-  constraint mensualidad_compras_telnorm_chk    check (telefono_norm ~ '^[0-9]{8,15}$'),
+  -- (M2.2) Canónico argentino: EXACTAMENTE 10 dígitos (área + local).
+  constraint mensualidad_compras_telnorm_chk    check (telefono_norm ~ '^[0-9]{10}$'),
   constraint mensualidad_compras_estado_chk     check (estado_pago in ('pendiente','aprobado','rechazado','cancelado')),
   constraint mensualidad_compras_proc_chk       check (procesamiento in ('pendiente','aplicado','ignorado')),
   constraint mensualidad_compras_tipo_chk       check (tipo is null or tipo in ('alta','renovacion')),

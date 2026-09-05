@@ -3,9 +3,12 @@ import {
   MAX_TRASLADO_MINUTOS, UNIDAD_MINUTOS, DURACIONES_MENSUALIDAD, CODIGO_RE,
   minutosDeReserva, duracionValida, cantidadSimuladoresValida,
   normalizarTelefono, normalizarTelefonoDetallado, telefonoNormalizadoValido,
-  normalizarCodigo, estadoMensualidad, simularCompra,
+  normalizarCodigo, estadoMensualidad, simularCompra, AREAS_3_DIGITOS,
 } from "@/lib/mensualidades";
-import { CASOS_TELEFONO } from "@/lib/mensualidadesTelefono.fixtures";
+import {
+  CASOS_TELEFONO, AREA_OFICIAL_2, AREAS_OFICIALES_3, AREAS_OFICIALES_4_MUESTRA,
+  formatosEquivalentes, localDe,
+} from "@/lib/mensualidadesTelefono.fixtures";
 
 // Ejecutar: npx tsx lib/mensualidades.test.ts
 // Reglas PURAS del producto. La contraparte contra la base real (RPC, constraints,
@@ -45,6 +48,26 @@ for (const [entrada, esperado, nota] of CASOS_TELEFONO) {
     `teléfono no idempotente (${nota}): "${entrada}"`
   );
 }
+
+// ── M2.2 · Cada indicativo oficial en sus tres formatos ────────────────────
+// La lista que usa el código tiene que ser EXACTAMENTE la de ENACOM.
+assert.deepEqual(
+  [...AREAS_3_DIGITOS].sort(), [...AREAS_OFICIALES_3].sort(),
+  "AREAS_3_DIGITOS difiere del snapshot oficial de ENACOM"
+);
+assert.equal(AREAS_OFICIALES_3.length, 38, "ENACOM lista 38 indicativos de 3 dígitos");
+
+let combinaciones = 0;
+for (const area of [AREA_OFICIAL_2, ...AREAS_OFICIALES_3, ...AREAS_OFICIALES_4_MUESTRA]) {
+  const local = localDe(area);
+  const canonico = `${area}${local}`;
+  assert.equal(canonico.length, 10, `área ${area}: el canónico debe tener 10 dígitos`);
+  for (const formato of formatosEquivalentes(area, local)) {
+    assert.equal(normalizarTelefono(formato), canonico, `área ${area}, formato "${formato}"`);
+    combinaciones++;
+  }
+}
+assert.equal(combinaciones, (1 + 38 + 5) * 3, "faltaron combinaciones de indicativos");
 
 // Un valor ya canónico no se toca.
 assert.equal(normalizarTelefono("3515123456"), "3515123456");

@@ -2,7 +2,10 @@ import { strict as assert } from "node:assert";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizarTelefono, simularCompra } from "@/lib/mensualidades";
-import { CASOS_TELEFONO } from "@/lib/mensualidadesTelefono.fixtures";
+import {
+  CASOS_TELEFONO, AREA_OFICIAL_2, AREAS_OFICIALES_3, AREAS_OFICIALES_4_MUESTRA,
+  formatosEquivalentes, localDe,
+} from "@/lib/mensualidadesTelefono.fixtures";
 
 // Integración de Mensualidades (Bloque M2) contra la DB REAL, con datos TEMPORALES
 // que se ELIMINAN al final. Teléfonos con área 2966 (Río Gallegos, fuera del área
@@ -244,6 +247,50 @@ async function main() {
     assert.equal(sql2 ?? null, sql ?? null, `T11 SQL no idempotente en "${entrada}"`);
   }
   console.log(`T11 paridad SQL == TS en ${CASOS_TELEFONO.length} casos, idempotente OK`);
+
+  // ── T11b · Cada indicativo oficial de ENACOM en sus 3 formatos, SQL vs TS ──
+  let combis = 0;
+  for (const area of [AREA_OFICIAL_2, ...AREAS_OFICIALES_3, ...AREAS_OFICIALES_4_MUESTRA]) {
+    const loc = localDe(area);
+    const canonico = `${area}${loc}`;
+    for (const formato of formatosEquivalentes(area, loc)) {
+      const { data: sql, error } = await supabaseAdmin.rpc("mensualidad_normalizar_telefono", { p_tel: formato });
+      if (error) throw new Error(`T11b SQL falló en "${formato}": ${error.message}`);
+      assert.equal(sql, canonico, `T11b SQL área ${area} formato "${formato}" → ${sql}`);
+      assert.equal(normalizarTelefono(formato), canonico, `T11b TS área ${area} formato "${formato}"`);
+      combis++;
+    }
+  }
+  assert.equal(combis, (1 + AREAS_OFICIALES_3.length + AREAS_OFICIALES_4_MUESTRA.length) * 3);
+  console.log(`T11b ${combis} combinaciones de indicativos oficiales, SQL == TS OK`);
+
+  // ── T22 · CHECK estricto de telefono_norm en las DOS tablas (M2.2) ────────
+  for (const malo of ["12345678", "123456789", "12345678901", "123456789012345"]) {
+    const { error: e1 } = await supabaseAdmin.from("mensualidades").insert({
+      codigo: "MEN-ZZZZ-2222", titular_nombre: "Zz", titular_apellido: "Test",
+      titular_telefono: "x", telefono_norm: malo, titular_email: "z@z.com", vence_el: HOY,
+    });
+    assert.equal((e1 as { code?: string } | null)?.code, "23514",
+      `T22 mensualidades aceptó telefono_norm de ${malo.length} dígitos`);
+    const { error: e2 } = await supabaseAdmin.from("mensualidad_compras").insert({
+      plan_slug: "1h", plan_nombre: "x", plan_minutos: 60, plan_precio: 1, plan_vigencia_dias: 30,
+      comprador_nombre: "Zz", comprador_apellido: "Test", comprador_telefono: "x",
+      telefono_norm: malo, comprador_email: "z@z.com", importe_bruto: 1,
+    });
+    assert.equal((e2 as { code?: string } | null)?.code, "23514",
+      `T22 compras aceptó telefono_norm de ${malo.length} dígitos`);
+  }
+  // Un canónico de 10 dígitos sí entra en ambas.
+  const telChk = nuevoTel();
+  const { data: mOk, error: eOk } = await supabaseAdmin.from("mensualidades").insert({
+    codigo: `MEN-ZZ${String(Date.now() % 100).padStart(2, "0")}-2222`.replace(/[01IO]/g, "2"),
+    titular_nombre: "Zz", titular_apellido: "Test", titular_telefono: telChk,
+    telefono_norm: telChk, titular_email: `${MARCA}@test.local`, vence_el: HOY,
+  }).select("id").single();
+  assert.ok(!eOk, `T22 rechazó un canónico válido: ${eOk?.message}`);
+  if (mOk) creados.mensualidades.push(mOk.id);
+  await nuevaCompra({ slug: "1h", minutos: 60, precio: 30000, telefonoNorm: telChk, ref: `${MARCA}_chk` });
+  console.log("T22 CHECK estricto (10 dígitos) en ambas tablas OK");
 
   // ── T19 · Renovación con formato viejo y después internacional ───────────
   // El mismo número escrito de dos formas tiene que caer en la MISMA billetera.
