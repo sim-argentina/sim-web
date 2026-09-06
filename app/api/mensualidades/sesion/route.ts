@@ -6,6 +6,9 @@ import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import { normalizarTelefonoDetallado, normalizarCodigo } from "@/lib/mensualidades";
 import { buscarPorCodigoYTelefono } from "@/lib/mensualidadesMiPlan";
 import {
+  claveLimiteCodigo, LIMITE_POR_CODIGO, VENTANA_POR_CODIGO_MS,
+} from "@/lib/mensualidadHuella";
+import {
   COOKIE_SESION, crearSesion, revocarSesion, limpiarSesionesVencidas,
   opcionesCookie, opcionesCookieBorrada, tokenDeRequest,
 } from "@/lib/mensualidadSesion";
@@ -46,7 +49,8 @@ export async function POST(req: Request) {
   if (!mensualidadesHabilitadas()) {
     return NextResponse.json({ error: "No encontrado" }, { status: 404, headers: sinCache });
   }
-  // Rate limit estricto: identificarse es adivinable por fuerza bruta.
+  // Rate limit estricto: identificarse es adivinable por fuerza bruta. Son DOS
+  // carriles independientes; este es el de origen (más abajo, el del código).
   if (!(await rateLimit(`mens-sesion:${clientIp(req)}`, 8, 60_000))) return tooManyResponse();
   if (!isAllowedOrigin(req)) return forbiddenOrigin();
 
@@ -67,6 +71,17 @@ export async function POST(req: Request) {
     // Formato inválido y datos que no coinciden devuelven EXACTAMENTE lo mismo.
     const codigo = normalizarCodigo(String(body.codigo ?? "").slice(0, 40));
     const tel = normalizarTelefonoDetallado(String(body.telefono ?? "").slice(0, 40));
+
+    // (Ajuste M4) Segundo carril: límite POR CÓDIGO, antes de consultar la base.
+    // El límite por IP no frena al que ya conoce un código y prueba teléfonos
+    // desde muchas IPs —que es justo el ataque que importa acá—, y una clave
+    // global o por instancia tampoco serviría. La clave es un HMAC del código:
+    // no es reversible y el código no se escribe en el store del rate limit.
+    // No es un oráculo: cuenta todos los intentos, exista o no la mensualidad.
+    if (codigo && !(await rateLimit(claveLimiteCodigo(codigo), LIMITE_POR_CODIGO, VENTANA_POR_CODIGO_MS))) {
+      await esperarPiso(t0);
+      return tooManyResponse();
+    }
 
     let mensualidadId: string | null = null;
     if (codigo && tel.ok) {

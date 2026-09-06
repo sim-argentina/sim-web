@@ -1,43 +1,47 @@
-// Fuente única de horarios, precios y ocupación de reservas.
-// La usan tanto la página pública de reservas como las rutas de API
-// (/api/reservas y /api/mercadopago/preference) para validar disponibilidad
-// de turnos de 15 y 30 minutos sin duplicar lógica.
+// Horarios, precios y ocupación de reservas.
+//
+// (M6) Los horarios, la ventana pública y el mapeo duración → bloques YA NO se
+// definen acá: la fuente única es `lib/agenda.ts`, que también consume el
+// navegador. Este módulo queda como la cara histórica de esa política —lo
+// importan /api/reservas, /api/mercadopago/*, Empresas, el Calendario del admin
+// y los bloqueos— para no cambiar en un solo paso a nueve consumidores.
+//
+// Todo lo que se re-exporta apunta a `lib/agenda.ts`: no hay una segunda copia
+// de los horarios ni una segunda función de bloques en ningún lado.
 
-export const WEEKDAY_SLOTS = [
-  "10:00", "10:20", "10:40", "11:00", "11:20", "11:40",
-  "12:00", "12:20", "12:40", "13:00", "13:20", "13:40",
-  "14:00", "14:20", "14:40", "15:00", "15:20", "15:40",
-  "16:00", "16:20", "16:40", "17:00", "17:20", "17:40",
-  "18:00", "18:20", "18:40", "19:00", "19:20", "19:40",
-  "20:00", "20:20", "20:40", "21:00", "21:20", "21:40",
-];
+import {
+  WEEKDAY_SLOTS as SLOTS_SEMANA,
+  WEEKEND_SLOTS as SLOTS_FINDE,
+  DURACIONES_POR_PRODUCTO,
+  bloquesDeAgenda,
+  esFinDeSemana,
+  horariosDe,
+} from "@/lib/agenda";
 
-export const WEEKEND_SLOTS = [
-  "10:00", "10:20", "10:40", "11:00", "11:20", "11:40",
-  "12:00", "12:20", "12:40", "13:00", "13:20", "13:40", "14:00",
-];
+export const WEEKDAY_SLOTS: readonly string[] = SLOTS_SEMANA;
+export const WEEKEND_SLOTS: readonly string[] = SLOTS_FINDE;
 
-// Precios por simulador/persona
+// Precios por simulador/persona. Los precios especiales por fecha se resuelven
+// en lib/reservasPricing.ts; esto es el precio normal vigente.
 export const PRECIO_15 = 12000;
 export const PRECIO_30_SEMANA = 18000;
 export const PRECIO_30_FINDE = 20000;
 
-export const DURACIONES_VALIDAS = [15, 30] as const;
-export type Duracion = (typeof DURACIONES_VALIDAS)[number];
+// Duraciones de una RESERVA NORMAL. 45 y 60 existen solo para Mensualidades y
+// viven en DURACIONES_POR_PRODUCTO.
+export const DURACIONES_VALIDAS = DURACIONES_POR_PRODUCTO.reserva as readonly (15 | 30)[];
+export type Duracion = 15 | 30;
 
 export function isWeekendDateKey(dateKey: string): boolean {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
-  const dow = date.getDay();
-  return dow === 0 || dow === 6;
+  return esFinDeSemana(dateKey);
 }
 
 export function getSlotsForDate(dateKey: string): string[] {
   if (!dateKey) return [];
-  return isWeekendDateKey(dateKey) ? WEEKEND_SLOTS : WEEKDAY_SLOTS;
+  return horariosDe(dateKey);
 }
 
-// Devuelve el turno siguiente (20 min después) dentro del mismo día, o null si no existe.
+// Turno siguiente (20 min después) dentro del mismo día, o null.
 export function getNextSlot(dateKey: string, hora: string): string | null {
   const slots = getSlotsForDate(dateKey);
   const idx = slots.indexOf(hora);
@@ -45,18 +49,18 @@ export function getNextSlot(dateKey: string, hora: string): string | null {
   return slots[idx + 1] ?? null;
 }
 
-// Slots de 20 min que ocupa una reserva según su duración.
-// 15 min → 1 slot; 30 min → 2 slots consecutivos.
+// Posiciones de agenda que ocupa una reserva según su duración.
+//
+// Contrato IDÉNTICO al histórico para no alterar a ningún consumidor: siempre
+// devuelve al menos [hora]. La versión estricta —que devuelve null cuando la
+// duración no entra o hay una discontinuidad— es `bloquesDeAgenda` de
+// lib/agenda.ts, y es la que usa toda la validación nueva.
 export function getOccupiedSlots(
   dateKey: string,
   hora: string,
   duracion: number
 ): string[] {
-  if (Number(duracion) >= 30) {
-    const next = getNextSlot(dateKey, hora);
-    return next ? [hora, next] : [hora];
-  }
-  return [hora];
+  return bloquesDeAgenda(dateKey, hora, duracion) ?? [hora];
 }
 
 // Precio por simulador según día y duración.
@@ -73,8 +77,8 @@ type ReservaOcupacion = {
   simuladores: unknown;
 };
 
-// Construye un mapa slot -> set de simuladores ocupados, expandiendo
-// las reservas de 30 min a sus dos slots consecutivos.
+// Mapa slot -> set de simuladores ocupados, expandiendo cada reserva a todos
+// los bloques que ocupa.
 export function construirOcupacion(
   dateKey: string,
   reservas: ReservaOcupacion[]

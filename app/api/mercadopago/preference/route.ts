@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Preference } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import {
-  getOccupiedSlots,
-  construirOcupacion,
-} from "@/lib/reservasSlots";
+import { getOccupiedSlots } from "@/lib/reservasSlots";
+import { hayDisponibilidadPara } from "@/lib/disponibilidad";
 import { getPrecioReserva } from "@/lib/reservasPricing";
 import { validarCodigoDescuento } from "@/lib/codigosDescuento";
 import { reservaEstaBloqueada } from "@/lib/bloqueos";
@@ -21,10 +19,6 @@ const client = new MercadoPagoConfig({ accessToken: accessToken! });
 function isInvalidBaseUrl(url: string) {
   return url.includes("localhost") || url.includes("127.0.0.1");
 }
-
-// Las reservas pendiente_pago de los últimos N minutos bloquean el turno
-// (mitiga la doble reserva mientras el cliente está pagando).
-const PENDIENTE_TTL_MIN = 15;
 
 export async function POST(req: Request) {
   if (!(await rateLimit(`pref-resv:${clientIp(req)}`, 10, 60_000))) {
@@ -92,37 +86,15 @@ export async function POST(req: Request) {
       );
     }
 
-    // Disponibilidad: reservas activas + pendientes recientes ocupan el turno.
-    const reqSlots = getOccupiedSlots(fecha, hora, duracion);
-    const ttlIso = new Date(Date.now() - PENDIENTE_TTL_MIN * 60_000).toISOString();
-
-    const { data: existentes, error: checkError } = await supabaseAdmin
-      .from("reservas")
-      .select("id, hora, duracion_minutos, simuladores, estado, created_at")
-      .eq("fecha", fecha)
-      .in("estado", ["activa", "pendiente_pago"]);
-
-    if (checkError) {
-      return failResponse(500, "Error validando disponibilidad", {
-        logContext: "pref-resv check",
-        error: checkError,
-      });
-    }
-
-    const bloqueantes = (existentes || []).filter(
-      (r) =>
-        r.estado === "activa" ||
-        (r.estado === "pendiente_pago" && r.created_at && r.created_at > ttlIso)
-    );
-    const ocupacion = construirOcupacion(fecha, bloqueantes);
-    const conflicto = reqSlots.some((slot) =>
-      simuladores.some((sim) => ocupacion[slot]?.has(sim))
-    );
-    if (conflicto) {
-      return NextResponse.json(
-        { error: "Uno o más simuladores ya están reservados en ese horario" },
-        { status: 409 }
-      );
+    // (M6) Disponibilidad real por la fuente única: reservas activas +
+    // pendientes recientes + bloqueos, con intersección de simuladores libres en
+    // TODOS los bloques que ocupa la duración. Reemplaza el chequeo de ocupación
+    // que este endpoint calculaba por su cuenta.
+    const disp = await hayDisponibilidadPara({
+      fecha, hora, duracion, simuladores, producto: "reserva",
+    });
+    if (!disp.ok) {
+      return NextResponse.json({ error: disp.error }, { status: disp.status });
     }
 
     const { data: reservaPendiente, error: insertError } = await supabaseAdmin

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getOccupiedSlots } from "@/lib/reservasSlots";
+import { hayDisponibilidadPara } from "@/lib/disponibilidad";
 import { getPrecioReserva } from "@/lib/reservasPricing";
 import {
   validarCodigoDescuento,
@@ -102,6 +103,16 @@ export async function POST(req: Request) {
         { error: "Ese horario no está disponible." },
         { status: 400 }
       );
+    }
+
+    // (M6) Disponibilidad real por la fuente única, antes de tocar nada. La
+    // garantía definitiva contra carreras sigue siendo el índice único de
+    // reserva_slots; esto evita crear la reserva para borrarla enseguida.
+    const disp = await hayDisponibilidadPara({
+      fecha, hora, duracion, simuladores, producto: "reserva",
+    });
+    if (!disp.ok) {
+      return NextResponse.json({ error: disp.error }, { status: disp.status });
     }
 
     // ── Precio recalculado server-side (precio especial de la fecha si existe;

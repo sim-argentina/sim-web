@@ -1,7 +1,18 @@
-import { getSlotsForDate } from "@/lib/reservasSlots";
+import {
+  DIAS_MAXIMO_ANTICIPACION, DIAS_MINIMO_ANTICIPACION,
+  bloquesDeAgenda, cantidadSimuladoresValida, duracionValidaPara,
+  fechaDentroDeVentana, fechaValida, hoyEnSim, horariosDe,
+  type Producto,
+} from "@/lib/agenda";
 
 // Validación server-side centralizada de inputs de reserva.
 // Nunca se confía en el cliente: precio y disponibilidad se recalculan aparte.
+//
+// (M6) La ventana de fechas ya no es una constante global ambigua de 120 días:
+// es la MISMA política pública que ve el cliente en /reservas —de mañana a
+// hoy + 15, en hora de Córdoba— y vive en lib/agenda.ts. Esa política aplica al
+// flujo PÚBLICO. Empresas y Administración no pasan por acá y conservan sus
+// propias reglas (ver lib/empresasServer.ts y /api/admin/*).
 
 export const SIMULADORES_VALIDOS = [
   "Ferrari",
@@ -10,8 +21,8 @@ export const SIMULADORES_VALIDOS = [
   "Alpine",
 ] as const;
 
-// Ventana máxima de reserva hacia el futuro (días).
-export const MAX_FUTURO_DIAS = 120;
+// Se mantienen exportadas por claridad de la política pública.
+export { DIAS_MINIMO_ANTICIPACION, DIAS_MAXIMO_ANTICIPACION };
 
 export type ReservaValida = {
   nombre: string;
@@ -19,7 +30,8 @@ export type ReservaValida = {
   fecha: string;
   hora: string;
   simuladores: string[];
-  duracion: 15 | 30;
+  duracion: number;
+  bloques: string[];
   codigo_descuento: string | null;
 };
 
@@ -31,7 +43,19 @@ function fail(error: string): ValidacionReserva {
   return { ok: false, error };
 }
 
-export function validarReservaInput(body: unknown): ValidacionReserva {
+export type OpcionesValidacion = {
+  /** Producto que reserva. Por defecto la reserva pública normal (15/30). */
+  producto?: Producto;
+  /** "Hoy" en Córdoba; se inyecta en los tests para fijar la ventana. */
+  hoy?: string;
+};
+
+export function validarReservaInput(
+  body: unknown,
+  opciones: OpcionesValidacion = {},
+): ValidacionReserva {
+  const producto: Producto = opciones.producto ?? "reserva";
+  const hoy = opciones.hoy ?? hoyEnSim();
   const b = (body ?? {}) as Record<string, unknown>;
 
   // ── Datos personales ──
@@ -42,35 +66,33 @@ export function validarReservaInput(body: unknown): ValidacionReserva {
     return fail("Teléfono inválido");
   }
 
-  // ── Fecha (formato real, no pasada, dentro de ventana) ──
+  // ── Fecha: real, desde mañana y dentro de la ventana pública ──
   const fecha = String(b.fecha ?? "");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return fail("Fecha inválida");
-  const fechaDate = new Date(fecha + "T00:00:00");
-  if (Number.isNaN(fechaDate.getTime())) return fail("Fecha inválida");
-  const hoy = new Date();
-  hoy.setHours(0, 0, 0, 0);
-  if (fechaDate < hoy) return fail("La fecha ya pasó");
-  const max = new Date(hoy);
-  max.setDate(max.getDate() + MAX_FUTURO_DIAS);
-  if (fechaDate > max) return fail("La fecha está fuera del rango permitido");
+  if (!fechaValida(fecha)) return fail("Fecha inválida");
+  if (!fechaDentroDeVentana(fecha, hoy)) {
+    return fail("La fecha está fuera del rango permitido");
+  }
 
-  // ── Duración (15/30) ──
-  const duracion: 15 | 30 = Number(b.duracion_minutos) === 30 ? 30 : 15;
+  // ── Duración: solo las que admite ESTE producto ──
+  // Si no viene el campo se mantiene el default histórico de 15; si viene un
+  // valor, tiene que ser válido (antes 45 o 60 se convertían en 15 en silencio).
+  const duracionCruda = b.duracion_minutos;
+  const duracion = duracionCruda === undefined || duracionCruda === null
+    ? 15
+    : Number(duracionCruda);
+  if (!duracionValidaPara(producto, duracion)) return fail("Duración inválida");
 
-  // ── Hora (debe ser un slot real del sistema) ──
-  const slots = getSlotsForDate(fecha);
+  // ── Hora: tiene que existir en el calendario del día y entrar completa ──
   const hora = String(b.hora ?? "");
-  if (!slots.includes(hora)) return fail("Horario inválido");
-  if (duracion === 30) {
-    const idx = slots.indexOf(hora);
-    if (idx === -1 || idx + 1 >= slots.length) {
-      return fail("No hay un turno consecutivo disponible para 30 minutos");
-    }
+  if (!horariosDe(fecha).includes(hora)) return fail("Horario inválido");
+  const bloques = bloquesDeAgenda(fecha, hora, duracion);
+  if (!bloques) {
+    return fail("No hay tiempo consecutivo disponible para esa duración");
   }
 
   // ── Simuladores (set permitido, 1..4, sin duplicados) ──
   const sims = b.simuladores;
-  if (!Array.isArray(sims) || sims.length < 1 || sims.length > 4) {
+  if (!Array.isArray(sims) || !cantidadSimuladoresValida(sims.length)) {
     return fail("Selección de simuladores inválida");
   }
   const norm = sims.map((s) => String(s));
@@ -99,6 +121,7 @@ export function validarReservaInput(body: unknown): ValidacionReserva {
       hora,
       simuladores: norm,
       duracion,
+      bloques,
       codigo_descuento,
     },
   };

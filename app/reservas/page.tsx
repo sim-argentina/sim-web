@@ -17,6 +17,11 @@ import {
   trackCheckoutError, trackPaymentRedirect, trackFreePurchase,
 } from "@/lib/analytics";
 import {
+  esFinDeSemana,
+  fechasPublicas,
+  horariosDe,
+} from "@/lib/agenda";
+import {
   getOccupiedSlots,
   getNextSlot,
   precioPorSimulador,
@@ -54,7 +59,6 @@ type CodigoAplicado = {
 };
 
 const PRICE = 12000;
-const MAX_BOOKING_DAYS = 15;
 
 const teams = [
   {
@@ -103,60 +107,7 @@ const teams = [
   },
 ];
 
-const weekdayTimeSlots = [
-  "10:00",
-  "10:20",
-  "10:40",
-  "11:00",
-  "11:20",
-  "11:40",
-  "12:00",
-  "12:20",
-  "12:40",
-  "13:00",
-  "13:20",
-  "13:40",
-  "14:00",
-  "14:20",
-  "14:40",
-  "15:00",
-  "15:20",
-  "15:40",
-  "16:00",
-  "16:20",
-  "16:40",
-  "17:00",
-  "17:20",
-  "17:40",
-  "18:00",
-  "18:20",
-  "18:40",
-  "19:00",
-  "19:20",
-  "19:40",
-  "20:00",
-  "20:20",
-  "20:40",
-  "21:00",
-  "21:20",
-  "21:40",
-];
 
-const weekendTimeSlots = [
-  "10:00",
-  "10:20",
-  "10:40",
-  "11:00",
-  "11:20",
-  "11:40",
-  "12:00",
-  "12:20",
-  "12:40",
-  "13:00",
-  "13:20",
-  "13:40",
-  "14:00",
-];
 
 function cn(...classes: string[]) {
   return classes.filter(Boolean).join(" ");
@@ -168,13 +119,6 @@ function formatPrice(value: number) {
     currency: "ARS",
     maximumFractionDigits: 0,
   }).format(value);
-}
-
-function formatDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 function capitalizeFirst(text: string) {
@@ -199,39 +143,23 @@ function createReservationKey(date: string, time: string) {
   return `${date}__${time}`;
 }
 
+// (M6) Estos helpers ya no definen política: la toman de lib/agenda, la misma
+// fuente que valida el servidor. Se conservan los nombres para no tocar el
+// resto de la página.
 function isWeekendDate(dateKey: string) {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
-  const dayOfWeek = date.getDay();
-  return dayOfWeek === 0 || dayOfWeek === 6;
+  return esFinDeSemana(dateKey);
 }
 
 function getTimeSlotsForDate(dateKey: string) {
-  if (!dateKey) return [];
-  return isWeekendDate(dateKey) ? weekendTimeSlots : weekdayTimeSlots;
+  return horariosDe(dateKey);
 }
 
 function getAvailableDates() {
-  const dates: {
-    value: string;
-    fullLabel: string;
-  }[] = [];
-
-  for (let i = 1; i <= MAX_BOOKING_DAYS; i++) {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    date.setDate(date.getDate() + i);
-
-    const value = formatDateKey(date);
-    const fullLabel = formatFullDateLabel(value);
-
-    dates.push({
-      value,
-      fullLabel,
-    });
-  }
-
-  return dates;
+  // fechasPublicas() usa el "hoy" de Córdoba, no la zona del dispositivo.
+  return fechasPublicas().map((value) => ({
+    value,
+    fullLabel: formatFullDateLabel(value),
+  }));
 }
 
 function getPhoneDigits(value: string) {
