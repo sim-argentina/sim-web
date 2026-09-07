@@ -32,6 +32,29 @@ type Confirmada = {
   saldo_restante: number;
 };
 
+// (M5B) Cotización de la diferencia: la calcula y la firma el servidor con los
+// precios vigentes de esa fecha. Acá solo se muestra.
+type Cotizacion = {
+  minutos_requeridos: number;
+  minutos_saldo: number;
+  minutos_faltantes: number;
+  bloques_30: number;
+  bloques_15: number;
+  precio_15: number;
+  precio_30: number;
+  importe: number;
+};
+
+/** Minutos que dura la retención mientras el titular paga. Igual que el TTL de
+ *  una reserva normal pendiente; solo se usa para el texto. */
+const RETENCION_MIN = 15;
+
+function pesos(n: number) {
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency", currency: "ARS", maximumFractionDigits: 0,
+  }).format(n);
+}
+
 function fechaLarga(iso: string) {
   const [y, m, d] = iso.split("-").map(Number);
   const txt = new Intl.DateTimeFormat("es-AR", {
@@ -78,6 +101,10 @@ export default function ReservarConMensualidad({
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [faltan, setFaltan] = useState<number | null>(null);
+  // (M5B) Cotización de la diferencia. Solo se llena cuando el saldo alcanza
+  // para una parte: con saldo 0 no hay pago mixto.
+  const [cotizacion, setCotizacion] = useState<Cotizacion | null>(null);
+  const [pagando, setPagando] = useState(false);
   const [confirmada, setConfirmada] = useState<Confirmada | null>(null);
   const [saldo, setSaldo] = useState(saldoInicial);
 
@@ -125,7 +152,10 @@ export default function ReservarConMensualidad({
 
   const minutos = duracion * sims.length;
   const alcanza = minutos > 0 && minutos <= saldo;
-  const listo = Boolean(fecha && hora && sims.length > 0 && acepto && alcanza);
+  // (M5B) Con saldo parcial el botón SÍ se habilita: al confirmar, el servidor
+  // devuelve la cotización de la diferencia en vez de crear la reserva. Con
+  // saldo 0 no, porque ese caso no tiene pago mixto.
+  const listo = Boolean(fecha && hora && sims.length > 0 && acepto && (alcanza || saldo > 0));
 
   // La clave se recalcula cuando cambia la selección, no en cada click.
   const clave = useMemo(
@@ -133,6 +163,15 @@ export default function ReservarConMensualidad({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [fecha, hora, duracion, sims.join("|")],
   );
+
+  // (M5B) Una cotización pertenece a UNA selección: si el titular cambia
+  // cualquier cosa, el importe deja de ser válido y se descarta. Nunca se
+  // muestra un precio que ya no corresponde a lo que está eligiendo.
+  const seleccion = `${fecha}|${hora}|${duracion}|${sims.join(",")}`;
+  useEffect(() => {
+    setCotizacion(null);
+    setFaltan(null);
+  }, [seleccion]);
 
   async function cambiarFecha(f: string) {
     setFecha(f);
@@ -155,6 +194,7 @@ export default function ReservarConMensualidad({
     setEnviando(true);
     setError(null);
     setFaltan(null);
+    setCotizacion(null);
     try {
       const res = await fetch("/api/mensualidades/reservar", {
         method: "POST",
@@ -183,11 +223,52 @@ export default function ReservarConMensualidad({
         setFaltan(data.minutos_faltantes);
         if (typeof data.saldo_minutos === "number") setSaldo(data.saldo_minutos);
       }
+      // (M5B) Si el servidor cotizó la diferencia, se muestra el desglose en vez
+      // de un error seco: el titular puede pagar solo lo que falta.
+      if (data.cotizacion) {
+        setCotizacion(data.cotizacion as Cotizacion);
+        return;
+      }
       setError(String(data.error ?? "No pudimos confirmar la reserva."));
     } catch {
       setError("No pudimos confirmar la reserva. Probá de nuevo.");
     } finally {
       setEnviando(false);
+    }
+  }
+
+  // (M5B) Crea la retención y manda a Mercado Pago. El turno y los minutos
+  // quedan tomados desde este momento, así que no hay ventana para que otro se
+  // lleve el horario mientras el titular paga.
+  async function pagarDiferencia() {
+    if (pagando) return;
+    setPagando(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/mensualidades/reservar/complemento", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          fecha, hora, duracion_minutos: duracion, simuladores: sims,
+          acepto_condiciones: true, idempotency_key: clave,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && typeof data.init_point === "string") {
+        window.location.href = data.init_point;
+        return;
+      }
+      if (res.status === 409) {
+        await cargar(fecha, duracion);
+        setCotizacion(null);
+        setError(String(data.error ?? "Ese turno ya no está disponible."));
+        return;
+      }
+      setError(String(data.error ?? "No pudimos abrir el pago. Probá de nuevo."));
+    } catch {
+      setError("No pudimos abrir el pago. Probá de nuevo.");
+    } finally {
+      setPagando(false);
     }
   }
 
@@ -426,9 +507,63 @@ export default function ReservarConMensualidad({
             <span>
               Esta selección necesita {minutosATexto(minutos)} y tenés {minutosATexto(saldo)}.
               {faltan !== null && <> Te faltan {minutosATexto(faltan)}.</>}{" "}
-              Por ahora elegí menos escuderías o una duración más corta.
+              {saldo > 0
+                ? "Confirmá para ver cuánto costaría pagar la diferencia."
+                : "Renová tu mensualidad o hacé una reserva normal."}
             </span>
           </p>
+        )}
+
+        {/* (M5B) COTIZACIÓN DE LA DIFERENCIA · el desglose completo antes de pagar */}
+        {cotizacion && (
+          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/[0.07] p-4">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-300">
+              Pagá solo la diferencia
+            </p>
+            <dl className="mt-3 space-y-1.5 text-xs text-zinc-300">
+              <div className="flex justify-between gap-4">
+                <dt>Necesitás</dt>
+                <dd className="tabular-nums">{minutosATexto(cotizacion.minutos_requeridos)}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt>Cubrís con tu mensualidad</dt>
+                <dd className="tabular-nums text-green-400">{minutosATexto(cotizacion.minutos_saldo)}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt>Te faltan</dt>
+                <dd className="tabular-nums text-amber-300">{minutosATexto(cotizacion.minutos_faltantes)}</dd>
+              </div>
+              <div className="my-2 border-t border-white/10" />
+              {cotizacion.bloques_30 > 0 && (
+                <div className="flex justify-between gap-4">
+                  <dt>{cotizacion.bloques_30} × bloque de 30 min</dt>
+                  <dd className="tabular-nums">{pesos(cotizacion.bloques_30 * cotizacion.precio_30)}</dd>
+                </div>
+              )}
+              {cotizacion.bloques_15 > 0 && (
+                <div className="flex justify-between gap-4">
+                  <dt>{cotizacion.bloques_15} × bloque de 15 min</dt>
+                  <dd className="tabular-nums">{pesos(cotizacion.bloques_15 * cotizacion.precio_15)}</dd>
+                </div>
+              )}
+              <div className="flex justify-between gap-4 pt-1 text-sm font-black text-white">
+                <dt>Total a pagar</dt>
+                <dd className="tabular-nums">{pesos(cotizacion.importe)}</dd>
+              </div>
+            </dl>
+            <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+              El turno queda reservado {RETENCION_MIN} minutos mientras pagás. Si no completás
+              el pago, se libera y los minutos vuelven a tu mensualidad.
+            </p>
+            <button
+              type="button"
+              onClick={() => void pagarDiferencia()}
+              disabled={pagando}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-500 px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {pagando ? "Abriendo el pago…" : `Pagar ${pesos(cotizacion.importe)}`}
+            </button>
+          </div>
         )}
 
         {error && (
@@ -437,15 +572,21 @@ export default function ReservarConMensualidad({
           </p>
         )}
 
-        <button
-          type="button"
-          onClick={() => void confirmar()}
-          disabled={!listo || enviando}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {enviando ? "Confirmando…" : "Confirmar reserva"}
-        </button>
+        {/* Con la cotización a la vista el botón de arriba ya no aplica: el paso
+            siguiente es pagar, no confirmar. */}
+        {!cotizacion && (
+          <button
+            type="button"
+            onClick={() => void confirmar()}
+            disabled={!listo || enviando}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-red-600 px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {enviando
+              ? (alcanza ? "Confirmando…" : "Calculando…")
+              : (alcanza ? "Confirmar reserva" : "Ver cuánto falta pagar")}
+          </button>
+        )}
 
         <div className="mt-3 flex items-center justify-between gap-3">
           <Link href="/mensualidades/mi-plan" className="text-xs text-zinc-500 underline-offset-4 hover:underline">

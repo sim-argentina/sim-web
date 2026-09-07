@@ -4,7 +4,8 @@ import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import {
-  validarDatosCompra, tieneMensualidadBloqueada, crearCompraYPreferencia,
+  validarDatosCompra, tieneMensualidadBloqueada, tieneRetencionMixtaPendiente,
+  crearCompraYPreferencia,
 } from "@/lib/mensualidadesCompra";
 
 // Inicio de compra de una Mensualidad SIM (Bloque M3).
@@ -48,6 +49,21 @@ export async function POST(req: Request) {
     if (await tieneMensualidadBloqueada(v.data.telefonoNorm)) {
       return NextResponse.json(
         { error: "No podemos procesar la compra con esos datos. Escribinos y lo resolvemos." },
+        { status: 409 }
+      );
+    }
+
+    // 4bis) (M5B) Con una reserva mixta esperando el pago no se puede renovar:
+    //       esos minutos están comprometidos en el ciclo actual y renovar ahora
+    //       rompería el tope de traslado de 60 cuando la retención se libere.
+    //       Se corta ANTES de cobrar: nunca se acepta plata que después no se
+    //       puede aplicar limpio.
+    if (await tieneRetencionMixtaPendiente(v.data.telefonoNorm)) {
+      return NextResponse.json(
+        {
+          error: "Tenés una reserva esperando el pago. Terminá ese pago o esperá a que venza, y después renovás.",
+          codigo: "retencion_en_curso",
+        },
         { status: 409 }
       );
     }

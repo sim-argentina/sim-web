@@ -6,6 +6,7 @@ import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import { leerSesion, tokenDeRequest } from "@/lib/mensualidadSesion";
 import { huellaCodigo } from "@/lib/mensualidadHuella";
 import { validarSeleccion, reservarConSaldo } from "@/lib/mensualidadesReserva";
+import { preciosDeLaFecha, calcularDesglose } from "@/lib/mensualidadesReservaMixta";
 
 // Confirmación de una reserva pagada 100% con saldo (Bloque M5A).
 //
@@ -69,14 +70,42 @@ export async function POST(req: Request) {
     if (!r.ok) {
       // La mensualidad borrada se responde como sesión inválida, sin revelar más.
       if (r.codigo === "mensualidad_inexistente") return sinSesion();
+
+      // (M5B) Saldo insuficiente con saldo > 0: se COTIZA la diferencia y se
+      // devuelve el desglose completo, para que el titular vea exactamente qué
+      // se le va a cobrar ANTES de que exista ninguna retención. Esto no crea
+      // nada: es solo un cálculo con los precios vigentes de esa fecha.
+      let cotizacion: Record<string, number | string> | null = null;
+      if (r.codigo === "saldo_insuficiente" && r.saldo !== undefined && r.saldo > 0) {
+        const p = await preciosDeLaFecha(v.value.fecha);
+        const d = calcularDesglose({
+          duracion: v.value.duracion,
+          cantidadSimuladores: v.value.simuladores.length,
+          saldoMinutos: r.saldo,
+          precio15: p.precio15, precio30: p.precio30, origenPrecio: p.origenPrecio,
+        });
+        if (!("error" in d)) {
+          cotizacion = {
+            minutos_requeridos: d.minutos_requeridos,
+            minutos_saldo: d.minutos_saldo,
+            minutos_faltantes: d.minutos_faltantes,
+            bloques_30: d.bloques_30,
+            bloques_15: d.bloques_15,
+            precio_15: d.precio_15,
+            precio_30: d.precio_30,
+            importe: d.importe,
+          };
+        }
+      }
+
       return NextResponse.json(
         {
           error: r.error,
           codigo: r.codigo,
-          // Solo en saldo insuficiente: lo que M5B va a necesitar para ofrecer
-          // el pago de la diferencia. No hay ningún otro dato de la billetera.
+          // Solo en saldo insuficiente. No hay ningún otro dato de la billetera.
           ...(r.saldo !== undefined ? { saldo_minutos: r.saldo } : {}),
           ...(r.faltan !== undefined ? { minutos_faltantes: r.faltan } : {}),
+          ...(cotizacion ? { cotizacion } : {}),
         },
         { status: r.status, headers: sinCache },
       );

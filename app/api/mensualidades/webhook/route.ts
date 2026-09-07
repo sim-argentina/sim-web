@@ -3,6 +3,7 @@ import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { logSecurityEvent } from "@/lib/apiError";
 import { procesarPagoMensualidad, idDePagoDeNotificacion } from "@/lib/mensualidadesPago";
+import { procesarPagoReserva } from "@/lib/mensualidadesReservaPago";
 
 // Webhook exclusivo de Mensualidades. Se distingue por el prefijo
 // "mensualidad_" en external_reference y no toca reservas, gift_cards ni
@@ -37,7 +38,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
     }
 
-    const r = await procesarPagoMensualidad(paymentId);
+    // (M5B) Este webhook atiende DOS productos que comparten notification_url:
+    // la compra del plan (external_reference "mensualidad_...") y el complemento
+    // de una reserva mixta ("mensualidad_reserva_..."). Se prueba primero el
+    // complemento, que es el prefijo MÁS ESPECÍFICO: al revés, una reserva mixta
+    // entraría por el procesador de compras y nunca se acreditaría.
+    //
+    // Cada procesador vuelve a consultar el pago a Mercado Pago por su cuenta y
+    // devuelve 'ignorado' si la referencia no es suya, así que probar los dos es
+    // seguro y no cruza productos.
+    const rReserva = await procesarPagoReserva(paymentId);
+    const r = rReserva.ok && rReserva.estado === "ignorado" && rReserva.motivo === "otro_producto"
+      ? await procesarPagoMensualidad(paymentId)
+      : rReserva;
 
     // Un pago de otro producto o de una compra inexistente NO es un error nuestro:
     // se responde 200 para que Mercado Pago no reintente eternamente.

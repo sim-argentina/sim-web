@@ -11,6 +11,10 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 // alguien que ya pagó.
 
 export const PREFIJO_EXT_REF = "mensualidad_";
+// Prefijo del COMPLEMENTO de una reserva mixta (M5B). Se declara acá —y no se
+// importa desde el módulo de M5B— para que este archivo no dependa de aquél y
+// no se arme un ciclo de imports.
+export const PREFIJO_EXT_REF_RESERVA = "mensualidad_reserva_";
 const MONEDA = "ARS";
 // Tolerancia de centavo para comparar importes en coma flotante devueltos por MP.
 const EPSILON = 0.01;
@@ -138,8 +142,14 @@ export async function procesarPagoMensualidad(paymentId: string): Promise<Result
 // para que los tests puedan ejercitar todas las validaciones sin red.
 export async function procesarPagoVerificado(id: string, pago: PagoMp): Promise<ResultadoPago> {
   // 2) ¿Es nuestro? El prefijo de external_reference separa productos.
+  //
+  // (M5B) "mensualidad_reserva_" TAMBIÉN empieza con "mensualidad_", así que el
+  // complemento de una reserva mixta caería acá y se buscaría —en vano— en
+  // mensualidad_compras. Se excluye explícitamente: ese pago lo procesa
+  // lib/mensualidadesReservaPago.ts, que tiene su propia tabla y su snapshot.
   const extRef = String(pago.external_reference || "");
   if (!extRef.startsWith(PREFIJO_EXT_REF)) return ignorado("otro_producto");
+  if (extRef.startsWith(PREFIJO_EXT_REF_RESERVA)) return ignorado("complemento_de_reserva");
 
   // 3) La compra tiene que existir en nuestra base.
   const { data: compra, error } = await supabaseAdmin
