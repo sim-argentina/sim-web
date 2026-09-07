@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { failResponse } from "@/lib/apiError";
 import { COOKIE_SESION, leerSesion, opcionesCookieBorrada, tokenDeRequest } from "@/lib/mensualidadSesion";
-import { getMiPlan } from "@/lib/mensualidadesMiPlan";
+import { getMiPlan, getReservasDeMiPlan } from "@/lib/mensualidadesMiPlan";
 
 // Datos de la mensualidad de la sesión (Bloque M4).
 //
@@ -34,7 +34,10 @@ export async function GET(req: Request) {
     // La mensualidad podría haber desaparecido (borrado administrativo).
     if (!plan) return sinSesion();
 
-    return NextResponse.json(plan, { headers: sinCache });
+    // (M5A) Historial de la mensualidad DE LA SESIÓN. Nunca de otra.
+    const reservas = await getReservasDeMiPlan(sesion.mensualidadId);
+
+    return NextResponse.json({ ...plan, reservas }, { headers: sinCache });
   } catch (error) {
     return failResponse(500, "No pudimos consultar tu mensualidad.", {
       logContext: "mens-miplan", error,

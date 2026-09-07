@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Copy, Check, LogOut, ShoppingCart } from "lucide-react";
-import type { MiPlan } from "@/lib/mensualidadesMiPlan";
+import { Copy, Check, LogOut, ShoppingCart, CalendarPlus } from "lucide-react";
+import type { MiPlan, HistorialReservas, ReservaDeMiPlan } from "@/lib/mensualidadesMiPlan";
 
 // Parte interactiva de "Mi mensualidad" (Bloque M4): copiar el código y cerrar
 // sesión. Los datos ya vienen resueltos del servidor: acá no se consulta nada.
@@ -43,7 +43,38 @@ const ESTILO_ESTADO: Record<MiPlan["estado"], { chip: string; titulo: string; te
   },
 };
 
-export default function MiPlanCliente({ plan }: { plan: MiPlan }) {
+function minutosATexto(min: number) {
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const r = min % 60;
+  return r === 0 ? `${h} h` : `${h} h ${r} min`;
+}
+
+// (M5A) Una reserva de la mensualidad. Solo lo que el titular necesita
+// reconocer: nada de ids internos, importes ni datos de contacto.
+function FilaReserva({ r }: { r: ReservaDeMiPlan }) {
+  return (
+    <li className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
+      <span className="text-sm font-black">
+        {fechaLarga(r.fecha)} · {r.hora}
+      </span>
+      <span className="text-xs text-zinc-500">
+        {r.duracion} min · {r.simuladores.join(", ")} · {minutosATexto(r.minutos_consumidos)}
+      </span>
+      <span className="w-full font-mono text-[11px] tracking-wider text-zinc-600">
+        {r.referencia} · {r.estado}
+      </span>
+    </li>
+  );
+}
+
+export default function MiPlanCliente({
+  plan,
+  reservas,
+}: {
+  plan: MiPlan;
+  reservas?: HistorialReservas;
+}) {
   const router = useRouter();
   const [copiado, setCopiado] = useState(false);
   const [saliendo, setSaliendo] = useState(false);
@@ -141,12 +172,21 @@ export default function MiPlanCliente({ plan }: { plan: MiPlan }) {
           </div>
         </dl>
 
-        {/* Lugar reservado para el botón de reservar, que llega en M5. */}
-        <div className="mt-7 rounded-2xl border border-dashed border-white/15 px-5 py-4 text-sm text-zinc-500">
-          {plan.puede_reservar
-            ? "Muy pronto vas a poder reservar tus turnos desde acá."
-            : "Cuando tu mensualidad esté activa y con saldo vas a poder reservar desde acá."}
-        </div>
+        {/* (M5A) Reservar con saldo. El CTA solo aparece si la mensualidad está
+            vigente y con minutos; la ruta igual vuelve a comprobarlo. */}
+        {plan.puede_reservar ? (
+          <Link
+            href="/mensualidades/reservar"
+            className="mt-7 flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-6 py-4 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:bg-red-500"
+          >
+            <CalendarPlus className="h-4 w-4" />
+            Reservar con mi mensualidad
+          </Link>
+        ) : (
+          <div className="mt-7 rounded-2xl border border-dashed border-white/15 px-5 py-4 text-sm text-zinc-500">
+            Cuando tu mensualidad esté activa y con saldo vas a poder reservar desde acá.
+          </div>
+        )}
 
         <div className="mt-7 flex flex-wrap gap-3">
           <Link
@@ -167,6 +207,35 @@ export default function MiPlanCliente({ plan }: { plan: MiPlan }) {
           </button>
         </div>
       </div>
+
+      {/* (M5A) Historial. Todavía sin botones de cancelar ni reprogramar. */}
+      {(reservas?.proximas.length || reservas?.anteriores.length) ? (
+        <div className={`${caja} mt-5`}>
+          {reservas.proximas.length > 0 && (
+            <>
+              <h2 className="text-lg font-black">Próximas reservas</h2>
+              <ul className="mt-3 space-y-2">
+                {reservas.proximas.map((r) => <FilaReserva key={r.referencia} r={r} />)}
+              </ul>
+            </>
+          )}
+          {reservas.anteriores.length > 0 && (
+            <>
+              <h2 className={`text-lg font-black ${reservas.proximas.length > 0 ? "mt-7" : ""}`}>
+                Reservas anteriores
+              </h2>
+              <ul className="mt-3 space-y-2">
+                {reservas.anteriores.map((r) => <FilaReserva key={r.referencia} r={r} />)}
+              </ul>
+              {reservas.hay_mas_anteriores && (
+                <p className="mt-3 text-xs text-zinc-600">
+                  Se muestran las más recientes.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      ) : null}
 
       <p className="mt-5 text-center text-xs text-zinc-600">
         Tu sesión se cierra sola a los 30 minutos.

@@ -100,6 +100,37 @@ async function libresPorHorario(args: {
   return { ok: true, libres };
 }
 
+export type HorarioConSimuladores = {
+  hora: string;
+  /** Escuderías concretas libres durante TODA la duración. */
+  simuladores: string[];
+};
+
+export type ResultadoConSimuladores =
+  | { ok: true; fecha: string; duracion: number; horarios: HorarioConSimuladores[] }
+  | Fallo;
+
+/**
+ * (M5A) Igual que `disponibilidadDelDia` pero con los NOMBRES de las escuderías
+ * libres. Es server-only y solo puede llegar al navegador detrás de un endpoint
+ * que exija sesión válida de Mensualidades: el cliente tiene que elegir Ferrari
+ * o McLaren, no "una de tres".
+ *
+ * NO debilita el DTO público de M6: `/api/disponibilidad` sigue devolviendo
+ * únicamente cantidades, porque no pide sesión.
+ */
+export async function simuladoresLibresDelDia(args: {
+  fecha: string;
+  duracion: number;
+  producto: Producto;
+  hoy?: string;
+}): Promise<ResultadoConSimuladores> {
+  const r = await libresPorHorario(args);
+  if (!r.ok) return r;
+  const horarios = Array.from(r.libres, ([hora, simuladores]) => ({ hora, simuladores }));
+  return { ok: true, fecha: args.fecha, duracion: args.duracion, horarios };
+}
+
 /**
  * Disponibilidad del día en la forma que ve el público: horario + CANTIDAD de
  * simuladores libres. Nunca los nombres.

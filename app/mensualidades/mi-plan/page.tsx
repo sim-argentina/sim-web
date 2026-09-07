@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { pageMetadata } from "@/lib/seo";
 import { COOKIE_SESION, leerSesion } from "@/lib/mensualidadSesion";
-import { getMiPlan } from "@/lib/mensualidadesMiPlan";
+import { getMiPlan, getReservasDeMiPlan } from "@/lib/mensualidadesMiPlan";
 import MiPlanCliente from "./MiPlanCliente";
 
 // "Mi mensualidad" (Bloque M4). La sesión sale de la cookie HttpOnly: el código
@@ -29,13 +29,16 @@ export default async function MiPlanPage() {
   const plan = await getMiPlan(sesion.mensualidadId);
   if (!plan) notFound();
 
+  // (M5A) Historial de la mensualidad DE LA SESIÓN, resuelto en el servidor.
+  const reservas = await getReservasDeMiPlan(sesion.mensualidadId);
+
   return (
     <main className="min-h-screen bg-black px-4 py-16 text-white md:py-24">
       <section className="mx-auto max-w-3xl">
         <p className="mb-4 text-xs font-black uppercase tracking-[0.45em] text-red-500">
           Mi mensualidad
         </p>
-        <MiPlanCliente plan={plan} />
+        <MiPlanCliente plan={plan} reservas={reservas} />
       </section>
     </main>
   );

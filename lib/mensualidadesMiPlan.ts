@@ -83,6 +83,94 @@ export async function getMiPlan(mensualidadId: string): Promise<MiPlan | null> {
   };
 }
 
+// ── Historial de reservas de la mensualidad (Bloque M5A) ───────────────────
+// Solo lo mínimo para que el titular reconozca su turno. Sin ids internos, sin
+// PII, sin nada de pagos y SIEMPRE de la mensualidad de la sesión.
+
+export type ReservaDeMiPlan = {
+  referencia: string;
+  fecha: string;
+  hora: string;
+  duracion: number;
+  simuladores: string[];
+  minutos_consumidos: number;
+  estado: string;
+};
+
+export type HistorialReservas = {
+  proximas: ReservaDeMiPlan[];
+  anteriores: ReservaDeMiPlan[];
+  /** Hay más anteriores de las que se devolvieron (no se pagina hacia atrás en M5A). */
+  hay_mas_anteriores: boolean;
+};
+
+/** Tope por tramo: suficiente para el uso real y sin traer la tabla entera. */
+export const LIMITE_HISTORIAL = 20;
+
+type FilaReserva = {
+  referencia_publica: string | null;
+  fecha: string;
+  hora: string;
+  duracion_minutos: number;
+  simuladores: unknown;
+  minutos_consumidos: number | null;
+  estado: string;
+};
+
+function aDto(r: FilaReserva): ReservaDeMiPlan {
+  return {
+    referencia: String(r.referencia_publica ?? ""),
+    fecha: r.fecha,
+    hora: r.hora,
+    duracion: Number(r.duracion_minutos) || 0,
+    simuladores: Array.isArray(r.simuladores) ? r.simuladores.map(String) : [],
+    minutos_consumidos: Number(r.minutos_consumidos) || 0,
+    estado: String(r.estado),
+  };
+}
+
+/**
+ * Próximas y anteriores. El corte es la fecha de HOY en Córdoba, no la del
+ * servidor: un turno de hoy sigue siendo "próximo" todo el día.
+ */
+export async function getReservasDeMiPlan(
+  mensualidadId: string,
+  limite: number = LIMITE_HISTORIAL,
+): Promise<HistorialReservas> {
+  const { data: hoy } = await supabaseAdmin.rpc("mensualidad_hoy");
+  const corte = String(hoy ?? "");
+
+  const columnas = "referencia_publica, fecha, hora, duracion_minutos, simuladores, minutos_consumidos, estado";
+
+  // Dos consultas acotadas y ordenadas, en vez de traer todo y partirlo en
+  // memoria: así el límite de PostgREST no puede recortar en silencio.
+  const [prox, ant] = await Promise.all([
+    supabaseAdmin
+      .from("reservas")
+      .select(columnas)
+      .eq("mensualidad_id", mensualidadId)
+      .gte("fecha", corte)
+      .order("fecha", { ascending: true })
+      .order("hora", { ascending: true })
+      .limit(limite),
+    supabaseAdmin
+      .from("reservas")
+      .select(columnas)
+      .eq("mensualidad_id", mensualidadId)
+      .lt("fecha", corte)
+      .order("fecha", { ascending: false })
+      .order("hora", { ascending: false })
+      .limit(limite + 1),
+  ]);
+
+  const anteriores = (ant.data ?? []) as unknown as FilaReserva[];
+  return {
+    proximas: ((prox.data ?? []) as unknown as FilaReserva[]).map(aDto),
+    anteriores: anteriores.slice(0, limite).map(aDto),
+    hay_mas_anteriores: anteriores.length > limite,
+  };
+}
+
 // Busca la mensualidad por código + teléfono normalizado. Devuelve solo el id:
 // quien llama decide qué hacer. No distingue "código inexistente" de "teléfono
 // que no coincide": las dos cosas devuelven null.
