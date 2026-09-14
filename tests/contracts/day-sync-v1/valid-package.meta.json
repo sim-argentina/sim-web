@@ -1,0 +1,14 @@
+{
+  "description": "Paquete valido de referencia del protocolo day-sync v1. Los bytes de valid-package.json son EXACTAMENTE los que la terminal envia por la red: el hash se calcula sobre ellos, sin re-serializar.",
+  "protocolVersion": 1,
+  "schemaVersion": "simcontrol.day-closure.v1",
+  "payloadSha256": "66b05d323c554e30f29628a6d01e0f45a9e34ea3ba2f8aeb090135276cff3df9",
+  "payloadBytes": 4793,
+  "expected": {
+    "reconcilableSessions": 3,
+    "reconcilableMinutesTotal": 50,
+    "sessions": 5,
+    "interventions": 2,
+    "performance": 3
+  }
+}

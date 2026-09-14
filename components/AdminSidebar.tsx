@@ -79,6 +79,13 @@ export default function AdminSidebar({ role }: Props) {
       href: "/admin/ia",
       roles: ["admin"],
     },
+    {
+      // Terminales de SIM Control y verificación de jornadas. Solo admin: desde acá se generan y
+      // revocan credenciales de máquina.
+      label: "SIM Control",
+      href: "/admin/sim-control",
+      roles: ["admin"],
+    },
   ];
 
   const visibleLinks = links.filter((link) => link.roles.includes(role));
