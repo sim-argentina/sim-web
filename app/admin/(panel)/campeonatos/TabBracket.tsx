@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { msToTiempo } from "@/lib/campeonatos";
+import { CONFIRMACION_REINICIO } from "@/lib/bracketConfirmacion";
 
 // ── Tipos del DTO que devuelve /api/admin/campeonatos/[id]/bracket ────────────
 type Participante = {
@@ -191,6 +192,7 @@ export default function TabBracket({ campeonatos, role }: { campeonatos: CampLit
   const [data, setData] = useState<EstadoBracket | null>(null);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+  const [reinicioAbierto, setReinicioAbierto] = useState(false);
   const esAdmin = role === "admin";
 
   useEffect(() => { if (!campSel && eliminacion[0]) setCampSel(eliminacion[0].id); }, [eliminacion, campSel]);
@@ -217,6 +219,14 @@ export default function TabBracket({ campeonatos, role }: { campeonatos: CampLit
     return true;
   };
   const accion = (body: Record<string, unknown>) => post(`/api/admin/campeonatos/${campSel}/bracket/acciones`, body);
+  // Ruta PROPIA, separada de /acciones: el reset destructivo no comparte endpoint
+  // con cerrar/reabrir clasificación. Al volver, cargar() refresca el estado.
+  const reiniciar = async () => {
+    const ok = await post(`/api/admin/campeonatos/${campSel}/bracket/reiniciar`, {
+      confirmacion: CONFIRMACION_REINICIO,
+    });
+    if (ok) setReinicioAbierto(false);
+  };
   const onCarrera = async (body: Record<string, unknown>) => { await post(`/api/admin/campeonatos/${campSel}/bracket/carrera`, body); };
   const guardarQuali = async (inscripcion_id: string, patch: Record<string, unknown>) => {
     await post(`/api/admin/campeonatos/${campSel}/bracket/clasificacion`, { inscripcion_id, ...patch });
@@ -366,6 +376,87 @@ export default function TabBracket({ campeonatos, role }: { campeonatos: CampLit
           )}
         </>
       )}
+
+      {/* ── Acciones administrativas (discretas, al final y solo para admin) ── */}
+      {data && esAdmin && (
+        <div className="mt-8 border-t border-white/5 pt-4">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-600">Acciones administrativas</p>
+          <button
+            onClick={() => setReinicioAbierto(true)}
+            className="rounded-xl border border-red-500/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-red-400 transition hover:border-red-500 hover:bg-red-600/10"
+          >
+            Reiniciar campeonato
+          </button>
+          <p className="mt-2 text-[11px] text-zinc-600">
+            Borra todo el progreso deportivo del cuadro. Las inscripciones y los pagos no se tocan.
+          </p>
+        </div>
+      )}
+
+      {data && reinicioAbierto && (
+        <ModalReiniciar
+          nombre={data.campeonato.nombre}
+          onCerrar={() => setReinicioAbierto(false)}
+          onConfirmar={reiniciar}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Modal de confirmación fuerte del reinicio ────────────────────────────────
+
+// No alcanza con un window.confirm(): hay que escribir la palabra exacta para que
+// el botón se habilite. La misma palabra la vuelve a exigir el backend.
+function ModalReiniciar({
+  nombre, onCerrar, onConfirmar,
+}: {
+  nombre: string;
+  onCerrar: () => void;
+  onConfirmar: () => Promise<void>;
+}) {
+  const [texto, setTexto] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const habilitado = texto.trim().toUpperCase() === CONFIRMACION_REINICIO && !enviando;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-red-500/30 bg-zinc-950 p-6">
+        <h3 className="text-lg font-black text-white">Reiniciar campeonato</h3>
+        <p className="mt-1 text-sm text-zinc-400">
+          Campeonato: <b className="text-white">{nombre}</b>
+        </p>
+
+        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-900/15 px-4 py-3 text-sm text-red-200">
+          Esta acción eliminará toda la clasificación, seeds, cuadro, carreras, resultados y podio de
+          este campeonato. Las inscripciones y pagos <b>NO</b> se eliminarán.
+        </p>
+
+        <label className="mt-4 block text-xs font-bold text-zinc-400">
+          Escribí <b className="text-white">{CONFIRMACION_REINICIO}</b> para habilitar
+        </label>
+        <input
+          autoFocus
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder={CONFIRMACION_REINICIO}
+          className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 px-4 py-2 text-sm text-white outline-none focus:border-red-500"
+        />
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onCerrar} disabled={enviando}
+            className="rounded-xl border border-white/15 px-4 py-2 text-sm font-bold text-zinc-300 hover:text-white disabled:opacity-50">
+            Cancelar
+          </button>
+          <button
+            disabled={!habilitado}
+            onClick={async () => { setEnviando(true); await onConfirmar(); setEnviando(false); }}
+            className="rounded-xl bg-red-600 px-5 py-2 text-sm font-bold text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {enviando ? "Reiniciando…" : "Reiniciar campeonato"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
