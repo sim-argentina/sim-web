@@ -18,6 +18,7 @@ const rutasAdmin = [
   "app/api/admin/ia/papelera/route.ts",
   "app/api/admin/ia/feedback/route.ts",
   "app/api/admin/ia/consumo/route.ts",
+  "app/api/admin/ia/inflacion/indice/route.ts",
 ];
 
 for (const ruta of rutasAdmin) {
@@ -60,6 +61,8 @@ for (const ruta of rutasAdmin) {
   assert.ok(/ToolParamError/.test(tools), "tools: valida parámetros");
   // No hay SQL crudo construido con input del modelo.
   assert.ok(!/`?select .*\$\{/i.test(tools), "tools: no arma SQL con input del modelo");
+  // Bloque 4E — herramientas cerradas de comparación/anomalías/proyección registradas.
+  assert.ok(/HERRAMIENTAS_ANALISIS/.test(tools), "tools: incluye el registro de análisis (4E)");
 }
 
 console.log("OK — IA (auth wiring): admin-only en todas las APIs; owner server-side; API key nunca expuesta/logueada; purga protegida; herramientas cerradas sin SQL del modelo.");

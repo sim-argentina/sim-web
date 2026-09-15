@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { validarAnioMes, formatHoras } from "@/lib/cronograma";
+import { formatHoras } from "@/lib/cronograma";
+import { ToolParamError, pedirAnioMes, schemaAnioMes } from "@/lib/ia/toolsCompartido";
+export { ToolParamError, pedirAnioMes, schemaAnioMes };
 import { consultarMetricasEquipo } from "@/lib/metricasEquipoServer";
 import { getMesVista, getHorasMensuales } from "@/lib/cronogramaServer";
 import { calcularMes, getCierreMes } from "@/lib/finanzas";
@@ -7,14 +9,13 @@ import { agregarStand } from "@/lib/metricasStand";
 import { idsReembolsadas } from "@/lib/reservasReembolsos";
 import { HERRAMIENTAS_CONOCIMIENTO } from "@/lib/ia/docs/conocimientoTools";
 import { preparar_informe } from "@/lib/ia/informes/informeTool";
+import { HERRAMIENTAS_ANALISIS } from "@/lib/ia/analisis/herramientas";
 import { estadoPeriodoCalendario, fraseEstado } from "@/lib/ia/periodo";
 
 // IA SIM · Bloque 4A — REGISTRO CERRADO de herramientas de SOLO LECTURA.
 // El modelo NUNCA elige tablas/columnas ni genera SQL: solo puede invocar estas
 // funciones tipadas con parámetros validados por el servidor. Ningún resultado
 // incluye PII de clientes (nombres/teléfonos). Los textos internos son DATOS.
-
-export class ToolParamError extends Error {}
 
 export type ToolFuente = {
   modulo: string;
@@ -43,22 +44,6 @@ export type ToolDef = {
 const ahoraISO = () => new Date().toISOString();
 const mesStr = (a: number, m: number) => `${a}-${String(m).padStart(2, "0")}`;
 const finDeMes = (a: number, m: number) => new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10);
-
-function pedirAnioMes(input: Record<string, unknown>): { anio: number; mes: number } {
-  const v = validarAnioMes(input.anio, input.mes);
-  if (!v.ok) throw new ToolParamError(v.error);
-  return { anio: v.anio, mes: v.mes };
-}
-
-const schemaAnioMes = {
-  type: "object",
-  properties: {
-    anio: { type: "integer", description: "Año (2020-2100)" },
-    mes: { type: "integer", description: "Mes 1-12" },
-  },
-  required: ["anio", "mes"],
-  additionalProperties: false,
-};
 
 // ── consultar_metricas_equipo (reutiliza el motor del Bloque 3B) ──────────────
 const consultar_metricas_equipo: ToolDef = {
@@ -290,6 +275,9 @@ export const HERRAMIENTAS: Record<string, ToolDef> = {
   ...HERRAMIENTAS_CONOCIMIENTO,
   // Bloque 4C — preparación de borrador de informe/archivo (no genera archivos).
   [preparar_informe.nombre]: preparar_informe,
+  // Bloque 4E — comparaciones, anomalías, proyecciones (determinístico; el FODA usa su propio
+  // flujo de síntesis estructurada terminal, ver lib/ia/analisis/sintesisFoda.ts).
+  ...HERRAMIENTAS_ANALISIS,
 };
 
 // Definiciones para el proveedor. Con `soloNombres` se ofrece SOLO ese subconjunto (por

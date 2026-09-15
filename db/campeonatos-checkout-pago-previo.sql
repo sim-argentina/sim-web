@@ -50,16 +50,20 @@ create table if not exists public.campeonato_checkouts (
   init_point         text,
   payment_id         text,
 
-  -- 'pendiente'  → todavía ocupa cupo (si no venció)
+  -- 'pendiente'  → retiene cupo mientras dure la retención
   -- 'aprobado'   → pago acreditado y inscripción creada (inscripcion_id)
-  -- 'sin_cupo'   → pagó DESPUÉS de vencer y ya no quedaba lugar: lo resuelve el staff
+  -- 'sin_cupo'   → el pago se acreditó cuando la retención ya había caído y el
+  --                lugar estaba vendido. Queda con su payment_id para que el
+  --                staff lo resuelva (devolución o cupo extra). Es la cola del
+  --                índice campeonato_checkouts_sin_cupo_idx.
   estado             text not null default 'pendiente'
                        check (estado in ('pendiente', 'aprobado', 'sin_cupo')),
   mp_status          text,
   mp_status_detail   text,
 
-  -- Vencimiento DERIVADO por fecha: al pasar expira_el el intento deja de ocupar
-  -- cupo solo, sin cron ni job de limpieza.
+  -- LÍMITE PARA PAGAR (= vencimiento de la preference de Mercado Pago). La
+  -- RETENCIÓN del cupo dura un poco más: expira_el + gracia, derivado por fecha,
+  -- sin columna extra, sin cron ni job de limpieza.
   expira_el          timestamptz not null,
   procesado_at       timestamptz,
   reconciliado_at    timestamptz,
@@ -118,11 +122,20 @@ create unique index if not exists campeonato_inscripciones_payment_uq
 --   2) inscripciones PENDIENTES no eliminadas dentro del TTL histórico (30 min)
 --      → altas de stand/admin recién hechas. Se conserva la semántica que ya
 --        existía; las pendientes viejas (fantasmas heredados) no ocupan nada.
---   3) intentos de checkout VIGENTES                → reserva temporal
+--   3) intentos con la RETENCIÓN viva               → reserva temporal
+--
+-- La retención dura MÁS que la ventana de pago:
+--   pagar hasta         = expira_el            (= vencimiento de la preference)
+--   cupo retenido hasta = expira_el + gracia   (derivado, sin columna nueva)
+-- Ese colchón es lo que impide terminar con cupos_maximos + 1: quien pagó en el
+-- minuto 19 conserva su lugar mientras llega el webhook, y nadie puede tomarlo.
 -- ============================================================================
+drop function if exists public.campeonato_cupo_ocupados(uuid, integer);
+
 create or replace function public.campeonato_cupo_ocupados(
   p_campeonato_id uuid,
-  p_ttl_pendientes_min integer default 30
+  p_ttl_pendientes_min integer default 30,
+  p_gracia_min integer default 5
 ) returns integer
 language sql
 stable
@@ -141,7 +154,7 @@ as $fn$
   + (select count(*) from public.campeonato_checkouts c
       where c.campeonato_id = p_campeonato_id
         and c.estado = 'pendiente'
-        and c.expira_el > now())
+        and now() <= c.expira_el + make_interval(mins => greatest(coalesce(p_gracia_min, 5), 0)))
   )::integer;
 $fn$;
 
@@ -150,6 +163,8 @@ $fn$;
 -- a dos personas peleando por el último cupo, así nunca se crean dos reservas
 -- para un solo lugar. No inserta NADA en campeonato_inscripciones.
 -- ============================================================================
+drop function if exists public.campeonato_checkout_crear(uuid, text, text, text, text, text, text, numeric, text, text, text, integer, integer);
+
 create or replace function public.campeonato_checkout_crear(
   p_campeonato_id       uuid,
   p_nombre              text,
@@ -163,7 +178,8 @@ create or replace function public.campeonato_checkout_crear(
   p_token_publico       text,
   p_idempotency_key     text,
   p_ttl_min             integer,
-  p_ttl_pendientes_min  integer default 30
+  p_ttl_pendientes_min  integer default 30,
+  p_gracia_min          integer default 5
 ) returns jsonb
 language plpgsql
 volatile
@@ -205,7 +221,7 @@ begin
 
   -- cupos_maximos 0 / negativo / null = sin límite (semántica histórica).
   if v_limite > 0 then
-    v_ocupados := public.campeonato_cupo_ocupados(p_campeonato_id, p_ttl_pendientes_min);
+    v_ocupados := public.campeonato_cupo_ocupados(p_campeonato_id, p_ttl_pendientes_min, p_gracia_min);
     if v_ocupados >= v_limite then
       return jsonb_build_object('resultado', 'sin_cupo', 'ocupados', v_ocupados, 'limite', v_limite);
     end if;
@@ -243,23 +259,34 @@ $fn$;
 --   · estado = 'aprobado'          → el segundo devuelve la misma inscripción
 --   · unique(payment_id)           → la base no admite dos inscripciones del mismo pago
 -- ============================================================================
+-- p_aprobado_at = date_approved REAL del pago, traído de Mercado Pago con las
+-- credenciales del servidor. Define si la reserva estaba viva CUANDO SE PAGÓ, que
+-- es lo único que importa: una notificación demorada no puede costarle el lugar a
+-- alguien que pagó dentro de su ventana.
+drop function if exists public.campeonato_checkout_confirmar(text, text, text, text, integer);
+drop function if exists public.campeonato_checkout_confirmar(text, text, text, text, timestamptz, integer);
+
 create or replace function public.campeonato_checkout_confirmar(
   p_external_reference  text,
   p_payment_id          text,
   p_mp_status           text,
   p_mp_status_detail    text,
-  p_ttl_pendientes_min  integer default 30
+  p_aprobado_at         timestamptz default null,
+  p_ttl_pendientes_min  integer default 30,
+  p_gracia_min          integer default 5
 ) returns jsonb
 language plpgsql
 volatile
 set search_path = public, pg_temp
 as $fn$
 declare
-  v_chk       public.campeonato_checkouts%rowtype;
-  v_limite    integer;
-  v_ocupados  integer;
-  v_existente uuid;
-  v_insc_id   uuid;
+  v_chk        public.campeonato_checkouts%rowtype;
+  v_limite     integer;
+  v_ocupados   integer;
+  v_existente  uuid;
+  v_insc_id    uuid;
+  v_hold_vivo  boolean;
+  v_pago_en_ventana boolean;
 begin
   select * into v_chk from public.campeonato_checkouts
     where external_reference = p_external_reference
@@ -290,11 +317,25 @@ begin
   select coalesce(cupos_maximos, 0) into v_limite
     from public.campeonatos where id = v_chk.campeonato_id;
 
-  -- Un intento VIGENTE ya tiene su cupo reservado desde que se creó: se confirma
-  -- sin volver a contar. Solo se re-verifica cuando el intento VENCIÓ, para que un
-  -- pago que llega tarde no pueda pasar por encima de cupos_maximos.
-  if coalesce(v_limite, 0) > 0 and v_chk.expira_el <= now() then
-    v_ocupados := public.campeonato_cupo_ocupados(v_chk.campeonato_id, p_ttl_pendientes_min);
+  -- ¿Nuestro lugar sigue retenido? Mismo criterio que campeonato_cupo_ocupados.
+  v_hold_vivo := now() <= v_chk.expira_el + make_interval(mins => greatest(coalesce(p_gracia_min, 5), 0));
+  -- ¿El pago entró mientras se podía pagar? Se mira el momento en que Mercado
+  -- Pago APROBÓ, no cuándo llegó el aviso. Sin date_approved se asume "ahora",
+  -- que es el criterio conservador.
+  v_pago_en_ventana := coalesce(p_aprobado_at, now()) <= v_chk.expira_el;
+
+  if v_hold_vivo and v_pago_en_ventana then
+    -- El cupo nunca dejó de ser nuestro y el pago fue en tiempo: se confirma sin
+    -- re-contar. No puede haber sobreventa: el conteo YA nos incluía, así que
+    -- nadie pudo haberse quedado con este lugar mientras tanto.
+    null;
+  elsif coalesce(v_limite, 0) > 0 then
+    -- Se cayó la retención, o el pago llegó después de la ventana. Se re-verifica
+    -- capacidad SIN contarnos a nosotros mismos (si no, nos bloquearíamos solos),
+    -- y el tope manda: nunca se crea la inscripción cupos_maximos + 1. El intento
+    -- queda en 'sin_cupo' con su payment_id, para que el staff lo resuelva.
+    v_ocupados := public.campeonato_cupo_ocupados(v_chk.campeonato_id, p_ttl_pendientes_min, p_gracia_min)
+                  - (case when v_chk.estado = 'pendiente' and v_hold_vivo then 1 else 0 end);
     if v_ocupados >= v_limite then
       update public.campeonato_checkouts set
         estado = 'sin_cupo', payment_id = p_payment_id,
@@ -331,15 +372,15 @@ begin
 end;
 $fn$;
 
-revoke all on function public.campeonato_cupo_ocupados(uuid, integer)
+revoke all on function public.campeonato_cupo_ocupados(uuid, integer, integer)
   from public, anon, authenticated;
-revoke all on function public.campeonato_checkout_crear(uuid, text, text, text, text, text, text, numeric, text, text, text, integer, integer)
+revoke all on function public.campeonato_checkout_crear(uuid, text, text, text, text, text, text, numeric, text, text, text, integer, integer, integer)
   from public, anon, authenticated;
-revoke all on function public.campeonato_checkout_confirmar(text, text, text, text, integer)
+revoke all on function public.campeonato_checkout_confirmar(text, text, text, text, timestamptz, integer, integer)
   from public, anon, authenticated;
-grant execute on function public.campeonato_cupo_ocupados(uuid, integer)
+grant execute on function public.campeonato_cupo_ocupados(uuid, integer, integer)
   to service_role;
-grant execute on function public.campeonato_checkout_crear(uuid, text, text, text, text, text, text, numeric, text, text, text, integer, integer)
+grant execute on function public.campeonato_checkout_crear(uuid, text, text, text, text, text, text, numeric, text, text, text, integer, integer, integer)
   to service_role;
-grant execute on function public.campeonato_checkout_confirmar(text, text, text, text, integer)
+grant execute on function public.campeonato_checkout_confirmar(text, text, text, text, timestamptz, integer, integer)
   to service_role;

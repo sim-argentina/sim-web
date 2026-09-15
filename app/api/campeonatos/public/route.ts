@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { normalizeEscuderia, pilotoKey } from "@/lib/campeonatos";
+import { GRACIA_CUPO_MS } from "@/lib/campeonatosCheckout";
 
 const CATEGORIAS = ["oro", "plata", "bronce"] as const;
 
@@ -28,7 +29,9 @@ export async function GET(req: Request) {
     return tooManyResponse();
   }
   try {
-    const ahoraIso = new Date().toISOString();
+    // Un intento retiene el cupo hasta expira_el + GRACIA_CUPO_MS, así que acá
+    // se pide expira_el > ahora − gracia (equivalente, y usa el índice existente).
+    const retencionDesdeIso = new Date(Date.now() - GRACIA_CUPO_MS).toISOString();
     const [campeonatosRes, sorteosRes, registrosRes, inscripcionesRes, fechasRes, checkoutsRes] =
       await Promise.all([
         supabaseAdmin
@@ -55,13 +58,15 @@ export async function GET(req: Request) {
           .from("campeonato_fechas")
           .select("id, campeonato_id, numero_fecha, nombre, circuito, estado")
           .order("numero_fecha", { ascending: true }),
-        // Intentos de checkout VIGENTES: reservan cupo pero NO son inscripciones.
-        // Los vencidos quedan fuera por la comparación de fecha (sin cron).
+        // Intentos con la RETENCIÓN viva: reservan cupo pero NO son inscripciones.
+        // Mismo criterio que campeonato_cupo_ocupados (expira_el + gracia), para
+        // que lo que se muestra y lo que se hace cumplir no se contradigan. Los
+        // abandonados salen solos por la comparación de fecha (sin cron).
         supabaseAdmin
           .from("campeonato_checkouts")
           .select("campeonato_id")
           .eq("estado", "pendiente")
-          .gt("expira_el", ahoraIso),
+          .gt("expira_el", retencionDesdeIso),
       ]);
 
     const campeonatos = campeonatosRes.data ?? [];

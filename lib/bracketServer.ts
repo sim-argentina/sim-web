@@ -4,6 +4,7 @@
 // migración (bracket por campeonato, ronda por número, participante por ronda).
 // Solo se importa desde route handlers (server): usa supabaseAdmin (service_role).
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { CONFIRMACION_REINICIO as CONFIRMACION_PALABRA } from "@/lib/bracketConfirmacion";
 import {
   configEliminacion,
   validarConfigEliminacion,
@@ -666,4 +667,64 @@ export async function finalizarTorneo(campeonatoId: string): Promise<Resultado<u
   if (!br) return fail(404, "Bracket no inicializado.");
   await supabaseAdmin.from("campeonato_bracket").update({ estado: "finalizado", finalizado_at: br.finalizado_at ?? new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", br.id);
   return ok({ estado: "finalizado" });
+}
+
+// ── Reinicio total del estado deportivo (owner/admin) ────────────────────────
+
+// La palabra de confirmación se comparte con el modal del admin desde un módulo
+// puro (lib/bracketConfirmacion). Exigirla es una condición del BACKEND: un cliente
+// que no la mande no puede disparar el reset aunque llegue al endpoint.
+export { CONFIRMACION_REINICIO } from "@/lib/bracketConfirmacion";
+
+export type ResumenReinicio = {
+  resultado: "reiniciado" | "ya_en_cero";
+  estado_previo: string | null;
+  participantes: number;
+  rondas: number;
+  carreras: number;
+  carrera_participantes: number;
+  tenia_podio: boolean;
+};
+
+// Deja el campeonato como si todavía no se hubiese operado deportivamente:
+// sin clasificación cerrada, sin seeds, sin mejores tiempos, sin cuadro, sin
+// carreras, sin resultados, sin podio. NO toca inscripciones, pagos ni checkouts.
+//
+// A diferencia de reabrirClasificacion(), funciona con carreras iniciadas,
+// finalizadas o con el torneo terminado: para eso existe. Todo el borrado ocurre
+// dentro de una función transaccional de Postgres (un DELETE con cascade), así que
+// no puede quedar medio cuadro borrado.
+export async function reiniciarCampeonato(
+  campeonatoId: string,
+  confirmacion: string,
+): Promise<Resultado<ResumenReinicio>> {
+  // Segunda barrera, server-side: sin la palabra exacta no se ejecuta nada.
+  if (confirmacion !== CONFIRMACION_PALABRA) {
+    return fail(400, `Confirmación inválida: escribí ${CONFIRMACION_PALABRA} para reiniciar.`);
+  }
+  const camp = await cargarCampeonatoEliminacion(campeonatoId);
+  if (!camp.ok) return camp;
+
+  const { data, error } = await supabaseAdmin.rpc("campeonato_bracket_reiniciar", {
+    p_campeonato_id: campeonatoId,
+  });
+  if (error) return fail(500, "No se pudo reiniciar el campeonato.");
+
+  // El RPC puede devolver además los rechazos de validación, por eso el tipo ancho.
+  // El RPC puede devolver además los rechazos de validación, por eso el tipo ancho.
+  const r = (data ?? {}) as Omit<ResumenReinicio, "resultado"> & { resultado?: string };
+  if (r.resultado === "campeonato_inexistente") return fail(404, "Campeonato no encontrado.");
+  if (r.resultado === "modalidad_invalida") return fail(400, "El campeonato no es de modalidad eliminación.");
+  if (r.resultado !== "reiniciado" && r.resultado !== "ya_en_cero") {
+    return fail(500, "No se pudo reiniciar el campeonato.");
+  }
+
+  // Fila de bracket nueva y limpia, con el MISMO helper que usa el resto del flujo
+  // (así la derivación de clasificacion_habilitada/seeding_modo vive en un solo
+  // lugar). Sin esto el campeonato quedaría "no iniciado" para el público en vez de
+  // "clasificación abierta". Si fallara, el estado igual es válido: un campeonato
+  // sin bracket es exactamente uno que todavía no se operó, y la próxima acción lo
+  // vuelve a crear.
+  await ensureBracket(camp.data);
+  return ok(r as ResumenReinicio);
 }

@@ -1,6 +1,6 @@
 import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { PREFIJO_EXT_REF, TTL_PENDIENTES_MIN } from "@/lib/campeonatosCheckout";
+import { PREFIJO_EXT_REF, TTL_PENDIENTES_MIN, GRACIA_CUPO_MIN } from "@/lib/campeonatosCheckout";
 
 // Procesador ÚNICO de pagos de inscripciones a campeonatos.
 // Lo usan el webhook y la reconciliación de la pantalla de resultado: la lógica
@@ -35,6 +35,10 @@ export type PagoMp = {
   external_reference?: string | null;
   currency_id?: string | null;
   transaction_amount?: number | null;
+  // Momento en que Mercado Pago aprobó el pago. Viene del pago traído con las
+  // credenciales del servidor (no de la notificación) y decide si la reserva de
+  // cupo seguía viva cuando se pagó.
+  date_approved?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -158,7 +162,12 @@ async function procesarCheckout(id: string, pago: PagoMp, extRef: string): Promi
       p_payment_id: id,
       p_mp_status: estadoMp,
       p_mp_status_detail: detalleMp,
+      // Momento REAL de la aprobación. Si el pago entró dentro de la ventana de
+      // reserva, la inscripción se confirma aunque el aviso llegue después: una
+      // notificación demorada no le quita el lugar a quien pagó en tiempo.
+      p_aprobado_at: pago.date_approved ?? null,
       p_ttl_pendientes_min: TTL_PENDIENTES_MIN,
+      p_gracia_min: GRACIA_CUPO_MIN,
     });
     if (rpcError) return falla("no_se_pudo_confirmar", 500);
 

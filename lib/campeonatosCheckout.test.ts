@@ -2,12 +2,13 @@ import { strict as assert } from "node:assert";
 import {
   validarInscripcionPublica, montoDelCampeonato, estadoPublicoCheckout,
   nuevaExternalReference, nuevoTokenPublico, isoConOffset,
-  PREFIJO_EXT_REF, TTL_CHECKOUT_MIN,
+  PREFIJO_EXT_REF, TTL_CHECKOUT_MIN, GRACIA_CUPO_MS,
 } from "@/lib/campeonatosCheckout";
 import {
   mensajeConfirmacion, fechaLargaEs, horaCorta, horaPresentacion,
   MENSAJE_LIGA, MENSAJE_ELIMINACION_SIN_FECHA,
 } from "@/lib/campeonatosMensajes";
+import { getInscripcionCampos, campoVisible, faltantesRequeridos } from "@/lib/campeonatosInscripcionConfig";
 
 // Tests PUROS del checkout de campeonatos: validación configurable, precio
 // server-side, estado público del intento y mensajes derivados de la config.
@@ -151,10 +152,30 @@ const standProhibido = validarInscripcionPublica({ ...base, metodo_pago_inscripc
 assert.equal(standProhibido.ok, false);
 assert.equal((standProhibido as { status: number }).status, 400);
 
-// Liga: DNI requerido, escudería obligatoria por modalidad, stand permitido.
+// Liga: DNI requerido (preset liga) y stand permitido.
 assert.equal(validarInscripcionPublica(base, LIGA).ok, false, "liga exige DNI");
+
+// Escudería en LIGA: VISIBLE pero OPCIONAL. La obligatoriedad sale solo de
+// config.inscripcion.campos — la misma fuente que usa el alta del admin—, no de
+// la modalidad. Una inscripción de liga sin escudería tiene que ser válida.
+const camposLiga = getInscripcionCampos(LIGA);
+assert.equal(camposLiga.escuderia, "optional");
+assert.equal(campoVisible(camposLiga, "escuderia"), true, "en liga la escudería se muestra");
 const ligaSinEscuderia = validarInscripcionPublica({ ...base, dni: "30111222" }, LIGA);
-assert.equal(ligaSinEscuderia.ok, false, "liga exige escudería");
+assert.ok(ligaSinEscuderia.ok, "liga SIN escudería tiene que ser válida");
+assert.equal(ligaSinEscuderia.data.datos.escuderia_favorita, null);
+// Público y admin coinciden: ninguno la reclama.
+assert.deepEqual(faltantesRequeridos(camposLiga, { ...base, dni: "30111222" }), []);
+// Pero si un campeonato la marca required, se sigue exigiendo en los dos lados.
+const LIGA_ESC_REQ = { ...LIGA, config: { inscripcion: { campos: { escuderia: "required" } } } };
+assert.equal(
+  validarInscripcionPublica({ ...base, dni: "30111222" }, LIGA_ESC_REQ).ok, false,
+  "escuderia required sí se exige",
+);
+assert.deepEqual(
+  faltantesRequeridos(getInscripcionCampos(LIGA_ESC_REQ), { ...base, dni: "30111222" }), ["Escudería"],
+);
+
 const ligaOk = validarInscripcionPublica(
   { ...base, dni: "30111222", escuderia_favorita: "Ferrari", metodo_pago_inscripcion: "stand" }, LIGA,
 );
@@ -184,8 +205,17 @@ assert.equal(estadoPublicoCheckout({ estado: "pendiente", mp_status: "pending", 
 assert.equal(estadoPublicoCheckout({ estado: "pendiente", mp_status: "in_process", expira_el: PASADO }), "pendiente");
 assert.equal(estadoPublicoCheckout({ estado: "pendiente", mp_status: "rejected", expira_el: FUTURO }), "rechazado");
 assert.equal(estadoPublicoCheckout({ estado: "pendiente", mp_status: "cancelled", expira_el: FUTURO }), "rechazado");
-assert.equal(estadoPublicoCheckout({ estado: "pendiente", mp_status: null, expira_el: PASADO }), "expirado");
 assert.equal(estadoPublicoCheckout({ estado: "sin_cupo", mp_status: "approved", expira_el: PASADO }), "sin_cupo");
+
+// Recién vencido y sin noticias: NO se le dice que falló, porque el aviso de un
+// pago hecho sobre el final de la ventana puede estar en camino.
+const RECIEN_VENCIDO = new Date(Date.now() - 60_000).toISOString();
+assert.equal(
+  estadoPublicoCheckout({ estado: "pendiente", mp_status: null, expira_el: RECIEN_VENCIDO }), "pendiente",
+  "dentro de la gracia se sigue confirmando",
+);
+const MUY_VIEJO = new Date(Date.now() - (GRACIA_CUPO_MS + 60_000)).toISOString();
+assert.equal(estadoPublicoCheckout({ estado: "pendiente", mp_status: null, expira_el: MUY_VIEJO }), "expirado");
 
 // ── Credenciales opacas ─────────────────────────────────────────────────────
 const extRef = nuevaExternalReference();

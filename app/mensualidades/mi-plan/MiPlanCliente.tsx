@@ -52,44 +52,17 @@ function minutosATexto(min: number) {
 
 // (M5A) Una reserva de la mensualidad. Solo lo que el titular necesita
 // reconocer: nada de ids internos, importes ni datos de contacto.
-function pesos(n: number) {
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency", currency: "ARS", maximumFractionDigits: 0,
-  }).format(n);
-}
-
 function FilaReserva({ r }: { r: ReservaDeMiPlan }) {
-  // (M5B) Una mixta esperando el pago NO puede parecer confirmada.
-  const pendiente = r.estado === "pendiente_pago";
-  const vencida = r.estado === "cancelada";
   return (
-    <li
-      className={`flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-2xl border px-4 py-3 ${
-        pendiente
-          ? "border-amber-500/30 bg-amber-500/[0.06]"
-          : vencida
-            ? "border-white/5 bg-white/[0.01] opacity-60"
-            : "border-white/10 bg-white/[0.02]"
-      }`}
-    >
+    <li className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
       <span className="text-sm font-black">
         {fechaLarga(r.fecha)} · {r.hora}
       </span>
       <span className="text-xs text-zinc-500">
         {r.duracion} min · {r.simuladores.join(", ")} · {minutosATexto(r.minutos_consumidos)}
       </span>
-      {r.cobertura === "mixta" && (
-        <span className={`w-full text-xs ${pendiente ? "text-amber-300" : "text-zinc-400"}`}>
-          {pendiente
-            ? `Falta pagar ${pesos(r.importe_complementario)} para confirmarla`
-            : vencida
-              ? `No se completó el pago de ${pesos(r.importe_complementario)}; los minutos volvieron a tu saldo`
-              : `Diferencia abonada: ${pesos(r.importe_complementario)}`}
-        </span>
-      )}
       <span className="w-full font-mono text-[11px] tracking-wider text-zinc-600">
-        {r.referencia} ·{" "}
-        {pendiente ? "pendiente de pago" : vencida ? "no confirmada" : "confirmada"}
+        {r.referencia} · {r.estado}
       </span>
     </li>
   );
@@ -105,18 +78,8 @@ export default function MiPlanCliente({
   const router = useRouter();
   const [copiado, setCopiado] = useState(false);
   const [saliendo, setSaliendo] = useState(false);
+  const estilo = ESTILO_ESTADO[plan.estado];
   const vencida = plan.estado === "vencida";
-  // (M5B) Con una retención viva el saldo está en 0 porque los minutos están
-  // COMPROMETIDOS, no gastados. Mostrar "te quedaste sin minutos" ahí sería
-  // falso, y peor: invita a renovar, que es justo lo que el guard bloquea.
-  const comprometida = plan.tiene_pago_pendiente;
-  const estilo = comprometida && plan.estado === "agotada"
-    ? {
-        chip: "border-amber-500/40 bg-amber-500/10 text-amber-300",
-        titulo: "Tenés minutos reservados",
-        texto: "Tu saldo está tomado por una reserva que espera el pago. Cuando se confirme o se libere, vas a poder seguir usando la mensualidad.",
-      }
-    : ESTILO_ESTADO[plan.estado];
 
   async function copiar() {
     try {
@@ -219,6 +182,24 @@ export default function MiPlanCliente({
             <CalendarPlus className="h-4 w-4" />
             Reservar con mi mensualidad
           </Link>
+        ) : plan.motivo === "sin_saldo" ? (
+          /* (M5B.1) Vigente pero sin minutos. No se ofrece pagar una diferencia
+             desde Mensualidades: se renueva (botón de abajo) o se paga el turno
+             completo en Reservas normales. */
+          <div className="mt-7 rounded-2xl border border-dashed border-white/15 px-5 py-4 text-sm text-zinc-400">
+            <p className="font-semibold text-zinc-300">No te quedan minutos disponibles.</p>
+            <p className="mt-1 text-zinc-500">
+              Renová tu mensualidad para seguir reservando desde acá, o hacé una
+              reserva normal y pagá ese turno completo.
+            </p>
+            <Link
+              href="/reservas"
+              className="mt-3 inline-flex items-center gap-2 rounded-xl border border-white/15 px-4 py-2.5 text-xs font-black uppercase tracking-[0.14em] text-zinc-300 transition hover:border-white/40"
+            >
+              <CalendarPlus className="h-3.5 w-3.5" />
+              Hacer una reserva normal
+            </Link>
+          </div>
         ) : (
           <div className="mt-7 rounded-2xl border border-dashed border-white/15 px-5 py-4 text-sm text-zinc-500">
             Cuando tu mensualidad esté activa y con saldo vas a poder reservar desde acá.
@@ -226,26 +207,13 @@ export default function MiPlanCliente({
         )}
 
         <div className="mt-7 flex flex-wrap gap-3">
-          {/* (M5B) Con una retención viva no se puede renovar: el servidor lo
-              rechaza para no romper el tope de traslado. Se muestra deshabilitado
-              y explicado, en vez de mandar al titular a un error. */}
-          {comprometida ? (
-            <span
-              title="Primero terminá o dejá vencer el pago pendiente"
-              className="inline-flex cursor-not-allowed items-center gap-2 rounded-2xl border border-white/15 px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-zinc-600"
-            >
-              <ShoppingCart className="h-4 w-4" />
-              Renovar mensualidad
-            </span>
-          ) : (
-            <Link
-              href="/mensualidades"
-              className="inline-flex items-center gap-2 rounded-2xl bg-red-600 px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:bg-red-500"
-            >
-              <ShoppingCart className="h-4 w-4" />
-              {vencida ? "Comprar mensualidad" : "Renovar mensualidad"}
-            </Link>
-          )}
+          <Link
+            href="/mensualidades"
+            className="inline-flex items-center gap-2 rounded-2xl bg-red-600 px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:bg-red-500"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            {vencida ? "Comprar mensualidad" : "Renovar mensualidad"}
+          </Link>
           <button
             type="button"
             onClick={cerrarSesion}
@@ -257,21 +225,6 @@ export default function MiPlanCliente({
           </button>
         </div>
       </div>
-
-      {/* (M5B) Minutos comprometidos por una reserva esperando el pago. Sin esto
-          el titular vería su saldo en 0 sin ninguna explicación. */}
-      {plan.tiene_pago_pendiente && (
-        <div className="mt-5 rounded-[26px] border border-amber-500/30 bg-amber-500/[0.07] p-5 md:p-6">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-300">
-            Tenés una reserva esperando el pago
-          </p>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-300">
-            {minutosATexto(plan.minutos_comprometidos)} de tu mensualidad están reservados
-            para ese turno. Si no completás el pago a tiempo, el turno se libera y los
-            minutos vuelven a tu saldo.
-          </p>
-        </div>
-      )}
 
       {/* (M5A) Historial. Todavía sin botones de cancelar ni reprogramar. */}
       {(reservas?.proximas.length || reservas?.anteriores.length) ? (
@@ -297,19 +250,6 @@ export default function MiPlanCliente({
                   Se muestran las más recientes.
                 </p>
               )}
-            </>
-          )}
-          {/* (M5B) Intentos que vencieron sin pagarse: fuera de las listas de
-              arriba para que nadie los confunda con un turno confirmado. */}
-          {reservas.vencidas.length > 0 && (
-            <>
-              <h2 className="mt-7 text-lg font-black text-zinc-400">Intentos no confirmados</h2>
-              <p className="mt-1 text-xs text-zinc-600">
-                No se completó el pago a tiempo. Los minutos ya volvieron a tu saldo.
-              </p>
-              <ul className="mt-3 space-y-2">
-                {reservas.vencidas.map((r) => <FilaReserva key={r.referencia} r={r} />)}
-              </ul>
             </>
           )}
         </div>

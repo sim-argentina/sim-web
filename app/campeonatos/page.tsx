@@ -6,7 +6,6 @@ import { useSearchParams } from "next/navigation";
 import { formatPenalizacion, msToTiempo, ESCUDERIAS_2026 } from "@/lib/campeonatos";
 import {
   esEliminacion,
-  requiereEscuderia,
   metodosPagoPublicos,
   normalizarCupoMaximo,
 } from "@/lib/campeonatosConfig";
@@ -504,9 +503,10 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
   const campos = getInscripcionCampos(campeonato); // misma fuente que admin/backend
   const vis = (k: Parameters<typeof campoVisible>[1]) => campoVisible(campos, k);
   const req = (k: Parameters<typeof campoRequerido>[1]) => campoRequerido(campos, k);
-  // Escudería obligatoria si la config la marca required o si la modalidad la exige
-  // (liga → ranking de constructores) y el campo está visible.
-  const escuderiaObligatoria = req("escuderia") || (requiereEscuderia(campeonato) && vis("escuderia"));
+  // Escudería obligatoria SOLO si la config la marca required (misma fuente que el
+  // admin y el backend). La modalidad decide si el campo se muestra, no si es
+  // obligatorio: en liga el preset es "optional" → visible y opcional.
+  const escuderiaObligatoria = req("escuderia");
   const metodos = metodosPagoPublicos(campeonato); // ["mercadopago"] o [..., "stand"]
   const ofrecePagoStand = metodos.includes("stand");
 

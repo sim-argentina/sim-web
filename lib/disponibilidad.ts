@@ -60,23 +60,15 @@ async function libresPorHorario(args: {
   const ttlIso = new Date(Date.now() - PENDIENTE_TTL_MIN * 60_000).toISOString();
   const { data: reservas, error } = await supabaseAdmin
     .from("reservas")
-    .select("hora, duracion_minutos, simuladores, estado, created_at, cobertura")
+    .select("hora, duracion_minutos, simuladores, estado, created_at")
     .eq("fecha", fecha)
     .in("estado", ["activa", "pendiente_pago"]);
   if (error) return fail(500, "No se pudo calcular la disponibilidad");
 
-  const bloqueantes = (reservas ?? []).filter((r) => {
-    if (r.estado === "activa") return true;
-    // (M5B) Una reserva MIXTA pendiente de pago no es una retención blanda: tiene
-    // filas reales en reserva_slots que solo suelta la liberación. Mientras siga
-    // en pendiente_pago ocupa el turno, sin importar hace cuánto se creó. Si se
-    // le aplicara el TTL de 15 minutos, la disponibilidad diría "libre" para un
-    // turno que la base va a rechazar con 23505.
-    if (r.cobertura === "mixta") return true;
-    // Reservas normales pendientes: retención blanda de PENDIENTE_TTL_MIN, tal
-    // como funcionaba antes de M5B.
-    return Boolean(r.created_at && r.created_at > ttlIso);
-  });
+  const bloqueantes = (reservas ?? []).filter(
+    (r) => r.estado === "activa" ||
+      (r.estado === "pendiente_pago" && r.created_at && r.created_at > ttlIso),
+  );
   const ocupacion = construirOcupacion(fecha, bloqueantes);
 
   // 2) Bloqueos administrativos del día.

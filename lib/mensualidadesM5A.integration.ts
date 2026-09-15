@@ -657,19 +657,13 @@ async function main() {
     const crudo = JSON.stringify(dto);
     for (const prohibido of [
       mA.id, mA.telefono_norm, `${MARCA}@test.local`, "Pérez",
-      "reserva_id", "mensualidad_id", "payment", "mp_", "token",
-      // (M5B) "importe" ya NO está prohibido: el DTO expone
-      // `importe_complementario`, que es el dinero que el propio titular pagó o
-      // tiene que pagar por su reserva mixta. Sigue prohibido todo lo interno
-      // (comisión, neto, ids de pago), que no aparece por ningún lado.
-      "comision", "neto",
+      "reserva_id", "mensualidad_id", "importe", "total", "payment", "mp_",
     ]) {
       assert.ok(!crudo.includes(prohibido), `M5A-46 el DTO no puede contener "${prohibido}"`);
     }
     for (const r of [...dto.reservas.proximas, ...dto.reservas.anteriores]) {
       assert.deepEqual(Object.keys(r).sort(),
-        ["cobertura", "duracion", "estado", "fecha", "hora", "importe_complementario",
-         "minutos_consumidos", "referencia", "simuladores"],
+        ["duracion", "estado", "fecha", "hora", "minutos_consumidos", "referencia", "simuladores"],
         "M5A-46 solo los campos mínimos");
     }
     await limpiar();

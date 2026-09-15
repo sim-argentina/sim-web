@@ -125,37 +125,6 @@ export async function tieneMensualidadBloqueada(telefonoNorm: string): Promise<b
   return Boolean(data.bloqueada) && String(data.vence_el) >= String(hoy);
 }
 
-// ── Guard de retención mixta (M5B) ──────────────────────────────────────────
-
-/**
- * ¿El titular tiene una reserva mixta esperando el pago?
- *
- * Mientras la haya no se puede iniciar una compra ni una renovación, y el
- * motivo es el tope de traslado: la retención ya descontó minutos del ciclo
- * ACTUAL. Si en el medio se renovara, esos minutos —al liberarse— volverían a un
- * ciclo nuevo que solo admite 60 minutos de arrastre, y el titular terminaría
- * con más de los que le corresponden.
- *
- * La base tiene además su propio invariante para la carrera que este guard no
- * llega a cubrir (ver liberar_retencion_reserva_mensualidad), pero cortar acá
- * evita cobrarle a alguien una renovación que después genera un caso raro.
- */
-export async function tieneRetencionMixtaPendiente(telefonoNorm: string): Promise<boolean> {
-  const { data: mens } = await supabaseAdmin
-    .from("mensualidades")
-    .select("id")
-    .eq("telefono_norm", telefonoNorm)
-    .order("vence_el", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!mens?.id) return false;
-
-  const { data } = await supabaseAdmin.rpc("mensualidad_tiene_retencion_viva", {
-    p_mensualidad_id: mens.id,
-  });
-  return Boolean(data);
-}
-
 // ── Creación de compra pendiente + preferencia ──────────────────────────────
 
 export type CompraCreada = { init_point: string; token_publico: string; plan: string; precio: number };
