@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
-import MercadoPagoConfig, { Payment } from "mercadopago";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { logSecurityEvent } from "@/lib/apiError";
+import { procesarPagoCampeonato, idDePagoDeNotificacion } from "@/lib/campeonatosPago";
 
-// Webhook exclusivo para inscripciones de campeonatos.
-// No toca la tabla "reservas" ni el webhook existente en /api/mercadopago/webhook.
-// Se distingue por el prefijo "campeonato_inscripcion_" en external_reference.
+// Webhook exclusivo de inscripciones a campeonatos. Se distingue por el prefijo
+// del external_reference y no toca reservas, gift cards ni mensualidades (cada
+// producto tiene su propia notification_url).
+//
+// ES LA FUENTE DE VERDAD: la inscripción deportiva se crea acá, no cuando el
+// navegador vuelve a /campeonatos. Toda la verificación (consulta del pago con
+// credenciales del servidor, moneda, importe, cupo, idempotencia) vive en
+// lib/campeonatosPago.ts y se comparte con la reconciliación server-side.
 
-const client = new MercadoPagoConfig({
-  accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN!,
-});
+export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
@@ -19,18 +21,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Demasiadas solicitudes" }, { status: 429 });
     }
 
-    const body = await req.json();
-
-    const paymentId =
-      body?.data?.id ||
-      body?.id ||
-      new URL(req.url).searchParams.get("id");
-
+    const body = await req.json().catch(() => null);
+    const paymentId = idDePagoDeNotificacion(req, body);
     const topic =
-      body?.type ||
-      body?.topic ||
+      (body as { type?: string; topic?: string } | null)?.type ??
+      (body as { topic?: string } | null)?.topic ??
       new URL(req.url).searchParams.get("topic");
 
+    // Notificaciones que no son de pagos (merchant_order, tests) se aceptan sin más.
     if (!paymentId || topic !== "payment") {
       return NextResponse.json({ received: true }, { status: 200 });
     }
@@ -40,61 +38,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
     }
 
-    const payment = new Payment(client);
-    const paymentData = await payment.get({ id: paymentId });
+    const r = await procesarPagoCampeonato(paymentId);
 
-    const extRef = paymentData.external_reference || "";
-
-    // Solo procesar referencias de campeonatos (separación total del flujo de reservas)
-    if (!extRef.startsWith("campeonato_inscripcion_")) {
+    // Un pago de otro producto o de un intento inexistente NO es un error nuestro:
+    // se responde 200 para que Mercado Pago no reintente eternamente.
+    if (r.ok) {
+      if (r.estado === "sin_cupo") {
+        // Pagó después de vencer la reserva y ya no había lugar: queda registrado
+        // en el intento para que el staff lo resuelva (devolución o cupo extra).
+        logSecurityEvent("campeonato_pago_sin_cupo", { payment_id: paymentId });
+      }
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    const inscripcionId = extRef.replace("campeonato_inscripcion_", "");
-
-    const { data: inscripcion } = await supabaseAdmin
-      .from("campeonato_inscripciones")
-      .select("id, payment_id")
-      .eq("id", inscripcionId)
-      .maybeSingle();
-
-    if (!inscripcion) {
-      return NextResponse.json(
-        { error: "Inscripción no encontrada" },
-        { status: 404 }
-      );
-    }
-
-    // Idempotente: si ya tiene payment_id, ignorar
-    if (inscripcion.payment_id) {
-      return NextResponse.json({ received: true }, { status: 200 });
-    }
-
-    let estado_pago: string;
-    if (paymentData.status === "approved") {
-      estado_pago = "pagado";
-    } else if (
-      paymentData.status === "rejected" ||
-      paymentData.status === "cancelled"
-    ) {
-      estado_pago = "rechazado";
-    } else {
-      return NextResponse.json({ received: true }, { status: 200 });
-    }
-
-    await supabaseAdmin
-      .from("campeonato_inscripciones")
-      .update({
-        estado_pago,
-        payment_id: String(paymentId),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", inscripcionId)
-      .is("payment_id", null);
-
-    return NextResponse.json({ received: true }, { status: 200 });
-  } catch (error) {
-    console.error("Error en webhook campeonatos:", error);
+    // Fallos reales sí se devuelven con su código: un 200 silencioso escondería
+    // pagos sin acreditar. Sin PII en la respuesta ni en el log.
+    logSecurityEvent("campeonato_webhook_fallo", { motivo: r.motivo });
+    return NextResponse.json({ error: r.motivo }, { status: r.status });
+  } catch {
     return NextResponse.json({ error: "Error interno del webhook" }, { status: 500 });
   }
 }

@@ -28,7 +28,8 @@ export async function GET(req: Request) {
     return tooManyResponse();
   }
   try {
-    const [campeonatosRes, sorteosRes, registrosRes, inscripcionesRes, fechasRes] =
+    const ahoraIso = new Date().toISOString();
+    const [campeonatosRes, sorteosRes, registrosRes, inscripcionesRes, fechasRes, checkoutsRes] =
       await Promise.all([
         supabaseAdmin
           .from("campeonatos")
@@ -54,6 +55,13 @@ export async function GET(req: Request) {
           .from("campeonato_fechas")
           .select("id, campeonato_id, numero_fecha, nombre, circuito, estado")
           .order("numero_fecha", { ascending: true }),
+        // Intentos de checkout VIGENTES: reservan cupo pero NO son inscripciones.
+        // Los vencidos quedan fuera por la comparación de fecha (sin cron).
+        supabaseAdmin
+          .from("campeonato_checkouts")
+          .select("campeonato_id")
+          .eq("estado", "pendiente")
+          .gt("expira_el", ahoraIso),
       ]);
 
     const campeonatos = campeonatosRes.data ?? [];
@@ -76,18 +84,34 @@ export async function GET(req: Request) {
       (r: { campeonato_fecha_id?: string | null }) => !(r.campeonato_fecha_id != null && fecha0Ids.has(r.campeonato_fecha_id))
     );
 
-    // Inscriptos pagados por campeonato (para mostrar cupos ocupados/restantes en
-    // la web pública). No es el conteo de enforcement (ese incluye pendientes
-    // vigentes y vive en /preference); acá alcanza con las inscripciones pagadas.
+    // Cupos por campeonato. Se distinguen TRES cosas distintas:
+    //   · inscriptos → pagados/confirmados. Es el único número que se muestra
+    //     como "inscripto": alguien que todavía no pagó nunca cuenta acá.
+    //   · reservados → intentos de checkout vigentes (gente pagando ahora mismo).
+    //     Ocupan lugar pero no son inscripciones; los vencidos ya no figuran.
+    //   · disponibles → lo que realmente queda libre.
     const inscriptosPorCamp: Record<string, number> = {};
     for (const ins of inscripciones as { campeonato_id?: string | null }[]) {
       const k = ins.campeonato_id ?? "";
       if (k) inscriptosPorCamp[k] = (inscriptosPorCamp[k] || 0) + 1;
     }
-    const campeonatosConCupos = campeonatos.map((c) => ({
-      ...c,
-      inscriptos: inscriptosPorCamp[c.id] ?? 0,
-    }));
+    const reservadosPorCamp: Record<string, number> = {};
+    for (const c of (checkoutsRes.data ?? []) as { campeonato_id?: string | null }[]) {
+      const k = c.campeonato_id ?? "";
+      if (k) reservadosPorCamp[k] = (reservadosPorCamp[k] || 0) + 1;
+    }
+    const campeonatosConCupos = campeonatos.map((c) => {
+      const inscriptos = inscriptosPorCamp[c.id] ?? 0;
+      const reservados = reservadosPorCamp[c.id] ?? 0;
+      const limite = Number(c.cupos_maximos);
+      const conLimite = Number.isFinite(limite) && limite > 0;
+      return {
+        ...c,
+        inscriptos,
+        cupos_reservados: reservados,
+        cupos_disponibles: conLimite ? Math.max(0, limite - inscriptos - reservados) : null,
+      };
+    });
 
     // Rankings: mejor tiempo por piloto por categoría
     const rankings: Record<string, unknown[]> = { oro: [], plata: [], bronce: [] };
