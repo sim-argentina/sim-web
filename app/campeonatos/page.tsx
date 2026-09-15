@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, Suspense, type ReactNode } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { formatPenalizacion, msToTiempo, ESCUDERIAS_2026 } from "@/lib/campeonatos";
 import {
   esEliminacion,
@@ -10,7 +11,18 @@ import {
   normalizarCupoMaximo,
 } from "@/lib/campeonatosConfig";
 import { getInscripcionCampos, campoVisible, campoRequerido } from "@/lib/campeonatosInscripcionConfig";
-import { gaEvent, setPendingPurchase } from "@/lib/analytics";
+import { mensajeConfirmacion } from "@/lib/campeonatosMensajes";
+import { gaEvent, setPendingPurchase, trackPurchase } from "@/lib/analytics";
+
+// Key de idempotencia del intento de checkout: sobrevive al doble clic y a los
+// reintentos por error de red, para no reservar dos cupos por la misma persona.
+function nuevaIdempotencyKey(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `k${Date.now()}${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -28,7 +40,12 @@ type CampeonatoConfig = {
   premios?: { total?: number; moneda?: string; detalle?: PremioItem[] };
   reglamento_carrera?: Record<string, unknown>;
   requisitos?: { altura_min_m?: number; peso_max_kg?: number; acepta?: string[] };
-  inscripcion?: { sin_devolucion?: boolean; transferible?: boolean; aviso_previo?: boolean; nota?: string };
+  // `mensaje_confirmacion` permite fijar por campeonato el texto que se muestra
+  // después de inscribirse. Si no está, se deriva de la modalidad + fecha + hora.
+  inscripcion?: {
+    sin_devolucion?: boolean; transferible?: boolean; aviso_previo?: boolean;
+    nota?: string; mensaje_confirmacion?: string;
+  };
   entrenamiento_previo?: { habilitado?: boolean; texto?: string };
 };
 
@@ -41,7 +58,11 @@ type Campeonato = {
   fecha_fin: string | null;
   precio_inscripcion: number;
   cupos_maximos: number;
+  // inscriptos = pagados/confirmados. Quien está pagando ahora mismo cuenta en
+  // cupos_reservados, NO acá: nadie figura como inscripto antes de pagar.
   inscriptos: number;
+  cupos_reservados?: number | null;
+  cupos_disponibles?: number | null;
   inscripcion_habilitada: boolean;
   imagen_url: string | null;
   categorias: string[];
@@ -200,21 +221,27 @@ function StatCard({ color, label, children }: { color: string; label: string; ch
 
 // ─── Confirmation screen ──────────────────────────────────────────────────────
 
+// Pantalla de cierre. La usan los DOS caminos posibles:
+//   · pago online confirmado  → "¡Inscripción confirmada!" (ya pagó)
+//   · pago en el stand        → "¡Inscripción registrada!" (paga al llegar)
+// El texto de instrucciones NO se decide acá: sale de la configuración del
+// campeonato (ver lib/campeonatosMensajes.ts), nunca de su nombre.
 type ConfirmacionData = {
+  titulo: string;
   nombre: string;
   apellido: string;
   telefono: string;
   dni: string;
   escuderia_favorita: string;
   campeonato: string;
-  metodo: "mercadopago" | "stand";
-  init_point?: string;
+  mensaje: string;
+  pagada: boolean;
+  monto?: number | null;
 };
 
 function ConfirmacionScreen({ data, onClose }: { data: ConfirmacionData; onClose: () => void }) {
-  const esMp = data.metodo === "mercadopago";
-  // Mensaje de WhatsApp según método de pago (sin PII en la URL).
-  const waMensaje = esMp
+  // Mensaje de WhatsApp según el estado del pago (sin PII en la URL).
+  const waMensaje = data.pagada
     ? "Hola SIM, me inscribí al campeonato y quiero unirme al grupo de WhatsApp. Ya pagué la inscripción con Mercado Pago."
     : "Hola SIM, me inscribí al campeonato y quiero unirme al grupo de WhatsApp. Voy a pagar la inscripción en el stand.";
   const waUrl = `https://wa.me/5493512520927?text=${encodeURIComponent(waMensaje)}`;
@@ -226,7 +253,7 @@ function ConfirmacionScreen({ data, onClose }: { data: ConfirmacionData; onClose
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </div>
-        <h3 className="text-xl font-black text-white mb-2">¡Inscripción registrada!</h3>
+        <h3 className="text-xl font-black uppercase text-white mb-2">{data.titulo}</h3>
       </div>
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-2">
@@ -238,6 +265,7 @@ function ConfirmacionScreen({ data, onClose }: { data: ConfirmacionData; onClose
           ["DNI", data.dni],
           ["Escudería", data.escuderia_favorita],
           ["Campeonato", data.campeonato],
+          ["Pago", data.pagada && data.monto ? `$${data.monto.toLocaleString()} · Mercado Pago` : ""],
         ] as [string, string][]).filter(([, value]) => Boolean(value)).map(([label, value]) => (
           <div key={label} className="flex justify-between text-sm">
             <span className="text-zinc-500">{label}</span>
@@ -247,12 +275,13 @@ function ConfirmacionScreen({ data, onClose }: { data: ConfirmacionData; onClose
       </div>
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-300 leading-relaxed space-y-3">
-        <p>Tu inscripción fue registrada correctamente.</p>
-        {esMp ? (
-          <p>Ahora debés acercarte al stand de SIM Argentina para realizar tu tanda clasificatoria y registrar tu mejor tiempo. Con ese tiempo serás ubicado en una categoría competitiva.</p>
-        ) : (
-          <p>Recordá que deberás abonar la inscripción al llegar al stand. Luego podrás realizar tu tanda clasificatoria y registrar tu mejor tiempo para ser ubicado en una categoría competitiva.</p>
-        )}
+        <p>
+          {data.pagada
+            ? "Tu pago fue confirmado y tu inscripción quedó registrada."
+            : "Tu inscripción fue registrada correctamente."}
+        </p>
+        {!data.pagada && <p>Recordá que deberás abonar la inscripción al llegar al stand.</p>}
+        <p>{data.mensaje}</p>
       </div>
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-sm space-y-2">
@@ -285,17 +314,12 @@ function ConfirmacionScreen({ data, onClose }: { data: ConfirmacionData; onClose
         Pedir acceso al grupo de WhatsApp
       </a>
 
-      {esMp && data.init_point ? (
-        <button onClick={() => { window.location.href = data.init_point!; }}
-          className="w-full rounded-2xl bg-red-600 py-4 font-black text-white text-base hover:bg-red-500 transition-all">
-          Ir a pagar con Mercado Pago →
-        </button>
-      ) : (
-        <button onClick={onClose}
-          className="w-full rounded-2xl bg-zinc-800 py-4 font-black text-white text-base hover:bg-zinc-700 transition-all">
-          Entendido
-        </button>
-      )}
+      {/* Sin botón de pago: cuando se llega acá por Mercado Pago el pago YA está
+          hecho, y en el flujo de stand se abona presencialmente. */}
+      <button onClick={onClose}
+        className="w-full rounded-2xl bg-zinc-800 py-4 font-black text-white text-base hover:bg-zinc-700 transition-all">
+        Entendido
+      </button>
     </div>
   );
 }
@@ -471,6 +495,7 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [confirmacion, setConfirmacion] = useState<ConfirmacionData | null>(null);
+  const idemKey = useRef<string | null>(null);
 
   const set = (k: string, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -497,6 +522,10 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
     }
     if (!form.acepto_condiciones) { setError("Debés aceptar los términos y condiciones."); return; }
     setLoading(true); setError("");
+    // La misma key en reintentos (doble clic, error de red) reusa el MISMO intento
+    // de checkout en vez de reservar un segundo cupo.
+    if (!idemKey.current) idemKey.current = nuevaIdempotencyKey();
+    const pagaEnStand = ofrecePagoStand && form.metodo_pago_inscripcion === "stand";
     try {
       const res = await fetch("/api/campeonatos/preference", {
         method: "POST",
@@ -507,32 +536,49 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
           instagram: form.instagram, escuderia_favorita: form.escuderia_favorita,
           acepto_condiciones: form.acepto_condiciones,
           // Si el campeonato no ofrece pago en stand, siempre Mercado Pago.
-          metodo_pago_inscripcion: ofrecePagoStand ? form.metodo_pago_inscripcion : "mercadopago",
-          campeonato_id: campeonato.id, monto: campeonato.precio_inscripcion,
+          metodo_pago_inscripcion: pagaEnStand ? "stand" : "mercadopago",
+          campeonato_id: campeonato.id,
+          idempotency_key: idemKey.current,
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data.error || "Error al procesar la inscripción."); return; }
-      if (form.metodo_pago_inscripcion === "mercadopago") {
+      if (!res.ok) {
+        // Una key quemada por un error del servidor no debe repetirse.
+        idemKey.current = null;
+        setError(data.error || "Error al procesar la inscripción.");
+        return;
+      }
+
+      // ── Pago online: derecho a Mercado Pago. Todavía NO hay inscripción ──────
+      if (data.metodo !== "stand") {
+        if (!data.init_point) {
+          idemKey.current = null;
+          setError("No pudimos abrir el pago. Intentá de nuevo en unos segundos.");
+          return;
+        }
         gaEvent("begin_checkout", {
           currency: "ARS",
           value: campeonato.precio_inscripcion,
           items: [{ item_id: campeonato.id, item_name: "Inscripción campeonato" }],
         });
         setPendingPurchase({ value: campeonato.precio_inscripcion, currency: "ARS", type: "campeonato" });
-      } else {
-        // Pago en el stand: la inscripción queda registrada sin pasar por MP.
-        gaEvent("sign_up", { method: "stand" });
+        window.location.href = data.init_point;
+        return;
       }
+
+      // ── Pago en el stand: la inscripción queda registrada sin pasar por MP ──
+      gaEvent("sign_up", { method: "stand" });
       setConfirmacion({
+        titulo: "¡Inscripción registrada!",
         nombre: form.nombre, apellido: form.apellido,
         telefono: form.telefono, dni: form.dni,
         escuderia_favorita: form.escuderia_favorita,
         campeonato: campeonato.nombre,
-        metodo: data.metodo,
-        init_point: data.init_point || data.sandbox_init_point,
+        mensaje: mensajeConfirmacion(campeonato),
+        pagada: false,
       });
     } catch {
+      idemKey.current = null;
       setError("Error de conexión. Intentá de nuevo.");
     } finally {
       setLoading(false);
@@ -656,19 +702,217 @@ function InscripcionModal({ campeonato, onClose }: { campeonato: Campeonato; onC
 
               {error && <p className="rounded-xl bg-red-900/30 border border-red-500/30 px-4 py-3 text-sm text-red-400">{error}</p>}
 
+              {/* CTA único: quien paga online va DERECHO a Mercado Pago. */}
               <button onClick={submit} disabled={loading}
-                className="w-full rounded-2xl bg-red-600 py-4 font-black text-white text-lg hover:bg-red-500 transition-all disabled:opacity-50">
+                className="w-full rounded-2xl bg-red-600 py-4 font-black uppercase text-white text-lg hover:bg-red-500 transition-all disabled:opacity-50">
                 {loading
                   ? "Procesando..."
-                  : form.metodo_pago_inscripcion === "stand"
+                  : ofrecePagoStand && form.metodo_pago_inscripcion === "stand"
                   ? "Inscribirme — pago en el stand"
-                  : `Inscribirme — pagar $${campeonato.precio_inscripcion.toLocaleString()} online`}
+                  : `Inscribirme — pagar $${campeonato.precio_inscripcion.toLocaleString()}`}
               </button>
             </div>
           </>
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Vuelta de Mercado Pago: estado REAL de la inscripción ───────────────────
+
+// Mercado Pago devuelve a /campeonatos?checkout=<token>. Ese token es lo único
+// que se usa: los query params de MP (collection_status, payment_id…) se ignoran
+// porque vienen del navegador y se pueden escribir a mano.
+//
+// El webhook puede llegar DESPUÉS del redirect, así que la pantalla no dice que
+// falló: muestra "Confirmando tu pago..." y consulta al servidor cada 2 segundos
+// hasta que la base confirma. Sin recargar la página.
+
+type EstadoInscripcion = {
+  estado: "confirmado" | "pendiente" | "rechazado" | "expirado" | "sin_cupo";
+  campeonato: string;
+  monto: number;
+  nombre?: string;
+  apellido?: string;
+  telefono?: string;
+  mensaje?: string;
+  transaction_id?: string;
+};
+
+const POLL_MS = 2000;
+const POLL_MAX = 45; // ~90 segundos de espera activa
+
+function EstadoInscripcionModal({ token, onClose }: { token: string; onClose: () => void }) {
+  const [datos, setDatos] = useState<EstadoInscripcion | null>(null);
+  const [noExiste, setNoExiste] = useState(false);
+  const [agotado, setAgotado] = useState(false);
+
+  // Una única suscripción al estado del servidor: consulta, y mientras el pago
+  // siga pendiente se vuelve a consultar cada POLL_MS. Todo el setState ocurre en
+  // el callback de la respuesta, nunca en el cuerpo del efecto.
+  useEffect(() => {
+    let vivo = true;
+    let intentos = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const reintentar = () => {
+      if (!vivo) return;
+      if (intentos >= POLL_MAX) { setAgotado(true); return; }
+      intentos += 1;
+      timer = setTimeout(() => { void consultar(); }, POLL_MS);
+    };
+
+    const consultar = async () => {
+      try {
+        const res = await fetch(
+          `/api/campeonatos/inscripcion-status?t=${encodeURIComponent(token)}`,
+          { cache: "no-store" },
+        );
+        if (!vivo) return;
+        if (res.status === 404) { setNoExiste(true); return; }
+        const d = await res.json().catch(() => null);
+        if (!vivo) return;
+        if (!res.ok || !d) { reintentar(); return; }
+
+        const estado = d as EstadoInscripcion;
+        setDatos(estado);
+        // Conversión GA4 recién con la confirmación del servidor (dedup interno).
+        if (estado.estado === "confirmado" && estado.transaction_id) {
+          trackPurchase("campeonato", estado.transaction_id);
+        }
+        if (estado.estado === "pendiente") reintentar();
+      } catch {
+        if (vivo) reintentar();
+      }
+    };
+
+    void consultar();
+    return () => { vivo = false; if (timer) clearTimeout(timer); };
+  }, [token]);
+
+  const caja = "relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-zinc-800 bg-zinc-950 p-6";
+  const envolver = (children: ReactNode) => (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
+      <div className={caja}>
+        <button onClick={onClose} className="absolute right-4 top-4 text-zinc-500 hover:text-white text-2xl leading-none">×</button>
+        {children}
+      </div>
+    </div>
+  );
+
+  if (noExiste) {
+    return envolver(
+      <div className="space-y-4 text-center">
+        <h3 className="text-xl font-black text-white">No encontramos esa inscripción</h3>
+        <p className="text-sm text-zinc-400">
+          El enlace puede haber vencido. Si pagaste y no ves la confirmación, escribinos y lo resolvemos.
+        </p>
+      </div>
+    );
+  }
+
+  if (!datos) {
+    return envolver(<p className="py-6 text-center text-zinc-400">Consultando el estado de tu pago...</p>);
+  }
+
+  if (datos.estado === "confirmado") {
+    return envolver(
+      <ConfirmacionScreen
+        data={{
+          titulo: "¡Inscripción confirmada!",
+          nombre: datos.nombre ?? "",
+          apellido: datos.apellido ?? "",
+          telefono: datos.telefono ?? "",
+          dni: "",
+          escuderia_favorita: "",
+          campeonato: datos.campeonato,
+          mensaje: datos.mensaje ?? "",
+          pagada: true,
+          monto: datos.monto,
+        }}
+        onClose={onClose}
+      />
+    );
+  }
+
+  if (datos.estado === "rechazado" || datos.estado === "expirado") {
+    const rechazado = datos.estado === "rechazado";
+    return envolver(
+      <div className="space-y-4 text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-red-500/30 bg-red-500/10">
+          <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </div>
+        <h3 className="text-xl font-black text-white">
+          {rechazado ? "El pago no se completó" : "La inscripción no se completó"}
+        </h3>
+        <p className="text-sm text-zinc-400">
+          {rechazado
+            ? "No se te cobró y no quedaste inscripto. Podés intentarlo de nuevo cuando quieras."
+            : "El tiempo para pagar se agotó y no quedaste inscripto. Podés volver a empezar la inscripción."}
+        </p>
+        <button onClick={onClose}
+          className="w-full rounded-2xl bg-red-600 py-3.5 font-black text-white hover:bg-red-500 transition-all">
+          Volver a intentar
+        </button>
+      </div>
+    );
+  }
+
+  if (datos.estado === "sin_cupo") {
+    return envolver(
+      <div className="space-y-4 text-center">
+        <h3 className="text-xl font-black text-white">Se agotaron los cupos</h3>
+        <p className="text-sm text-zinc-400">
+          Tu pago llegó cuando el campeonato ya estaba completo. Escribinos por WhatsApp y lo resolvemos
+          con vos (devolución o lugar disponible).
+        </p>
+        <a href="https://wa.me/5493512520927" target="_blank" rel="noopener noreferrer"
+          className="block w-full rounded-2xl bg-[#25D366] py-3.5 font-black text-white hover:bg-[#20bd5a] transition-all">
+          Escribirnos por WhatsApp
+        </a>
+      </div>
+    );
+  }
+
+  // Pendiente: el webhook todavía no llegó o Mercado Pago dejó el pago en proceso.
+  return envolver(
+    <div className="space-y-4 text-center">
+      <div className="mx-auto h-12 w-12 animate-spin rounded-full border-2 border-zinc-700 border-t-red-500" />
+      <h3 className="text-xl font-black text-white">Confirmando tu pago...</h3>
+      <p className="text-sm text-zinc-400">
+        Estamos esperando la confirmación de tu pago. Esta pantalla se actualiza sola; no hace falta
+        que recargues.
+      </p>
+      {agotado && (
+        <p className="text-xs text-zinc-500">
+          Está tardando más de lo normal. Podés cerrar esta ventana: si el pago se acredita, tu lugar
+          queda registrado igual. Ante cualquier duda, escribinos por WhatsApp.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Lee el token opaco de la URL (?checkout=...) y abre la pantalla de estado. Al
+// cerrarla se saca el token de la URL sin recargar, para que el link no quede en
+// el historial ni se comparta por accidente.
+function RetornoCheckout() {
+  const token = useSearchParams().get("checkout");
+  const [cerrado, setCerrado] = useState(false);
+  if (!token || cerrado) return null;
+  return (
+    <EstadoInscripcionModal
+      token={token}
+      onClose={() => {
+        setCerrado(true);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("checkout");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }}
+    />
   );
 }
 
@@ -695,9 +939,16 @@ function SecCampeonatos({ campeonatos, onInscribir, onVerCuadro }: { campeonatos
               <p>📅 {c.fecha_inicio}{c.fecha_fin && c.fecha_fin !== c.fecha_inicio && ` → ${c.fecha_fin}`}</p>
             )}
             <p>💰 ${c.precio_inscripcion.toLocaleString()} / inscripción</p>
-            {/* Cupos dinámicos: NUNCA hardcodeados. Se leen de cupos_maximos. */}
+            {/* Cupos dinámicos: NUNCA hardcodeados. Se leen de cupos_maximos.
+                El numerador son los INSCRIPTOS (pagados): quien está pagando en
+                este momento se avisa aparte, sin contarlo como inscripto. */}
             {normalizarCupoMaximo(c.cupos_maximos) > 0 && (
-              <p>🎟️ {c.inscriptos ?? 0}/{normalizarCupoMaximo(c.cupos_maximos)} cupos</p>
+              <p>
+                🎟️ {c.inscriptos ?? 0}/{normalizarCupoMaximo(c.cupos_maximos)} cupos
+                {(c.cupos_reservados ?? 0) > 0 && (
+                  <span className="text-zinc-500"> · {c.cupos_reservados} en proceso de pago</span>
+                )}
+              </p>
             )}
             {esEliminacion(c.modalidad) && c.config?.premios?.total != null && (
               <p>🏆 ${Number(c.config.premios.total).toLocaleString("es-AR")} en premios</p>
@@ -1572,6 +1823,11 @@ export default function CampeonatosPage() {
       {inscripcionCamp && (
         <InscripcionModal campeonato={inscripcionCamp} onClose={() => setInscripcionCamp(null)} />
       )}
+
+      {/* Vuelta de Mercado Pago: estado real + confirmación */}
+      <Suspense fallback={null}>
+        <RetornoCheckout />
+      </Suspense>
 
       {/* Bracket público en vivo */}
       {verCuadroCamp && (
