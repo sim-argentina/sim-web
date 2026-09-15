@@ -1,6 +1,6 @@
 import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { PREFIJO_EXT_REF, TTL_PENDIENTES_MIN } from "@/lib/campeonatosCheckout";
+import { PREFIJO_EXT_REF, TTL_PENDIENTES_MIN, GRACIA_CUPO_MIN } from "@/lib/campeonatosCheckout";
 
 // Procesador ÚNICO de pagos de inscripciones a campeonatos.
 // Lo usan el webhook y la reconciliación de la pantalla de resultado: la lógica
@@ -167,6 +167,7 @@ async function procesarCheckout(id: string, pago: PagoMp, extRef: string): Promi
       // notificación demorada no le quita el lugar a quien pagó en tiempo.
       p_aprobado_at: pago.date_approved ?? null,
       p_ttl_pendientes_min: TTL_PENDIENTES_MIN,
+      p_gracia_min: GRACIA_CUPO_MIN,
     });
     if (rpcError) return falla("no_se_pudo_confirmar", 500);
 

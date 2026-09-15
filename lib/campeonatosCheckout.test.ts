@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import {
   validarInscripcionPublica, montoDelCampeonato, estadoPublicoCheckout,
   nuevaExternalReference, nuevoTokenPublico, isoConOffset,
-  PREFIJO_EXT_REF, TTL_CHECKOUT_MIN, GRACIA_CONFIRMACION_MS,
+  PREFIJO_EXT_REF, TTL_CHECKOUT_MIN, GRACIA_CUPO_MS,
 } from "@/lib/campeonatosCheckout";
 import {
   mensajeConfirmacion, fechaLargaEs, horaCorta, horaPresentacion,
@@ -214,7 +214,7 @@ assert.equal(
   estadoPublicoCheckout({ estado: "pendiente", mp_status: null, expira_el: RECIEN_VENCIDO }), "pendiente",
   "dentro de la gracia se sigue confirmando",
 );
-const MUY_VIEJO = new Date(Date.now() - (GRACIA_CONFIRMACION_MS + 60_000)).toISOString();
+const MUY_VIEJO = new Date(Date.now() - (GRACIA_CUPO_MS + 60_000)).toISOString();
 assert.equal(estadoPublicoCheckout({ estado: "pendiente", mp_status: null, expira_el: MUY_VIEJO }), "expirado");
 
 // ── Credenciales opacas ─────────────────────────────────────────────────────

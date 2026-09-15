@@ -17,9 +17,22 @@ import {
 //
 // Nada monetario viene del cliente: el precio se relee de campeonatos.precio_inscripcion.
 
-// Cuánto tiempo el intento retiene el cupo. Es también el vencimiento de la
-// preferencia de Mercado Pago, para que no se pueda pagar una reserva ya vencida.
+// VENTANA PARA PAGAR: hasta acá se puede pagar. Es también el vencimiento de la
+// preferencia de Mercado Pago, así que pasado este punto MP no acepta el pago.
 export const TTL_CHECKOUT_MIN = 20;
+
+// GRACIA DE RETENCIÓN DEL CUPO: el intento sigue ocupando el lugar unos minutos
+// MÁS que la ventana de pago. Ese colchón es lo que impide el +1: alguien que
+// pagó en el minuto 19 conserva su cupo mientras llega el webhook, y nadie puede
+// tomarlo en el medio. Pasada la gracia sin pago acreditado, el lugar se libera.
+//
+//   pagar hasta          = expira_el
+//   cupo retenido hasta  = expira_el + GRACIA_CUPO_MIN
+//
+// Es la MISMA gracia que usa la pantalla de estado antes de dar el intento por
+// abandonado: frontend y backend no pueden desalinearse.
+export const GRACIA_CUPO_MIN = 5;
+export const GRACIA_CUPO_MS = GRACIA_CUPO_MIN * 60_000;
 
 // TTL histórico de las inscripciones PENDIENTES que siguen ocupando cupo (altas
 // de stand/admin recientes). Se mantiene igual que antes de este cambio.
@@ -174,12 +187,10 @@ export type EstadoCheckoutPublico = "confirmado" | "sin_cupo" | "rechazado" | "e
 const MP_EN_CURSO = new Set(["pending", "in_process", "authorized"]);
 const MP_CAIDO = new Set(["rejected", "cancelled"]);
 
-// Margen después de expira_el antes de dar un intento por abandonado EN PANTALLA.
-// Quien paga sobre el final de la ventana puede tener el aviso de Mercado Pago en
-// camino cuando la reserva ya venció: durante este margen se sigue mostrando
-// "Confirmando tu pago..." en vez de decirle que no se completó. No afecta al
-// cupo (ese se libera puntual a expira_el) ni a la confirmación.
-export const GRACIA_CONFIRMACION_MS = 5 * 60_000;
+// Mientras el cupo sigue retenido (ver GRACIA_CUPO_MS), la pantalla tampoco da el
+// intento por abandonado: quien pagó sobre el final de la ventana puede tener el
+// aviso de Mercado Pago en camino, y decirle "no se completó" sería mentirle.
+// Es el mismo margen que retiene el lugar server-side, no un maquillaje visual.
 
 // Traducción PURA del intento a lo que ve la persona. "confirmado" sale única y
 // exclusivamente de que la base tenga el intento aprobado (es decir: webhook o
@@ -194,19 +205,20 @@ export function estadoPublicoCheckout(
   const mp = String(chk.mp_status ?? "");
   if (MP_EN_CURSO.has(mp)) return "pendiente";
   if (MP_CAIDO.has(mp)) return "rechazado";
-  // Sin noticias de Mercado Pago y con la reserva vencida hace rato: abandonado.
-  if (Date.parse(chk.expira_el) + GRACIA_CONFIRMACION_MS <= ahoraMs) return "expirado";
+  // Sin noticias de Mercado Pago y con la retención ya caída: abandonado.
+  if (Date.parse(chk.expira_el) + GRACIA_CUPO_MS <= ahoraMs) return "expirado";
   return "pendiente";
 }
 
 // ── Cupo ────────────────────────────────────────────────────────────────────
 
-// Ocupados = pagadas + pendientes vigentes + intentos de checkout vigentes.
+// Ocupados = pagadas + pendientes vigentes + intentos con la retención viva.
 // Definición ÚNICA, en SQL, compartida con el alta atómica y el contador público.
 export async function cupoOcupados(campeonatoId: string): Promise<number> {
   const { data } = await supabaseAdmin.rpc("campeonato_cupo_ocupados", {
     p_campeonato_id: campeonatoId,
     p_ttl_pendientes_min: TTL_PENDIENTES_MIN,
+    p_gracia_min: GRACIA_CUPO_MIN,
   });
   return Number(data) || 0;
 }
@@ -256,6 +268,7 @@ export async function crearCheckoutYPreferencia(
     p_idempotency_key: datos.idempotencyKey,
     p_ttl_min: TTL_CHECKOUT_MIN,
     p_ttl_pendientes_min: TTL_PENDIENTES_MIN,
+    p_gracia_min: GRACIA_CUPO_MIN,
   });
 
   if (error || !data) return fail(500, "No se pudo iniciar la inscripción. Probá de nuevo.");
