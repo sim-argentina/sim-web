@@ -34,7 +34,17 @@ const TEMA_EXTERNO: Array<{ re: RegExp; que: string }> = [
   { re: /\b(ley|leyes|normativa|normativas|decreto|resolucion|reglamentacion|boletin oficial|habilitacion municipal|impuesto)\b/, que: "normativa" },
   { re: /\b(inflacion|indec|bcra|dolar|tipo de cambio|indicador economico|indicadores economicos|tasa de interes|salario minimo)\b/, que: "indicadores" },
   { re: /\b(noticia|noticias|novedad|novedades|tendencia|tendencias|evento|eventos|feria|convencion|lanzamiento)\b/, que: "noticias_tendencias" },
+  // 4E — FODA explícitamente pedido contra mercado/competencia/externo (además de "compara..."
+  // que ya dispara la regla 5 de abajo; esto cubre frases sin la palabra "compara").
+  { re: /\bfoda\b.{0,40}(mercado|competenc|externo|actual)\b/, que: "foda_externo" },
 ];
+
+// 4E — "ajustar/ajustado por inflación" es una operación INTERNA (usa el índice IPC ya cargado
+// por el admin; nunca busca en internet). Sin esta excepción, la palabra suelta "inflación" del
+// bucket "indicadores" de arriba dispararía Tavily para una comparación puramente interna.
+function esAjusteInflacionInterno(t: string): boolean {
+  return /\binflaci[oó]n\b/.test(t) && /\bajust/.test(t) && !/\b(indec|bcra|dolar|tipo de cambio|tasa de interes|salario minimo)\b/.test(t);
+}
 
 // Datos INTERNOS de SIM (resolubles con el sistema; no requieren internet).
 const TEMA_INTERNO = /\b(turno|turnos|factur|ganancia|ingreso|ingresos|cronograma|reserva|reservas|stand|colectivo|comision|comisiones|equipo|federico|francisco|ramiro|fede|fran|rami|cierre|saldo|metrica|metricas|jornada|empleado|empleados|personas|operaciones|neto|bruto)\b/;
@@ -55,7 +65,8 @@ export function decidirWeb(pregunta: string): DecisionWeb {
   const pii = contienePII(pregunta);
   if (pii.hay) return { habilitar: false, explicita: false, motivo: `pii:${pii.tipos.join(",")}` };
 
-  const temaExterno = TEMA_EXTERNO.find((x) => x.re.test(t));
+  const ajusteInternoInflacion = esAjusteInflacionInterno(t);
+  const temaExterno = TEMA_EXTERNO.find((x) => x.re.test(t) && !(x.que === "indicadores" && ajusteInternoInflacion));
   const interno = TEMA_INTERNO.test(t);
   const temporal = TEMPORAL_CAMBIANTE.test(t);
   const compara = COMPARA_EXTERNO.test(t);

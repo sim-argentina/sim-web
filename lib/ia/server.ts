@@ -31,6 +31,8 @@ import { estimarPresupuesto, evaluarPresupuesto, PRESUPUESTO_ESTANDAR, PRESUPUES
 import { TAVILY_CREDITOS_VERSION } from "@/lib/ia/web/providerTavily";
 import { elegirModelo } from "@/lib/ia/router";
 import { SYSTEM_PROMPT } from "@/lib/ia/systemPrompt";
+import { construirContextoInternoFoda } from "@/lib/ia/analisis/contextoInternoFoda";
+import { ejecutarSintesisFoda, type ResultadoSintesisFoda } from "@/lib/ia/analisis/sintesisFoda";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -451,6 +453,20 @@ export async function correrChat(
   }
 
   // ════════════════════════════════════════════════════════════════════════════════════════
+  // Bloque 4E — FODA MIXTO (interno + web): mismo patrón de síntesis estructurada terminal que
+  // la rama de abajo, pero con su propio esquema (emitir_foda) y contexto interno más amplio
+  // (identidad + canales + métricas + finanzas + cronograma, no solo lo competitivo). Tiene
+  // prioridad sobre el análisis competitivo genérico cuando la pregunta pide un FODA.
+  // ════════════════════════════════════════════════════════════════════════════════════════
+  const esFoda = /\bfoda\b/i.test(pregunta);
+  if (contextoWebUsuario && esFoda) {
+    const internasFoda = await construirContextoInternoFoda();
+    const timeoutMs = Math.max(15000, Math.min(limites.webTimeoutMs, limites.tiempoEjecucionMsMax));
+    const res = await ejecutarSintesisFoda({ provider, modelo: modeloElegido, claseModelo: claseElegida, historialPrevio: hist, pregunta, internas: internasFoda, externas, maxTokensSalida: cfgPresupuesto.maxTokensSalida, timeoutMs });
+    return await persistirResultadoFoda({ conversacionId, userMsg, owner, dia, pregunta, conv, decWeb, webAudit, webAccion, busquedaPrevia, relevantes, internas: internasFoda, externas, res });
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════════════════
   // Corrección 4D.5.2 — consultas MIXTAS (contexto web efectivamente construido): síntesis
   // ESTRUCTURADA y TERMINAL. Una sola llamada a Claude, forzada por tool_choice a
   // emitir_analisis_web; sin herramientas internas de exploración; sin herramienta web nativa;
@@ -549,6 +565,17 @@ export async function correrChat(
     return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: false, estado: estadoMensaje, herramientas: [], uso: res.uso, busquedasWeb: webAudit && !webAudit.cacheHit && webAudit.intentado ? 1 : 0, webExplicita: decWeb.explicita, webCacheHit: webAudit?.cacheHit ?? false, webCreditos: webAudit?.creditos ?? 0 };
   }
 
+  // ── Bloque 4E — FODA INTERNO (sin web): mismo flujo estructurado terminal, sin fuentes
+  // externas. El router ya clasifica "foda" como potente por defecto (router.ts). ─────────────
+  if (esFoda) {
+    const decisionModeloFoda = elegirModelo(pregunta);
+    const claseElegidaFoda = decisionModeloFoda.clase;
+    const modeloElegidoFoda = modelos[claseElegidaFoda];
+    const internasFoda = await construirContextoInternoFoda();
+    const res = await ejecutarSintesisFoda({ provider, modelo: modeloElegidoFoda, claseModelo: claseElegidaFoda, historialPrevio: hist, pregunta, internas: internasFoda, externas: [], maxTokensSalida: cfgPresupuesto.maxTokensSalida, timeoutMs: limites.tiempoEjecucionMsMax });
+    return await persistirResultadoFoda({ conversacionId, userMsg, owner, dia, pregunta, conv, decWeb, webAudit: null, webAccion, busquedaPrevia, relevantes, internas: internasFoda, externas: [], res });
+  }
+
   // ── Consulta INTERNA (sin contexto web): flujo general sin cambios (Markdown libre, loop de
   // herramientas internas, informes) ─────────────────────────────────────────────────────────
   const contextoUsuario = contextoConocimiento;
@@ -634,4 +661,95 @@ export async function correrChat(
   await supabaseAdmin.from("ia_conversaciones").update(patch).eq("id", conversacionId);
 
   return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: res.escalado, estado: estadoMensaje, herramientas: res.herramientas, uso: res.uso, borrador, busquedasWeb: 0, webExplicita: decWeb.explicita, webCacheHit: false, webCreditos: 0 };
+}
+
+// Bloque 4E — persistencia del resultado de FODA (interno o mixto). Mismo patrón que la
+// síntesis estructurada de análisis competitivo (4D.5.2/4D.5.3): fuentes REALMENTE citadas se
+// persisten como reales; mensaje de bloqueo honesto sin sugerir repetir/ampliar automáticamente;
+// se conserva el crudo pre-validación para poder reparar sin volver a llamar a Claude/Tavily.
+async function persistirResultadoFoda(p: {
+  conversacionId: string; userMsg: { id: string }; owner: string; dia: string; pregunta: string;
+  conv: { titulo: string | null }; decWeb: { motivo: string; explicita: boolean };
+  webAudit: WebAudit | null; webAccion: "normal" | "forzar" | "ampliar";
+  busquedaPrevia: Record<string, unknown>;
+  relevantes: Array<{ titulo: string; version_numero: number; metodo_extraccion: string | null; categoria: string | null; ubicacion: string; documento_id: string }>;
+  internas: FuenteInternaDisponible[]; externas: FuenteExternaDisponible[];
+  res: ResultadoSintesisFoda;
+}): Promise<CorrerOk> {
+  const { conversacionId, userMsg, owner, dia, pregunta, conv, decWeb, webAudit, webAccion, busquedaPrevia, relevantes, internas, externas, res } = p;
+  const costoTotal = estimarCostoUSD(res.modelo, res.uso.tokensIn, res.uso.tokensOut) ?? 0;
+
+  const fuentesConocimiento = relevantes.map((h) => ({ tipo: "interna" as const, modulo: `${h.titulo} · versión ${h.version_numero} · ${h.metodo_extraccion ?? "documento"} · categoría ${h.categoria ?? "—"} · ${h.ubicacion}`, actualizado: new Date().toISOString() }));
+  const idsInternosCitados = new Set<string>();
+  const idsExternosCitados = new Set<string>();
+  if (res.spec) {
+    for (const cuadrante of [res.spec.fortalezas, res.spec.debilidades, res.spec.oportunidades, res.spec.amenazas]) {
+      for (const pt of cuadrante) for (const id of pt.fuenteIds) { idsInternosCitados.add(id); idsExternosCitados.add(id); }
+    }
+  }
+  const internasCitadas = internas.filter((f) => idsInternosCitados.has(f.id));
+  const fuentesInternas = [...fuentesConocimiento, ...internasCitadas.map((f) => ({ tipo: "interna" as const, modulo: f.modulo + (f.periodo ? ` · ${f.periodo}` : ""), actualizado: f.actualizado ?? new Date().toISOString() }))];
+  const externasCitadas = externas.filter((f) => idsExternosCitados.has(f.id));
+  const externasAMostrar = externasCitadas.length > 0 ? externasCitadas : externas;
+  const fuentesExternasMsg = externasAMostrar.map((f) => ({ tipo: "externa" as const, modulo: f.dominio || "internet", url: f.url, titulo: f.titulo, dominio: f.dominio, fragmento: f.fragmento, fecha_pagina: f.fechaPublicada }));
+  const fuentesFinales = [...fuentesInternas, ...fuentesExternasMsg];
+
+  const { data: eje } = await supabaseAdmin.from("ia_ejecuciones").insert({
+    conversacion_id: conversacionId, mensaje_id: userMsg.id, modelo: res.modelo, proveedor: getProveedor(),
+    clase_modelo: res.claseModelo, motivo_router: "foda_estructurado", escalado: false,
+    tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, rondas: res.estado === "completa" ? 1 : 0, duracion_ms: res.duracion_ms,
+    estado: res.estado === "completa" ? "completa" : "error", error: res.estado === "bloqueada" ? (res.errores?.join(" | ") ?? res.motivoBloqueo ?? null) : null,
+    busqueda_previa: { ...busquedaPrevia, datos_internos_disponibles: internas.length, datos_internos_citados: internasCitadas.length, fuentes_externas_disponibles: externas.length, fuentes_externas_citadas: externasCitadas.length, salida_estructurada: true, foda: true, crudo_estructurado: res.crudo ?? null, fuentes_internas_ofrecidas: internas, fuentes_externas_ofrecidas: externas },
+    costo_estimado: costoTotal, precios_version: PRECIOS_VERSION,
+    busquedas_web: webAudit && !webAudit.cacheHit && webAudit.intentado ? 1 : 0, costo_busquedas_usd: 0, precios_web_version: webAudit ? TAVILY_CREDITOS_VERSION : null,
+    uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.estado === "bloqueada" ? res.motivoBloqueo ?? null : null,
+  }).select("id").single();
+  const refDiag = (eje?.id ?? userMsg.id).slice(0, 8);
+
+  if (webAudit) {
+    const estadoWeb = webAudit.estado === "no_configurada" ? "deshabilitada" : webAudit.estado;
+    const { data: bw } = await supabaseAdmin.from("ia_busquedas_web").insert({
+      conversacion_id: conversacionId, mensaje_usuario_id: userMsg.id, ejecucion_id: eje?.id ?? null,
+      motivo: decWeb.motivo, explicita: decWeb.explicita, proveedor: "tavily", modelo: res.modelo,
+      estado: estadoWeb, duracion_ms: webAudit.duracionMs, consultas: webAudit.intentado ? [webAudit.consultaSaneada] : [],
+      busquedas_facturables: webAudit.cacheHit ? 0 : (webAudit.intentado ? 1 : 0), costo_usd: 0, precios_version: TAVILY_CREDITOS_VERSION,
+      error_normalizado: webAudit.errorCodigo ?? null, validador_version: VALIDADOR_VERSION,
+      fuentes_recibidas: webAudit.resultados.length, salvedades: 0,
+      herramientas_ofrecidas: 1, integridad_ok: res.estado === "completa",
+      uso_desconocido: res.usoDesconocido ?? false, cache_hit: webAudit.cacheHit, creditos_busqueda: webAudit.creditos,
+      chars_recibidos: webAudit.charsRecibidos, chars_enviados: webAudit.charsEnviados, presupuesto_aprobado: webAccion === "ampliar" ? "ampliado" : "estandar",
+    }).select("id").single();
+    if (bw?.id && webAudit.resultados.length > 0) {
+      const filas = webAudit.resultados.map((rw, i) => ({ busqueda_id: bw.id, ejecucion_id: eje?.id ?? null, url: rw.url, dominio: rw.dominio ?? dominioDe(rw.url) ?? null, titulo: rw.titulo ?? null, fecha_pagina: rw.fechaPublicada ?? null, fragmento: rw.fragmento ?? null, orden: rw.posicion ?? i }));
+      await supabaseAdmin.from("ia_fuentes_externas").upsert(filas, { onConflict: "busqueda_id,url", ignoreDuplicates: true });
+    }
+  }
+
+  const MSG_BLOQUEADA: Record<string, string> = {
+    truncado_max_tokens: `No pude terminar el FODA dentro del presupuesto de esta consulta. Abajo tenés las fuentes que ya encontré: se conservan. Referencia: ${refDiag}.`,
+    salida_invalida: `El FODA no cumplió el formato esperado y no lo publiqué, para no mostrar datos a medio validar. Referencia: ${refDiag}.`,
+    sin_llamada_herramienta: `No pude generar el FODA en el formato esperado. Referencia: ${refDiag}.`,
+    error_proveedor: `Hubo un error al generar el FODA y no se reintentó automáticamente. Referencia: ${refDiag}.${res.usoDesconocido ? "\n\nEl proveedor no devolvió el detalle final de uso; el posible consumo de este intento queda pendiente de conciliación." : ""}`,
+  };
+  const contenido = res.estado === "completa" ? res.texto : (MSG_BLOQUEADA[res.motivoBloqueo ?? "error_proveedor"] ?? MSG_BLOQUEADA.error_proveedor);
+
+  try {
+    console.log(JSON.stringify({ ia_diag: { ref: refDiag, estado: res.estado, motivo_bloqueo: res.motivoBloqueo ?? null, modelo: res.modelo, clase: res.claseModelo, foda: true, web_proveedor: webAudit ? "tavily" : null, cache_hit: webAudit?.cacheHit ?? false, duracion_ms: res.duracion_ms } }));
+  } catch { /* logging best-effort */ }
+
+  const estadoMensaje = res.estado === "completa" ? "completa" : "error";
+  const { data: asstMsg } = await supabaseAdmin.from("ia_mensajes").insert({
+    conversacion_id: conversacionId, rol: "assistant", contenido, modelo: res.modelo, proveedor: getProveedor(),
+    clase_modelo: res.claseModelo, motivo_router: "foda_estructurado", escalado: false,
+    tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, fuentes: fuentesFinales, herramientas: [], estado: estadoMensaje,
+    error: res.estado === "bloqueada" ? JSON.stringify({ motivo: res.motivoBloqueo, errores: res.errores ?? null, crudo: res.crudo ?? null }).slice(0, 4000) : null,
+    busquedas_web: webAudit && !webAudit.cacheHit && webAudit.intentado ? 1 : 0,
+  }).select("id").single();
+
+  await supabaseAdmin.rpc("ia_sumar_consumo", { p_owner: owner, p_dia: dia, p_in: res.uso.tokensIn, p_out: res.uso.tokensOut, p_costo: costoTotal });
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), modelo_ultimo: res.modelo, proveedor: getProveedor() };
+  if (!conv.titulo) patch.titulo = tituloAuto(pregunta);
+  await supabaseAdmin.from("ia_conversaciones").update(patch).eq("id", conversacionId);
+
+  return { ok: true, mensajeId: asstMsg?.id ?? "", texto: contenido, fuentes: fuentesFinales, modelo: res.modelo, claseModelo: res.claseModelo, escalado: false, estado: estadoMensaje, herramientas: [], uso: res.uso, busquedasWeb: webAudit && !webAudit.cacheHit && webAudit.intentado ? 1 : 0, webExplicita: decWeb.explicita, webCacheHit: webAudit?.cacheHit ?? false, webCreditos: webAudit?.creditos ?? 0 };
 }
