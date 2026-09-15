@@ -269,8 +269,8 @@ async function main() {
   assert.equal((await crearIntento(uno.id, { nombre: "Zz", apellido: "Tarde", telefono: "3515000007" }, 20000)).resultado, "sin_cupo");
   console.log("CASO F (concurrencia último cupo) OK");
 
-  // Pago que llega DESPUÉS de vencer la reserva, con el cupo ya agotado:
-  // no se crea una inscripción de más; queda marcado para que lo vea el staff.
+  // Pago hecho DESPUÉS de vencer la reserva, con el cupo ya agotado: no se crea
+  // una inscripción de más; queda marcado para que lo vea el staff.
   const dos = await crearCampeonato({ modalidad: "eliminacion", precio: 20000, cupos: 1, permiteStand: false });
   const tarde = await crearIntento(dos.id, { nombre: "Zz", apellido: "Vencido", telefono: "3515000008" }, 20000);
   await supabaseAdmin.from("campeonato_checkouts")
@@ -280,20 +280,101 @@ async function main() {
   const aTiempo = await crearIntento(dos.id, { nombre: "Zz", apellido: "ATiempo", telefono: "3515000010" }, 20000);
   assert.equal(aTiempo.resultado, "creado");
   await procesarPagoVerificado(nuevoPagoId(), pagoMp({ external_reference: aTiempo.external_reference!, transaction_amount: 20000 }));
-  const rTarde = await procesarPagoVerificado(nuevoPagoId(), pagoMp({ external_reference: tarde.external_reference!, transaction_amount: 20000 }));
+  // date_approved POSTERIOR al vencimiento: el pago es genuinamente tardío.
+  const rTarde = await procesarPagoVerificado(nuevoPagoId(), pagoMp({
+    external_reference: tarde.external_reference!, transaction_amount: 20000,
+    date_approved: new Date().toISOString(),
+  }));
   assert.equal((rTarde as { estado: string }).estado, "sin_cupo");
   assert.equal((await inscripcionesDe(dos.id)).length, 1, "nunca se supera cupos_maximos");
   assert.equal(estadoPublicoCheckout(await leerCheckout(tarde.external_reference!)), "sin_cupo");
   console.log("CASO F bis (pago tardío sin cupo) OK");
 
+  // ── CASO J · WEBHOOK TARDÍO sobre un pago hecho EN VENTANA ────────────────
+  // T0 checkout · T+19 Mercado Pago aprueba · T+21 llega el aviso. El pago fue
+  // dentro de la reserva, así que la inscripción se crea igual aunque expira_el
+  // ya haya pasado Y aunque el cupo figure lleno: ese lugar era suyo.
+  const tres = await crearCampeonato({ modalidad: "eliminacion", precio: 20000, cupos: 1, permiteStand: false });
+  const enVentana = await crearIntento(tres.id, { nombre: "Zz", apellido: "EnVentana", telefono: "3515000015" }, 20000);
+  assert.equal(enVentana.resultado, "creado");
+
+  // Se simula el reloj: la ventana cerró hace 1 minuto (T+21) y el pago se aprobó
+  // 2 minutos antes de ese cierre (T+19).
+  const expiro = new Date(Date.now() - 60_000);
+  const aprobadoEnVentana = new Date(expiro.getTime() - 2 * 60_000);
+  await supabaseAdmin.from("campeonato_checkouts")
+    .update({ expira_el: expiro.toISOString() })
+    .eq("external_reference", enVentana.external_reference!);
+
+  // Y encima el cupo ya figura ocupado por otro (lo peor posible).
+  assert.equal(await cupoOcupados(tres.id), 0, "la reserva vencida ya no ocupa cupo");
+  const otro = await crearIntento(tres.id, { nombre: "Zz", apellido: "Otro", telefono: "3515000016" }, 20000);
+  assert.equal(otro.resultado, "creado");
+  assert.equal(await cupoOcupados(tres.id), 1, "el cupo quedó tomado por otro intento");
+
+  const rEnVentana = await procesarPagoVerificado(nuevoPagoId(), pagoMp({
+    external_reference: enVentana.external_reference!, transaction_amount: 20000,
+    date_approved: aprobadoEnVentana.toISOString(),
+  }));
+  assert.equal((rEnVentana as { estado: string }).estado, "creado", "el pago en ventana NO pierde la inscripción");
+  const insEnVentana = (await inscripcionesDe(tres.id)).find((i) => i.apellido === "EnVentana");
+  assert.ok(insEnVentana, "la inscripción del pago en ventana existe");
+  assert.equal(insEnVentana!.estado_pago, "pagado");
+  assert.equal(Number(insEnVentana!.monto), 20000);
+  const chkEnVentana = await leerCheckout(enVentana.external_reference!);
+  assert.equal(chkEnVentana.estado, "aprobado");
+  assert.equal(estadoPublicoCheckout(chkEnVentana), "confirmado");
+
+  // Sigue siendo idempotente: el mismo aviso repetido no duplica nada.
+  const rRepetido = await procesarPagoVerificado(String(chkEnVentana.payment_id), pagoMp({
+    external_reference: enVentana.external_reference!, transaction_amount: 20000,
+    date_approved: aprobadoEnVentana.toISOString(),
+  }));
+  assert.equal((rRepetido as { estado: string }).estado, "ya_aprobado");
+  assert.equal((await inscripcionesDe(tres.id)).length, 1);
+
+  // Y el monto se sigue validando con la misma dureza en el camino tardío.
+  const cuatro = await crearCampeonato({ modalidad: "eliminacion", precio: 20000, cupos: 1, permiteStand: false });
+  const montoMal = await crearIntento(cuatro.id, { nombre: "Zz", apellido: "MontoMal", telefono: "3515000017" }, 20000);
+  await supabaseAdmin.from("campeonato_checkouts")
+    .update({ expira_el: expiro.toISOString() })
+    .eq("external_reference", montoMal.external_reference!);
+  const rMontoMal = await procesarPagoVerificado(nuevoPagoId(), pagoMp({
+    external_reference: montoMal.external_reference!, transaction_amount: 1,
+    date_approved: aprobadoEnVentana.toISOString(),
+  }));
+  assert.equal(rMontoMal.ok, false);
+  assert.equal((rMontoMal as { motivo: string }).motivo, "importe_no_coincide");
+  assert.equal((await inscripcionesDe(cuatro.id)).length, 0);
+  console.log("CASO J (webhook tardío, pago en ventana) OK");
+
   // ── CASO I · Liga: formulario configurable y datos completos ──────────────
-  // Liga exige DNI y escudería; ambos se conservan en la inscripción.
+  // Liga exige DNI; la escudería es VISIBLE pero OPCIONAL.
   assert.equal(validarInscripcionPublica({ nombre: "Zz", apellido: "Liga", telefono: "3515000011", acepto_condiciones: true }, liga).ok, false);
   const okLiga = validarInscripcionPublica(
     { nombre: "Zz", apellido: "Liga", telefono: "3515000011", dni: "30111222", escuderia_favorita: "Ferrari", acepto_condiciones: true },
     liga,
   );
   assert.ok(okLiga.ok);
+
+  // Liga + escuderia optional + SIN escudería → checkout e inscripción válidos.
+  const sinEsc = validarInscripcionPublica(
+    { nombre: "Zz", apellido: "SinEscuderia", telefono: "3515000014", dni: "30111444", acepto_condiciones: true },
+    liga,
+  );
+  assert.ok(sinEsc.ok, "liga sin escudería tiene que validar");
+  assert.equal(sinEsc.data.campos.escuderia, "optional");
+  const iSinEsc = await crearIntento(
+    liga.id, { nombre: "Zz", apellido: "SinEscuderia", telefono: "3515000014", dni: "30111444", escuderia: null }, 40000,
+  );
+  assert.equal(iSinEsc.resultado, "creado");
+  await procesarPagoVerificado(nuevoPagoId(), pagoMp({ external_reference: iSinEsc.external_reference!, transaction_amount: 40000 }));
+  const insSinEsc = (await inscripcionesDe(liga.id)).find((i) => i.apellido === "SinEscuderia");
+  assert.ok(insSinEsc, "la inscripción de liga sin escudería existe");
+  assert.equal(insSinEsc!.estado_pago, "pagado");
+  assert.equal(insSinEsc!.escuderia_favorita, null);
+  assert.equal(insSinEsc!.dni, "30111444", "el DNI sigue exigido y guardado");
+  console.log("CASO I bis (liga sin escudería) OK");
   const iLiga = await crearIntento(
     liga.id,
     { nombre: "Zz", apellido: "Liga", telefono: "3515000011", dni: "30111222", escuderia: "Ferrari" },
@@ -301,7 +382,7 @@ async function main() {
   );
   assert.equal(iLiga.resultado, "creado", "cupos_maximos 0 = ilimitado");
   await procesarPagoVerificado(nuevoPagoId(), pagoMp({ external_reference: iLiga.external_reference!, transaction_amount: 40000 }));
-  const insLiga = await inscripcionesDe(liga.id);
+  const insLiga = (await inscripcionesDe(liga.id)).filter((i) => i.apellido === "Liga");
   assert.equal(insLiga.length, 1);
   assert.equal(insLiga[0].dni, "30111222");
   assert.equal(insLiga[0].escuderia_favorita, "Ferrari");
@@ -325,7 +406,7 @@ async function main() {
   assert.equal((rLegacy as { estado: string }).estado, "creado");
   const insLegacy = (await inscripcionesDe(liga.id)).find((i) => i.id === legacy!.id);
   assert.equal(insLegacy?.estado_pago, "pagado");
-  assert.equal((await inscripcionesDe(liga.id)).length, 2, "el flujo viejo NO duplica filas");
+  assert.equal((await inscripcionesDe(liga.id)).length, 3, "el flujo viejo NO duplica filas");
   console.log("compatibilidad flujo viejo OK");
 
   // Pago de otro producto: se ignora sin tocar nada.

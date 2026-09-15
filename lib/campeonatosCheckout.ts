@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "crypto";
 import MercadoPagoConfig, { Preference } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { permitePagoStand, requiereEscuderia } from "@/lib/campeonatosConfig";
+import { permitePagoStand } from "@/lib/campeonatosConfig";
 import {
   getInscripcionCampos, campoVisible, campoRequerido,
   type CamposInscripcion,
@@ -120,12 +120,12 @@ export function validarInscripcionPublica(
   if (campoVisible(campos, "dni") && dni && !/^[0-9.\s-]{6,15}$/.test(dni)) {
     return fail(400, "DNI inválido", "dni");
   }
-  // Escudería: obligatoria si la config la marca required, o si la modalidad la
-  // exige (liga → ranking de constructores) y el campo está visible.
-  const escuderiaObligatoria =
-    campoRequerido(campos, "escuderia") ||
-    (requiereEscuderia(campeonato) && campoVisible(campos, "escuderia"));
-  if (escuderiaObligatoria && !escuderia) {
+  // Escudería: obligatoria SOLO si la config del campeonato la marca "required".
+  // La modalidad decide si el campo tiene sentido deportivo (liga → ranking de
+  // constructores) y por eso se MUESTRA, pero no lo vuelve obligatorio: la única
+  // fuente de obligatoriedad es config.inscripcion.campos, la misma que usa el
+  // alta del admin. En liga el preset es "optional" → visible y opcional.
+  if (campoRequerido(campos, "escuderia") && !escuderia) {
     return fail(400, "Falta la escudería favorita", "escuderia_favorita");
   }
 
@@ -174,6 +174,13 @@ export type EstadoCheckoutPublico = "confirmado" | "sin_cupo" | "rechazado" | "e
 const MP_EN_CURSO = new Set(["pending", "in_process", "authorized"]);
 const MP_CAIDO = new Set(["rejected", "cancelled"]);
 
+// Margen después de expira_el antes de dar un intento por abandonado EN PANTALLA.
+// Quien paga sobre el final de la ventana puede tener el aviso de Mercado Pago en
+// camino cuando la reserva ya venció: durante este margen se sigue mostrando
+// "Confirmando tu pago..." en vez de decirle que no se completó. No afecta al
+// cupo (ese se libera puntual a expira_el) ni a la confirmación.
+export const GRACIA_CONFIRMACION_MS = 5 * 60_000;
+
 // Traducción PURA del intento a lo que ve la persona. "confirmado" sale única y
 // exclusivamente de que la base tenga el intento aprobado (es decir: webhook o
 // reconciliación ya crearon la inscripción). Un pago 'pending' de Mercado Pago
@@ -187,8 +194,8 @@ export function estadoPublicoCheckout(
   const mp = String(chk.mp_status ?? "");
   if (MP_EN_CURSO.has(mp)) return "pendiente";
   if (MP_CAIDO.has(mp)) return "rechazado";
-  // Sin noticias de Mercado Pago y con la reserva vencida: el intento se abandonó.
-  if (Date.parse(chk.expira_el) <= ahoraMs) return "expirado";
+  // Sin noticias de Mercado Pago y con la reserva vencida hace rato: abandonado.
+  if (Date.parse(chk.expira_el) + GRACIA_CONFIRMACION_MS <= ahoraMs) return "expirado";
   return "pendiente";
 }
 

@@ -243,11 +243,18 @@ $fn$;
 --   · estado = 'aprobado'          → el segundo devuelve la misma inscripción
 --   · unique(payment_id)           → la base no admite dos inscripciones del mismo pago
 -- ============================================================================
+-- p_aprobado_at = date_approved REAL del pago, traído de Mercado Pago con las
+-- credenciales del servidor. Define si la reserva estaba viva CUANDO SE PAGÓ, que
+-- es lo único que importa: una notificación demorada no puede costarle el lugar a
+-- alguien que pagó dentro de su ventana.
+drop function if exists public.campeonato_checkout_confirmar(text, text, text, text, integer);
+
 create or replace function public.campeonato_checkout_confirmar(
   p_external_reference  text,
   p_payment_id          text,
   p_mp_status           text,
   p_mp_status_detail    text,
+  p_aprobado_at         timestamptz default null,
   p_ttl_pendientes_min  integer default 30
 ) returns jsonb
 language plpgsql
@@ -255,11 +262,12 @@ volatile
 set search_path = public, pg_temp
 as $fn$
 declare
-  v_chk       public.campeonato_checkouts%rowtype;
-  v_limite    integer;
-  v_ocupados  integer;
-  v_existente uuid;
-  v_insc_id   uuid;
+  v_chk        public.campeonato_checkouts%rowtype;
+  v_limite     integer;
+  v_ocupados   integer;
+  v_existente  uuid;
+  v_insc_id    uuid;
+  v_pago_en_ventana boolean;
 begin
   select * into v_chk from public.campeonato_checkouts
     where external_reference = p_external_reference
@@ -290,10 +298,18 @@ begin
   select coalesce(cupos_maximos, 0) into v_limite
     from public.campeonatos where id = v_chk.campeonato_id;
 
-  -- Un intento VIGENTE ya tiene su cupo reservado desde que se creó: se confirma
-  -- sin volver a contar. Solo se re-verifica cuando el intento VENCIÓ, para que un
-  -- pago que llega tarde no pueda pasar por encima de cupos_maximos.
-  if coalesce(v_limite, 0) > 0 and v_chk.expira_el <= now() then
+  -- ¿El pago ocurrió mientras la reserva seguía viva? Se compara contra el momento
+  -- en que Mercado Pago APROBÓ, no contra el momento en que llegó el aviso: si
+  -- alguien pagó en el minuto 19 de una ventana de 20, su lugar estaba reservado,
+  -- y que el webhook (o la reconciliación) llegue en el minuto 21 no se lo quita.
+  -- Sin date_approved se asume "ahora", que es el criterio conservador.
+  v_pago_en_ventana := coalesce(p_aprobado_at, now()) <= v_chk.expira_el;
+
+  -- Un intento con el pago DENTRO de su ventana ya tiene el cupo reservado: se
+  -- confirma sin volver a contar. Solo se re-verifica cuando se pagó DESPUÉS de
+  -- que la reserva venciera, para que un pago tardío de verdad no pase por encima
+  -- de cupos_maximos.
+  if coalesce(v_limite, 0) > 0 and not v_pago_en_ventana then
     v_ocupados := public.campeonato_cupo_ocupados(v_chk.campeonato_id, p_ttl_pendientes_min);
     if v_ocupados >= v_limite then
       update public.campeonato_checkouts set
@@ -335,11 +351,11 @@ revoke all on function public.campeonato_cupo_ocupados(uuid, integer)
   from public, anon, authenticated;
 revoke all on function public.campeonato_checkout_crear(uuid, text, text, text, text, text, text, numeric, text, text, text, integer, integer)
   from public, anon, authenticated;
-revoke all on function public.campeonato_checkout_confirmar(text, text, text, text, integer)
+revoke all on function public.campeonato_checkout_confirmar(text, text, text, text, timestamptz, integer)
   from public, anon, authenticated;
 grant execute on function public.campeonato_cupo_ocupados(uuid, integer)
   to service_role;
 grant execute on function public.campeonato_checkout_crear(uuid, text, text, text, text, text, text, numeric, text, text, text, integer, integer)
   to service_role;
-grant execute on function public.campeonato_checkout_confirmar(text, text, text, text, integer)
+grant execute on function public.campeonato_checkout_confirmar(text, text, text, text, timestamptz, integer)
   to service_role;
