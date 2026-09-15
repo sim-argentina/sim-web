@@ -420,15 +420,39 @@ export default function ReservarConMensualidad({
           </span>
         </label>
 
+        {/* (M5B.1) El saldo se usa entero o no se usa. No hay consumo parcial ni
+            pago de diferencia: si no alcanza, las dos salidas son renovar o
+            pagar el turno completo en Reservas normales. Cada una es una
+            operación independiente, así que NO se arrastra la selección. */}
         {minutos > 0 && !alcanza && (
-          <p className="mt-4 flex gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-300">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            <span>
-              Esta selección necesita {minutosATexto(minutos)} y tenés {minutosATexto(saldo)}.
-              {faltan !== null && <> Te faltan {minutosATexto(faltan)}.</>}{" "}
-              Por ahora elegí menos escuderías o una duración más corta.
-            </span>
-          </p>
+          <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-300">
+            <p className="flex gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>
+                Tu saldo no alcanza para esta reserva. Podés renovar tu mensualidad
+                o hacer una reserva normal.
+                <span className="mt-2 block text-amber-300/80">
+                  Esta selección necesita {minutosATexto(minutos)} y tenés {minutosATexto(saldo)}
+                  {faltan !== null ? <>: te faltan {minutosATexto(faltan)}</> : null}.
+                  También podés elegir menos escuderías o una duración más corta.
+                </span>
+              </span>
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link
+                href="/mensualidades"
+                className="inline-flex items-center gap-2 rounded-xl bg-amber-500/20 px-4 py-2.5 font-black uppercase tracking-[0.14em] text-amber-200 transition hover:bg-amber-500/30"
+              >
+                Renovar mensualidad
+              </Link>
+              <Link
+                href="/reservas"
+                className="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 px-4 py-2.5 font-black uppercase tracking-[0.14em] text-amber-200 transition hover:border-amber-400/60"
+              >
+                Hacer una reserva normal
+              </Link>
+            </div>
+          </div>
         )}
 
         {error && (

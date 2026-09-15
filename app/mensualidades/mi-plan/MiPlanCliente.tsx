@@ -182,6 +182,24 @@ export default function MiPlanCliente({
             <CalendarPlus className="h-4 w-4" />
             Reservar con mi mensualidad
           </Link>
+        ) : plan.motivo === "sin_saldo" ? (
+          /* (M5B.1) Vigente pero sin minutos. No se ofrece pagar una diferencia
+             desde Mensualidades: se renueva (botón de abajo) o se paga el turno
+             completo en Reservas normales. */
+          <div className="mt-7 rounded-2xl border border-dashed border-white/15 px-5 py-4 text-sm text-zinc-400">
+            <p className="font-semibold text-zinc-300">No te quedan minutos disponibles.</p>
+            <p className="mt-1 text-zinc-500">
+              Renová tu mensualidad para seguir reservando desde acá, o hacé una
+              reserva normal y pagá ese turno completo.
+            </p>
+            <Link
+              href="/reservas"
+              className="mt-3 inline-flex items-center gap-2 rounded-xl border border-white/15 px-4 py-2.5 text-xs font-black uppercase tracking-[0.14em] text-zinc-300 transition hover:border-white/40"
+            >
+              <CalendarPlus className="h-3.5 w-3.5" />
+              Hacer una reserva normal
+            </Link>
+          </div>
         ) : (
           <div className="mt-7 rounded-2xl border border-dashed border-white/15 px-5 py-4 text-sm text-zinc-500">
             Cuando tu mensualidad esté activa y con saldo vas a poder reservar desde acá.
