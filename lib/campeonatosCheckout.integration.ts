@@ -123,7 +123,8 @@ async function leerCheckout(extRef: string) {
 }
 
 let pagoSeq = 0;
-const nuevoPagoId = () => `zzpay_${Date.now()}_${pagoSeq++}`;
+const PREFIJO_PAGO = "zzpay_";
+const nuevoPagoId = () => `${PREFIJO_PAGO}${Date.now()}_${pagoSeq++}`;
 
 async function limpiar() {
   for (const id of creados.campeonatos) {
@@ -131,6 +132,10 @@ async function limpiar() {
     await supabaseAdmin.from("campeonato_inscripciones").delete().eq("campeonato_id", id);
     await supabaseAdmin.from("campeonatos").delete().eq("id", id);
   }
+  // Los pagos sintéticos del test quedan registrados en fin_pagos_web (el
+  // procesador guarda la comisión de Checkout Pro al aprobar). Se borran por el
+  // prefijo de la marca temporal: nunca tocan un payment_id real de Mercado Pago.
+  await supabaseAdmin.from("fin_pagos_web").delete().like("payment_id", `${PREFIJO_PAGO}%`);
 }
 
 async function main() {
