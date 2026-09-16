@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
 import {
+  ComisionesNoCalculablesError,
+  MSG_COMISIONES_NO_CALCULABLES,
   calcularMes,
   getCategorias,
   getCierreMes,
@@ -149,6 +151,9 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof ComisionesNoCalculablesError) {
+      return failResponse(503, MSG_COMISIONES_NO_CALCULABLES, { logContext: "finanzas cierre GET comisiones", error });
+    }
     return failResponse(500, "Error cargando el cierre", { logContext: "finanzas cierre GET", error });
   }
 }
@@ -240,6 +245,11 @@ export async function POST(req: Request) {
     await registrarFinLog("cerrar_mes", "fin_cierres_mensuales", mes, { mes, estado, diferencia }, auth.role);
     return NextResponse.json({ ok: true, mes, estado, saldo_teorico: teorico, saldo_real: real, diferencia });
   } catch (error) {
+    // Cerrar un mes con comisiones incalculables congelaría un saldo teórico
+    // inflado en fin_cierres_mensuales y lo arrastraría al mes siguiente.
+    if (error instanceof ComisionesNoCalculablesError) {
+      return failResponse(503, MSG_COMISIONES_NO_CALCULABLES, { logContext: "finanzas cierre POST comisiones", error });
+    }
     return failResponse(500, "Error cerrando el mes", { logContext: "finanzas cierre POST", error });
   }
 }

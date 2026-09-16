@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { FECHA_RE, mesActual, mesValido, registrarFinLog } from "@/lib/finanzas";
+import { FECHA_RE, mesActual, mesValido, registrarFinLog, ultimoDiaMes } from "@/lib/finanzas";
 import { estaVencido, getEventosRango, hoyISO, validarEvento } from "@/lib/finanzasEventos";
 
 // GET ?mes=YYYY-MM  ó  ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Mes inválido (YYYY-MM)" }, { status: 400 });
     }
     desde = `${mes}-01`;
-    hasta = `${mes}-31`;
+    // getEventosRango es inclusivo: el tope es el último día REAL del mes.
+    hasta = ultimoDiaMes(mes);
   }
   if (!FECHA_RE.test(desde) || !FECHA_RE.test(hasta) || desde > hasta) {
     return NextResponse.json({ error: "Rango de fechas inválido" }, { status: 400 });

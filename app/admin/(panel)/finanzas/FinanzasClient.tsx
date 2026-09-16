@@ -49,6 +49,8 @@ type PorFuente = {
   pagosDeuda: number;
   transferenciasEntrantes: number;
   transferenciasSalientes: number;
+  comisiones: number;
+  reembolsos: number;
   egresos: number;
   neto: number;
 };
@@ -143,6 +145,8 @@ type PorFuenteApi = {
   pagosDeuda: number;
   transferenciasEntrantes: number;
   transferenciasSalientes: number;
+  comisiones: number;
+  reembolsos: number;
   egresos: number;
   neto: number;
   saldoInicial: number;
@@ -953,6 +957,8 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
                   <p>Ingresos: <span className="font-bold text-green-400">+{dinero(f.ingresos)}</span></p>
                   {f.financiamiento > 0 && <p>Financiamiento: <span className="font-bold text-amber-400">+{dinero(f.financiamiento)}</span></p>}
                   <p>Pagado: <span className="font-bold text-red-400">-{dinero(f.egresos)}</span></p>
+                  {f.comisiones > 0 && <p>Comisiones de cobro: <span className="font-bold text-red-400">-{dinero(f.comisiones)}</span></p>}
+                  {f.reembolsos > 0 && <p>Reembolsos: <span className="font-bold text-red-400">-{dinero(f.reembolsos)}</span></p>}
                   <p>Transferencias: <span className="font-bold text-white/80">+{dinero(f.transferenciasEntrantes)} / -{dinero(f.transferenciasSalientes)}</span></p>
                 </div>
               </div>
@@ -960,7 +966,7 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
           })}
         </div>
         <p className="mt-2 text-[11px] text-white/30">
-          Dinero que debería existir hoy por fuente = saldo inicial + ingresos + financiamiento + transferencias entrantes − pagos − transferencias salientes.
+          Dinero que debería existir hoy por fuente = saldo inicial + ingresos + financiamiento + transferencias entrantes − pagos − comisiones de cobro − reembolsos − transferencias salientes.
           {resumen.saldoInicialPorFuente && !resumen.saldoInicialPorFuente.desglosado && r.saldoInicialGeneral !== 0 ? " El saldo inicial no está desglosado por fuente: se muestra en Efectivo." : ""}
         </p>
       </div>
@@ -1235,6 +1241,8 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
                 {f.pagosDeuda > 0 && <FilaFuente label="Pagos de deuda" valor={f.pagosDeuda} />}
                 <FilaFuente label="Transf. entrantes" valor={f.transferenciasEntrantes} />
                 <FilaFuente label="Transf. salientes" valor={f.transferenciasSalientes} />
+                <FilaFuente label="Comisiones de cobro" valor={f.comisiones} />
+                <FilaFuente label="Reembolsos" valor={f.reembolsos} />
               </div>
               <div className="mt-2 space-y-1 border-t border-white/10 pt-2 text-xs">
                 <div className="flex items-center justify-between"><span className="text-white/50">Saldo inicial</span><span className="font-bold text-white/80">{dinero(f.saldoInicial)}</span></div>

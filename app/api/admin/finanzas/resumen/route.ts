@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
-import { calcularMes, getCierreMes, getMesInicio, getSaldoInicialPorFuente, mesActual, mesValido } from "@/lib/finanzas";
+import {
+  ComisionesNoCalculablesError,
+  MSG_COMISIONES_NO_CALCULABLES,
+  calcularMes,
+  getCierreMes,
+  getMesInicio,
+  getSaldoInicialPorFuente,
+  mesActual,
+  mesValido,
+} from "@/lib/finanzas";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAdmin();
@@ -42,6 +51,9 @@ export async function GET(req: NextRequest) {
         : { estado: "abierto", saldo_real_general: null, diferencia_general: null },
     });
   } catch (error) {
+    if (error instanceof ComisionesNoCalculablesError) {
+      return failResponse(503, MSG_COMISIONES_NO_CALCULABLES, { logContext: "finanzas resumen GET comisiones", error });
+    }
     return failResponse(500, "Error calculando el resumen", { logContext: "finanzas resumen GET", error });
   }
 }

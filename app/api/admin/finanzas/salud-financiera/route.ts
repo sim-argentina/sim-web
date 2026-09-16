@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
 import {
+  ComisionesNoCalculablesError,
+  MSG_COMISIONES_NO_CALCULABLES,
   calcularMes,
   getMesInicio,
   getSerieIngresos,
   mesActual,
   mesValido,
   restarMeses,
+  ultimoDiaMes,
 } from "@/lib/finanzas";
 import {
   TIPOS_COBRO,
@@ -42,7 +45,7 @@ export async function GET(req: NextRequest) {
     }
 
     const hoy = hoyISO();
-    const finMes = `${mes}-31`;
+    const finMes = ultimoDiaMes(mes);
     const desdeSerie = restarMeses(mes, 2) < mesInicio ? mesInicio : restarMeses(mes, 2);
 
     const [{ resumen }, eventos, serieIngresos] = await Promise.all([
@@ -199,6 +202,9 @@ export async function GET(req: NextRequest) {
       listas: { proximos_pagos: proximosPagos, proximos_cobros: proximosCobros, vencidos: listaVencidos },
     });
   } catch (error) {
+    if (error instanceof ComisionesNoCalculablesError) {
+      return failResponse(503, MSG_COMISIONES_NO_CALCULABLES, { logContext: "finanzas salud GET comisiones", error });
+    }
     return failResponse(500, "Error calculando salud financiera", { logContext: "finanzas salud GET", error });
   }
 }

@@ -17,6 +17,7 @@ import {
   calcularComisionesPagos, claveComision, METODOS_CON_COMISION,
   type ComisionConfig,
 } from "@/lib/finanzasComisiones";
+import { diasEnMes as diasEnMesPuro, rangoMes as rangoMesPuro } from "@/lib/finanzasMes";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -149,10 +150,9 @@ export function restarMeses(mes: string, n: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-export function diasEnMes(mes: string): number {
-  const [y, m] = mes.split("-").map(Number);
-  return new Date(Date.UTC(y, m, 0)).getUTCDate();
-}
+// Utilidades de mes puras: viven en @/lib/finanzasMes (módulo sin DB, para que la
+// regresión corra sin credenciales) y se re-exportan para no cambiar ningún import.
+export { diasEnMes, rangoMes, ultimoDiaMes } from "@/lib/finanzasMes";
 
 // ── Mapeo método de pago → tipo de cuenta (solo efectivo / mercado_pago) ─────
 
@@ -219,11 +219,12 @@ export async function getSueldoMes(mes: string): Promise<number> {
 }
 
 export async function getExcepcionesMes(mes: string): Promise<FinExcepcion[]> {
+  const { desde, hastaExclusivo } = rangoMesPuro(mes);
   const { data, error } = await supabaseAdmin
     .from("fin_excepciones_operativas")
     .select("*")
-    .gte("fecha", `${mes}-01`)
-    .lte("fecha", `${mes}-31`)
+    .gte("fecha", desde)
+    .lt("fecha", hastaExclusivo)
     .order("fecha", { ascending: true });
   if (error) throw error;
   return (data || []).map((e) => ({
@@ -239,11 +240,12 @@ export async function getExcepcionesMes(mes: string): Promise<FinExcepcion[]> {
 // ── Duración promedio de turno (auto: 15 + demora promedio de subida) ────────
 
 export async function getDuracionPromedioTurno(mes: string): Promise<number> {
+  const { desde, hastaExclusivo } = rangoMesPuro(mes);
   const { data, error } = await supabaseAdmin
     .from("turnos_stand")
     .select("hora_estimada_subida, hora_subida, fecha, estado")
-    .gte("fecha", `${mes}-01`)
-    .lte("fecha", `${mes}-31`);
+    .gte("fecha", desde)
+    .lt("fecha", hastaExclusivo);
   if (error) throw error;
 
   const toMin = (h: unknown): number | null => {
@@ -275,7 +277,7 @@ export function capacidadYDiasOperativos(
   excepciones: FinExcepcion[],
   duracionTurnoMin: number
 ): { capacidad: number; diasOperativos: number; diasDelMes: number; diasCerrados: number } {
-  const total = diasEnMes(mes);
+  const total = diasEnMesPuro(mes);
   const excPorFecha: Record<string, FinExcepcion> = {};
   for (const e of excepciones) excPorFecha[e.fecha] = e;
 
@@ -453,6 +455,8 @@ export type ResumenPorFuente = {
   pagosDeuda: number;
   transferenciasEntrantes: number;
   transferenciasSalientes: number;
+  comisiones: number; // comisiones de cobro imputadas a la fuente (hoy solo Mercado Pago)
+  reembolsos: number; // reembolsos de Reservas devueltos por la fuente (hoy solo Mercado Pago)
   egresos: number; // total egresos (costos+gastos+inversiones+sueldo+otros+pagosDeuda)
   neto: number;
   saldoInicial: number; // saldo inicial de la fuente (arrastre por fuente)
@@ -566,6 +570,8 @@ export function resumirMes(params: {
       pagosDeuda: 0,
       transferenciasEntrantes: 0,
       transferenciasSalientes: 0,
+      comisiones: 0,
+      reembolsos: 0,
       egresos: 0,
       neto: 0,
       saldoInicial: 0,
@@ -644,6 +650,8 @@ export function resumirMes(params: {
     const neto = f.ingresos + f.financiamiento - egresos + f.transferenciasEntrantes - f.transferenciasSalientes - comFuente - reembolsosFuente;
     return {
       ...f,
+      comisiones: comFuente,
+      reembolsos: reembolsosFuente,
       egresos,
       neto,
       saldoInicial: saldoInicialFuente,
@@ -712,18 +720,46 @@ export async function getComisionesConfig(): Promise<ComisionConfig[]> {
   })) as ComisionConfig[];
 }
 
+// Mensaje único para la UI: explica por qué NO se muestra un saldo, en lugar de
+// mostrar uno inflado. Lo usan todas las rutas que calculan el mes.
+export const MSG_COMISIONES_NO_CALCULABLES =
+  "No se pudieron calcular las comisiones de cobro del mes. El saldo no se muestra para no informar un número más alto que el real. Reintentá en unos segundos.";
+
+// Las comisiones de cobro se RESTAN del saldo de Mercado Pago. Si la consulta
+// falla y se devuelve 0, el panel informa un saldo MÁS ALTO que el real y nadie
+// se entera: un fallo técnico nunca debe leerse como un resultado financiero.
+// Por eso se propaga este error y las rutas lo traducen a un mensaje explícito.
+export class ComisionesNoCalculablesError extends Error {
+  readonly mes: string;
+  readonly causa: unknown;
+  constructor(mes: string, causa?: unknown) {
+    const detalle =
+      causa instanceof Error ? causa.message : (causa as { message?: string } | null)?.message ?? "";
+    super(`No se pudieron calcular las comisiones de cobro de ${mes}${detalle ? `: ${detalle}` : ""}`);
+    this.name = "ComisionesNoCalculablesError";
+    this.mes = mes;
+    this.causa = causa;
+  }
+}
+
 // Comisiones del turnero del stand para el mes (por pago individual). Solo lectura;
 // no modifica ni cómo se carga ni cómo se muestra el turnero.
 export async function getComisionesStandMes(mes: string): Promise<ComisionesResumen> {
-  const [{ data: cfgRows }, { data: turnos }] = await Promise.all([
+  const { desde, hastaExclusivo } = rangoMesPuro(mes);
+  const [cfgRes, turnosRes] = await Promise.all([
     supabaseAdmin.from("fin_comisiones_cobro").select("*").eq("activa", true),
     supabaseAdmin
       .from("turnos_stand")
       .select("id, fecha, metodo_pago, total, posnet_pago, pagos_detalle")
-      .gte("fecha", `${mes}-01`)
-      .lte("fecha", `${mes}-31`)
+      .gte("fecha", desde)
+      .lt("fecha", hastaExclusivo)
       .or("estado.is.null,estado.neq.cancelado"),
   ]);
+
+  if (cfgRes.error) throw new ComisionesNoCalculablesError(mes, cfgRes.error);
+  if (turnosRes.error) throw new ComisionesNoCalculablesError(mes, turnosRes.error);
+  const cfgRows = cfgRes.data;
+  const turnos = turnosRes.data;
 
   const configByKey: Record<string, ComisionConfig> = {};
   for (const c of cfgRows || []) {

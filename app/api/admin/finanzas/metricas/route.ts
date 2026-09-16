@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
 import {
+  ComisionesNoCalculablesError,
+  MSG_COMISIONES_NO_CALCULABLES,
   calcularMes,
   capacidadYDiasOperativos,
   getConfiguracion,
@@ -204,6 +206,9 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof ComisionesNoCalculablesError) {
+      return failResponse(503, MSG_COMISIONES_NO_CALCULABLES, { logContext: "finanzas metricas GET comisiones", error });
+    }
     return failResponse(500, "Error calculando métricas", { logContext: "finanzas metricas GET", error });
   }
 }
