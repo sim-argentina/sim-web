@@ -9,6 +9,8 @@ import autoTable from "jspdf-autotable";
 // Reglas contables del informe (no duplicar datos):
 //  · Bruto  = lo cobrado al cliente (antes de comisiones de cobro).
 //  · Neto   = bruto - reembolsos - comisiones. Es lo que queda para Finanzas.
+//  · Comisiones = las del stand (Point/PayWay, estimadas por configuración) MÁS
+//    las web (Mercado Pago Checkout Pro, cargos REALES informados por MP).
 //  · Mi sueldo es una SALIDA de SIM (rubro destacado dentro de Gastos), nunca
 //    una contabilidad personal aparte, y se suma una sola vez a los egresos.
 //  · Financiamiento (préstamos) suma a la caja pero NO es revenue operativo.
@@ -25,6 +27,12 @@ type PorFuente = {
   inversiones: number; gastosSueldo: number; pagosDeuda: number; transferenciasEntrantes: number;
   transferenciasSalientes: number; neto: number; saldoInicial?: number; saldoTeorico?: number;
 };
+type ComisionesWeb = {
+  bruto: number; cargos: number; neto: number; brutoSinDatos: number;
+  cantidad: number; cantidadSinDatos: number; cantidadNoConciliados: number; tasaEfectiva: number;
+  porProducto?: Record<string, { bruto: number; cargos: number; neto: number; cantidad: number; brutoSinDatos: number; cantidadSinDatos: number }>;
+};
+
 type Comisiones = {
   brutoStand: number; comisionStand: number; netoStand: number; tasaEfectiva: number;
   porMetodo?: Record<string, { bruto: number; comision: number }>;
@@ -38,7 +46,8 @@ export type InformeCierre = {
   saldo_real_guardado: number | null; saldo_real_efectivo?: number | null; saldo_real_mp?: number | null;
   diferencia_guardada: number | null; diferencia_efectivo?: number | null; diferencia_mp?: number | null;
   comisiones?: Comisiones | null;
-  desglose: { ingresos: number; reembolsos_reservas?: number; ingresos_despues_reembolsos?: number; comisiones_cobro: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
+  comisiones_web?: ComisionesWeb | null;
+  desglose: { ingresos: number; reembolsos_reservas?: number; ingresos_despues_reembolsos?: number; comisiones_cobro: number; comisiones_web?: number; comisiones_totales?: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
   por_fuente: PorFuente[];
   detalle: {
     ingresos: { total: number; automaticos: Array<{ fuente: string; total: number; cantidad: number }>; automaticos_total: number; manuales_por_categoria: RubroCat[]; manuales_total: number };
@@ -160,6 +169,21 @@ function construirAnalisis(c: InformeCierre, deudas?: InformeDeuda[]): Bullet[] 
     const impacto = t >= 0.05 ? "alto" : t >= 0.025 ? "medio" : "bajo";
     out.push({ label: "Comisiones", texto: `Las comisiones de cobro fueron ${money(c.comisiones.comisionStand)}, ${pct(t)} de los ingresos brutos del stand (${money(c.comisiones.brutoStand)}). El impacto es ${impacto} según el mix de medios de pago.` });
   }
+  // 4 bis) Comisiones web: son cargos reales, no estimados.
+  const cw = c.comisiones_web;
+  if (cw && cw.bruto > 0 && cw.cargos > 0) {
+    out.push({
+      label: "Comisiones web",
+      texto: `Los cobros web (Checkout Pro) facturaron ${money(cw.bruto)} y Mercado Pago descontó ${money(cw.cargos)} (${pct(cw.tasaEfectiva)}) antes de acreditar: entraron ${money(cw.neto)}. Son cargos reales informados por Mercado Pago, no estimados.`,
+    });
+  }
+  if (cw && cw.cantidadSinDatos > 0) {
+    out.push({
+      label: "Faltan datos",
+      texto: `Hay ${cw.cantidadSinDatos} cobro(s) web por ${money(cw.brutoSinDatos)} sin comisión disponible: ese bruto está contado sin descontarle cargos, así que el saldo de Mercado Pago puede ser menor.`,
+    });
+  }
+
   if (c.comisiones?.sinConfig) {
     out.push({ label: "Faltan datos", texto: "No hay configuración de comisiones cargada: los netos del stand pueden estar sobreestimados." });
   } else if (c.comisiones && Array.isArray(c.comisiones.advertencias) && c.comisiones.advertencias.length > 0) {
@@ -418,7 +442,10 @@ export function generarInformePdf(args: {
   if ((dg.reembolsos_reservas ?? 0) > 0) {
     resumenBody.push(["- Reembolsos de Reservas", money(-(dg.reembolsos_reservas ?? 0)), share(dg.reembolsos_reservas ?? 0, dg.ingresos)]);
   }
-  resumenBody.push(["- Comisiones de cobro", money(-dg.comisiones_cobro), share(dg.comisiones_cobro, dg.ingresos)]);
+  resumenBody.push(["- Comisiones del stand (Point / PayWay)", money(-dg.comisiones_cobro), share(dg.comisiones_cobro, dg.ingresos)]);
+  if ((dg.comisiones_web ?? 0) > 0) {
+    resumenBody.push(["- Comisiones web (Checkout Pro)", money(-(dg.comisiones_web ?? 0)), share(dg.comisiones_web ?? 0, dg.ingresos)]);
+  }
   filaFuerte("Ingresos netos (queda para Finanzas)", money(dg.ingresos_netos), share(dg.ingresos_netos, dg.ingresos));
   resumenBody.push(["- Costos", money(-dg.costos), share(dg.costos, dg.ingresos_netos)]);
   resumenBody.push(["- Gastos operativos", money(-dg.gastos), share(dg.gastos, dg.ingresos_netos)]);
@@ -469,7 +496,10 @@ export function generarInformePdf(args: {
     ingResumen.push(["- Reembolsos de Reservas", money(-(dg.reembolsos_reservas ?? 0)), share(dg.reembolsos_reservas ?? 0, dg.ingresos)]);
     ingResumen.push(["Ingresos después de reembolsos", money(dg.ingresos_despues_reembolsos ?? dg.ingresos), share(dg.ingresos_despues_reembolsos ?? dg.ingresos, dg.ingresos)]);
   }
-  ingResumen.push(["- Comisiones de cobro", money(-dg.comisiones_cobro), share(dg.comisiones_cobro, dg.ingresos)]);
+  ingResumen.push(["- Comisiones del stand (Point / PayWay)", money(-dg.comisiones_cobro), share(dg.comisiones_cobro, dg.ingresos)]);
+  if ((dg.comisiones_web ?? 0) > 0) {
+    ingResumen.push(["- Comisiones web (Checkout Pro)", money(-(dg.comisiones_web ?? 0)), share(dg.comisiones_web ?? 0, dg.ingresos)]);
+  }
   ingResumen.push(["Ingresos netos", money(dg.ingresos_netos), share(dg.ingresos_netos, dg.ingresos)]);
   table(
     [{ header: "Concepto" }, { header: "Monto", width: 92, align: "right" }, { header: "% del bruto", width: 72, align: "right" }],

@@ -5,6 +5,7 @@ import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
 import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { logSecurityEvent } from "@/lib/apiError";
+import { registrarPagoWebSeguro, type PagoMpFinanzas } from "@/lib/mercadopagoPagos";
 
 // Webhook exclusivo para Gift Cards. Se distingue por el prefijo
 // "gift_card_" en external_reference. No toca la tabla "reservas".
@@ -76,6 +77,11 @@ export async function POST(req: Request) {
     const nowIso = new Date().toISOString();
 
     if (paymentData.status === "approved") {
+      // Cargos reales de Checkout Pro. Idempotente por payment_id y aislado: si
+      // falla, la gift card se entrega igual y el pago queda como "comisión no
+      // disponible" en Finanzas.
+      await registrarPagoWebSeguro(String(paymentId), "gift_cards", paymentData as PagoMpFinanzas, "webhook");
+
       await supabaseAdmin
         .from("gift_cards")
         .update({

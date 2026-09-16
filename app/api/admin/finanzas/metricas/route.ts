@@ -140,7 +140,10 @@ export async function GET(req: NextRequest) {
       revenue: ingresos, // NETO (bruto − comisiones de cobro)
       ingresos_bruto: resumen.ingresosBruto,
       comisiones_cobro: resumen.comisionesCobro,
+      comisiones_web: resumen.comisionesWebTotal,
+      comisiones_totales: resumen.comisionesTotales,
       tasa_comision: resumen.comisiones ? resumen.comisiones.tasaEfectiva : 0,
+      tasa_comision_web: resumen.comisionesWeb ? resumen.comisionesWeb.tasaEfectiva : 0,
       gross_profit: utilidadBruta,
       gross_margin: ratio(utilidadBruta, ingresos),
       operating_profit: resultadoOperativo,

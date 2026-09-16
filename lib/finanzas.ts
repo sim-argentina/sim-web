@@ -455,7 +455,9 @@ export type ResumenPorFuente = {
   pagosDeuda: number;
   transferenciasEntrantes: number;
   transferenciasSalientes: number;
-  comisiones: number; // comisiones de cobro imputadas a la fuente (hoy solo Mercado Pago)
+  comisiones: number; // comisiones totales imputadas a la fuente (stand + web)
+  comisionesStand: number; // Point/QR/Débito/Crédito y PayWay (estimadas por config)
+  comisionesWeb: number; // Checkout Pro (cargos REALES informados por Mercado Pago)
   reembolsos: number; // reembolsos de Reservas devueltos por la fuente (hoy solo Mercado Pago)
   egresos: number; // total egresos (costos+gastos+inversiones+sueldo+otros+pagosDeuda)
   neto: number;
@@ -486,6 +488,39 @@ export type ComisionesResumen = {
   sinConfig: boolean;
 };
 
+// ── Comisiones web (Mercado Pago Checkout Pro) ───────────────────────────────
+// A diferencia de las del stand, NO son estimadas: son los cargos reales que
+// Mercado Pago informó por cada pago (fee_details / net_received_amount).
+export type ComisionWebFila = {
+  producto: string;
+  paymentId: string;
+  referencia: string | null;
+  brutoOperacion: number; // lo que factura la operación (lo que ve el cliente)
+  bruto: number | null;   // transaction_amount informado por MP
+  cargos: number | null;
+  neto: number | null;
+  incompleto: boolean;
+  conciliado: boolean;
+  motivo: string | null;
+  mpStatus: string | null;
+  dateApproved: string | null;
+  moneyReleaseStatus: string | null;
+};
+
+export type ComisionesWebResumen = {
+  bruto: number;              // bruto de los pagos CON datos de comisión
+  cargos: number;             // cargos reales de Checkout Pro
+  neto: number;               // acreditado realmente
+  brutoSinDatos: number;      // bruto de pagos sin comisión disponible
+  cantidad: number;
+  cantidadSinDatos: number;
+  cantidadNoConciliados: number;
+  tasaEfectiva: number;       // cargos / bruto (0..1)
+  porProducto: Record<string, { bruto: number; cargos: number; neto: number; cantidad: number; brutoSinDatos: number; cantidadSinDatos: number }>;
+  detalle: ComisionWebFila[];
+  sinDatos: ComisionWebFila[]; // advertencias: NO se asume comisión 0
+};
+
 export type ResumenMes = {
   mes: string;
   ingresosAutomaticos: number;
@@ -493,9 +528,12 @@ export type ResumenMes = {
   ingresosBruto: number; // bruto (auto + manuales), antes de comisiones
   reembolsosReservas: number; // reembolsos completos de Reservas web imputados a ESTE mes (fecha_reembolso). Salida de MP.
   ingresosDespuesReembolsos: number; // ingresosBruto − reembolsosReservas (antes de comisiones)
-  comisionesCobro: number; // comisiones de cobro del stand (se descuentan del revenue)
+  comisionesCobro: number; // comisiones ESTIMADAS del stand (Point/PayWay)
+  comisionesWebTotal: number; // cargos REALES de Checkout Pro (cobros web)
+  comisionesTotales: number; // comisionesCobro + comisionesWebTotal
   ingresos: number; // NETO operativo (bruto − comisiones), SIN financiamiento ni reembolsos
   comisiones: ComisionesResumen | null; // detalle informativo de comisiones del stand
+  comisionesWeb: ComisionesWebResumen | null; // detalle de cargos reales de Checkout Pro
   financiamiento: number; // préstamos / entradas de financiamiento (no es revenue)
   costos: number;
   gastos: number;
@@ -532,6 +570,7 @@ export function resumirMes(params: {
   cuentas: FinCuenta[];
   categorias: FinCategoria[];
   comisionesData?: ComisionesResumen | null;
+  comisionesWebData?: ComisionesWebResumen | null;
   reembolsosReservas?: number;
 }): ResumenMes {
   const { mes, movimientos, ingresosAuto, ingresosAutoTotal, turnosDelMes, saldoInicialGeneral, sueldoAsignado, cuentas, categorias } = params;
@@ -544,9 +583,17 @@ export function resumirMes(params: {
   const saldoInicialEfectivo = params.saldoInicialEfectivo ?? saldoInicialGeneral;
   const saldoInicialMp = params.saldoInicialMp ?? 0;
   const comisionesData = params.comisionesData ?? null;
+  const comisionesWebData = params.comisionesWebData ?? null;
   // Comisiones de cobro del stand: reducen el revenue/caja (Mercado Pago). Nunca
   // se vuelven a restar como costo (evita doble descuento).
   const comisionesCobro = comisionesData ? comisionesData.comisionStand : 0;
+  // Cargos REALES de Checkout Pro sobre los cobros web. El ingreso automático se
+  // suma en BRUTO (es lo que facturó SIM); acá se descuenta lo que Mercado Pago
+  // se quedó antes de acreditar. Una sola estrategia: bruto − cargos, nunca
+  // "sumar el neto" además, para no descontar dos veces.
+  const comisionesWebTotal = comisionesWebData ? comisionesWebData.cargos : 0;
+  const round2Monto = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  const comisionesTotales = round2Monto(comisionesCobro + comisionesWebTotal);
 
   const catById: Record<string, FinCategoria> = {};
   for (const c of categorias) catById[c.id] = c;
@@ -571,6 +618,8 @@ export function resumirMes(params: {
       transferenciasEntrantes: 0,
       transferenciasSalientes: 0,
       comisiones: 0,
+      comisionesStand: 0,
+      comisionesWeb: 0,
       reembolsos: 0,
       egresos: 0,
       neto: 0,
@@ -643,7 +692,10 @@ export function resumirMes(params: {
     // La comisión de cobro solo afecta a Mercado Pago (qr/débito/crédito acreditan
     // neto). Se descuenta del neto de caja; `ingresos` de la fuente queda en bruto
     // (para "Ingresos por fuente").
-    const comFuente = f.tipo === "mercado_pago" ? comisionesCobro : 0;
+    const comStandFuente = f.tipo === "mercado_pago" ? comisionesCobro : 0;
+    // Los cobros web entran SIEMPRE por Mercado Pago, así que su cargo también.
+    const comWebFuente = f.tipo === "mercado_pago" ? comisionesWebTotal : 0;
+    const comFuente = round2Monto(comStandFuente + comWebFuente);
     // Los reembolsos de Reservas salen por Mercado Pago (se devolvieron por ese medio).
     const reembolsosFuente = f.tipo === "mercado_pago" ? reembolsosReservas : 0;
     const saldoInicialFuente = f.tipo === "efectivo" ? saldoInicialEfectivo : saldoInicialMp;
@@ -651,6 +703,8 @@ export function resumirMes(params: {
     return {
       ...f,
       comisiones: comFuente,
+      comisionesStand: comStandFuente,
+      comisionesWeb: comWebFuente,
       reembolsos: reembolsosFuente,
       egresos,
       neto,
@@ -664,7 +718,7 @@ export function resumirMes(params: {
 
   const ingresosBruto = ingresosAutoTotal + ingresosManuales; // bruto, sin financiamiento
   const ingresosDespuesReembolsos = ingresosBruto - reembolsosReservas; // antes de comisiones
-  const ingresos = ingresosDespuesReembolsos - comisionesCobro; // NETO operativo (revenue real, ya neto de reembolsos)
+  const ingresos = ingresosDespuesReembolsos - comisionesTotales; // NETO operativo (revenue real, ya neto de reembolsos)
   const egresosTotales = costos + gastos + inversiones + gastosSueldo + otros + pagosDeuda;
   const saldoFinalTeoricoGeneral = saldoInicialGeneral + ingresos + financiamiento - egresosTotales + ajustesNet;
 
@@ -676,8 +730,11 @@ export function resumirMes(params: {
     reembolsosReservas,
     ingresosDespuesReembolsos,
     comisionesCobro,
+    comisionesWebTotal,
+    comisionesTotales,
     ingresos,
     comisiones: comisionesData,
+    comisionesWeb: comisionesWebData,
     financiamiento,
     costos,
     gastos,
@@ -810,13 +867,92 @@ export async function getComisionesStandMes(mes: string): Promise<ComisionesResu
   };
 }
 
+// ── Comisiones web: cargos REALES de Mercado Pago Checkout Pro ───────────────
+//
+// Lee fin_pagos_web (lo que MP informó por cada pago) cruzado con los cobros web
+// del mes. El criterio de mes lo pone la RPC y es el MISMO de fin_ingresos_por_mes,
+// así que el cargo cae siempre en el mes donde está su bruto.
+//
+// Un pago sin datos de comisión NO se cuenta como comisión 0: suma a
+// `brutoSinDatos` y sale listado en `sinDatos` como advertencia.
+export async function getComisionesWebMes(mes: string): Promise<ComisionesWebResumen> {
+  const { data, error } = await supabaseAdmin.rpc("fin_comisiones_web_por_mes", { p_mes: mes });
+  // Mismo criterio que el stand: un fallo técnico no puede leerse como $0.
+  if (error) throw new ComisionesNoCalculablesError(mes, error);
+
+  const detalle: ComisionWebFila[] = [];
+  const sinDatos: ComisionWebFila[] = [];
+  const porProducto: ComisionesWebResumen["porProducto"] = {};
+  let bruto = 0, cargos = 0, neto = 0, brutoSinDatos = 0;
+  let cantidad = 0, cantidadSinDatos = 0, cantidadNoConciliados = 0;
+
+  for (const r of (data || []) as Array<Record<string, unknown>>) {
+    const producto = String(r.producto || "desconocido");
+    const brutoOperacion = Number(r.bruto_operacion) || 0;
+    const fila: ComisionWebFila = {
+      producto,
+      paymentId: String(r.payment_id || ""),
+      referencia: r.referencia ? String(r.referencia) : null,
+      brutoOperacion,
+      bruto: r.bruto === null || r.bruto === undefined ? null : Number(r.bruto),
+      cargos: r.cargos === null || r.cargos === undefined ? null : Number(r.cargos),
+      neto: r.neto === null || r.neto === undefined ? null : Number(r.neto),
+      incompleto: Boolean(r.incompleto),
+      conciliado: Boolean(r.conciliado),
+      motivo: r.motivo_incompleto ? String(r.motivo_incompleto) : null,
+      mpStatus: r.mp_status ? String(r.mp_status) : null,
+      dateApproved: r.date_approved ? String(r.date_approved) : null,
+      moneyReleaseStatus: r.money_release_status ? String(r.money_release_status) : null,
+    };
+    detalle.push(fila);
+
+    const p = (porProducto[producto] = porProducto[producto] || {
+      bruto: 0, cargos: 0, neto: 0, cantidad: 0, brutoSinDatos: 0, cantidadSinDatos: 0,
+    });
+
+    if (fila.incompleto || fila.cargos === null || fila.neto === null) {
+      sinDatos.push(fila);
+      brutoSinDatos += brutoOperacion;
+      cantidadSinDatos++;
+      p.brutoSinDatos += brutoOperacion;
+      p.cantidadSinDatos++;
+      continue;
+    }
+
+    // Se usa el bruto que informó MP; si faltara, el de la operación.
+    const brutoPago = fila.bruto ?? brutoOperacion;
+    bruto += brutoPago;
+    cargos += fila.cargos;
+    neto += fila.neto;
+    cantidad++;
+    if (!fila.conciliado) cantidadNoConciliados++;
+    p.bruto += brutoPago;
+    p.cargos += fila.cargos;
+    p.neto += fila.neto;
+    p.cantidad++;
+  }
+
+  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  bruto = round2(bruto); cargos = round2(cargos); neto = round2(neto); brutoSinDatos = round2(brutoSinDatos);
+  for (const p of Object.values(porProducto)) {
+    p.bruto = round2(p.bruto); p.cargos = round2(p.cargos); p.neto = round2(p.neto); p.brutoSinDatos = round2(p.brutoSinDatos);
+  }
+
+  return {
+    bruto, cargos, neto, brutoSinDatos,
+    cantidad, cantidadSinDatos, cantidadNoConciliados,
+    tasaEfectiva: bruto > 0 ? cargos / bruto : 0,
+    porProducto, detalle, sinDatos,
+  };
+}
+
 // Calcula todo lo necesario para resumen/cierre de un mes.
 export async function calcularMes(mes: string): Promise<{
   resumen: ResumenMes;
   ingresosAuto: IngresoAutomatico[];
   movimientos: FinMovimiento[];
 }> {
-  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicialFuente, sueldo, comisiones, reembolsosReservas] = await Promise.all([
+  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicialFuente, sueldo, comisiones, comisionesWeb, reembolsosReservas] = await Promise.all([
     getCuentas(),
     getCategorias(),
     getIngresosAutomaticos(mes),
@@ -824,6 +960,7 @@ export async function calcularMes(mes: string): Promise<{
     getSaldoInicialPorFuente(mes),
     getSueldoMes(mes),
     getComisionesStandMes(mes),
+    getComisionesWebMes(mes),
     getReembolsosReservasMes(mes),
   ]);
 
@@ -840,6 +977,7 @@ export async function calcularMes(mes: string): Promise<{
     cuentas,
     categorias,
     comisionesData: comisiones,
+    comisionesWebData: comisionesWeb,
     reembolsosReservas,
   });
 

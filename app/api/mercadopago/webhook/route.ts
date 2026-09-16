@@ -6,6 +6,7 @@ import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { getOccupiedSlots } from "@/lib/reservasSlots";
 import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
 import { logSecurityEvent } from "@/lib/apiError";
+import { registrarPagoWebSeguro, type PagoMpFinanzas } from "@/lib/mercadopagoPagos";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 
@@ -71,6 +72,11 @@ export async function POST(req: Request) {
     if (reserva.mercado_pago_payment_id) {
       return NextResponse.json({ received: true }, { status: 200 });
     }
+
+    // Cargos reales de Checkout Pro. Idempotente por payment_id y aislado: si
+    // falla, la reserva se activa igual y el pago queda como "comisión no
+    // disponible" en Finanzas.
+    await registrarPagoWebSeguro(String(paymentId), "reservas_online", paymentData as PagoMpFinanzas, "webhook");
 
     // Reservar los slots ocupados (garantía DB anti doble-reserva). Si chocan
     // con otra reserva activa, se marca conflicto_pago (no se pisa el turno).

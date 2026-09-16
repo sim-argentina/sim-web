@@ -115,11 +115,14 @@ export async function GET(req: NextRequest) {
       // Comisiones de cobro del stand: informativas + línea que baja el saldo.
       // El saldo teórico ya está NETO (no se resta dos veces).
       comisiones: r.comisiones,
+      comisiones_web: r.comisionesWeb,
       desglose: {
         ingresos: r.ingresosBruto,
         reembolsos_reservas: r.reembolsosReservas,
         ingresos_despues_reembolsos: r.ingresosDespuesReembolsos,
         comisiones_cobro: r.comisionesCobro,
+        comisiones_web: r.comisionesWebTotal,
+        comisiones_totales: r.comisionesTotales,
         ingresos_netos: r.ingresos,
         financiamiento: r.financiamiento,
         costos: r.costos,

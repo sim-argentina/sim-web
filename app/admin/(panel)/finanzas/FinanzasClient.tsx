@@ -50,6 +50,8 @@ type PorFuente = {
   transferenciasEntrantes: number;
   transferenciasSalientes: number;
   comisiones: number;
+  comisionesStand: number;
+  comisionesWeb: number;
   reembolsos: number;
   egresos: number;
   neto: number;
@@ -78,6 +80,23 @@ type ComisionesResumen = {
   advertencias: Array<{ fecha: string; turno_id: number | string; metodo_pago: string; monto: number; procesador: string | null; motivo: string }>;
   sinConfig: boolean;
 };
+// Comisiones web: cargos REALES que informó Mercado Pago por cada cobro de
+// Checkout Pro. No son estimadas como las del stand.
+type ComisionWebFila = {
+  producto: string; paymentId: string; referencia: string | null;
+  brutoOperacion: number; bruto: number | null; cargos: number | null; neto: number | null;
+  incompleto: boolean; conciliado: boolean; motivo: string | null;
+  mpStatus: string | null; dateApproved: string | null; moneyReleaseStatus: string | null;
+};
+type ComisionesWebResumen = {
+  bruto: number; cargos: number; neto: number; brutoSinDatos: number;
+  cantidad: number; cantidadSinDatos: number; cantidadNoConciliados: number;
+  tasaEfectiva: number;
+  porProducto: Record<string, { bruto: number; cargos: number; neto: number; cantidad: number; brutoSinDatos: number; cantidadSinDatos: number }>;
+  detalle: ComisionWebFila[];
+  sinDatos: ComisionWebFila[];
+};
+
 type ComisionConfigRow = {
   id: string; procesador: string; metodo_pago: string; porcentaje_base: number;
   aplica_iva: boolean; iva_porcentaje: number; acreditacion: string; activa: boolean;
@@ -92,7 +111,10 @@ type ResumenApi = {
     ingresosManuales: number;
     ingresosBruto: number;
     comisionesCobro: number;
+    comisionesWebTotal: number;
+    comisionesTotales: number;
     comisiones: ComisionesResumen | null;
+    comisionesWeb: ComisionesWebResumen | null;
     ingresos: number;
     financiamiento: number;
     costos: number;
@@ -146,6 +168,8 @@ type PorFuenteApi = {
   transferenciasEntrantes: number;
   transferenciasSalientes: number;
   comisiones: number;
+  comisionesStand: number;
+  comisionesWeb: number;
   reembolsos: number;
   egresos: number;
   neto: number;
@@ -171,7 +195,8 @@ type CierreApi = {
   diferencia_mp: number | null;
   informe_generado_at: string | null;
   comisiones?: ComisionesResumen | null;
-  desglose: { ingresos: number; reembolsos_reservas?: number; ingresos_despues_reembolsos?: number; comisiones_cobro: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
+  comisiones_web?: ComisionesWebResumen | null;
+  desglose: { ingresos: number; reembolsos_reservas?: number; ingresos_despues_reembolsos?: number; comisiones_cobro: number; comisiones_web?: number; comisiones_totales?: number; ingresos_netos: number; financiamiento: number; costos: number; gastos: number; inversiones: number; gastos_sueldo: number; pagos_deuda: number; otros: number; ajustes: number };
   por_fuente: PorFuenteApi[];
   detalle: {
     ingresos: { total: number; automaticos: Array<{ fuente: string; total: number; cantidad: number }>; automaticos_total: number; manuales_por_categoria: RubroCat[]; manuales_total: number };
@@ -810,6 +835,98 @@ function pctNum(n: number): string {
 
 // Bloque "Comisiones e ingresos netos" del stand. Solo informativo: Finanzas usa
 // el neto (bruto − comisiones) para revenue/caja/resultado/cierre, sin doble descuento.
+const LABEL_PRODUCTO_WEB: Record<string, string> = {
+  campeonatos: "Campeonatos",
+  reservas_online: "Reservas online",
+  gift_cards: "Gift cards",
+};
+
+// Bloque "Comisiones web (Checkout Pro)". A diferencia del stand, NO son
+// estimadas por configuración: son los cargos REALES que Mercado Pago informó
+// pago por pago (comisión + retenciones), contrastados contra
+// net_received_amount. Finanzas suma el BRUTO al revenue y descuenta estos
+// cargos del saldo de Mercado Pago: nunca se descuentan dos veces.
+function BloqueComisionesWeb({ com }: { com: ComisionesWebResumen | null }) {
+  const [verDetalle, setVerDetalle] = useState(false);
+  if (!com) return null;
+  if (com.cantidad === 0 && com.cantidadSinDatos === 0) return null;
+  return (
+    <div>
+      <h2 className="mb-3 text-lg font-black uppercase text-red-500">Comisiones web · Mercado Pago Checkout Pro</h2>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <CardKpi titulo="Ingresos web brutos" valor={dinero(com.bruto)} detalle="Lo que pagó el cliente" />
+        <CardKpi titulo="Comisiones Checkout Pro" valor={dinero(com.cargos)} color="rojo" detalle="Cargos reales de Mercado Pago" />
+        <CardKpi titulo="Neto web acreditado" valor={dinero(com.neto)} color="verde" detalle="Lo que entró a Mercado Pago" />
+        <CardKpi titulo="Tasa efectiva" valor={pct(com.tasaEfectiva)} detalle="Cargos / bruto" />
+      </div>
+
+      {com.cantidadSinDatos > 0 && (
+        <div className="mt-3 rounded-2xl border border-amber-500/40 bg-amber-950/20 p-4">
+          <p className="text-sm font-black text-amber-200">
+            {com.cantidadSinDatos} cobro(s) web sin comisión disponible por {dinero(com.brutoSinDatos)}. No se asumió comisión $0: ese bruto está sumado al saldo de Mercado Pago sin descontarle cargos, así que el saldo real puede ser menor.
+          </p>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="text-white/40"><tr><th className="py-1 pr-3">Producto</th><th className="py-1 pr-3">payment_id</th><th className="py-1 pr-3 text-right">Bruto</th><th className="py-1 pr-3">Estado</th></tr></thead>
+              <tbody>{com.sinDatos.map((s) => (
+                <tr key={s.paymentId} className="border-t border-white/5">
+                  <td className="py-1 pr-3">{LABEL_PRODUCTO_WEB[s.producto] || s.producto}</td>
+                  <td className="py-1 pr-3 font-mono text-white/70">{s.paymentId}</td>
+                  <td className="py-1 pr-3 text-right font-bold">{dinero(s.brutoOperacion)}</td>
+                  <td className="py-1 pr-3 text-amber-300">{s.motivo || "comisión no disponible"}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {com.cantidadNoConciliados > 0 && (
+        <p className="mt-2 text-xs font-bold text-amber-300">{com.cantidadNoConciliados} pago(s) donde el desglose de cargos no explica el neto informado por Mercado Pago.</p>
+      )}
+
+      <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10 bg-black p-4">
+        <table className="w-full text-left text-xs">
+          <thead className="text-white/40"><tr><th className="py-1 pr-3">Producto</th><th className="py-1 pr-3 text-right">Pagos</th><th className="py-1 pr-3 text-right">Bruto</th><th className="py-1 pr-3 text-right">Cargos</th><th className="py-1 pr-3 text-right">Neto</th></tr></thead>
+          <tbody>{Object.entries(com.porProducto).map(([prod, v]) => (
+            <tr key={prod} className="border-t border-white/5">
+              <td className="py-1 pr-3 font-bold">{LABEL_PRODUCTO_WEB[prod] || prod}</td>
+              <td className="py-1 pr-3 text-right">{v.cantidad}</td>
+              <td className="py-1 pr-3 text-right">{dinero(v.bruto)}</td>
+              <td className="py-1 pr-3 text-right text-red-400">{dinero(v.cargos)}</td>
+              <td className="py-1 pr-3 text-right font-bold text-green-400">{dinero(v.neto)}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+
+      {com.detalle.length > 0 && (
+        <div className="mt-2">
+          <button onClick={() => setVerDetalle((v) => !v)} className="mb-2 text-xs font-black uppercase text-white/50 hover:text-white">{verDetalle ? "Ocultar" : "Ver"} detalle por pago ({com.detalle.length})</button>
+          {verDetalle && (
+            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-black p-4">
+              <table className="w-full text-left text-xs">
+                <thead className="text-white/40"><tr><th className="py-1 pr-3">Producto</th><th className="py-1 pr-3">payment_id</th><th className="py-1 pr-3 text-right">Bruto</th><th className="py-1 pr-3 text-right">Cargos</th><th className="py-1 pr-3 text-right">Neto</th><th className="py-1 pr-3">Estado MP</th></tr></thead>
+                <tbody>{com.detalle.map((d) => (
+                  <tr key={d.paymentId} className="border-t border-white/5">
+                    <td className="py-1 pr-3">{LABEL_PRODUCTO_WEB[d.producto] || d.producto}</td>
+                    <td className="py-1 pr-3 font-mono text-white/70">{d.paymentId}</td>
+                    <td className="py-1 pr-3 text-right">{dinero(d.bruto ?? d.brutoOperacion)}</td>
+                    <td className="py-1 pr-3 text-right text-red-400">{d.cargos === null ? "—" : dinero(d.cargos)}</td>
+                    <td className="py-1 pr-3 text-right font-bold">{d.neto === null ? "—" : dinero(d.neto)}</td>
+                    <td className={d.incompleto ? "py-1 pr-3 text-amber-300" : "py-1 pr-3 text-white/50"}>{d.incompleto ? d.motivo : d.mpStatus}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="mt-2 text-[11px] text-white/30">Los cargos salen de lo que informó Mercado Pago por cada pago (comisión + retenciones), no de una tasa estimada. El revenue y las métricas comerciales siguen usando el bruto; el saldo de Mercado Pago usa el neto.</p>
+    </div>
+  );
+}
+
 function BloqueComisiones({ com }: { com: ComisionesResumen | null }) {
   const [verDetalle, setVerDetalle] = useState(false);
   const [verAdv, setVerAdv] = useState(false);
@@ -907,6 +1024,8 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
       {/* Comisiones e ingresos netos del stand */}
       <BloqueComisiones com={r.comisiones} />
 
+      <BloqueComisionesWeb com={r.comisionesWeb} />
+
       {/* Ingresos por fuente (Efectivo / Mercado Pago) */}
       <div>
         <h2 className="mb-3 text-lg font-black uppercase text-red-500">Ingresos por fuente</h2>
@@ -957,7 +1076,8 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
                   <p>Ingresos: <span className="font-bold text-green-400">+{dinero(f.ingresos)}</span></p>
                   {f.financiamiento > 0 && <p>Financiamiento: <span className="font-bold text-amber-400">+{dinero(f.financiamiento)}</span></p>}
                   <p>Pagado: <span className="font-bold text-red-400">-{dinero(f.egresos)}</span></p>
-                  {f.comisiones > 0 && <p>Comisiones de cobro: <span className="font-bold text-red-400">-{dinero(f.comisiones)}</span></p>}
+                  {f.comisionesStand > 0 && <p>Comisiones del stand: <span className="font-bold text-red-400">-{dinero(f.comisionesStand)}</span></p>}
+                  {f.comisionesWeb > 0 && <p>Comisiones web (Checkout Pro): <span className="font-bold text-red-400">-{dinero(f.comisionesWeb)}</span></p>}
                   {f.reembolsos > 0 && <p>Reembolsos: <span className="font-bold text-red-400">-{dinero(f.reembolsos)}</span></p>}
                   <p>Transferencias: <span className="font-bold text-white/80">+{dinero(f.transferenciasEntrantes)} / -{dinero(f.transferenciasSalientes)}</span></p>
                 </div>
@@ -1180,7 +1300,8 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
           <FilaCierre label="Saldo inicial general" valor={cierre.saldo_inicial_general} />
           <FilaCierre label="+ Ingresos cobrados" valor={dg.ingresos} color="verde" />
           {(dg.reembolsos_reservas ?? 0) > 0 && <FilaCierre label="− Reembolsos de Reservas" valor={-(dg.reembolsos_reservas ?? 0)} color="rojo" />}
-          {dg.comisiones_cobro > 0 && <FilaCierre label="− Comisiones de cobro" valor={-dg.comisiones_cobro} color="rojo" />}
+          {dg.comisiones_cobro > 0 && <FilaCierre label="− Comisiones del stand (Point / PayWay)" valor={-dg.comisiones_cobro} color="rojo" />}
+          {(dg.comisiones_web ?? 0) > 0 && <FilaCierre label="− Comisiones web (Checkout Pro)" valor={-(dg.comisiones_web ?? 0)} color="rojo" />}
           {dg.financiamiento > 0 && <FilaCierre label="+ Financiamiento (préstamos)" valor={dg.financiamiento} color="verde" />}
           <FilaCierre label="− Costos" valor={-dg.costos} color="rojo" />
           <FilaCierre label="− Gastos" valor={-dg.gastos} color="rojo" />
@@ -1192,6 +1313,8 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
           <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2 text-base font-black"><span className="uppercase">Saldo final teórico general</span><span>{dinero(cierre.saldo_teorico_general)}</span></div>
         </div>
       </div>
+
+      <BloqueComisionesWeb com={cierre.comisiones_web ?? null} />
 
       {cierre.comisiones && (cierre.comisiones.comisionStand > 0 || cierre.comisiones.advertencias.length > 0) && (
         <BloqueComisiones com={cierre.comisiones} />
@@ -1241,7 +1364,8 @@ function TabCierre({ mes, cierre, onHecho }: { mes: string; cierre: CierreApi | 
                 {f.pagosDeuda > 0 && <FilaFuente label="Pagos de deuda" valor={f.pagosDeuda} />}
                 <FilaFuente label="Transf. entrantes" valor={f.transferenciasEntrantes} />
                 <FilaFuente label="Transf. salientes" valor={f.transferenciasSalientes} />
-                <FilaFuente label="Comisiones de cobro" valor={f.comisiones} />
+                <FilaFuente label="Comisiones del stand" valor={f.comisionesStand} />
+                <FilaFuente label="Comisiones web (Checkout Pro)" valor={f.comisionesWeb} />
                 <FilaFuente label="Reembolsos" valor={f.reembolsos} />
               </div>
               <div className="mt-2 space-y-1 border-t border-white/10 pt-2 text-xs">

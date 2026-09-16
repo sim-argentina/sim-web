@@ -1,6 +1,7 @@
 import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { PREFIJO_EXT_REF, TTL_PENDIENTES_MIN, GRACIA_CUPO_MIN } from "@/lib/campeonatosCheckout";
+import { registrarPagoWebSeguro, type OrigenRegistro, type PagoMpFinanzas } from "@/lib/mercadopagoPagos";
 
 // Procesador ÚNICO de pagos de inscripciones a campeonatos.
 // Lo usan el webhook y la reconciliación de la pantalla de resultado: la lógica
@@ -40,7 +41,9 @@ export type PagoMp = {
   // cupo seguía viva cuando se pagó.
   date_approved?: string | null;
   metadata?: Record<string, unknown> | null;
-};
+  // Cargos reales de Checkout Pro (fee_details / net_received_amount). Solo se
+  // usan para conciliar en Finanzas: no intervienen en confirmar la inscripción.
+} & PagoMpFinanzas;
 
 const ignorado = (motivo: string): ResultadoPago => ({ ok: true, estado: "ignorado", motivo });
 const falla = (motivo: string, status = 400): ResultadoPago => ({ ok: false, motivo, status });
@@ -86,12 +89,15 @@ export async function reconciliarCheckout(externalReference: string): Promise<Re
   )[0];
   if (!elegido?.id) return null;
 
-  return procesarPagoCampeonato(String(elegido.id));
+  return procesarPagoCampeonato(String(elegido.id), "reconciliacion");
 }
 
 // ── Procesamiento central ───────────────────────────────────────────────────
 
-export async function procesarPagoCampeonato(paymentId: string): Promise<ResultadoPago> {
+export async function procesarPagoCampeonato(
+  paymentId: string,
+  origen: OrigenRegistro = "webhook"
+): Promise<ResultadoPago> {
   const id = String(paymentId || "").trim();
   if (!id) return falla("payment_id_ausente", 400);
 
@@ -105,21 +111,30 @@ export async function procesarPagoCampeonato(paymentId: string): Promise<Resulta
   } catch {
     return falla("pago_no_consultable", 502);
   }
-  return procesarPagoVerificado(id, pago);
+  return procesarPagoVerificado(id, pago, origen);
 }
 
 // Verificación + aplicación sobre un pago YA traído de Mercado Pago. Separada
 // para que los tests ejerciten TODAS las validaciones sin red y sin pagos reales.
-export async function procesarPagoVerificado(id: string, pago: PagoMp): Promise<ResultadoPago> {
+export async function procesarPagoVerificado(
+  id: string,
+  pago: PagoMp,
+  origen: OrigenRegistro = "webhook"
+): Promise<ResultadoPago> {
   const extRef = String(pago.external_reference || "");
 
-  if (extRef.startsWith(PREFIJO_EXT_REF)) return procesarCheckout(id, pago, extRef);
-  if (extRef.startsWith(PREFIJO_EXT_REF_LEGACY)) return procesarLegacy(id, pago, extRef);
+  if (extRef.startsWith(PREFIJO_EXT_REF)) return procesarCheckout(id, pago, extRef, origen);
+  if (extRef.startsWith(PREFIJO_EXT_REF_LEGACY)) return procesarLegacy(id, pago, extRef, origen);
   return ignorado("otro_producto");
 }
 
 // ── Flujo actual: intento de checkout → inscripción ─────────────────────────
-async function procesarCheckout(id: string, pago: PagoMp, extRef: string): Promise<ResultadoPago> {
+async function procesarCheckout(
+  id: string,
+  pago: PagoMp,
+  extRef: string,
+  origen: OrigenRegistro
+): Promise<ResultadoPago> {
   const { data: chk, error } = await supabaseAdmin
     .from("campeonato_checkouts")
     .select("id, campeonato_id, monto, estado, inscripcion_id")
@@ -157,6 +172,11 @@ async function procesarCheckout(id: string, pago: PagoMp, extRef: string): Promi
 
   // Aprobado → la inscripción nace por la ÚNICA vía atómica que existe.
   if (estadoMp === "approved") {
+    // Foto financiera del pago (cargos reales de Checkout Pro). Es idempotente y
+    // NUNCA puede frenar la confirmación: si falla, el pago queda como "comisión
+    // no disponible" en Finanzas y la inscripción se crea igual.
+    await registrarPagoWebSeguro(id, "campeonatos", pago, origen);
+
     const { data, error: rpcError } = await supabaseAdmin.rpc("campeonato_checkout_confirmar", {
       p_external_reference: extRef,
       p_payment_id: id,
@@ -193,7 +213,12 @@ async function procesarCheckout(id: string, pago: PagoMp, extRef: string): Promi
 // ── Flujo legacy: la inscripción ya existía en estado pendiente ──────────────
 // Solo alcanza a las preferencias emitidas ANTES de este cambio. No crea filas
 // nuevas: únicamente marca como pagada/rechazada la que ya está.
-async function procesarLegacy(id: string, pago: PagoMp, extRef: string): Promise<ResultadoPago> {
+async function procesarLegacy(
+  id: string,
+  pago: PagoMp,
+  extRef: string,
+  origen: OrigenRegistro
+): Promise<ResultadoPago> {
   const inscripcionId = extRef.slice(PREFIJO_EXT_REF_LEGACY.length);
 
   const { data: insc } = await supabaseAdmin
@@ -209,6 +234,8 @@ async function procesarLegacy(id: string, pago: PagoMp, extRef: string): Promise
   if (estadoMp === "approved") estado_pago = "pagado";
   else if (estadoMp === "rejected" || estadoMp === "cancelled") estado_pago = "rechazado";
   else return { ok: true, estado: "registrado", mpStatus: estadoMp || "desconocido" };
+
+  if (estado_pago === "pagado") await registrarPagoWebSeguro(id, "campeonatos", pago, origen);
 
   await supabaseAdmin
     .from("campeonato_inscripciones")
