@@ -661,9 +661,15 @@ async function main() {
     ]) {
       assert.ok(!crudo.includes(prohibido), `M5A-46 el DTO no puede contener "${prohibido}"`);
     }
+    // La guarda sigue siendo un conjunto CERRADO: si alguien agrega un campo al
+    // DTO, este test falla y hay que justificarlo acá. (M5C) sumó cinco, todos
+    // derivados y sin PII: qué acciones habilita la reserva, cuántos minutos
+    // volverían si se cancela ahora, y cómo terminó una cancelación.
     for (const r of [...dto.reservas.proximas, ...dto.reservas.anteriores]) {
       assert.deepEqual(Object.keys(r).sort(),
-        ["duracion", "estado", "fecha", "hora", "minutos_consumidos", "referencia", "simuladores"],
+        ["cancelacion_resultado", "duracion", "estado", "fecha", "hora",
+         "minutos_a_restituir", "minutos_consumidos", "puede_cancelar",
+         "puede_reprogramar", "referencia", "restituye_minutos", "simuladores"],
         "M5A-46 solo los campos mínimos");
     }
     await limpiar();

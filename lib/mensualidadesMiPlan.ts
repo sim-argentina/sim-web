@@ -95,6 +95,19 @@ export type ReservaDeMiPlan = {
   simuladores: string[];
   minutos_consumidos: number;
   estado: string;
+  /**
+   * (M5C) Qué puede hacer el titular con ESTA reserva. Lo decide el servidor
+   * con la hora de Córdoba; el navegador solo lo muestra. La RPC vuelve a
+   * comprobarlo, así que esto es para la interfaz, no una autorización.
+   */
+  puede_cancelar: boolean;
+  puede_reprogramar: boolean;
+  /** (M5C) Si cancela AHORA, ¿le vuelven los minutos? Falta 24 h o más. */
+  restituye_minutos: boolean;
+  /** (M5C) Cuántos minutos volverían: los consumidos, o 0 si ya no restituye. */
+  minutos_a_restituir: number;
+  /** (M5C) Cómo terminó una cancelación: restituida | sin_restitucion | null. */
+  cancelacion_resultado: string | null;
 };
 
 export type HistorialReservas = {
@@ -115,17 +128,46 @@ type FilaReserva = {
   simuladores: unknown;
   minutos_consumidos: number | null;
   estado: string;
+  no_show: boolean | null;
+  cancelacion_resultado: string | null;
 };
 
-function aDto(r: FilaReserva): ReservaDeMiPlan {
+/**
+ * (M5C) Milisegundos que faltan para que empiece la reserva, en hora de
+ * Córdoba. `fecha` es 'YYYY-MM-DD' y `hora` 'HH:MM'; Argentina es UTC-3 todo el
+ * año (sin horario de verano), así que el instante se arma con el offset fijo
+ * -03:00 y no depende de la zona del servidor. Es el mismo criterio que usa
+ * lib/bloqueosEstado.ts desde antes de Mensualidades.
+ */
+export function faltanMsPara(fecha: string, hora: string, ahora: number = Date.now()): number {
+  const t = Date.parse(`${fecha}T${hora}:00-03:00`);
+  return Number.isFinite(t) ? t - ahora : Number.NaN;
+}
+
+/** (M5C) El corte de las 24 h es INCLUSIVO: con exactamente 24 h todavía se restituye. */
+export const MS_24H = 24 * 60 * 60 * 1000;
+
+function aDto(r: FilaReserva, ahora: number): ReservaDeMiPlan {
+  const minutos = Number(r.minutos_consumidos) || 0;
+  const faltan = faltanMsPara(r.fecha, r.hora, ahora);
+  // Solo una reserva viva, futura y que no sea no-show admite acciones. Es la
+  // misma lista de condiciones que aplica la RPC.
+  const viva = r.estado === "activa" && !r.no_show && Number.isFinite(faltan) && faltan > 0;
+  const conPlazo = viva && faltan >= MS_24H;
   return {
     referencia: String(r.referencia_publica ?? ""),
     fecha: r.fecha,
     hora: r.hora,
     duracion: Number(r.duracion_minutos) || 0,
     simuladores: Array.isArray(r.simuladores) ? r.simuladores.map(String) : [],
-    minutos_consumidos: Number(r.minutos_consumidos) || 0,
+    minutos_consumidos: minutos,
     estado: String(r.estado),
+    // Cancelar se puede hasta que empieza; reprogramar solo con 24 h o más.
+    puede_cancelar: viva,
+    puede_reprogramar: conPlazo,
+    restituye_minutos: conPlazo,
+    minutos_a_restituir: conPlazo ? minutos : 0,
+    cancelacion_resultado: r.cancelacion_resultado ?? null,
   };
 }
 
@@ -140,7 +182,11 @@ export async function getReservasDeMiPlan(
   const { data: hoy } = await supabaseAdmin.rpc("mensualidad_hoy");
   const corte = String(hoy ?? "");
 
-  const columnas = "referencia_publica, fecha, hora, duracion_minutos, simuladores, minutos_consumidos, estado";
+  const columnas = "referencia_publica, fecha, hora, duracion_minutos, simuladores, " +
+    "minutos_consumidos, estado, no_show, cancelacion_resultado";
+  // Un solo "ahora" para todo el listado: si no, dos reservas del mismo lote
+  // podrían quedar de distinto lado del corte de 24 h por unos milisegundos.
+  const ahora = Date.now();
 
   // Dos consultas acotadas y ordenadas, en vez de traer todo y partirlo en
   // memoria: así el límite de PostgREST no puede recortar en silencio.
@@ -165,8 +211,8 @@ export async function getReservasDeMiPlan(
 
   const anteriores = (ant.data ?? []) as unknown as FilaReserva[];
   return {
-    proximas: ((prox.data ?? []) as unknown as FilaReserva[]).map(aDto),
-    anteriores: anteriores.slice(0, limite).map(aDto),
+    proximas: ((prox.data ?? []) as unknown as FilaReserva[]).map((r) => aDto(r, ahora)),
+    anteriores: anteriores.slice(0, limite).map((r) => aDto(r, ahora)),
     hay_mas_anteriores: anteriores.length > limite,
   };
 }

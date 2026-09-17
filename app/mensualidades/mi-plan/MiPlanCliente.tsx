@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Copy, Check, LogOut, ShoppingCart, CalendarPlus } from "lucide-react";
+import { Copy, Check, LogOut, ShoppingCart, CalendarPlus, CalendarClock, XCircle } from "lucide-react";
 import type { MiPlan, HistorialReservas, ReservaDeMiPlan } from "@/lib/mensualidadesMiPlan";
 
 // Parte interactiva de "Mi mensualidad" (Bloque M4): copiar el código y cerrar
@@ -52,18 +52,272 @@ function minutosATexto(min: number) {
 
 // (M5A) Una reserva de la mensualidad. Solo lo que el titular necesita
 // reconocer: nada de ids internos, importes ni datos de contacto.
-function FilaReserva({ r }: { r: ReservaDeMiPlan }) {
+// (M5C) Clave de idempotencia por INTENTO LÓGICO: se genera una vez cuando el
+// titular abre el panel, no en cada clic. Así un doble clic manda la misma clave
+// y el servidor lo resuelve como reintento en vez de como dos operaciones.
+function nuevaClave() {
+  const b = new Uint8Array(18);
+  crypto.getRandomValues(b);
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+type Horario = { hora: string; simuladores: string[] };
+
+/**
+ * (M5C) Acciones sobre UNA reserva futura. El servidor ya dijo en el DTO qué se
+ * puede hacer y qué pasa con los minutos: acá no se recalcula la regla de 24 h,
+ * solo se muestra. La RPC vuelve a comprobarlo todo al confirmar.
+ */
+function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boolean }) {
+  const router = useRouter();
+  const [panel, setPanel] = useState<null | "cancelar" | "reprogramar">(null);
+  const [clave, setClave] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reprogramación: fechas y horarios REALES, traídos del servidor.
+  const [fechas, setFechas] = useState<string[]>([]);
+  const [fecha, setFecha] = useState("");
+  const [horarios, setHorarios] = useState<Horario[]>([]);
+  const [hora, setHora] = useState("");
+  const [cargando, setCargando] = useState(false);
+
+  function abrir(cual: "cancelar" | "reprogramar") {
+    setError(null);
+    setClave(nuevaClave());
+    setPanel(cual);
+  }
+
+  const cargarDia = useCallback(async (f: string) => {
+    setCargando(true);
+    setHora("");
+    try {
+      const res = await fetch(
+        `/api/mensualidades/disponibilidad?fecha=${encodeURIComponent(f)}&duracion=${r.duracion}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) { setHorarios([]); return; }
+      const data = await res.json();
+      if (Array.isArray(data.fechas) && fechas.length === 0) setFechas(data.fechas);
+      // Solo sirven los horarios donde están libres TODAS las escuderías de esta
+      // reserva: al reprogramar no se pueden cambiar.
+      const libres = (data.horarios as Horario[] | undefined) ?? [];
+      setHorarios(libres.filter((h) => r.simuladores.every((s) => h.simuladores.includes(s))));
+    } catch {
+      setHorarios([]);
+    } finally {
+      setCargando(false);
+    }
+  }, [r.duracion, r.simuladores, fechas.length]);
+
+  useEffect(() => {
+    if (panel !== "reprogramar") return;
+    // UNA sola consulta al abrir: la respuesta ya trae la ventana de fechas Y
+    // los horarios del día pedido. Pedirlo dos veces (una para las fechas y otra
+    // para el día) duplicaba el viaje y dejaba una carrera en la que la segunda
+    // respuesta podía pisar a la primera.
+    let vivo = true;
+    setCargando(true);
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/mensualidades/disponibilidad?fecha=${encodeURIComponent(r.fecha)}&duracion=${r.duracion}`,
+          { cache: "no-store" },
+        );
+        if (!vivo) return;
+        if (!res.ok) { setHorarios([]); return; }
+        const data = await res.json();
+        if (!vivo) return;
+        const disponibles: string[] = Array.isArray(data.fechas) ? data.fechas : [];
+        setFechas(disponibles);
+        setFecha(String(data.fecha ?? r.fecha));
+        const libres = (data.horarios as Horario[] | undefined) ?? [];
+        setHorarios(libres.filter((h) => r.simuladores.every((s) => h.simuladores.includes(s))));
+      } catch {
+        if (vivo) setHorarios([]);
+      } finally {
+        if (vivo) setCargando(false);
+      }
+    })();
+    // Si el titular cierra el panel mientras viaja la respuesta, se descarta.
+    return () => { vivo = false; };
+    // Solo al abrir el panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel]);
+
+  async function enviar(url: string, body: Record<string, unknown>) {
+    setEnviando(true);
+    setError(null);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...body, referencia: r.referencia, idempotency_key: clave }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(String(data?.error ?? "No pudimos completar la operación."));
+        return;
+      }
+      setPanel(null);
+      // El saldo y el listado se actualizan solos: no hace falta recargar a mano.
+      router.refresh();
+    } catch {
+      setError("No pudimos conectarnos. Probá de nuevo.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  const acciones = gestionable && (r.puede_cancelar || r.puede_reprogramar);
+
   return (
-    <li className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
-      <span className="text-sm font-black">
-        {fechaLarga(r.fecha)} · {r.hora}
-      </span>
-      <span className="text-xs text-zinc-500">
-        {r.duracion} min · {r.simuladores.join(", ")} · {minutosATexto(r.minutos_consumidos)}
-      </span>
-      <span className="w-full font-mono text-[11px] tracking-wider text-zinc-600">
-        {r.referencia} · {r.estado}
-      </span>
+    <li className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <span className="text-sm font-black">
+          {fechaLarga(r.fecha)} · {r.hora}
+        </span>
+        <span className="text-xs text-zinc-500">
+          {r.duracion} min · {r.simuladores.length} {r.simuladores.length === 1 ? "escudería" : "escuderías"}
+          {" · "}{minutosATexto(r.minutos_consumidos)}
+        </span>
+        <span className="w-full text-xs text-zinc-500">{r.simuladores.join(", ")}</span>
+        <span className="w-full font-mono text-[11px] tracking-wider text-zinc-600">
+          {r.referencia} · {r.estado}
+          {r.cancelacion_resultado === "restituida" && " · minutos devueltos"}
+          {r.cancelacion_resultado === "sin_restitucion" && " · sin devolución"}
+        </span>
+      </div>
+
+      {acciones && panel === null && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {r.puede_reprogramar && (
+            <button
+              type="button"
+              onClick={() => abrir("reprogramar")}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition hover:border-white/40"
+            >
+              <CalendarClock className="h-3.5 w-3.5" /> Reprogramar
+            </button>
+          )}
+          {r.puede_cancelar && (
+            <button
+              type="button"
+              onClick={() => abrir("cancelar")}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 px-3 py-2 text-[11px] font-black uppercase tracking-[0.14em] text-red-300 transition hover:border-red-400/60"
+            >
+              <XCircle className="h-3.5 w-3.5" /> Cancelar
+            </button>
+          )}
+          {!r.puede_reprogramar && r.puede_cancelar && (
+            <span className="self-center text-[11px] text-zinc-600">
+              Ya no se puede reprogramar: faltan menos de 24 horas.
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── Confirmación de cancelación, con el resultado CONCRETO ── */}
+      {panel === "cancelar" && (
+        <div className="mt-3 rounded-xl border border-red-500/25 bg-red-500/[0.06] p-3">
+          <p className="text-xs text-red-200">
+            {r.restituye_minutos ? (
+              <>Se cancelará el turno y <strong>se restituirán {minutosATexto(r.minutos_a_restituir)}</strong> a tu mensualidad.</>
+            ) : (
+              <>Se liberará la reserva, pero <strong>no se devolverán los {minutosATexto(r.minutos_consumidos)} utilizados</strong>, porque faltan menos de 24 horas.</>
+            )}
+          </p>
+          {error && <p className="mt-2 text-xs text-red-300">{error}</p>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={enviando}
+              onClick={() => void enviar("/api/mensualidades/reservas/cancelar", {})}
+              className="rounded-xl bg-red-600 px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-red-500 disabled:opacity-40"
+            >
+              {enviando ? "Cancelando…" : "Sí, cancelar"}
+            </button>
+            <button
+              type="button"
+              disabled={enviando}
+              onClick={() => setPanel(null)}
+              className="rounded-xl border border-white/15 px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition hover:border-white/40 disabled:opacity-40"
+            >
+              Volver
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reprogramar: solo fechas y horarios realmente disponibles ── */}
+      {panel === "reprogramar" && (
+        <div className="mt-3 rounded-xl border border-white/15 bg-white/[0.02] p-3">
+          <p className="text-xs text-zinc-400">
+            Se mantienen la duración ({r.duracion} min) y las escuderías ({r.simuladores.join(", ")}).
+            Solo cambiás el día y el horario; no se consume saldo adicional.
+          </p>
+
+          <label className="mt-3 block text-[11px] font-black uppercase tracking-[0.14em] text-zinc-400">
+            Fecha
+            <select
+              value={fecha}
+              onChange={(e) => { setFecha(e.target.value); void cargarDia(e.target.value); }}
+              className="mt-1 block w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm font-normal normal-case tracking-normal text-white"
+            >
+              {fechas.map((f) => <option key={f} value={f}>{fechaLarga(f)}</option>)}
+            </select>
+          </label>
+
+          <div className="mt-3">
+            <span className="text-[11px] font-black uppercase tracking-[0.14em] text-zinc-400">Horario</span>
+            {cargando ? (
+              <p className="mt-2 text-xs text-zinc-500">Buscando horarios…</p>
+            ) : horarios.length === 0 ? (
+              <p className="mt-2 text-xs text-amber-300">
+                Ese día no hay horarios con tus {r.simuladores.length === 1 ? "escudería" : "escuderías"} libres. Probá otra fecha.
+              </p>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {horarios.map((h) => (
+                  <button
+                    key={h.hora}
+                    type="button"
+                    onClick={() => setHora(h.hora)}
+                    className={`rounded-lg border px-2.5 py-1.5 text-xs transition ${
+                      hora === h.hora
+                        ? "border-red-500 bg-red-600/20 font-black text-white"
+                        : "border-white/15 text-zinc-300 hover:border-white/40"
+                    }`}
+                  >
+                    {h.hora}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {error && <p className="mt-2 text-xs text-red-300">{error}</p>}
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={enviando || !fecha || !hora}
+              onClick={() => void enviar("/api/mensualidades/reservas/reprogramar", { fecha, hora })}
+              className="rounded-xl bg-red-600 px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {enviando ? "Reprogramando…" : "Confirmar cambio"}
+            </button>
+            <button
+              type="button"
+              disabled={enviando}
+              onClick={() => setPanel(null)}
+              className="rounded-xl border border-white/15 px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition hover:border-white/40 disabled:opacity-40"
+            >
+              Volver
+            </button>
+          </div>
+        </div>
+      )}
     </li>
   );
 }
@@ -226,14 +480,14 @@ export default function MiPlanCliente({
         </div>
       </div>
 
-      {/* (M5A) Historial. Todavía sin botones de cancelar ni reprogramar. */}
+      {/* (M5C) Historial. Las próximas se pueden cancelar y reprogramar. */}
       {(reservas?.proximas.length || reservas?.anteriores.length) ? (
         <div className={`${caja} mt-5`}>
           {reservas.proximas.length > 0 && (
             <>
               <h2 className="text-lg font-black">Próximas reservas</h2>
               <ul className="mt-3 space-y-2">
-                {reservas.proximas.map((r) => <FilaReserva key={r.referencia} r={r} />)}
+                {reservas.proximas.map((r) => <FilaReserva key={r.referencia} r={r} gestionable />)}
               </ul>
             </>
           )}
