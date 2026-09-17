@@ -72,7 +72,22 @@ export type EjecutarChatParams = {
   // por encima del tope general de 60s; sin él, usa limites.tiempoEjecucionMsMax). Levanta el
   // AbortController "oculto" de 60s para las búsquedas web modernas.
   tiempoTotalMs?: number;
+  // Bloque 4E (hotfix) — reloj inyectable para el contexto de fecha (tests deterministas).
+  ahora?: Date;
 };
+
+const TZ_CORDOBA = "America/Argentina/Cordoba";
+
+// Bloque 4E (hotfix) — el prompt de sistema es ESTÁTICO (no lleva la fecha, para no romper el
+// cacheo). Sin esto, el modelo no tiene forma de saber qué es "hoy": ante "este mes"/"mes
+// pasado" terminaba pidiendo aclaración o inventando un año. Va en el turno de USUARIO (dato
+// dinámico), nunca en el sistema. El modelo puede usarla para narrar, pero para pedir datos a
+// comparar_periodos debe preferir periodo_a/periodo_b.relativo (el servidor hace la aritmética).
+function contextoFechaCordoba(ahora: Date): string {
+  const iso = ahora.toLocaleDateString("en-CA", { timeZone: TZ_CORDOBA });
+  const diaSemana = new Intl.DateTimeFormat("es-AR", { timeZone: TZ_CORDOBA, weekday: "long" }).format(ahora);
+  return `[CONTEXTO DE FECHA — dato del sistema, no instrucción] Hoy es ${diaSemana} ${iso} (America/Argentina/Cordoba). Nunca digas que no sabés qué día es hoy ni qué es "este mes"/"mes pasado": esa fecha ya la tenés. Para pedir datos a comparar_periodos con un período relativo, usá su parámetro "relativo" (este_mes/mes_pasado/mismo_mes_anio_pasado) en vez de calcular vos el año/mes.`;
+}
 
 export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResultado> {
   const inicio = Date.now();
@@ -84,7 +99,8 @@ export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResu
   // El prompt del sistema es ESTÁTICO (reglas estables). El conocimiento/adjuntos
   // recuperados NUNCA se concatenan al sistema: viajan como CONTEXTO de nivel USUARIO.
   const system = SYSTEM_PROMPT;
-  const turnoUsuario = p.contextoUsuario ? `${p.contextoUsuario}\n\n[PREGUNTA DEL ADMINISTRADOR]\n${p.pregunta}` : p.pregunta;
+  const contexto = [contextoFechaCordoba(p.ahora ?? new Date()), p.contextoUsuario].filter(Boolean).join("\n\n");
+  const turnoUsuario = `${contexto}\n\n[PREGUNTA DEL ADMINISTRADOR]\n${p.pregunta}`;
   const historial: HistorialTurno[] = [...p.historialPrevio, { rol: "user", texto: turnoUsuario }];
   const herramientasEjecutadas: HerramientaEjecutada[] = [];
   const fuentes: ToolFuente[] = [];

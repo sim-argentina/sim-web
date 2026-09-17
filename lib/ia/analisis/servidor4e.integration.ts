@@ -12,6 +12,7 @@ import { FakeWebSearchProvider } from "@/lib/ia/web/providerWebFake";
 import { NOMBRE_EMITIR_FODA } from "@/lib/ia/analisis/fodaSchema";
 import { cargarPuntoIpc, leerSerieIpc } from "@/lib/ia/analisis/ipc";
 import { ejecutarComparacion } from "@/lib/ia/analisis/comparacionServer";
+import { hoyCordoba } from "@/lib/ia/periodo";
 
 const OWNER = "admin:zztest-4e";
 const RESULT5 = [
@@ -182,6 +183,65 @@ async function main() {
     assert.ok(!/\+54\s?9?\s?\d{2,4}[\s.-]?\d{3,4}[\s.-]?\d{4}/.test(json), "sin números de teléfono en el resultado");
     console.log("OK — 4E (parte 8): comparar_periodos no expone PII (sin nombres/teléfonos de clientes en el resultado estructurado).");
   }
+
+  // ── 9) HOTFIX — "Compará los turnos de este mes con el mes pasado" resuelve SOLO, sin pedir
+  // aclaración, seleccionando comparar_periodos con relativo (este_mes/mes_pasado), modelo
+  // económico, y sin ofrecer la herramienta web (no hay Tavily de por medio). El período
+  // esperado se calcula con la fecha REAL de Córdoba (no se hardcodea el mes de la incidencia).
+  const conv9 = await nuevaConv();
+  try {
+    const hoyCba = hoyCordoba();
+    const [anioHoy, mesHoy] = hoyCba.split("-").map(Number);
+    const mesAnteriorEsperado = mesHoy === 1 ? { anio: anioHoy - 1, mes: 12 } : { anio: anioHoy, mes: mesHoy - 1 };
+    const p9 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "comparar_periodos", input: { modo: "equipo", periodo_a: { relativo: "este_mes" }, periodo_b: { relativo: "mes_pasado" } } }] },
+      { tipo: "texto", texto: "Este mes tuvo esta actividad comparado con el mes pasado." },
+    ]);
+    const r9 = await correrChat({ owner: OWNER, conversacionId: conv9, pregunta: "Compará los turnos de este mes con el mes pasado." }, { provider: p9 });
+    assert.ok(r9.ok, "ok"); if (!r9.ok) return;
+    assert.equal(r9.claseModelo, "economico", "comparación numérica simple de dos meses → modelo económico");
+    const h9 = (r9.herramientas as Array<{ nombre: string; ok: boolean; resumen?: Record<string, unknown> }>).find((h) => h.nombre === "comparar_periodos");
+    assert.ok(h9?.ok, "comparar_periodos se ejecutó (el modelo NO sustituyó la herramienta por una respuesta libre)");
+    const resumen9 = h9!.resumen as { ladoA: { periodo: string }; ladoB: { periodo: string } };
+    assert.equal(resumen9.ladoA.periodo, hoyCba.slice(0, 7), "'este_mes' resuelve al mes/año ACTUAL de Córdoba");
+    const mesPasadoStr = `${mesAnteriorEsperado.anio}-${String(mesAnteriorEsperado.mes).padStart(2, "0")}`;
+    assert.equal(resumen9.ladoB.periodo, mesPasadoStr, "'mes_pasado' resuelve al mes anterior (con acarreo de año si hace falta)");
+    assert.equal(p9.ultimoWebSearch, undefined, "sin Tavily/búsqueda web: es una comparación interna");
+    console.log("OK — 4E (parte 9, hotfix): 'este mes' vs 'mes pasado' resuelve con la fecha real de Córdoba, sin aclaración, con comparar_periodos + modelo económico + cero web.");
+  } finally { await limpiar(conv9); }
+
+  // ── 10) HOTFIX — "el mismo mes del año pasado" (año pasado) resuelve con acarreo de año ────
+  const conv10 = await nuevaConv();
+  try {
+    const hoyCba = hoyCordoba();
+    const [anioHoy, mesHoy] = hoyCba.split("-").map(Number);
+    const p10 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "comparar_periodos", input: { modo: "equipo", periodo_a: { relativo: "este_mes" }, periodo_b: { relativo: "mismo_mes_anio_pasado" } } }] },
+      { tipo: "texto", texto: "Comparación interanual del mismo mes." },
+    ]);
+    const r10 = await correrChat({ owner: OWNER, conversacionId: conv10, pregunta: "Compará los turnos de este mes con el mismo mes del año pasado." }, { provider: p10 });
+    assert.ok(r10.ok, "ok"); if (!r10.ok) return;
+    const h10 = (r10.herramientas as Array<{ nombre: string; ok: boolean; resumen?: Record<string, unknown> }>).find((h) => h.nombre === "comparar_periodos");
+    assert.ok(h10?.ok, "comparar_periodos se ejecutó");
+    const resumen10 = h10!.resumen as { ladoB: { periodo: string } };
+    assert.equal(resumen10.ladoB.periodo, `${anioHoy - 1}-${String(mesHoy).padStart(2, "0")}`, "'mismo_mes_anio_pasado' resuelve al mismo mes, año-1");
+    console.log("OK — 4E (parte 10, hotfix): 'año pasado' (mismo mes) resuelve al año anterior sin pedir aclaración.");
+  } finally { await limpiar(conv10); }
+
+  // ── 11) HOTFIX — una expresión REALMENTE ambigua sigue pudiendo pedir aclaración: no se ────
+  // fuerza tool_choice a comparar_periodos, así que el modelo conserva la libertad de preguntar
+  // cuando de verdad falta información (acá: "el otro mes" no identifica ningún período).
+  const conv11 = await nuevaConv();
+  try {
+    const p11 = new FakeProviderGuionado([
+      { tipo: "texto", texto: "¿A qué mes te referís con 'el otro mes'? Decime el mes y el año para poder compararlo con marzo." },
+    ]);
+    const r11 = await correrChat({ owner: OWNER, conversacionId: conv11, pregunta: "Compará marzo con el otro mes." }, { provider: p11 });
+    assert.ok(r11.ok, "ok"); if (!r11.ok) return;
+    assert.equal((r11.herramientas as unknown[]).length, 0, "período genuinamente ambiguo: no se ejecuta ninguna herramienta");
+    assert.equal(p11.ultimoToolChoice, undefined, "no se fuerza tool_choice: el modelo conserva la libertad de pedir aclaración cuando hace falta de verdad");
+    console.log("OK — 4E (parte 11, hotfix): una expresión realmente ambigua ('el otro mes', sin año ni referencia) todavía puede pedir aclaración; no se forzó comparar_periodos.");
+  } finally { await limpiar(conv11); }
 
   const { count } = await supabaseAdmin.from("ia_conversaciones").select("id", { count: "exact", head: true }).eq("owner", OWNER);
   console.log("Limpieza ZZTEST verificada:", (count ?? 0) === 0);

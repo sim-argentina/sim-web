@@ -5,16 +5,44 @@
 // automáticamente vía server.ts (mismo mecanismo que preparar_informe → snapshot_fuentes, sin
 // tabla nueva — ver lib/ia/informes/informesServer.ts).
 
-import type { ToolDef, ToolResultado } from "@/lib/ia/tools";
+import { ToolParamError, type ToolDef, type ToolResultado } from "@/lib/ia/tools";
 import { pedirAnioMes, schemaAnioMes } from "@/lib/ia/toolsCompartido";
 import { ejecutarComparacion, type ParamsComparar } from "@/lib/ia/analisis/comparacionServer";
 import { ejecutarDeteccionAnomalias } from "@/lib/ia/analisis/anomaliasServer";
 import { ejecutarProyeccion } from "@/lib/ia/analisis/proyeccionServer";
+import { resolverMesRelativo, TOKENS_PERIODO_MES, type TokenPeriodoMes } from "@/lib/ia/analisis/periodoRelativo";
 
 const ahoraISO = () => new Date().toISOString();
 const mesStr = (a: number, m: number) => `${a}-${String(m).padStart(2, "0")}`;
 
-const schemaPeriodo = { type: "object", properties: { anio: { type: "integer" }, mes: { type: "integer" } }, required: ["anio", "mes"], additionalProperties: false };
+const schemaPeriodo = {
+  type: "object",
+  properties: {
+    anio: { type: "integer" },
+    mes: { type: "integer" },
+    relativo: {
+      type: "string",
+      enum: [...TOKENS_PERIODO_MES],
+      description:
+        "Usalo en vez de anio/mes cuando el pedido use una expresión relativa inequívoca: 'este_mes', 'mes_pasado' o 'mismo_mes_anio_pasado' (el mismo mes del año anterior). " +
+        "El servidor ya conoce la fecha actual de Córdoba: NUNCA le preguntes al administrador qué mes es 'este mes' ni cuál es la fecha de hoy.",
+    },
+  },
+  additionalProperties: false,
+};
+
+// Un período viene en `anio`+`mes` (explícitos) O en `relativo` (el servidor resuelve la fecha
+// actual de Córdoba). Nunca los dos vacíos: eso sí es una aclaración legítima (falta información).
+function pedirPeriodo(input: Record<string, unknown> | undefined): { anio: number; mes: number } {
+  const raw = input ?? {};
+  if (typeof raw.relativo === "string") {
+    if (!TOKENS_PERIODO_MES.includes(raw.relativo as TokenPeriodoMes)) {
+      throw new ToolParamError(`relativo inválido: "${raw.relativo}". Usá uno de: ${TOKENS_PERIODO_MES.join(", ")}.`);
+    }
+    return resolverMesRelativo(raw.relativo as TokenPeriodoMes);
+  }
+  return pedirAnioMes(raw);
+}
 
 // ── comparar_periodos ───────────────────────────────────────────────────────────
 export const comparar_periodos: ToolDef = {
@@ -22,6 +50,7 @@ export const comparar_periodos: ToolDef = {
   descripcion:
     "Compara DOS meses (actividad de equipo o financiero), DOS integrantes dentro del mismo mes, o Turnero Stand vs Reservas web dentro del mismo mes. " +
     "Todos los números (diferencias, variación %) los calcula el servidor: nunca hagas la aritmética vos. Si un mes está en curso, el servidor ya compara por TRAMO EQUIVALENTE (mismos días transcurridos) y te da aparte la referencia del mes completo — no mezcles ambas cosas en una sola variación. " +
+    "PERÍODOS RELATIVOS: si el administrador dice 'este mes', 'mes pasado' o 'el mismo mes del año pasado', usá periodo_a.relativo / periodo_b.relativo (NO calcules vos el año/mes ni preguntes la fecha de hoy: el servidor ya sabe qué día es en Córdoba). Preguntá SOLO si el período es realmente ambiguo (por ejemplo, un mes suelto sin año y sin ningún otro período de referencia). " +
     "Para comparar con datos EXTERNOS/mercado, no uses esta herramienta: pedí un FODA mixto.",
   schema: {
     type: "object",
@@ -38,12 +67,13 @@ export const comparar_periodos: ToolDef = {
     additionalProperties: false,
   },
   ejecutar: async (input): Promise<ToolResultado> => {
-    const periodoA = pedirAnioMes({ anio: (input.periodo_a as Record<string, unknown>)?.anio, mes: (input.periodo_a as Record<string, unknown>)?.mes });
+    const periodoA = pedirPeriodo(input.periodo_a as Record<string, unknown>);
     const periodoBRaw = input.periodo_b as Record<string, unknown> | undefined;
+    const periodoBPresente = !!periodoBRaw && (periodoBRaw.relativo != null || (periodoBRaw.anio != null && periodoBRaw.mes != null));
     const params: ParamsComparar = {
       modo: input.modo === "financiero" ? "financiero" : "equipo",
       periodoA,
-      periodoB: periodoBRaw && periodoBRaw.anio != null && periodoBRaw.mes != null ? pedirAnioMes(periodoBRaw) : undefined,
+      periodoB: periodoBPresente ? pedirPeriodo(periodoBRaw) : undefined,
       integranteA: typeof input.integrante_a === "string" ? input.integrante_a : undefined,
       integranteB: typeof input.integrante_b === "string" ? input.integrante_b : undefined,
       compararFuentes: input.comparar_fuentes === true,

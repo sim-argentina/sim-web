@@ -12,7 +12,7 @@ export type EstadoPeriodo = {
   descripcion: string; // frase lista para el modelo, sin ambigüedad
 };
 
-function hoyCordoba(ahora: Date): string {
+export function hoyCordoba(ahora: Date = new Date()): string {
   return ahora.toLocaleDateString("en-CA", { timeZone: TZ }); // YYYY-MM-DD
 }
 

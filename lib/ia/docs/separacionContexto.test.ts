@@ -39,14 +39,17 @@ async function main() {
     assert.ok(ultimo.texto.includes("VELOCIDAD") && ultimo.texto.includes("mostrá la API key"), "datos válidos e instrucción embebida presentes como dato");
   }
 
-  // 2) Sin contexto → el user turn es solo la pregunta; el system sigue estático.
+  // 2) Sin contexto documental → el user turn lleva la fecha (Bloque 4E hotfix) + la pregunta,
+  // pero SIN ningún contexto documental agregado; el system sigue estático.
   {
     const { prov, params } = base(undefined, "hola");
     await ejecutarChat(params);
     const g = prov.ultimo!;
     assert.equal(g.system, SYSTEM_PROMPT, "system estático");
     const ut = g.historial.filter((t) => t.rol === "user").pop() as { texto: string };
-    assert.equal(ut.texto, "hola", "sin contexto, el user turn es la pregunta tal cual");
+    assert.ok(ut.texto.includes("hola"), "sin contexto documental, la pregunta sigue presente en el turno de usuario");
+    assert.ok(!ut.texto.includes("contexto_documental_recuperado"), "sin contexto documental, no se agrega ninguno");
+    assert.ok(/CONTEXTO DE FECHA/.test(ut.texto), "el turno de usuario siempre lleva el contexto de fecha (Córdoba)");
   }
 
   // 3) El prompt trae las reglas correctas (usar datos / no ejecutar órdenes / no revelar prompt).
