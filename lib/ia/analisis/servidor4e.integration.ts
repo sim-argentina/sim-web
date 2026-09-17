@@ -77,12 +77,23 @@ async function main() {
     const r2 = await correrChat({ owner: OWNER, conversacionId: conv2, pregunta: "Compará los turnos de agosto con el mes en curso." }, { provider: p2 });
     assert.ok(r2.ok, "ok"); if (!r2.ok) return;
     const h2 = (r2.herramientas as Array<{ nombre: string; ok: boolean; resumen?: Record<string, unknown> }>).find((h) => h.nombre === "comparar_periodos");
-    const resumen2 = h2!.resumen as { modoPeriodo?: string; referenciaCompleta?: { etiqueta: string } | null; advertencias?: string[] };
+    const resumen2 = h2!.resumen as {
+      modoPeriodo?: string;
+      referenciaCompleta?: { etiqueta: string; metricas: Array<{ diferencia: number; variacionPct: number | null; variacionFormateada: string }> } | null;
+      advertencias?: string[];
+    };
     // Si "hoy" cae el día 1 del mes, ambos meses pueden terminar comparándose como completos
     // (sin tramo que recortar); para cualquier otro día del mes debe salir "equivalente".
     if (hoy.getDate() > 1) {
       assert.equal(resumen2.modoPeriodo, "equivalente", "mes en curso → comparación por TRAMO EQUIVALENTE");
       assert.ok(resumen2.referenciaCompleta, "el mes completo de referencia se ofrece APARTE (no mezclado en la variación)");
+      // Hotfix 2 — el mes anterior completo es SOLO referencia: no puede tener una diferencia ni
+      // una variación real (ni siquiera 0%), para que nadie la confunda con parte de la comparación.
+      for (const m of resumen2.referenciaCompleta!.metricas) {
+        assert.equal(m.diferencia, 0, "referencia completa: diferencia siempre 0 (no es una comparación)");
+        assert.equal(m.variacionPct, null, "referencia completa: variación excluida (null), no 0%");
+        assert.ok(!/%/.test(m.variacionFormateada), "referencia completa: el texto formateado tampoco debe insinuar un porcentaje");
+      }
     }
     console.log("OK — 4E (parte 2): comparar_periodos con un mes en curso usa tramo EQUIVALENTE y ofrece el mes completo de referencia por separado.");
   } finally { await limpiar(conv2); }
@@ -203,9 +214,11 @@ async function main() {
     const h9 = (r9.herramientas as Array<{ nombre: string; ok: boolean; resumen?: Record<string, unknown> }>).find((h) => h.nombre === "comparar_periodos");
     assert.ok(h9?.ok, "comparar_periodos se ejecutó (el modelo NO sustituyó la herramienta por una respuesta libre)");
     const resumen9 = h9!.resumen as { ladoA: { periodo: string }; ladoB: { periodo: string } };
-    assert.equal(resumen9.ladoA.periodo, hoyCba.slice(0, 7), "'este_mes' resuelve al mes/año ACTUAL de Córdoba");
+    // Hotfix 2 — A es SIEMPRE el período más antiguo (mes pasado = base) y B el más reciente
+    // (este mes = comparado), sin importar que el pedido haya puesto "este_mes" en periodo_a.
     const mesPasadoStr = `${mesAnteriorEsperado.anio}-${String(mesAnteriorEsperado.mes).padStart(2, "0")}`;
-    assert.equal(resumen9.ladoB.periodo, mesPasadoStr, "'mes_pasado' resuelve al mes anterior (con acarreo de año si hace falta)");
+    assert.equal(resumen9.ladoA.periodo, mesPasadoStr, "ladoA es el mes pasado (base/referencia), con acarreo de año si hace falta");
+    assert.equal(resumen9.ladoB.periodo, hoyCba.slice(0, 7), "ladoB es este mes (actual/comparado)");
     assert.equal(p9.ultimoWebSearch, undefined, "sin Tavily/búsqueda web: es una comparación interna");
     console.log("OK — 4E (parte 9, hotfix): 'este mes' vs 'mes pasado' resuelve con la fecha real de Córdoba, sin aclaración, con comparar_periodos + modelo económico + cero web.");
   } finally { await limpiar(conv9); }
@@ -223,8 +236,11 @@ async function main() {
     assert.ok(r10.ok, "ok"); if (!r10.ok) return;
     const h10 = (r10.herramientas as Array<{ nombre: string; ok: boolean; resumen?: Record<string, unknown> }>).find((h) => h.nombre === "comparar_periodos");
     assert.ok(h10?.ok, "comparar_periodos se ejecutó");
-    const resumen10 = h10!.resumen as { ladoB: { periodo: string } };
-    assert.equal(resumen10.ladoB.periodo, `${anioHoy - 1}-${String(mesHoy).padStart(2, "0")}`, "'mismo_mes_anio_pasado' resuelve al mismo mes, año-1");
+    const resumen10 = h10!.resumen as { ladoA: { periodo: string }; ladoB: { periodo: string } };
+    // Hotfix 2 — el año anterior es cronológicamente más antiguo → ladoA (base), aunque haya
+    // llegado en periodo_b; "este_mes" (año actual) es el más reciente → ladoB (comparado).
+    assert.equal(resumen10.ladoA.periodo, `${anioHoy - 1}-${String(mesHoy).padStart(2, "0")}`, "'mismo_mes_anio_pasado' resuelve al mismo mes, año-1, y queda como ladoA (base)");
+    assert.equal(resumen10.ladoB.periodo, hoyCba.slice(0, 7), "'este_mes' queda como ladoB (comparado)");
     console.log("OK — 4E (parte 10, hotfix): 'año pasado' (mismo mes) resuelve al año anterior sin pedir aclaración.");
   } finally { await limpiar(conv10); }
 
@@ -242,6 +258,69 @@ async function main() {
     assert.equal(p11.ultimoToolChoice, undefined, "no se fuerza tool_choice: el modelo conserva la libertad de pedir aclaración cuando hace falta de verdad");
     console.log("OK — 4E (parte 11, hotfix): una expresión realmente ambigua ('el otro mes', sin año ni referencia) todavía puede pedir aclaración; no se forzó comparar_periodos.");
   } finally { await limpiar(conv11); }
+
+  // ── 12) HOTFIX 2 — orientación A/B invariante al orden de los parámetros: da IGUAL en qué
+  // slot (periodo_a/periodo_b) venga cada mes, el resultado final debe ser IDÉNTICO. Antes de
+  // este hotfix, invertir el orden invertía además a quién le tocaba ser el denominador de la
+  // variación (el bug real: "este mes" en periodo_a, "mes pasado" en periodo_b, terminaba
+  // usando el mes ACTUAL como base). Se usan julio/agosto 2026 (ambos finalizados, ya usados en
+  // la parte 1) sin necesidad de conocer sus valores reales: alcanza con que ambos órdenes den
+  // exactamente lo mismo.
+  {
+    const [directo, invertido] = await Promise.all([
+      ejecutarComparacion({ modo: "equipo", periodoA: { anio: 2026, mes: 7 }, periodoB: { anio: 2026, mes: 8 } }),
+      ejecutarComparacion({ modo: "equipo", periodoA: { anio: 2026, mes: 8 }, periodoB: { anio: 2026, mes: 7 } }), // orden INVERTIDO
+    ]);
+    assert.ok(directo.ok && invertido.ok, "ambas órdenes ejecutan OK");
+    if (directo.ok && invertido.ok) {
+      assert.equal(directo.ladoA.periodo, "2026-07", "julio (más antiguo) es SIEMPRE ladoA...");
+      assert.equal(invertido.ladoA.periodo, "2026-07", "...sin importar en qué parámetro lo haya puesto el llamador");
+      assert.equal(directo.ladoB.periodo, "2026-08");
+      assert.equal(invertido.ladoB.periodo, "2026-08");
+      assert.deepEqual(directo.metricas, invertido.metricas, "las métricas (diferencia, variación, signos) son IDÉNTICAS sin importar el orden de los parámetros");
+    }
+  }
+  console.log("OK — 4E (parte 12, hotfix): la orientación A=más antiguo/B=más reciente es invariante al orden de periodo_a/periodo_b — ya no depende de cómo el modelo redactó el pedido.");
+
+  // ── 13) HOTFIX 2 — reproduce el caso productivo EXACTO: septiembre 492 vs agosto 607, con
+  // "este_mes" en periodo_a y "mes_pasado" en periodo_b (el orden natural en que un modelo real
+  // arma la llamada para "comparar ESTE MES con EL MES PASADO" — y el que causó el bug en
+  // producción). Usa datos reales (no se conocen los valores exactos de HOY, así que se verifica
+  // la RELACIÓN, no los números: sea cual sea el resultado, la variación debe salir de dividir
+  // por agosto —el período más antiguo—, nunca por septiembre.
+  const conv13 = await nuevaConv();
+  try {
+    const p13 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "comparar_periodos", input: { modo: "equipo", periodo_a: { relativo: "este_mes" }, periodo_b: { relativo: "mes_pasado" } } }] },
+      { tipo: "texto", texto: "Comparación de este mes contra el mes pasado." },
+    ]);
+    const r13 = await correrChat({ owner: OWNER, conversacionId: conv13, pregunta: "Compará los turnos de este mes con el mes pasado." }, { provider: p13 });
+    assert.ok(r13.ok, "ok"); if (!r13.ok) return;
+    const h13 = (r13.herramientas as Array<{ nombre: string; ok: boolean; resumen?: Record<string, unknown> }>).find((h) => h.nombre === "comparar_periodos");
+    assert.ok(h13?.ok, "comparar_periodos se ejecutó");
+    const resumen13 = h13!.resumen as {
+      ladoA: { periodo: string }; ladoB: { periodo: string };
+      metricas: Array<{ clave: string; valorA: number; valorB: number; diferencia: number; variacionPct: number | null; diferenciaFormateada: string; variacionFormateada: string }>;
+    };
+    const hoyCba = hoyCordoba();
+    const [anioHoy, mesHoy] = hoyCba.split("-").map(Number);
+    const mesPasadoEsperado = mesHoy === 1 ? { anio: anioHoy - 1, mes: 12 } : { anio: anioHoy, mes: mesHoy - 1 };
+    // ladoA es SIEMPRE el más antiguo (mes pasado), aunque "este_mes" haya llegado en periodo_a.
+    assert.equal(resumen13.ladoA.periodo, `${mesPasadoEsperado.anio}-${String(mesPasadoEsperado.mes).padStart(2, "0")}`, "ladoA es el mes pasado (base), no 'este_mes', pese al orden de la llamada");
+    assert.equal(resumen13.ladoB.periodo, hoyCba.slice(0, 7), "ladoB es este mes (comparado)");
+    const turnos = resumen13.metricas.find((m) => m.clave === "turnos")!;
+    assert.equal(turnos.diferencia, Math.round((turnos.valorB - turnos.valorA) * 10000) / 10000, "diferencia = B - A (con A=mes pasado)");
+    if (turnos.valorA !== 0) {
+      const esperado = Math.round(((turnos.valorB - turnos.valorA) / Math.abs(turnos.valorA)) * 100 * 100) / 100;
+      assert.equal(turnos.variacionPct, esperado, "variación = (B-A)/|A|*100, con A=mes pasado (NUNCA con A=este mes)");
+    }
+    // Coherencia de signo: si hay una diferencia negativa, el texto formateado debe empezar con "-".
+    for (const m of resumen13.metricas) {
+      if (m.diferencia < 0) assert.ok(m.diferenciaFormateada.startsWith("-"), `${m.clave}: diferencia negativa debe verse con signo ('${m.diferenciaFormateada}')`);
+      if (m.variacionPct != null && m.variacionPct < 0) assert.ok(m.variacionFormateada.startsWith("-"), `${m.clave}: variación negativa debe verse con signo ('${m.variacionFormateada}')`);
+    }
+    console.log(`OK — 4E (parte 13, hotfix): reproduce el caso productivo — turnos ${turnos.valorA}→${turnos.valorB}, diferencia ${turnos.diferenciaFormateada}, variación ${turnos.variacionFormateada} (base = mes pasado, con signo preservado).`);
+  } finally { await limpiar(conv13); }
 
   const { count } = await supabaseAdmin.from("ia_conversaciones").select("id", { count: "exact", head: true }).eq("owner", OWNER);
   console.log("Limpieza ZZTEST verificada:", (count ?? 0) === 0);

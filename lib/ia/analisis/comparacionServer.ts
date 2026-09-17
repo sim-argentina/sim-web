@@ -143,23 +143,31 @@ export async function ejecutarComparacion(p: ParamsComparar): Promise<ResultadoC
 
   // ── Eje "periodo": mes A vs mes B (completos o equivalentes) ─────────────────────────────
   if (!p.periodoB) return { ok: false, motivo: "Falta periodo_b (o integrante_a/integrante_b, o comparar_fuentes) para saber qué comparar." };
-  const resol = resolverPeriodos(p.periodoA, p.periodoB);
-  const periodoAStr = `${p.periodoA.anio}-${String(p.periodoA.mes).padStart(2, "0")}`;
-  const periodoBStr = `${p.periodoB.anio}-${String(p.periodoB.mes).padStart(2, "0")}`;
+  // Bloque 4E (hotfix 2) — A es SIEMPRE el período más antiguo (base/referencia) y B el más
+  // reciente (actual/comparado), SIN IMPORTAR en qué parámetro (periodo_a/periodo_b) los haya
+  // puesto el modelo. Así la variación es SIEMPRE (B-A)/|A|, nunca al revés: antes, con "este
+  // mes" en periodo_a y "mes pasado" en periodo_b (orden natural de la frase), A terminaba
+  // siendo el mes ACTUAL y la variación salía calculada contra el denominador equivocado.
+  const claveMes = (per: { anio: number; mes: number }) => per.anio * 12 + per.mes;
+  const [periodoA, periodoB] = claveMes(p.periodoB) < claveMes(p.periodoA) ? [p.periodoB, p.periodoA] : [p.periodoA, p.periodoB];
+  const resol = resolverPeriodos(periodoA, periodoB);
+  const periodoAStr = `${periodoA.anio}-${String(periodoA.mes).padStart(2, "0")}`;
+  const periodoBStr = `${periodoB.anio}-${String(periodoB.mes).padStart(2, "0")}`;
 
   if (p.modo === "equipo") {
     const [ladoA, ladoB] = await Promise.all([
-      ladoDesdeMetricasEquipo(resol.ventanaA, etiquetaMes(p.periodoA.anio, p.periodoA.mes) + (resol.modo === "equivalente" && resol.aEnCurso ? " (real hasta hoy)" : resol.modo === "equivalente" ? " (tramo equivalente)" : ""), periodoAStr),
-      ladoDesdeMetricasEquipo(resol.ventanaB, etiquetaMes(p.periodoB.anio, p.periodoB.mes) + (resol.modo === "equivalente" && resol.bEnCurso ? " (real hasta hoy)" : resol.modo === "equivalente" ? " (tramo equivalente)" : ""), periodoBStr),
+      ladoDesdeMetricasEquipo(resol.ventanaA, etiquetaMes(periodoA.anio, periodoA.mes) + (resol.modo === "equivalente" && resol.aEnCurso ? " (real hasta hoy)" : resol.modo === "equivalente" ? " (tramo equivalente)" : ""), periodoAStr),
+      ladoDesdeMetricasEquipo(resol.ventanaB, etiquetaMes(periodoB.anio, periodoB.mes) + (resol.modo === "equivalente" && resol.bEnCurso ? " (real hasta hoy)" : resol.modo === "equivalente" ? " (tramo equivalente)" : ""), periodoBStr),
     ]);
     let refCompletaOut: { etiqueta: string; metricas: MetricaComparada[] } | null = null;
     if (resol.modo === "equivalente" && resol.referenciaCompletaLado) {
       const esA = resol.referenciaCompletaLado === "A";
-      const per = esA ? p.periodoA : p.periodoB;
+      const per = esA ? periodoA : periodoB;
       const full = await ladoDesdeMetricasEquipo(ventanaMes(per.anio, per.mes), `${etiquetaMes(per.anio, per.mes)} (mes completo, referencia histórica)`, esA ? periodoAStr : periodoBStr);
-      // Referencia completa se muestra sola (no como "diferencia" contra nada): metricas = valores de A=B=ese mismo mes para reusar el render de tabla.
-      refCompletaOut = { etiqueta: full.lado.etiqueta, metricas: metricasComparadas(full.metricas, full.metricas).map((m) => ({ ...m, diferencia: 0, variacionPct: null })) };
-      advertencias.push(`${resol.referenciaCompletaLado === "A" ? p.periodoA.anio + "-" + p.periodoA.mes : p.periodoB.anio + "-" + p.periodoB.mes} se comparó por tramo EQUIVALENTE (mismos ${resol.diasTranscurridos} días); el mes completo de esa referencia se muestra aparte, no mezclado en la variación.`);
+      // Referencia completa se muestra sola (no como "diferencia" contra nada): metricas = valores de A=B=ese mismo mes para reusar el render de tabla. Se anula también el
+      // texto formateado de diferencia/variación (si no, "variacionFormateada" diría "0,00 %" mientras "variacionPct" dice null: la misma inconsistencia de signo que este hotfix corrige).
+      refCompletaOut = { etiqueta: full.lado.etiqueta, metricas: metricasComparadas(full.metricas, full.metricas).map((m) => ({ ...m, diferencia: 0, variacionPct: null, diferenciaFormateada: "—", variacionFormateada: "no aplica (referencia)" })) };
+      advertencias.push(`${esA ? periodoAStr : periodoBStr} se comparó por tramo EQUIVALENTE (mismos ${resol.diasTranscurridos} días); el mes completo de esa referencia se muestra aparte, no mezclado en la variación.`);
     }
     return { ok: true, eje: "periodo", modo: "equipo", ladoA: ladoA.lado, ladoB: ladoB.lado, metricas: metricasComparadas(ladoA.metricas, ladoB.metricas), modoPeriodo: resol.modo, referenciaCompleta: refCompletaOut, inflacion: null, advertencias };
   }
@@ -167,7 +175,7 @@ export async function ejecutarComparacion(p: ParamsComparar): Promise<ResultadoC
   // modo === "financiero": la Finanzas es mensual (no hay recorte por día); si uno de los meses
   // está en curso, se compara igual con lo real acumulado a hoy, pero se ADVIERTE que no es un
   // tramo equivalente (limitación real del motor de Finanzas, no del comparador).
-  const [ladoA, ladoB] = await Promise.all([ladoDesdeFinanzas(periodoAStr, etiquetaMes(p.periodoA.anio, p.periodoA.mes)), ladoDesdeFinanzas(periodoBStr, etiquetaMes(p.periodoB.anio, p.periodoB.mes))]);
+  const [ladoA, ladoB] = await Promise.all([ladoDesdeFinanzas(periodoAStr, etiquetaMes(periodoA.anio, periodoA.mes)), ladoDesdeFinanzas(periodoBStr, etiquetaMes(periodoB.anio, periodoB.mes))]);
   if (resol.aEnCurso || resol.bEnCurso) {
     advertencias.push("Finanzas no admite un recorte por día: el mes en curso se compara con lo real acumulado HASTA HOY, contra el mes de referencia COMPLETO. No es un tramo equivalente (a diferencia de la comparación de actividad de equipo).");
   }

@@ -13,7 +13,6 @@ import { ejecutarProyeccion } from "@/lib/ia/analisis/proyeccionServer";
 import { resolverMesRelativo, TOKENS_PERIODO_MES, type TokenPeriodoMes } from "@/lib/ia/analisis/periodoRelativo";
 
 const ahoraISO = () => new Date().toISOString();
-const mesStr = (a: number, m: number) => `${a}-${String(m).padStart(2, "0")}`;
 
 const schemaPeriodo = {
   type: "object",
@@ -86,12 +85,14 @@ export const comparar_periodos: ToolDef = {
     const payload = {
       ...r,
       _unidades: { ars: "Pesos argentinos (ARS), enteros.", horas: "Horas (ya convertidas; NUNCA confundir con minutos de actividad de clientes).", minutos: "Minutos de actividad comercial de clientes (turnos × 15), NO horas trabajadas del cronograma." },
-      _regla: "variacionPct=null significa 'no calculable' (el valor base es cero): nunca lo reemplaces por 0% ni lo inventes.",
+      _regla: "variacionPct=null significa 'no calculable' (el valor base es cero): nunca lo reemplaces por 0% ni lo inventes. " +
+        "En cada métrica, 'ladoA' es SIEMPRE el período más antiguo/base y 'ladoB' el más reciente/comparado (el servidor los ordena así aunque el pedido los haya mencionado al revés): la variación es (B-A)/|A|, no al revés. " +
+        "USÁ TAL CUAL los campos 'valorAFormateado', 'valorBFormateado', 'diferenciaFormateada' y 'variacionFormateada' (ya traen signo, separador de miles y unidad correctos) en la tabla y en el texto: NO recalcules la diferencia ni el porcentaje, NO reformatees los números vos mismo, y NO les cambies el signo. El mismo número debe aparecer igual en el resumen, en la tabla y en el análisis.",
     };
     return {
       contenido: JSON.stringify(payload),
       resumen: payload,
-      fuente: { modulo: "Comparación de períodos", periodo: `${mesStr(periodoA.anio, periodoA.mes)}`, registros: r.ladoA.registros + r.ladoB.registros, actualizado: ahoraISO() },
+      fuente: { modulo: "Comparación de períodos", periodo: r.ladoA.periodo, registros: r.ladoA.registros + r.ladoB.registros, actualizado: ahoraISO() },
     };
   },
 };
