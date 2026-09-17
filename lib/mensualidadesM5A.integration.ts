@@ -4,7 +4,10 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { COOKIE_SESION, crearSesion } from "@/lib/mensualidadSesion";
 import { getMiPlan, getReservasDeMiPlan } from "@/lib/mensualidadesMiPlan";
 import { CONDICIONES_VERSION, CONDICIONES_RESERVA_VERSION } from "@/lib/mensualidadesCondiciones";
-import { bloquesDeAgenda, horariosPosibles, sumarDias } from "@/lib/agenda";
+import {
+  bloquesDeAgenda, diaHabilitadoPara, diasEntre, fechasPublicas, fechasPublicasPara,
+  horariosPosiblesPara, sumarDias,
+} from "@/lib/agenda";
 import { disponibilidadDelDia } from "@/lib/disponibilidad";
 
 // Integración del Bloque M5A contra la DB REAL, con datos TEMPORALES que se
@@ -19,6 +22,13 @@ import { disponibilidadDelDia } from "@/lib/disponibilidad";
 // Ejecutar: npx tsx --env-file=.env.local lib/mensualidadesM5A.integration.ts
 
 const MARCA = `zzm5a_${Date.now()}`;
+
+// (M5C.1) Mensualidades exige de 2 a 4 simuladores. Estas constantes existen
+// para que ningún caso quede pidiendo uno solo por descuido, y para que la
+// intención de cada test se lea sin contar elementos a mano.
+const DOS = ["Ferrari", "McLaren"];
+const TRES = ["Ferrari", "McLaren", "Red Bull"];
+const CUATRO = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
 const creados = { mensualidades: [] as string[], reservas: [] as number[], compras: [] as string[] };
 
 let seq = 0;
@@ -109,8 +119,14 @@ async function main() {
   const { GET: getMiPlanRoute } = await import("@/app/api/mensualidades/mi-plan/route");
 
   const hoy = await hoyCordoba();
-  const manana = sumarDias(hoy, 1);
-  const limite = sumarDias(hoy, 15);
+  // (M5C.1) Mensualidades opera de lunes a viernes, así que el último día
+  // utilizable de la ventana es el último HÁBIL, que no siempre es hoy + 15,
+  // y el primero es el primer hábil, que no siempre es mañana.
+  const ventanaMens = fechasPublicasPara("mensualidad", hoy);
+  assert.ok(ventanaMens.length >= 2, "la ventana de Mensualidades necesita días hábiles");
+  const primerHabil = ventanaMens[0];
+  const limite = ventanaMens[ventanaMens.length - 1];
+  const diasHastaLimite = diasEntre(hoy, limite);
   const pasado = sumarDias(hoy, 16);
 
   // Se trabaja en el último día de la ventana, con los horarios más tardíos que
@@ -122,7 +138,7 @@ async function main() {
     : [];
   assert.ok(librísimos.length >= 4, `hacen falta 4 inicios con los 4 simuladores libres en ${limite}`);
   // Se toman de atrás para adelante y separados, para que no se pisen entre sí.
-  const posibles60 = horariosPosibles(limite, 60);
+  const posibles60 = horariosPosiblesPara("mensualidad", limite, 60);
   const elegibles = librísimos.filter((h) => posibles60.includes(h)).reverse();
   const H1 = elegibles[0];
   const H2 = elegibles.find((h) => bloquesDeAgenda(limite, h, 60)!.every((b) => !bloquesDeAgenda(limite, H1, 60)!.includes(b)))!;
@@ -130,7 +146,11 @@ async function main() {
     bloquesDeAgenda(limite, h, 60)!.every((b) =>
       !bloquesDeAgenda(limite, H1, 60)!.includes(b) && !bloquesDeAgenda(limite, H2, 60)!.includes(b)))!;
   assert.ok(H1 && H2 && H3, "hacen falta tres ventanas de 60 min que no se solapen");
-  console.log(`base: hoy=${hoy} ventana=${manana}..${limite} horarios=${H1}/${H2}/${H3}`);
+  // Un sábado dentro de la ventana pública: existe siempre, porque 15 días
+  // corridos contienen al menos dos. Sirve para probar el rechazo por día.
+  const sabadoDeLaVentana = fechasPublicas(hoy).find((d) => !diaHabilitadoPara("mensualidad", d))!;
+  assert.ok(sabadoDeLaVentana, "la ventana de 15 días siempre tiene un fin de semana");
+  console.log(`base: hoy=${hoy} ventana hábil=${primerHabil}..${limite} horarios=${H1}/${H2}/${H3} no-hábil=${sabadoDeLaVentana}`);
 
   await limpiar();
 
@@ -141,7 +161,7 @@ async function main() {
   {
     const res = await postReservar(pedido("/api/mensualidades/reservar", {
       metodo: "POST", cookie: tokFlag,
-      body: { fecha: limite, hora: H1, duracion_minutos: 15, simuladores: ["Ferrari"], acepto_condiciones: true, idempotency_key: nuevaClave() },
+      body: { fecha: limite, hora: H1, duracion_minutos: 15, simuladores: DOS, acepto_condiciones: true, idempotency_key: nuevaClave() },
     }));
     assert.equal(res.status, 404, "M5A-3 con la flag apagada el endpoint no existe");
     assert.equal((await res.json()).error, "No encontrado", "respuesta neutral");
@@ -154,7 +174,7 @@ async function main() {
     for (const [nota, cookie] of [["sin cookie", undefined], ["token basura", "x".repeat(43)]] as const) {
       const res = await postReservar(pedido("/api/mensualidades/reservar", {
         metodo: "POST", cookie,
-        body: { fecha: limite, hora: H1, duracion_minutos: 15, simuladores: ["Ferrari"], acepto_condiciones: true, idempotency_key: nuevaClave() },
+        body: { fecha: limite, hora: H1, duracion_minutos: 15, simuladores: DOS, acepto_condiciones: true, idempotency_key: nuevaClave() },
       }));
       assert.equal(res.status, 404, `M5A-2 ${nota} → 404 neutral`);
     }
@@ -164,7 +184,7 @@ async function main() {
       .update({ revocada_at: new Date().toISOString() }).eq("mensualidad_id", mRev.id);
     const resRev = await postReservar(pedido("/api/mensualidades/reservar", {
       metodo: "POST", cookie: tokRev,
-      body: { fecha: limite, hora: H1, duracion_minutos: 15, simuladores: ["Ferrari"], acepto_condiciones: true, idempotency_key: nuevaClave() },
+      body: { fecha: limite, hora: H1, duracion_minutos: 15, simuladores: DOS, acepto_condiciones: true, idempotency_key: nuevaClave() },
     }));
     assert.equal(resRev.status, 404, "M5A-2 sesión revocada → 404");
     const mVen = await crearMensualidad({ saldo: 60, diasVence: 20 });
@@ -180,7 +200,7 @@ async function main() {
     assert.ok(!eVen, `no se pudo envejecer la sesión: ${eVen?.message}`);
     const resVen = await postReservar(pedido("/api/mensualidades/reservar", {
       metodo: "POST", cookie: tokVen,
-      body: { fecha: limite, hora: H1, duracion_minutos: 15, simuladores: ["Ferrari"], acepto_condiciones: true, idempotency_key: nuevaClave() },
+      body: { fecha: limite, hora: H1, duracion_minutos: 15, simuladores: DOS, acepto_condiciones: true, idempotency_key: nuevaClave() },
     }));
     assert.equal(resVen.status, 404, "M5A-2 sesión vencida → 404");
   }
@@ -195,7 +215,7 @@ async function main() {
     ];
     for (const [nota, opts, esperado] of casos) {
       const m = await crearMensualidad(opts);
-      const r = await rpc(m.id, limite, H1, 15, ["Ferrari"], nuevaClave());
+      const r = await rpc(m.id, limite, H1, 15, DOS, nuevaClave());
       assert.ok(r.error, `M5A-5/6/7 ${nota} tiene que fallar`);
       assert.ok(String(r.error?.message).includes(esperado), `M5A ${nota} → ${esperado}`);
       assert.equal(await saldoDe(m.id), opts.saldo, `${nota}: el saldo no se toca`);
@@ -205,15 +225,15 @@ async function main() {
     }
     // 8 · Turno POSTERIOR al vencimiento (vence en 2 días, turno en 15).
     const mCorta = await crearMensualidad({ saldo: 300, diasVence: 2 });
-    const rPost = await rpc(mCorta.id, limite, H1, 15, ["Ferrari"], nuevaClave());
+    const rPost = await rpc(mCorta.id, limite, H1, 15, DOS, nuevaClave());
     assert.ok(String(rPost.error?.message).includes("turno_posterior_al_vencimiento"),
       "M5A-8 el turno no puede caer después del vencimiento");
     assert.equal(await saldoDe(mCorta.id), 300, "no se descontó nada");
     // 9 · Turno EL MISMO DÍA del vencimiento: vale todo el día.
-    const mJusta = await crearMensualidad({ saldo: 300, diasVence: 15 });
-    const rMismo = await rpc(mJusta.id, limite, H1, 15, ["Ferrari"], nuevaClave());
+    const mJusta = await crearMensualidad({ saldo: 300, diasVence: diasHastaLimite });
+    const rMismo = await rpc(mJusta.id, limite, H1, 15, DOS, nuevaClave());
     assert.ok(!rMismo.error, `M5A-9 mismo día del vencimiento debe entrar: ${rMismo.error?.message}`);
-    assert.equal(await saldoDe(mJusta.id), 285, "M5A-9 descontó 15");
+    assert.equal(await saldoDe(mJusta.id), 270, "M5A-9 descontó 15 x 2 simuladores");
   }
   console.log("M5A-4/5/6/7/8/9 estado y vigencia OK");
 
@@ -221,22 +241,33 @@ async function main() {
   {
     const m = await crearMensualidad({ saldo: 600, diasVence: 25 });
     for (const [nota, fecha] of [["hoy", hoy], ["ayer", sumarDias(hoy, -1)]] as const) {
-      const r = await rpc(m.id, fecha, "10:00", 15, ["Ferrari"], nuevaClave());
-      assert.ok(String(r.error?.message).includes("fecha_fuera_de_ventana"), `M5A-10 ${nota} rechazada`);
+      const r = await rpc(m.id, fecha, "10:00", 15, DOS, nuevaClave());
+      assert.ok(r.error, `M5A-10 ${nota} rechazada`);
+      // Las dos reglas rigen; cuál corta primero depende del día de la semana.
+      assert.match(String(r.error?.message), /fecha_fuera_de_ventana|dia_no_habilitado/,
+        `M5A-10 ${nota}: el motivo tiene que ser la ventana o el día`);
     }
+    // Un día pasado que además es hábil: acá el motivo solo puede ser la ventana.
+    const habilPasado = [0, 1, 2, 3, 4, 5, 6].map((i) => sumarDias(hoy, -i))
+      .find((d) => diaHabilitadoPara("mensualidad", d))!;
+    const rPasado = await rpc(m.id, habilPasado, "10:00", 15, DOS, nuevaClave());
+    assert.ok(String(rPasado.error?.message).includes("fecha_fuera_de_ventana"),
+      `M5A-10 ${habilPasado} es hábil pero pasado: se rechaza por la ventana`);
     // 11 · Mañana entra (se elige un horario libre de ese día).
-    const dm = await disponibilidadDelDia({ fecha: manana, duracion: 15, producto: "mensualidad" });
+    const dm = await disponibilidadDelDia({ fecha: primerHabil, duracion: 15, producto: "mensualidad" });
     assert.ok(dm.ok);
-    const horaManana = dm.ok ? dm.horarios.filter((h) => h.simuladores === 4).slice(-1)[0]?.hora : undefined;
-    if (horaManana) {
-      const r = await rpc(m.id, manana, horaManana, 15, ["Alpine"], nuevaClave());
-      assert.ok(!r.error, `M5A-11 mañana debe entrar: ${r.error?.message}`);
+    const horaPrimera = dm.ok ? dm.horarios.filter((h) => h.simuladores === 4).slice(-1)[0]?.hora : undefined;
+    if (horaPrimera) {
+      const r = await rpc(m.id, primerHabil, horaPrimera, 15, ["Red Bull", "Alpine"], nuevaClave());
+      assert.ok(!r.error, `M5A-11 el primer día hábil debe entrar: ${r.error?.message}`);
     }
     // 12 · hoy + 15 entra · 13 · hoy + 16 no (la ventana la aplica la app; la
     // base sabe que es futuro, así que acá el corte lo pone validarSeleccion).
     const { validarSeleccion } = await import("@/lib/mensualidadesReserva");
-    const base = { hora: "10:00", duracion_minutos: 15, simuladores: ["Ferrari"], acepto_condiciones: true, idempotency_key: nuevaClave() };
-    assert.equal(validarSeleccion({ ...base, fecha: limite }).ok, true, "M5A-12 hoy+15 válido");
+    const base = { hora: "10:00", duracion_minutos: 15, simuladores: DOS, acepto_condiciones: true, idempotency_key: nuevaClave() };
+    assert.equal(validarSeleccion({ ...base, fecha: limite }).ok, true,
+      "M5A-12 el último día hábil de la ventana es válido");
+    // hoy+16 está fuera de la ventana pase lo que pase con el día de la semana.
     const v16 = validarSeleccion({ ...base, fecha: pasado });
     assert.equal(v16.ok, false, "M5A-13 hoy+16 inválido");
     if (!v16.ok) assert.equal(v16.codigo, "fecha_fuera_de_ventana");
@@ -245,11 +276,12 @@ async function main() {
 
   // ── 14..20 · Duraciones, simuladores y consumo exacto ───────────────────
   {
+    // (M5C.1) Las cuatro duraciones contra las tres cantidades permitidas.
     const consumos: Array<[number, string[], number]> = [
-      [15, ["Ferrari"], 15],
-      [30, ["Ferrari", "McLaren"], 60],
-      [45, ["Ferrari", "McLaren", "Red Bull"], 135],
-      [60, ["Ferrari", "McLaren", "Red Bull", "Alpine"], 240],
+      [15, DOS, 30],
+      [30, TRES, 90],
+      [45, CUATRO, 180],
+      [60, DOS, 120],
     ];
     for (const [dur, sims, esperado] of consumos) {
       const m = await crearMensualidad({ saldo: 600, diasVence: 20 });
@@ -271,14 +303,18 @@ async function main() {
     // 15/17/18/19 · Entradas manipuladas: la RPC no confía en el que llama.
     const m = await crearMensualidad({ saldo: 600, diasVence: 20 });
     const malos: Array<[string, () => PromiseLike<{ error: unknown }>]> = [
-      ["duración 20", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 20, p_simuladores: ["Ferrari"], p_slots: [H1], p_idempotency_key: nuevaClave(), p_condiciones_version: "v" })],
+      ["duración 20", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 20, p_simuladores: DOS, p_slots: [H1], p_idempotency_key: nuevaClave(), p_condiciones_version: "v" })],
       ["0 simuladores", () => rpc(m.id, limite, H1, 15, [], nuevaClave())],
+      // (M5C.1) Uno solo ya no alcanza, aunque el simulador esté libre.
+      ["1 simulador", () => rpc(m.id, limite, H1, 15, ["Ferrari"], nuevaClave())],
+      // (M5C.1) Y el día tiene que ser hábil, aunque todo lo demás esté bien.
+      ["sábado", () => rpc(m.id, sabadoDeLaVentana, "11:00", 15, DOS, nuevaClave())],
       ["5 simuladores", () => rpc(m.id, limite, H1, 15, ["Ferrari", "McLaren", "Red Bull", "Alpine", "Ferrari"], nuevaClave())],
       ["duplicado", () => rpc(m.id, limite, H1, 30, ["Ferrari", "Ferrari"], nuevaClave())],
-      ["desconocido", () => rpc(m.id, limite, H1, 15, ["Williams"], nuevaClave())],
-      ["condiciones vacías", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 15, p_simuladores: ["Ferrari"], p_slots: [H1], p_idempotency_key: nuevaClave(), p_condiciones_version: "  " })],
-      ["bloques de menos", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 60, p_simuladores: ["Ferrari"], p_slots: [H1], p_idempotency_key: nuevaClave(), p_condiciones_version: "v" })],
-      ["clave corta", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 15, p_simuladores: ["Ferrari"], p_slots: [H1], p_idempotency_key: "corta", p_condiciones_version: "v" })],
+      ["desconocido", () => rpc(m.id, limite, H1, 15, ["Williams", "McLaren"], nuevaClave())],
+      ["condiciones vacías", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 15, p_simuladores: DOS, p_slots: [H1], p_idempotency_key: nuevaClave(), p_condiciones_version: "  " })],
+      ["bloques de menos", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 60, p_simuladores: DOS, p_slots: [H1], p_idempotency_key: nuevaClave(), p_condiciones_version: "v" })],
+      ["clave corta", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 15, p_simuladores: DOS, p_slots: [H1], p_idempotency_key: "corta", p_condiciones_version: "v" })],
     ];
     for (const [nota, fn] of malos) {
       const r = await fn();
@@ -288,7 +324,7 @@ async function main() {
     await limpiar();
     creados.mensualidades.length = 0;
   }
-  console.log("M5A-14..20 duraciones, escuderías y consumo OK");
+  console.log("M5A-14..20 duraciones, simuladores y consumo OK");
 
   // ── 21/22 · Saldo exacto e insuficiente ─────────────────────────────────
   {
@@ -330,25 +366,25 @@ async function main() {
   {
     const mA = await crearMensualidad({ saldo: 600, diasVence: 20 });
     const mB = await crearMensualidad({ saldo: 600, diasVence: 20 });
-    // A toma Ferrari 60 min.
-    const rA = await rpc(mA.id, limite, H1, 60, ["Ferrari"], nuevaClave());
+    // A toma Ferrari y McLaren 60 min.
+    const rA = await rpc(mA.id, limite, H1, 60, DOS, nuevaClave());
     assert.ok(!rA.error, `preparación: ${rA.error?.message}`);
 
-    // 24 · Ferrari ocupado: no se acepta aunque queden otras tres libres.
-    const rDup = await rpc(mB.id, limite, H1, 15, ["Ferrari"], nuevaClave());
+    // 24 · Ferrari ocupado: no se acepta aunque el otro elegido esté libre.
+    const rDup = await rpc(mB.id, limite, H1, 15, ["Ferrari", "Red Bull"], nuevaClave());
     assert.ok(rDup.error, "M5A-24 Ferrari ocupado no se puede tomar");
     assert.equal((rDup.error as { code?: string }).code, "23505", "M5A-24 lo corta el índice único");
     assert.equal(await saldoDe(mB.id), 600, "M5A-37 rollback: no se descontó nada");
 
     // 25 · Ocupación en un bloque INTERMEDIO de una experiencia larga.
     const bloques = bloquesDeAgenda(limite, H1, 60)!;
-    const rInt = await rpc(mB.id, limite, bloques[1], 30, ["Ferrari"], nuevaClave());
+    const rInt = await rpc(mB.id, limite, bloques[1], 30, ["McLaren", "Red Bull"], nuevaClave());
     assert.ok(rInt.error, "M5A-25 un bloque intermedio ocupado bloquea la reserva");
 
-    // 23 · Las otras tres sí se pueden, en el mismo horario.
-    const rOtras = await rpc(mB.id, limite, H1, 60, ["McLaren", "Red Bull", "Alpine"], nuevaClave());
+    // 23 · Las otras dos sí se pueden, en el mismo horario.
+    const rOtras = await rpc(mB.id, limite, H1, 60, ["Red Bull", "Alpine"], nuevaClave());
     assert.ok(!rOtras.error, `M5A-23 las libres deben entrar: ${rOtras.error?.message}`);
-    assert.equal(await saldoDe(mB.id), 600 - 180, "M5A-23 60x3 = 180");
+    assert.equal(await saldoDe(mB.id), 600 - 120, "M5A-23 60x2 = 120");
 
     // 28 · Intersección: el endpoint autenticado no ofrece nada en ese horario.
     const tokB = (await crearSesion(mB.id))!;
@@ -360,7 +396,7 @@ async function main() {
     // Y el DTO trae NOMBRES, no cantidades.
     const alguno = dtoDisp.horarios[0];
     assert.ok(Array.isArray(alguno.simuladores) && typeof alguno.simuladores[0] === "string",
-      "M5A-28 el contrato autenticado devuelve escuderías concretas");
+      "M5A-28 el contrato autenticado devuelve simuladores concretos");
     assert.deepEqual(Object.keys(alguno).sort(), ["hora", "simuladores"], "sin campos de más");
     assert.deepEqual(dtoDisp.duraciones, [15, 30, 45, 60]);
     const crudoDisp = JSON.stringify(dtoDisp);
@@ -370,7 +406,7 @@ async function main() {
     await limpiar();
     creados.mensualidades.length = 0;
   }
-  console.log("M5A-23/24/25/28 escuderías concretas e intersección OK");
+  console.log("M5A-23/24/25/28 simuladores concretos e intersección OK");
 
   // ── 26/27 · Bloqueos administrativos ────────────────────────────────────
   {
@@ -381,10 +417,10 @@ async function main() {
       fecha: limite, todo_el_dia: false, hora_inicio: bloques[1], hora_fin: bloques[1],
       simulador: "Ferrari", motivo: MARCA, activo: true,
     }).select("id").single();
-    const rParcial = await rpc(m.id, limite, H1, 60, ["Ferrari"], nuevaClave());
+    const rParcial = await rpc(m.id, limite, H1, 60, ["Ferrari", "Red Bull"], nuevaClave());
     assert.ok(rParcial.error, "M5A-26/27 bloqueo parcial en bloque intermedio impide reservar");
     assert.equal(await saldoDe(m.id), 600, "no se descontó");
-    const rOtra = await rpc(m.id, limite, H1, 60, ["McLaren"], nuevaClave());
+    const rOtra = await rpc(m.id, limite, H1, 60, ["McLaren", "Alpine"], nuevaClave());
     assert.ok(!rOtra.error, "M5A-26 el bloqueo de un simulador no afecta a los otros");
     await supabaseAdmin.from("bloqueos_reservas").delete().eq("id", b1!.id);
 
@@ -392,7 +428,7 @@ async function main() {
     const { data: b2 } = await supabaseAdmin.from("bloqueos_reservas").insert({
       fecha: limite, todo_el_dia: true, motivo: MARCA, activo: true,
     }).select("id").single();
-    const rTotal = await rpc(m.id, limite, H2, 15, ["Alpine"], nuevaClave());
+    const rTotal = await rpc(m.id, limite, H2, 15, ["Ferrari", "Alpine"], nuevaClave());
     assert.ok(rTotal.error, "M5A-27 bloqueo total impide reservar");
     assert.equal((rTotal.error as { code?: string }).code, "23514", "M5A-27 lo corta el trigger");
     await supabaseAdmin.from("bloqueos_reservas").delete().eq("id", b2!.id);
@@ -405,13 +441,11 @@ async function main() {
   // ── 29/30 · Último horario válido e inválido ────────────────────────────
   {
     const { validarSeleccion } = await import("@/lib/mensualidadesReserva");
-    const finde = ["2026-06-13"];
-    void finde;
-    const posibles = horariosPosibles(limite, 60);
+    const posibles = horariosPosiblesPara("mensualidad", limite, 60);
     const ultimo = posibles[posibles.length - 1];
-    const todos = horariosPosibles(limite, 15);
+    const todos = horariosPosiblesPara("mensualidad", limite, 15);
     const primeroMalo = todos[todos.indexOf(ultimo) + 1];
-    const b = { fecha: limite, duracion_minutos: 60, simuladores: ["Ferrari"], acepto_condiciones: true, idempotency_key: nuevaClave() };
+    const b = { fecha: limite, duracion_minutos: 60, simuladores: DOS, acepto_condiciones: true, idempotency_key: nuevaClave() };
     assert.equal(validarSeleccion({ ...b, hora: ultimo }).ok, true, `M5A-29 ${ultimo} es el último válido para 60`);
     const malo = validarSeleccion({ ...b, hora: primeroMalo });
     assert.equal(malo.ok, false, `M5A-30 ${primeroMalo} ya no entra`);
@@ -424,7 +458,7 @@ async function main() {
     const m = await crearMensualidad({ saldo: 600, diasVence: 20 });
     const tok = (await crearSesion(m.id))!;
     const clave = nuevaClave();
-    const cuerpo = { fecha: limite, hora: H1, duracion_minutos: 30, simuladores: ["Ferrari", "McLaren"], acepto_condiciones: true, idempotency_key: clave };
+    const cuerpo = { fecha: limite, hora: H1, duracion_minutos: 30, simuladores: DOS, acepto_condiciones: true, idempotency_key: clave };
 
     const r1 = await postReservar(pedido("/api/mensualidades/reservar", { metodo: "POST", cookie: tok, body: cuerpo }));
     assert.equal(r1.status, 201, "M5A-31 la primera crea");
@@ -441,12 +475,12 @@ async function main() {
       .select("*", { count: "exact", head: true }).in("reserva_id", (reservaIds ?? []).map((x) => x.id));
     assert.equal(nRes, 1, "M5A-31 una sola reserva");
     assert.equal(nMov, 1, "M5A-38 exactamente un movimiento");
-    assert.equal(nSlots, 4, "M5A-31 4 slots (2 bloques x 2 escuderías), sin duplicar");
+    assert.equal(nSlots, 4, "M5A-31 4 slots (2 bloques x 2 simuladores), sin duplicar");
 
     // 33 · La misma clave con OTRO payload se rechaza.
     const r3 = await postReservar(pedido("/api/mensualidades/reservar", {
       metodo: "POST", cookie: tok,
-      body: { ...cuerpo, hora: H2, simuladores: ["Alpine"], duracion_minutos: 15 },
+      body: { ...cuerpo, hora: H2, simuladores: ["Red Bull", "Alpine"], duracion_minutos: 15 },
     }));
     assert.equal(r3.status, 409, "M5A-33 misma clave con otro payload → 409");
     assert.equal((await r3.json()).codigo, "idempotency_key_con_otro_payload");
@@ -485,7 +519,7 @@ async function main() {
     // 42 · Sin aceptar condiciones no se reserva.
     const rSin = await postReservar(pedido("/api/mensualidades/reservar", {
       metodo: "POST", cookie: tok,
-      body: { fecha: limite, hora: H2, duracion_minutos: 15, simuladores: ["Alpine"], acepto_condiciones: false, idempotency_key: nuevaClave() },
+      body: { fecha: limite, hora: H2, duracion_minutos: 15, simuladores: ["Red Bull", "Alpine"], acepto_condiciones: false, idempotency_key: nuevaClave() },
     }));
     assert.equal(rSin.status, 422, "M5A-42 condiciones obligatorias");
     assert.equal((await rSin.json()).codigo, "condiciones");
@@ -494,7 +528,7 @@ async function main() {
     const rInyecta = await postReservar(pedido("/api/mensualidades/reservar", {
       metodo: "POST", cookie: tok,
       body: {
-        fecha: limite, hora: H2, duracion_minutos: 15, simuladores: ["Alpine"],
+        fecha: limite, hora: H2, duracion_minutos: 15, simuladores: ["Red Bull", "Alpine"],
         acepto_condiciones: true, idempotency_key: nuevaClave(),
         nombre: "Intruso", apellido: "Falso", telefono: "3510000000",
         email: "intruso@test.local", total: 99999, minutos_consumidos: 1,
@@ -506,7 +540,7 @@ async function main() {
     assert.equal(rInj!.nombre, "Ana María", "M5A-43 el nombre del body se ignora");
     assert.equal(rInj!.email, `${MARCA}@test.local`, "M5A-43 el email del body se ignora");
     assert.equal(Number(rInj!.total), 0, "M5A-43 el total del body se ignora");
-    assert.equal(rInj!.minutos_consumidos, 15, "M5A-43 los minutos los calcula el servidor");
+    assert.equal(rInj!.minutos_consumidos, 30, "M5A-43 los minutos los calcula el servidor");
     await limpiar();
     creados.mensualidades.length = 0;
   }
@@ -515,10 +549,11 @@ async function main() {
   // ── 34/35/36/37 · Concurrencia ──────────────────────────────────────────
   {
     // 34 · Dos consumos simultáneos del último saldo: gana uno solo.
+    // 30 min x 2 simuladores = 60: justo el saldo, así que entra UNA sola.
     const m = await crearMensualidad({ saldo: 60, diasVence: 20 });
     const [c1, c2] = await Promise.all([
-      rpc(m.id, limite, H1, 60, ["Ferrari"], nuevaClave()),
-      rpc(m.id, limite, H2, 60, ["McLaren"], nuevaClave()),
+      rpc(m.id, limite, H1, 30, ["Ferrari", "McLaren"], nuevaClave()),
+      rpc(m.id, limite, H2, 30, ["Red Bull", "Alpine"], nuevaClave()),
     ]);
     const okC = [c1, c2].filter((r) => !r.error).length;
     assert.equal(okC, 1, "M5A-34 solo una de las dos puede consumir el último saldo");
@@ -550,12 +585,12 @@ async function main() {
     const dispD = await disponibilidadDelDia({ fecha: limite, duracion: 15, producto: "mensualidad" });
     const horaLibre = dispD.ok ? dispD.horarios.filter((h) => h.simuladores === 4).slice(-1)[0]?.hora : H1;
     const [d1, d2] = await Promise.all([
-      rpc(mD.id, limite, horaLibre!, 15, ["Alpine"], claveDoble),
-      rpc(mD.id, limite, horaLibre!, 15, ["Alpine"], claveDoble),
+      rpc(mD.id, limite, horaLibre!, 15, ["Red Bull", "Alpine"], claveDoble),
+      rpc(mD.id, limite, horaLibre!, 15, ["Red Bull", "Alpine"], claveDoble),
     ]);
     const okD = [d1, d2].filter((r) => !r.error).length;
     assert.ok(okD >= 1, "M5A-31 al menos una responde bien al doble clic");
-    assert.equal(await saldoDe(mD.id), 585, "M5A-31 el doble clic descuenta una sola vez");
+    assert.equal(await saldoDe(mD.id), 570, "M5A-31 el doble clic descuenta una sola vez");
     const { count: resD } = await supabaseAdmin.from("reservas")
       .select("*", { count: "exact", head: true }).eq("mensualidad_id", mD.id);
     assert.equal(resD, 1, "M5A-31 una sola reserva");
@@ -585,7 +620,7 @@ async function main() {
         p_external_reference: extRef, p_mp_payment_id: `${MARCA}-pay`,
         p_importe_bruto: 1000, p_comision_mp: 0, p_importe_neto: 1000,
       }),
-      rpc(m.id, limite, H1, 60, ["Ferrari"], nuevaClave()),
+      rpc(m.id, limite, H1, 30, DOS, nuevaClave()),
     ]);
     assert.ok(!ren.error, `M5A-36 la renovación debe aplicarse: ${ren.error?.message}`);
     assert.ok(!con.error, `M5A-36 el consumo debe aplicarse: ${con.error?.message}`);
@@ -620,8 +655,8 @@ async function main() {
   {
     const mA = await crearMensualidad({ saldo: 600, diasVence: 20 });
     const mB = await crearMensualidad({ saldo: 600, diasVence: 20 });
-    await rpc(mA.id, limite, H1, 15, ["Ferrari"], nuevaClave());
-    await rpc(mB.id, limite, H2, 15, ["McLaren"], nuevaClave());
+    await rpc(mA.id, limite, H1, 15, DOS, nuevaClave());
+    await rpc(mB.id, limite, H2, 15, ["Red Bull", "Alpine"], nuevaClave());
     // Una reserva PASADA de A, insertada directo (la RPC no acepta el pasado).
     const pasada = sumarDias(hoy, -5);
     const { data: vieja } = await supabaseAdmin.from("reservas").insert({
@@ -642,11 +677,11 @@ async function main() {
     assert.equal(hist.anteriores[0].fecha, pasada);
     // 44 · Nunca aparece la reserva de la otra mensualidad.
     const todas = [...hist.proximas, ...hist.anteriores];
-    assert.ok(todas.every((r) => r.simuladores[0] !== "McLaren"),
+    assert.ok(todas.every((r) => !r.simuladores.includes("Red Bull")),
       "M5A-44 no se cuela la reserva de otra mensualidad");
     const histB = await getReservasDeMiPlan(mB.id);
     assert.equal(histB.proximas.length, 1);
-    assert.equal(histB.proximas[0].simuladores[0], "McLaren");
+    assert.equal(histB.proximas[0].simuladores[0], "Red Bull");
 
     // 46 · El DTO no lleva PII ni ids internos.
     const tokA = (await crearSesion(mA.id))!;
@@ -681,7 +716,7 @@ async function main() {
   // ── 47/48/49 · Visibilidad operativa y no contaminación de Reservas ─────
   {
     const m = await crearMensualidad({ saldo: 600, diasVence: 20 });
-    const r = await rpc(m.id, limite, H1, 60, ["Ferrari"], nuevaClave());
+    const r = await rpc(m.id, limite, H1, 60, DOS, nuevaClave());
     assert.ok(!r.error);
     const reservaId = (r.data as Array<{ reserva_id: number }>)[0].reserva_id;
 
@@ -702,12 +737,13 @@ async function main() {
       assert.ok(mia, `M5A-47 la reserva de mensualidad aparece en el listado ${nota}`);
       assert.equal(mia!.duracion_minutos, 60, `M5A-47 ${nota}: con su duración de 60`);
       assert.equal(mia!.estado, "activa", `M5A-47 ${nota}: confirmada`);
-      assert.equal(mia!.cantidad_turnos, 1, `M5A-47 ${nota}: un simulador`);
+      assert.equal(mia!.cantidad_turnos, 2, `M5A-47 ${nota}: dos simuladores`);
     }
     // Los slots existen y son los cuatro bloques, para el turnero y la ocupación.
     const { data: slotsOp } = await supabaseAdmin.from("reserva_slots")
       .select("hora, simulador").eq("reserva_id", reservaId).order("hora");
-    assert.equal((slotsOp ?? []).length, 4, "M5A-47 la reserva ocupa sus 4 bloques");
+    assert.equal((slotsOp ?? []).length, 8,
+      "M5A-47 la reserva ocupa sus 4 bloques en cada uno de los 2 simuladores");
 
     // El calendario del admin deriva el rango con getOccupiedSlots (M6).
     const { getOccupiedSlots } = await import("@/lib/reservasSlots");
@@ -719,7 +755,8 @@ async function main() {
     assert.ok(dispPublica.ok);
     if (dispPublica.ok) {
       const enH1 = dispPublica.horarios.find((h) => h.hora === H1);
-      assert.equal(enH1?.simuladores, 3, "M5A-48 Ferrari deja de estar libre para Reservas normales");
+      assert.equal(enH1?.simuladores, 2,
+        "M5A-48 Ferrari y McLaren dejan de estar libres para Reservas normales");
     }
 
     // 49 · Reservas normales siguen sin 45/60.

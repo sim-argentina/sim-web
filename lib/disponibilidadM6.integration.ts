@@ -94,8 +94,13 @@ async function main() {
     const r60 = await disp(60);
     assert.ok(r60.ok);
     if (r60.ok) assert.equal(r60.horarios.length, 33, "60 min recorta los 3 últimos inicios");
-    const rFinde = await disp(15, FECHA_FINDE);
-    assert.ok(rFinde.ok && rFinde.horarios.length === 13, "fin de semana con 13 inicios");
+    // (M5C.1) El fin de semana es de Reservas normales: ahí la grilla corta de
+    // 13 inicios sigue intacta. Mensualidades, en cambio, no opera ese día.
+    const rFinde = await disp(15, FECHA_FINDE, "reserva");
+    assert.ok(rFinde.ok && rFinde.horarios.length === 13,
+      "fin de semana con 13 inicios para Reservas normales");
+    const rFindeMens = await disp(15, FECHA_FINDE);
+    assert.equal(rFindeMens.ok, false, "Mensualidades no opera el fin de semana");
   }
   console.log("M6-A día limpio y recorte por duración OK");
 

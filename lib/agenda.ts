@@ -53,13 +53,63 @@ export const DIAS_MAXIMO_ANTICIPACION = 15;
 export type Producto = "reserva" | "mensualidad";
 
 /**
+ * (M5C.1) Reglas operativas POR PRODUCTO. Un solo lugar, un solo objeto.
+ *
+ * El motor de agenda y disponibilidad es compartido —misma ocupación real,
+ * mismos slots, mismos bloqueos— y lo que cambia por producto es el FILTRO que
+ * se le aplica. Por eso esto no duplica nada: parametriza.
+ *
+ * Reservas normales conservan exactamente lo que tenían: todos los días
+ * (semana y fin de semana), 15 y 30 minutos, de 1 a 4 simuladores.
+ * Mensualidades es más acotada: solo días hábiles y mínimo 2 simuladores.
+ */
+export type ReglasProducto = {
+  /** Duraciones que ese producto puede pedir. */
+  duraciones: readonly number[];
+  /** Mínimo y máximo de simuladores por reserva. */
+  simuladoresMin: number;
+  simuladoresMax: number;
+  /** Días de la semana habilitados (0 = domingo … 6 = sábado). */
+  diasHabilitados: readonly number[];
+  /**
+   * Minuto del día en que cierra la operación. La EXPERIENCIA tiene que
+   * terminar a esa hora o antes: `inicio + duración <= cierre`.
+   */
+  cierreMin: number;
+};
+
+const TODOS_LOS_DIAS = [0, 1, 2, 3, 4, 5, 6] as const;
+const LUNES_A_VIERNES = [1, 2, 3, 4, 5] as const;
+/** 22:00 en minutos desde medianoche. */
+const CIERRE_22 = 22 * 60;
+
+export const REGLAS_POR_PRODUCTO: Record<Producto, ReglasProducto> = {
+  // Sin cambios respecto de lo que ya regía antes de M5C.1.
+  reserva: {
+    duraciones: [15, 30],
+    simuladoresMin: 1,
+    simuladoresMax: 4,
+    diasHabilitados: TODOS_LOS_DIAS,
+    cierreMin: CIERRE_22,
+  },
+  // (M5C.1) Mensualidades: lunes a viernes y de 2 a 4 simuladores.
+  mensualidad: {
+    duraciones: [15, 30, 45, 60],
+    simuladoresMin: 2,
+    simuladoresMax: 4,
+    diasHabilitados: LUNES_A_VIERNES,
+    cierreMin: CIERRE_22,
+  },
+};
+
+/**
  * Duraciones aceptadas por producto. Reservas normales siguen siendo 15 y 30:
  * 45 y 60 son exclusivas de Mensualidades y no deben ofrecerse ni aceptarse en
  * el flujo público de Reservas.
  */
 export const DURACIONES_POR_PRODUCTO: Record<Producto, readonly number[]> = {
-  reserva: [15, 30],
-  mensualidad: [15, 30, 45, 60],
+  reserva: REGLAS_POR_PRODUCTO.reserva.duraciones,
+  mensualidad: REGLAS_POR_PRODUCTO.mensualidad.duraciones,
 };
 
 /** Todas las duraciones que el sistema sabe mapear a bloques. */
@@ -212,4 +262,79 @@ export function bloquesDeAgenda(
 /** Horarios de inicio en los que la duración entra completa (sin mirar ocupación). */
 export function horariosPosibles(fecha: string, duracion: unknown): string[] {
   return horariosDe(fecha).filter((h) => bloquesDeAgenda(fecha, h, duracion) !== null);
+}
+
+// ── (M5C.1) La MISMA agenda, filtrada por producto ──────────────────────────
+// Todo lo de arriba queda intacto: es lo que usan Reservas normales y su
+// comportamiento no cambia ni un minuto. Lo de acá abajo aplica, encima, las
+// restricciones propias del producto.
+
+/** Día de la semana de una fecha (0 = domingo … 6 = sábado), sin zona horaria. */
+function diaDeLaSemana(fecha: string): number {
+  const [y, m, d] = fecha.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** ¿Ese producto opera ese día? Mensualidades: solo lunes a viernes. */
+export function diaHabilitadoPara(producto: Producto, fecha: string): boolean {
+  if (!fechaValida(fecha)) return false;
+  return REGLAS_POR_PRODUCTO[producto].diasHabilitados.includes(diaDeLaSemana(fecha));
+}
+
+/** Cantidad de simuladores admitida por el producto. Mensualidades: de 2 a 4. */
+export function cantidadSimuladoresValidaPara(producto: Producto, n: unknown): boolean {
+  if (typeof n === "string" && !/^\d+$/.test(n)) return false;
+  const v = Number(n);
+  const r = REGLAS_POR_PRODUCTO[producto];
+  return Number.isInteger(v) && v >= r.simuladoresMin && v <= r.simuladoresMax;
+}
+
+/**
+ * ¿La EXPERIENCIA termina antes del cierre? Se mide sobre la duración real
+ * pedida, no sobre los bloques de agenda: `inicio + duración <= cierre`.
+ *
+ * Hoy la grilla ya es más estricta que esto en las cuatro duraciones (un turno
+ * de 60 no puede empezar después de las 20:40 porque no le entran los cuatro
+ * bloques), así que este filtro no rechaza nada que la grilla acepte. Está
+ * igual, explícito y probado, para que la regla se cumpla por decisión y no por
+ * casualidad: si mañana cambia la cadencia o el mapeo de bloques, el cierre a
+ * las 22:00 lo sigue garantizando esta función.
+ */
+export function terminaAntesDelCierre(
+  producto: Producto, hora: string, duracion: unknown,
+): boolean {
+  if (!/^\d{2}:\d{2}$/.test(hora)) return false;
+  const d = Number(duracion);
+  if (!Number.isInteger(d) || d <= 0) return false;
+  const [h, m] = hora.split(":").map(Number);
+  if (h > 23 || m > 59) return false;
+  return h * 60 + m + d <= REGLAS_POR_PRODUCTO[producto].cierreMin;
+}
+
+/**
+ * Bloques que ocupa una experiencia DE ESE PRODUCTO, o null si no corresponde.
+ * Suma al chequeo de agenda (M6) el día habilitado y el cierre.
+ */
+export function bloquesDeAgendaPara(
+  producto: Producto, fecha: string, hora: string, duracion: unknown,
+): string[] | null {
+  if (!duracionValidaPara(producto, duracion)) return null;
+  if (!diaHabilitadoPara(producto, fecha)) return null;
+  if (!terminaAntesDelCierre(producto, hora, duracion)) return null;
+  return bloquesDeAgenda(fecha, hora, duracion);
+}
+
+/** Horarios de inicio que ese producto puede ofrecer ese día. */
+export function horariosPosiblesPara(
+  producto: Producto, fecha: string, duracion: unknown,
+): string[] {
+  if (!diaHabilitadoPara(producto, fecha)) return [];
+  return horariosDe(fecha).filter(
+    (h) => bloquesDeAgendaPara(producto, fecha, h, duracion) !== null,
+  );
+}
+
+/** Las fechas de la ventana pública en las que ESE producto opera. */
+export function fechasPublicasPara(producto: Producto, hoy: string = hoyEnSim()): string[] {
+  return fechasPublicas(hoy).filter((f) => diaHabilitadoPara(producto, f));
 }

@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { cancelarReserva, reprogramarReserva } from "@/lib/mensualidadesGestionReserva";
 import { crearSesion, revocarSesion } from "@/lib/mensualidadSesion";
+import { diasEntre, fechasPublicasPara } from "@/lib/agenda";
 
 // Integración del Bloque M5C contra la DB REAL, con datos TEMPORALES marcados
 // con MARCA y eliminados al final.
@@ -124,8 +125,13 @@ async function limpiar() {
 
 async function main() {
   const hoy = await hoyCordoba();
-  const D5 = masDias(hoy, 5);
-  const D8 = masDias(hoy, 8);
+  // (M5C.1) Mensualidades opera de lunes a viernes: las dos fechas de trabajo
+  // salen de la ventana hábil, no de un offset fijo que puede caer sábado.
+  const habiles = fechasPublicasPara("mensualidad", hoy);
+  assert.ok(habiles.length >= 7, "la ventana hábil necesita al menos siete días");
+  const D5 = habiles[3];
+  const D8 = habiles[6];
+  console.log(`base: hoy=${hoy} dias hábiles de trabajo=${D5} y ${D8}`);
 
   // ── M5C-1 · Cancelación con más de 24 h: restituye exacto ────────────────
   {
@@ -157,15 +163,15 @@ async function main() {
     const mid = await crearBilletera(300);
     // 24 h + 2 min de margen: el corte es inclusivo, así que restituye.
     const a = await crearReserva({ mid, fecha: D5, hora: "13:00", duracion: 15,
-      sims: ["Alpine"], slots: ["13:00"] });
+      sims: ["Red Bull", "Alpine"], slots: ["13:00"] });
     await moverA(a.referencia, 24 * 3600_000 + 120_000);
     const ca = await cancelarReserva(mid, a.referencia, clave());
     assert.ok(ca.ok && ca.data.restituyo === true, "M5C-2 a 24 h y 2 min todavía restituye");
-    if (ca.ok) assert.equal(ca.data.minutos_restituidos, 15);
+    if (ca.ok) assert.equal(ca.data.minutos_restituidos, 30, "15 min x 2 simuladores");
 
     // 23 h 59 min: ya no.
     const b = await crearReserva({ mid, fecha: D5, hora: "14:00", duracion: 15,
-      sims: ["Alpine"], slots: ["14:00"] });
+      sims: ["Red Bull", "Alpine"], slots: ["14:00"] });
     const saldoAntes = await saldoDe(mid);
     await moverA(b.referencia, 23 * 3600_000 + 59 * 60_000);
     const cb = await cancelarReserva(mid, b.referencia, clave());
@@ -185,7 +191,7 @@ async function main() {
   {
     const mid = await crearBilletera(120);
     const r = await crearReserva({ mid, fecha: D5, hora: "15:00", duracion: 15,
-      sims: ["Red Bull"], slots: ["15:00"] });
+      sims: ["Red Bull", "Alpine"], slots: ["15:00"] });
     const c1 = await cancelarReserva(mid, r.referencia, clave());
     const saldo1 = await saldoDe(mid);
     const c2 = await cancelarReserva(mid, r.referencia, clave());
@@ -201,14 +207,14 @@ async function main() {
   {
     const mid = await crearBilletera(120);
     const r = await crearReserva({ mid, fecha: D5, hora: "16:00", duracion: 15,
-      sims: ["Ferrari"], slots: ["16:00"] });
+      sims: ["Ferrari", "McLaren"], slots: ["16:00"] });
     const saldoAntes = await saldoDe(mid);
     const [x, y] = await Promise.all([
       cancelarReserva(mid, r.referencia, clave()),
       cancelarReserva(mid, r.referencia, clave()),
     ]);
     assert.ok(x.ok && y.ok, "las dos responden sin romper");
-    assert.equal(await saldoDe(mid), saldoAntes + 15, "M5C-5 se devolvió UNA sola vez");
+    assert.equal(await saldoDe(mid), saldoAntes + 30, "M5C-5 se devolvió UNA sola vez");
     assert.equal(await devoluciones(r.reservaId), 1, "M5C-5 un único movimiento");
   }
   console.log("M5C-5 cancelaciones concurrentes sin doble devolución OK");
@@ -217,7 +223,7 @@ async function main() {
   {
     const mid = await crearBilletera(120);
     const r = await crearReserva({ mid, fecha: D5, hora: "17:00", duracion: 15,
-      sims: ["Alpine"], slots: ["17:00"] });
+      sims: ["Red Bull", "Alpine"], slots: ["17:00"] });
     await moverA(r.referencia, -3600_000); // hace una hora
     const saldoAntes = await saldoDe(mid);
     const c = await cancelarReserva(mid, r.referencia, clave());
@@ -234,7 +240,7 @@ async function main() {
     const mid = await crearBilletera(120);
     const otro = await crearBilletera(120);
     const r = await crearReserva({ mid, fecha: D5, hora: "18:00", duracion: 15,
-      sims: ["McLaren"], slots: ["18:00"] });
+      sims: ["Ferrari", "McLaren"], slots: ["18:00"] });
 
     const c = await cancelarReserva(otro, r.referencia, clave());
     assert.equal(c.ok, false, "M5C-7 no se cancela una reserva ajena");
@@ -259,7 +265,7 @@ async function main() {
   }
   console.log("M5C-7 reserva ajena y reserva normal protegidas OK");
 
-  // ── M5C-8 · Reprogramación válida: no toca saldo, duración ni escuderías ─
+  // ── M5C-8 · Reprogramación válida: no toca saldo, duración ni simuladores ─
   {
     const mid = await crearBilletera(300);
     const r = await crearReserva({ mid, fecha: D5, hora: "10:00", duracion: 30,
@@ -288,7 +294,7 @@ async function main() {
     assert.equal(e.hora, "16:00");
     assert.equal(e.duracion_minutos, 30);
     assert.deepEqual((e.simuladores as string[]).map(String).sort(), ["Ferrari", "McLaren"],
-      "M5C-8 las escuderías NO cambian");
+      "M5C-8 los simuladores NO cambian");
     assert.equal(e.reprogramaciones, 1);
 
     // Los slots viejos quedaron liberados, no activos.
@@ -310,7 +316,7 @@ async function main() {
   {
     const mid = await crearBilletera(120);
     const r = await crearReserva({ mid, fecha: D5, hora: "11:00", duracion: 15,
-      sims: ["Alpine"], slots: ["11:00"] });
+      sims: ["Red Bull", "Alpine"], slots: ["11:00"] });
     const orig = await moverA(r.referencia, 20 * 3600_000); // faltan 20 h
     const p = await reprogramarReserva(mid, r.referencia, D8, "12:00", clave());
     assert.equal(p.ok, false, "M5C-10 con menos de 24 h no se reprograma");
@@ -321,7 +327,7 @@ async function main() {
     const e = await estadoDe(r.referencia);
     assert.equal(e.fecha, orig.fecha, "la reserva original no se movió");
     assert.equal(e.hora, orig.hora);
-    assert.equal(await slotsActivos(r.reservaId), 1, "conserva su slot");
+    assert.equal(await slotsActivos(r.reservaId), 2, "conserva sus dos slots");
 
     // Pero SÍ se puede cancelar, sin devolución.
     const c = await cancelarReserva(mid, r.referencia, clave());
@@ -334,10 +340,10 @@ async function main() {
     const mid = await crearBilletera(300);
     const otro = await crearBilletera(300);
     const r = await crearReserva({ mid, fecha: D5, hora: "20:00", duracion: 15,
-      sims: ["Ferrari"], slots: ["20:00"] });
-    // Otro titular toma el turno destino con la MISMA escudería.
+      sims: ["Ferrari", "McLaren"], slots: ["20:00"] });
+    // Otro titular toma el turno destino con los MISMOS simuladores.
     await crearReserva({ mid: otro, fecha: D8, hora: "21:00", duracion: 15,
-      sims: ["Ferrari"], slots: ["21:00"] });
+      sims: ["Ferrari", "McLaren"], slots: ["21:00"] });
 
     const saldoAntes = await saldoDe(mid);
     const p = await reprogramarReserva(mid, r.referencia, D8, "21:00", clave());
@@ -348,16 +354,22 @@ async function main() {
     assert.equal(e.fecha, D5, "M5C-11 la reserva ORIGINAL quedó intacta");
     assert.equal(e.hora, "20:00");
     assert.equal(e.estado, "activa");
-    assert.equal(await slotsActivos(r.reservaId), 1, "M5C-11 conserva su slot original");
+    assert.equal(await slotsActivos(r.reservaId), 2, "M5C-11 conserva sus slots originales");
     assert.equal(await saldoDe(mid), saldoAntes, "y el saldo no se movió");
   }
   console.log("M5C-11 turno ocupado deja la reserva original intacta OK");
 
   // ── M5C-12 · Fuera de ventana y posterior al vencimiento ────────────────
   {
-    const mid = await crearBilletera(300, 6); // vence en 6 días
-    const r = await crearReserva({ mid, fecha: masDias(hoy, 3), hora: "10:00", duracion: 15,
-      sims: ["Alpine"], slots: ["10:00"] });
+    // El turno va en un día hábil temprano y el vencimiento dos días después,
+    // para que exista otro día hábil YA VENCIDO todavía dentro de la ventana.
+    const habilTemprano = habiles[1];
+    const diasVence = diasEntre(hoy, habilTemprano) + 2;
+    const habilVencido = habiles.find((d) => diasEntre(hoy, d) > diasVence)!;
+    assert.ok(habilVencido, "hace falta un día hábil posterior al vencimiento");
+    const mid = await crearBilletera(300, diasVence);
+    const r = await crearReserva({ mid, fecha: habilTemprano, hora: "10:00", duracion: 15,
+      sims: ["Red Bull", "Alpine"], slots: ["10:00"] });
 
     const hoyMismo = await reprogramarReserva(mid, r.referencia, hoy, "12:00", clave());
     assert.equal(hoyMismo.ok, false, "M5C-12 no se reprograma para hoy");
@@ -366,14 +378,14 @@ async function main() {
     assert.equal(lejos.ok, false, "M5C-12 no más de 15 días");
     if (!lejos.ok) assert.equal(lejos.codigo, "fecha_fuera_de_ventana");
 
-    // Dentro de la ventana de 15 días PERO después del vencimiento (día 10 > 6).
-    const postVenc = await reprogramarReserva(mid, r.referencia, masDias(hoy, 10), "12:00", clave());
+    // Dentro de la ventana de 15 días, día hábil, PERO después del vencimiento.
+    const postVenc = await reprogramarReserva(mid, r.referencia, habilVencido, "12:00", clave());
     assert.equal(postVenc.ok, false, "M5C-12 no después del vencimiento");
     if (!postVenc.ok) {
       assert.equal(postVenc.codigo, "turno_posterior_al_vencimiento",
         `esperaba turno_posterior_al_vencimiento, fue ${postVenc.codigo}`);
     }
-    assert.equal((await estadoDe(r.referencia)).fecha, masDias(hoy, 3), "la original no se movió");
+    assert.equal((await estadoDe(r.referencia)).fecha, habilTemprano, "la original no se movió");
   }
   console.log("M5C-12 ventana de 15 días y vencimiento respetados OK");
 
@@ -381,14 +393,14 @@ async function main() {
   {
     const mid = await crearBilletera(120);
     const r = await crearReserva({ mid, fecha: D5, hora: "09:00", duracion: 15,
-      sims: ["Red Bull"], slots: ["09:00"] });
+      sims: ["Red Bull", "Alpine"], slots: ["09:00"] });
     await supabaseAdmin.from("reservas").update({ no_show: true }).eq("id", r.reservaId);
     const saldoAntes = await saldoDe(mid);
 
     const c = await cancelarReserva(mid, r.referencia, clave());
     assert.equal(c.ok, false, "M5C-13 un no-show no se cancela");
     if (!c.ok) assert.equal(c.codigo, "estado_no_cancelable");
-    const p = await reprogramarReserva(mid, r.referencia, D8, "09:00", clave());
+    const p = await reprogramarReserva(mid, r.referencia, D8, "10:00", clave());
     assert.equal(p.ok, false, "M5C-13 un no-show no se reprograma");
 
     assert.equal(await saldoDe(mid), saldoAntes, "M5C-13 el no-show NO restituye minutos");
@@ -401,7 +413,7 @@ async function main() {
     const mid = await crearBilletera(120);
     for (const estado of ["reembolsada", "pendiente_pago"]) {
       const r = await crearReserva({ mid, fecha: D5, hora: estado === "reembolsada" ? "10:40" : "11:20",
-        duracion: 15, sims: ["McLaren"], slots: [estado === "reembolsada" ? "10:40" : "11:20"] });
+        duracion: 15, sims: ["Ferrari", "McLaren"], slots: [estado === "reembolsada" ? "10:40" : "11:20"] });
       await supabaseAdmin.from("reservas").update({ estado }).eq("id", r.reservaId);
       const c = await cancelarReserva(mid, r.referencia, clave());
       assert.equal(c.ok, false, `M5C-14 estado ${estado} no se cancela`);
@@ -420,7 +432,7 @@ async function main() {
 
     const mid = await crearBilletera(120);
     const r = await crearReserva({ mid, fecha: D5, hora: "21:20", duracion: 15,
-      sims: ["Alpine"], slots: ["21:20"] });
+      sims: ["Red Bull", "Alpine"], slots: ["21:20"] });
     const token = await crearSesion(mid);
     assert.ok(token, "sesión creada");
 
@@ -479,13 +491,13 @@ async function main() {
       assert.ok(!crudo.includes(prohibido), `M5C-15 el DTO no puede traer "${prohibido}"`);
     }
     assert.equal(dto.restituyo, true);
-    assert.equal(dto.minutos_restituidos, 15);
+    assert.equal(dto.minutos_restituidos, 30);
     assert.ok(/no-store/i.test(ok.headers.get("cache-control") ?? ""), "no-store");
 
     // Reprogramar una reserva ajena vía endpoint → 404.
     const otroMid = await crearBilletera(120);
     const rAjena = await crearReserva({ mid: otroMid, fecha: D5, hora: "21:40", duracion: 15,
-      sims: ["Ferrari"], slots: ["21:40"] });
+      sims: ["Ferrari", "McLaren"], slots: ["21:40"] });
     const ajena = await pedir(reprogramarRoute, "/api/mensualidades/reservas/reprogramar",
       { referencia: rAjena.referencia, fecha: D8, hora: "14:00", idempotency_key: clave() }, token);
     assert.equal(ajena.status, 404, "M5C-15 no se reprograma una reserva de otra billetera");

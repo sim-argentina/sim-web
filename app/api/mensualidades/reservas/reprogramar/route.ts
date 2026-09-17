@@ -9,7 +9,7 @@ import { reprogramarReserva } from "@/lib/mensualidadesGestionReserva";
 
 // Reprogramación de una reserva hecha con la Mensualidad (Bloque M5C).
 //
-// Solo cambia fecha y hora. La duración, las escuderías y los minutos ya
+// Solo cambia fecha y hora. La duración, los simuladores y los minutos ya
 // consumidos salen de la reserva existente, no del cuerpo: no hay forma de
 // cambiarlos por acá, ni el saldo se mueve.
 //

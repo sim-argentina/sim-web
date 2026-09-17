@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { fechasPublicasPara } from "@/lib/agenda";
 
 // Integración del Bloque M5B.1 contra la DB REAL, con datos TEMPORALES que se
 // ELIMINAN al final.
@@ -55,11 +56,13 @@ async function limpiar() {
   await supabaseAdmin.from("mensualidades").delete().in("id", ids);
 }
 
-async function fechaEnVentana(dias = 4): Promise<string> {
+// (M5C.1) Mensualidades opera de lunes a viernes, así que la fecha de trabajo
+// sale de la ventana HÁBIL y no de un offset fijo que puede caer sábado.
+async function fechaEnVentana(indice = 3): Promise<string> {
   const { data: hoy } = await supabaseAdmin.rpc("mensualidad_hoy");
-  const [y, m, d] = String(hoy).split("-").map(Number);
-  const t = new Date(Date.UTC(y, m - 1, d) + dias * 86_400_000);
-  return t.toISOString().slice(0, 10);
+  const habiles = fechasPublicasPara("mensualidad", String(hoy));
+  if (!habiles.length) throw new Error("la ventana no tiene días hábiles");
+  return habiles[Math.min(indice, habiles.length - 1)];
 }
 
 type Rpc = {
@@ -173,8 +176,8 @@ async function main() {
   // ── M5B1-3..11/20/21 · Saldo insuficiente: rechaza SIN NINGÚN EFECTO ─────
   for (const caso of [
     { nota: "M5B1-20 saldo 60, 30x4 = 120", saldo: 60, duracion: 30, sims: ["Ferrari", "McLaren", "Red Bull", "Alpine"], slots: ["16:00", "16:20"], hora: "16:00" },
-    { nota: "M5B1-21 saldo 45, 60x1 = 60", saldo: 45, duracion: 60, sims: ["Alpine"], slots: ["17:00", "17:20", "17:40", "18:00"], hora: "17:00" },
-    { nota: "M5B1-5 falta por 15 min: 45 vs 60x1", saldo: 45, duracion: 60, sims: ["Ferrari"], slots: ["19:00", "19:20", "19:40", "20:00"], hora: "19:00" },
+    { nota: "M5B1-21 saldo 45, 60x2 = 120", saldo: 45, duracion: 60, sims: ["Red Bull", "Alpine"], slots: ["17:00", "17:20", "17:40", "18:00"], hora: "17:00" },
+    { nota: "M5B1-5 falta por 15 min: 105 vs 60x2", saldo: 105, duracion: 60, sims: ["Ferrari", "McLaren"], slots: ["19:00", "19:20", "19:40", "20:00"], hora: "19:00" },
   ]) {
     const mid = await crearBilletera(caso.saldo);
     const { error } = await reservar({
@@ -201,7 +204,7 @@ async function main() {
   {
     const mid = await crearBilletera(0);
     const { error } = await reservar({
-      mid, fecha: FECHA, hora: "10:00", duracion: 15, sims: ["Alpine"], slots: ["10:00"],
+      mid, fecha: FECHA, hora: "10:00", duracion: 15, sims: ["Red Bull", "Alpine"], slots: ["10:00"],
     });
     assert.ok(String(error?.message).includes("mensualidad_agotada"),
       "M5B1-4 saldo 0 rechaza (estado agotada)");
@@ -214,13 +217,13 @@ async function main() {
   {
     const mid = await crearBilletera(60);
     const clave = nuevaClave();
-    const a = await reservar({ mid, fecha: FECHA, hora: "11:00", duracion: 15, sims: ["Ferrari"], slots: ["11:00"], clave });
-    const b = await reservar({ mid, fecha: FECHA, hora: "11:00", duracion: 15, sims: ["Ferrari"], slots: ["11:00"], clave });
+    const a = await reservar({ mid, fecha: FECHA, hora: "11:00", duracion: 15, sims: ["Ferrari", "McLaren"], slots: ["11:00"], clave });
+    const b = await reservar({ mid, fecha: FECHA, hora: "11:00", duracion: 15, sims: ["Ferrari", "McLaren"], slots: ["11:00"], clave });
     const ra = (Array.isArray(a.data) ? a.data[0] : a.data) as Rpc;
     const rb = (Array.isArray(b.data) ? b.data[0] : b.data) as Rpc;
     assert.equal(ra.reserva_id, rb.reserva_id, "M5B1-12 misma reserva");
     assert.equal(rb.idempotente, true);
-    assert.equal(await saldoDe(mid), 45, "M5B1-12 descuenta una sola vez");
+    assert.equal(await saldoDe(mid), 30, "M5B1-12 descuenta una sola vez");
     assert.equal((await efectos(mid)).movs, 1, "M5B1-12 un solo movimiento");
   }
   console.log("M5B1-12 doble clic idempotente OK");
@@ -245,9 +248,9 @@ async function main() {
   {
     const midA = await crearBilletera(30);
     const midB = await crearBilletera(30);
-    await reservar({ mid: midA, fecha: FECHA, hora: "09:00", duracion: 15, sims: ["Ferrari"], slots: ["09:00"] });
+    await reservar({ mid: midA, fecha: FECHA, hora: "09:00", duracion: 15, sims: ["Ferrari", "McLaren"], slots: ["09:00"] });
     const antes = await saldoDe(midB);
-    const { error } = await reservar({ mid: midB, fecha: FECHA, hora: "09:00", duracion: 15, sims: ["Ferrari"], slots: ["09:00"] });
+    const { error } = await reservar({ mid: midB, fecha: FECHA, hora: "09:00", duracion: 15, sims: ["Ferrari", "McLaren"], slots: ["09:00"] });
     assert.ok(error, "el turno ya está tomado");
     assert.equal(await saldoDe(midB), antes, "M5B1-14 conflicto de slot no descuenta");
     assert.equal((await efectos(midB)).movs, 0, "M5B1-14 sin movimiento");
@@ -258,19 +261,20 @@ async function main() {
   {
     const mid = await crearBilletera(120);
     await supabaseAdmin.from("mensualidades").update({ bloqueada: true }).eq("id", mid);
-    const { error } = await reservar({ mid, fecha: FECHA, hora: "15:00", duracion: 15, sims: ["Alpine"], slots: ["15:00"] });
+    const { error } = await reservar({ mid, fecha: FECHA, hora: "15:00", duracion: 15, sims: ["Red Bull", "Alpine"], slots: ["15:00"] });
     assert.ok(String(error?.message).includes("mensualidad_bloqueada"), "M5B1-15 bloqueada rechaza");
     assert.equal(await saldoDe(mid), 120);
     await supabaseAdmin.from("mensualidades").update({ bloqueada: false }).eq("id", mid);
 
     const { data: hoy } = await supabaseAdmin.rpc("mensualidad_hoy");
-    const lejos = new Date(`${hoy}T12:00:00Z`);
-    lejos.setUTCDate(lejos.getUTCDate() + 10);
+    // Vence HOY, así que cualquier día hábil futuro de la ventana ya es
+    // posterior al vencimiento. Se reusa FECHA: la 15:00 quedó libre porque
+    // el intento anterior lo rechazó la mensualidad bloqueada.
     await supabaseAdmin.from("mensualidades")
-      .update({ vence_el: new Date(`${hoy}T12:00:00Z`).toISOString().slice(0, 10) }).eq("id", mid);
+      .update({ vence_el: String(hoy) }).eq("id", mid);
     const { error: e2 } = await reservar({
-      mid, fecha: lejos.toISOString().slice(0, 10), hora: "15:00",
-      duracion: 15, sims: ["Alpine"], slots: ["15:00"],
+      mid, fecha: FECHA, hora: "15:00",
+      duracion: 15, sims: ["Red Bull", "Alpine"], slots: ["15:00"],
     });
     assert.ok(String(e2?.message).includes("turno_posterior_al_vencimiento"),
       "M5B1-16 turno posterior al vencimiento rechaza");
@@ -286,7 +290,7 @@ async function main() {
       [45, ["11:20", "11:40", "12:00"]], [60, ["18:00", "18:20", "18:40", "19:00"]],
     ] as Array<[number, string[]]>) {
       const { error } = await reservar({
-        mid, fecha: FECHA, hora: slots[0], duracion: dur, sims: ["Alpine"], slots,
+        mid, fecha: FECHA, hora: slots[0], duracion: dur, sims: ["Red Bull", "Alpine"], slots,
       });
       assert.equal(error, null, `M5B1-17 duración ${dur} sigue permitida`);
       await supabaseAdmin.from("mensualidades").update({ saldo_minutos: 240 }).eq("id", mid);
@@ -296,7 +300,7 @@ async function main() {
     });
     assert.ok(String(eDup?.message).includes("simuladores_duplicados"), "M5B1-18 duplicados rechazan");
     const { error: eDesc } = await reservar({
-      mid, fecha: FECHA, hora: "13:40", duracion: 15, sims: ["Ferrari 2026"], slots: ["13:40"],
+      mid, fecha: FECHA, hora: "13:40", duracion: 15, sims: ["Ferrari 2026", "McLaren"], slots: ["13:40"],
     });
     assert.ok(String(eDesc?.message).includes("simulador_desconocido"), "M5B1-18 desconocido rechaza");
   }

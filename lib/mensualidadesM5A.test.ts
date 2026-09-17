@@ -15,7 +15,7 @@ const PASADO_LIMITE = "2026-06-26";
 
 const base = {
   fecha: MANANA, hora: "10:00", duracion_minutos: 15,
-  simuladores: ["Ferrari"], acepto_condiciones: true,
+  simuladores: ["Ferrari", "McLaren"], acepto_condiciones: true,
   idempotency_key: "abcdefghij1234567890",
 };
 const sel = (extra: Record<string, unknown> = {}) => validarSeleccion({ ...base, ...extra }, HOY);
@@ -69,18 +69,16 @@ for (const [d, ultimo, primeroMalo] of ultimos) {
       `semana ${d} min ya no entra a las ${primeroMalo}`);
   }
 }
-// Fin de semana cierra antes.
-const finde: Array<[number, string, string]> = [
-  [15, "14:00", ""], [30, "13:40", "14:00"], [45, "13:20", "13:40"], [60, "13:00", "13:20"],
-];
-for (const [d, ultimo, primeroMalo] of finde) {
-  assert.equal(codigoDe(sel({ fecha: FINDE, duracion_minutos: d, hora: ultimo })), "ok",
-    `finde ${d} min entra a las ${ultimo}`);
-  if (primeroMalo) {
-    assert.equal(codigoDe(sel({ fecha: FINDE, duracion_minutos: d, hora: primeroMalo })), "sin_bloques",
-      `finde ${d} min ya no entra a las ${primeroMalo}`);
-  }
+// (M5C.1) El fin de semana ya no existe para Mensualidades. La grilla corta de
+// sábado y domingo sigue viva —es la de Reservas normales—, pero acá se corta
+// antes, por el día, y no llega ni a mirar la hora.
+for (const [d, hora] of [[15, "14:00"], [30, "13:40"], [45, "13:20"], [60, "13:00"]] as const) {
+  assert.equal(codigoDe(sel({ fecha: FINDE, duracion_minutos: d, hora })), "dia_no_habilitado",
+    `finde ${d} min a las ${hora} ya no se puede con mensualidad`);
 }
+// Y tampoco en un horario que en la semana sería perfectamente válido.
+assert.equal(codigoDe(sel({ fecha: FINDE, hora: "10:00" })), "dia_no_habilitado",
+  "el sábado se rechaza por el día, no por el horario");
 
 // Los bloques que salen son los que va a recibir la RPC.
 const r60 = sel({ duracion_minutos: 60, hora: "12:00" });
@@ -90,17 +88,20 @@ const r45 = sel({ duracion_minutos: 45, hora: "12:00" });
 assert.ok(r45.ok);
 if (r45.ok) assert.deepEqual(r45.value.bloques, ["12:00", "12:20", "12:40"]);
 
-// ── Escuderías ─────────────────────────────────────────────────────────────
+// ── Simuladores (M5C.1: de 2 a 4, nunca uno solo) ──────────────────────────
 const TODAS = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
-for (let n = 1; n <= 4; n++) {
-  assert.equal(codigoDe(sel({ simuladores: TODAS.slice(0, n) })), "ok", `${n} escuderías`);
+for (let n = 2; n <= 4; n++) {
+  assert.equal(codigoDe(sel({ simuladores: TODAS.slice(0, n) })), "ok", `${n} simuladores`);
 }
 assert.equal(codigoDe(sel({ simuladores: [] })), "simuladores_invalidos", "0 no");
+assert.equal(codigoDe(sel({ simuladores: ["Ferrari"] })), "simuladores_invalidos",
+  "(M5C.1) uno solo tampoco, aunque esté libre");
 assert.equal(codigoDe(sel({ simuladores: [...TODAS, "Ferrari"] })), "simuladores_invalidos", "5 no");
 assert.equal(codigoDe(sel({ simuladores: "Ferrari" })), "simuladores_invalidos", "tiene que ser lista");
 assert.equal(codigoDe(sel({ simuladores: ["Ferrari", "Ferrari"] })), "simuladores_duplicados");
 assert.equal(codigoDe(sel({ simuladores: ["Ferrari", "Williams"] })), "simulador_desconocido");
-assert.equal(codigoDe(sel({ simuladores: ["ferrari"] })), "simulador_desconocido", "distingue mayúsculas");
+assert.equal(codigoDe(sel({ simuladores: ["ferrari", "McLaren"] })), "simulador_desconocido",
+  "distingue mayúsculas");
 
 // ── Condiciones: obligatorias y nunca por defecto ──────────────────────────
 assert.equal(codigoDe(sel({ acepto_condiciones: false })), "condiciones");

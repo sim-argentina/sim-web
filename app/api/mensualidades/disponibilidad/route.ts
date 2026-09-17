@@ -5,12 +5,12 @@ import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import { leerSesion, tokenDeRequest } from "@/lib/mensualidadSesion";
 import { huellaCodigo } from "@/lib/mensualidadHuella";
 import { simuladoresLibresDelDia } from "@/lib/disponibilidad";
-import { DURACIONES_POR_PRODUCTO, fechasPublicas } from "@/lib/agenda";
+import { DURACIONES_POR_PRODUCTO, REGLAS_POR_PRODUCTO, fechasPublicasPara } from "@/lib/agenda";
 
-// Disponibilidad CON NOMBRES de escudería para Mensualidades (Bloque M5A).
+// Disponibilidad CON NOMBRES de simulador para Mensualidades (Bloque M5A).
 //
-// Existe aparte de /api/disponibilidad porque devuelve más: qué escuderías
-// concretas están libres, no cuántas. Eso solo se entrega a quien ya probó ser
+// Existe aparte de /api/disponibilidad porque devuelve más: qué simuladores
+// concretos están libres, no cuántos. Eso solo se entrega a quien ya probó ser
 // el titular (sesión de M4). El DTO público genérico de M6 no se toca ni se
 // debilita: sigue devolviendo cantidades a cualquiera.
 //
@@ -41,7 +41,12 @@ export async function GET(req: Request) {
     }
 
     const url = new URL(req.url);
-    const fecha = url.searchParams.get("fecha") ?? "";
+    // (M5C.1) Solo los días en que Mensualidades opera: lunes a viernes.
+    const publicas = fechasPublicasPara("mensualidad");
+    // Sin fecha se contesta el primer día operativo. Así una pantalla puede
+    // abrirse sin conocer las reglas, y una reserva vieja que cayó en un día
+    // que hoy no opera igual puede reprogramarse.
+    const fecha = url.searchParams.get("fecha") || publicas[0] || "";
     const duracionCruda = url.searchParams.get("duracion") ?? "15";
     if (!/^\d+$/.test(duracionCruda)) {
       return NextResponse.json({ error: "Duración inválida" }, { status: 400, headers: sinCache });
@@ -56,7 +61,11 @@ export async function GET(req: Request) {
       fecha: r.fecha,
       duracion: r.duracion,
       duraciones: DURACIONES_POR_PRODUCTO.mensualidad,
-      fechas: fechasPublicas(),
+      fechas: publicas,
+      // (M5C.1) Los límites de cantidad también viajan: la pantalla no los
+      // inventa ni los codifica a mano. El servidor vuelve a validarlos igual.
+      simuladores_min: REGLAS_POR_PRODUCTO.mensualidad.simuladoresMin,
+      simuladores_max: REGLAS_POR_PRODUCTO.mensualidad.simuladoresMax,
       horarios: r.horarios,
     }, { headers: sinCache });
   } catch (error) {

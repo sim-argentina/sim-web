@@ -1,5 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { bloquesDeAgenda, fechaDentroDeVentana, fechaValida, horariosDe } from "@/lib/agenda";
+import {
+  bloquesDeAgendaPara, cantidadSimuladoresValidaPara, diaHabilitadoPara,
+  fechaDentroDeVentana, fechaValida, horariosDe,
+} from "@/lib/agenda";
 import { hayDisponibilidadPara } from "@/lib/disponibilidad";
 
 // Cancelación y reprogramación de reservas de Mensualidades (Bloque M5C).
@@ -172,7 +175,7 @@ type FilaReprogramar = {
   sin_cambios: boolean;
 };
 
-/** Duración y escuderías de la reserva, para resolver los bloques del nuevo horario. */
+/** Duración y simuladores de la reserva, para resolver los bloques del nuevo horario. */
 type Actual = { duracion: number; simuladores: string[]; fecha: string; hora: string };
 
 async function leerReservaPropia(
@@ -197,7 +200,7 @@ async function leerReservaPropia(
 }
 
 /**
- * Mueve la reserva a otra fecha/hora. La duración y las escuderías NO se tocan:
+ * Mueve la reserva a otra fecha/hora. La duración y los simuladores NO se tocan:
  * salen de la reserva existente, no del cuerpo de la solicitud, así que no hay
  * forma de cambiarlas reprogramando.
  */
@@ -221,6 +224,10 @@ export async function reprogramarReserva(
     return fail(422, "fecha_fuera_de_ventana",
       "Solo se puede reservar desde mañana y hasta 15 días de anticipación.");
   }
+  // (M5C.1) Mensualidades opera de lunes a viernes: no se reprograma a un finde.
+  if (!diaHabilitadoPara("mensualidad", fecha)) {
+    return fail(422, "dia_no_habilitado", "Con la mensualidad se reserva de lunes a viernes.");
+  }
   if (!horariosDe(fecha).includes(hora)) {
     return fail(422, "hora_invalida", "Elegí un horario válido.");
   }
@@ -229,10 +236,18 @@ export async function reprogramarReserva(
   const actual = await leerReservaPropia(mensualidadId, referencia);
   if (!actual) return fail(404, "reserva_inexistente", "No encontramos esa reserva.");
 
-  const bloques = bloquesDeAgenda(fecha, hora, actual.duracion);
+  // (M5C.1) Una reserva vieja con menos de 2 simuladores no se puede mover: las
+  // reglas nuevas rigen para reprogramaciones nuevas. Se puede cancelar.
+  if (!cantidadSimuladoresValidaPara("mensualidad", actual.simuladores.length)) {
+    return fail(422, "simuladores_invalidos",
+      "Esa reserva no cumple las condiciones actuales y no se puede reprogramar. Podés cancelarla.");
+  }
+
+  // (M5C.1) El turno nuevo también tiene que terminar antes del cierre.
+  const bloques = bloquesDeAgendaPara("mensualidad", fecha, hora, actual.duracion);
   if (!bloques) {
     return fail(422, "sin_bloques",
-      "Ese horario no tiene tiempo consecutivo suficiente para la duración de tu reserva.");
+      "Ese horario no sirve para la duración de tu reserva: la experiencia tiene que terminar antes de las 22:00.");
   }
 
   // Disponibilidad real (M6) ANTES de tocar nada, salvo que sea el mismo turno:

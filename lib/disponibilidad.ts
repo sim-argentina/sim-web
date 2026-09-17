@@ -3,8 +3,8 @@ import { getBloqueosActivos, turnoBloqueado } from "@/lib/bloqueos";
 import { construirOcupacion } from "@/lib/reservasSlots";
 import { SIMULADORES_VALIDOS } from "@/lib/reservasValidation";
 import {
-  bloquesDeAgenda, duracionValidaPara, fechaDentroDeVentana, fechaValida,
-  hoyEnSim, horariosDe, type Producto,
+  bloquesDeAgendaPara, diaHabilitadoPara, duracionValidaPara,
+  fechaDentroDeVentana, fechaValida, hoyEnSim, horariosDe, type Producto,
 } from "@/lib/agenda";
 
 // Cálculo de disponibilidad REAL de un día (Bloque M6). Solo servidor.
@@ -55,6 +55,12 @@ async function libresPorHorario(args: {
   if (!fechaValida(fecha)) return fail(400, "Fecha inválida");
   if (!fechaDentroDeVentana(fecha, hoy)) return fail(400, "Fecha fuera del rango disponible");
   if (!duracionValidaPara(producto, duracion)) return fail(400, "Duración inválida");
+  // (M5C.1) El producto puede no operar ese día: Mensualidades es de lunes a
+  // viernes. Reservas normales tienen habilitados los siete, así que para ellas
+  // esto nunca corta.
+  if (!diaHabilitadoPara(producto, fecha)) {
+    return fail(400, "Ese día no está disponible para este producto.");
+  }
 
   // 1) Ocupación: reservas confirmadas + pendientes de pago recientes.
   const ttlIso = new Date(Date.now() - PENDIENTE_TTL_MIN * 60_000).toISOString();
@@ -83,8 +89,11 @@ async function libresPorHorario(args: {
   // El Map conserva el orden de inserción, así que sale cronológico.
   const libres = new Map<string, string[]>();
   for (const hora of horariosDe(fecha)) {
-    const bloques = bloquesDeAgenda(fecha, hora, duracion);
-    // null = la duración no entra completa o hay una discontinuidad horaria.
+    // (M5C.1) Suma al chequeo de agenda de M6 el día habilitado y el cierre a
+    // las 22:00 del producto. Para "reserva" es equivalente a bloquesDeAgenda:
+    // mismos días, misma grilla, mismo resultado que antes.
+    const bloques = bloquesDeAgendaPara(producto, fecha, hora, duracion);
+    // null = no entra completa, hay discontinuidad, o el producto no lo admite.
     if (!bloques) continue;
 
     const disponibles = SIMULADORES_VALIDOS.filter((sim) => {
@@ -111,7 +120,7 @@ export type ResultadoConSimuladores =
   | Fallo;
 
 /**
- * (M5A) Igual que `disponibilidadDelDia` pero con los NOMBRES de las escuderías
+ * (M5A) Igual que `disponibilidadDelDia` pero con los NOMBRES de los simuladores
  * libres. Es server-only y solo puede llegar al navegador detrás de un endpoint
  * que exija sesión válida de Mensualidades: el cliente tiene que elegir Ferrari
  * o McLaren, no "una de tres".
@@ -154,7 +163,7 @@ export async function disponibilidadDelDia(args: {
  * que resuelve las carreras.
  *
  * Comprueba los simuladores CONCRETOS que se piden, no una cantidad: el cliente
- * elige escuderías, así que pedir Ferrari cuando Ferrari está tomado tiene que
+ * elige simuladores, así que pedir Ferrari cuando Ferrari está tomado tiene que
  * fallar aunque queden otras tres libres.
  */
 export async function hayDisponibilidadPara(args: {

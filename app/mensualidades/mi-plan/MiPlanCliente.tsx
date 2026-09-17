@@ -99,7 +99,7 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
       if (!res.ok) { setHorarios([]); return; }
       const data = await res.json();
       if (Array.isArray(data.fechas) && fechas.length === 0) setFechas(data.fechas);
-      // Solo sirven los horarios donde están libres TODAS las escuderías de esta
+      // Solo sirven los horarios donde están libres TODOS los simuladores de esta
       // reserva: al reprogramar no se pueden cambiar.
       const libres = (data.horarios as Horario[] | undefined) ?? [];
       setHorarios(libres.filter((h) => r.simuladores.every((s) => h.simuladores.includes(s))));
@@ -120,10 +120,16 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
     setCargando(true);
     void (async () => {
       try {
-        const res = await fetch(
-          `/api/mensualidades/disponibilidad?fecha=${encodeURIComponent(r.fecha)}&duracion=${r.duracion}`,
+        const pedir = (f: string) => fetch(
+          `/api/mensualidades/disponibilidad?duracion=${r.duracion}` +
+            (f ? `&fecha=${encodeURIComponent(f)}` : ""),
           { cache: "no-store" },
         );
+        // Abre en el día de la reserva. Si ese día hoy no opera (una reserva
+        // vieja que cayó un fin de semana), se pide sin fecha y el servidor
+        // contesta el primer día operativo: igual se puede reprogramar.
+        let res = await pedir(r.fecha);
+        if (!res.ok) res = await pedir("");
         if (!vivo) return;
         if (!res.ok) { setHorarios([]); return; }
         const data = await res.json();
@@ -178,7 +184,7 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
           {fechaLarga(r.fecha)} · {r.hora}
         </span>
         <span className="text-xs text-zinc-500">
-          {r.duracion} min · {r.simuladores.length} {r.simuladores.length === 1 ? "escudería" : "escuderías"}
+          {r.duracion} min · {r.simuladores.length} {r.simuladores.length === 1 ? "simulador" : "simuladores"}
           {" · "}{minutosATexto(r.minutos_consumidos)}
         </span>
         <span className="w-full text-xs text-zinc-500">{r.simuladores.join(", ")}</span>
@@ -253,7 +259,7 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
       {panel === "reprogramar" && (
         <div className="mt-3 rounded-xl border border-white/15 bg-white/[0.02] p-3">
           <p className="text-xs text-zinc-400">
-            Se mantienen la duración ({r.duracion} min) y las escuderías ({r.simuladores.join(", ")}).
+            Se mantienen la duración ({r.duracion} min) y los simuladores ({r.simuladores.join(", ")}).
             Solo cambiás el día y el horario; no se consume saldo adicional.
           </p>
 
@@ -274,7 +280,7 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
               <p className="mt-2 text-xs text-zinc-500">Buscando horarios…</p>
             ) : horarios.length === 0 ? (
               <p className="mt-2 text-xs text-amber-300">
-                Ese día no hay horarios con tus {r.simuladores.length === 1 ? "escudería" : "escuderías"} libres. Probá otra fecha.
+                Ese día no hay horarios con tus {r.simuladores.length === 1 ? "simulador" : "simuladores"} libres. Probá otra fecha.
               </p>
             ) : (
               <div className="mt-2 flex flex-wrap gap-1.5">

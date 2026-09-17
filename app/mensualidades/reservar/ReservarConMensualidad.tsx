@@ -19,6 +19,8 @@ type Disponibilidad = {
   duracion: number;
   duraciones: number[];
   fechas: string[];
+  simuladores_min: number;
+  simuladores_max: number;
   horarios: Horario[];
 };
 
@@ -123,9 +125,14 @@ export default function ReservarConMensualidad({
     [disp, hora],
   );
 
+  // (M5C.1) Los límites llegan del servidor. El fallback 2..4 solo cubre el
+  // instante previo a la primera respuesta, cuando todavía no hay nada elegido.
+  const minSims = disp?.simuladores_min ?? 2;
+  const maxSims = disp?.simuladores_max ?? 4;
+
   const minutos = duracion * sims.length;
   const alcanza = minutos > 0 && minutos <= saldo;
-  const listo = Boolean(fecha && hora && sims.length > 0 && acepto && alcanza);
+  const listo = Boolean(fecha && hora && sims.length >= minSims && acepto && alcanza);
 
   // La clave se recalcula cuando cambia la selección, no en cada click.
   const clave = useMemo(
@@ -146,7 +153,7 @@ export default function ReservarConMensualidad({
 
   function alternarSim(s: string) {
     setSims((prev) =>
-      prev.includes(s) ? prev.filter((x) => x !== s) : prev.length >= 4 ? prev : [...prev, s],
+      prev.includes(s) ? prev.filter((x) => x !== s) : prev.length >= maxSims ? prev : [...prev, s],
     );
   }
 
@@ -214,7 +221,7 @@ export default function ReservarConMensualidad({
             </dd>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-            <dt className={ROTULO}>Escuderías</dt>
+            <dt className={ROTULO}>Simuladores</dt>
             <dd className="mt-1 text-lg font-black">{confirmada.simuladores.join(" · ")}</dd>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
@@ -293,7 +300,7 @@ export default function ReservarConMensualidad({
             ))}
           </div>
           <p className="mt-2 text-xs text-zinc-600">
-            Consume {duracion} minutos por cada escudería que elijas.
+            Consume {duracion} minutos por cada simulador que elijas.
           </p>
         </div>
 
@@ -331,10 +338,10 @@ export default function ReservarConMensualidad({
           )}
         </div>
 
-        {/* ESCUDERÍAS */}
+        {/* SIMULADORES */}
         {hora && (
           <div className="mt-7">
-            <p className={ROTULO}>Escuderías</p>
+            <p className={ROTULO}>Simuladores</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {libresDelHorario.map((s) => {
                 const elegida = sims.includes(s);
@@ -356,7 +363,7 @@ export default function ReservarConMensualidad({
               })}
             </div>
             <p className="mt-2 text-xs text-zinc-600">
-              Podés elegir entre 1 y 4 escuderías. Solo aparecen las libres durante todo el turno.
+              Elegí entre {minSims} y {maxSims} simuladores. Solo aparecen los libres durante todo el turno.
             </p>
           </div>
         )}
@@ -380,7 +387,7 @@ export default function ReservarConMensualidad({
             <dd className="font-bold">{duracion} min</dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt className="text-zinc-500">Escuderías</dt>
+            <dt className="text-zinc-500">Simuladores</dt>
             <dd className="text-right font-bold">{sims.length ? sims.join(", ") : "—"}</dd>
           </div>
         </dl>
@@ -391,9 +398,11 @@ export default function ReservarConMensualidad({
             {minutos > 0 ? minutosATexto(minutos) : "—"}
           </p>
           <p className="mt-1 text-xs text-zinc-500">
-            {sims.length > 0
-              ? `${duracion} min x ${sims.length} escudería${sims.length === 1 ? "" : "s"}`
-              : "Elegí al menos una escudería"}
+            {sims.length >= minSims
+              // Con el mínimo en 2 siempre es plural, pero el plural correcto
+              // de "simulador" es "simuladores", no "simuladors".
+              ? `${duracion} min x ${sims.length} simuladores`
+              : `Elegí al menos ${minSims} simuladores`}
           </p>
           <p className="mt-3 text-xs text-zinc-500">
             Saldo actual: <span className="font-bold text-zinc-300">{minutosATexto(saldo)}</span>
@@ -434,7 +443,7 @@ export default function ReservarConMensualidad({
                 <span className="mt-2 block text-amber-300/80">
                   Esta selección necesita {minutosATexto(minutos)} y tenés {minutosATexto(saldo)}
                   {faltan !== null ? <>: te faltan {minutosATexto(faltan)}</> : null}.
-                  También podés elegir menos escuderías o una duración más corta.
+                  También podés elegir menos simuladores o una duración más corta.
                 </span>
               </span>
             </p>

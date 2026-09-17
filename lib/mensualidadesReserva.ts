@@ -3,8 +3,9 @@ import { hayDisponibilidadPara } from "@/lib/disponibilidad";
 import { SIMULADORES_VALIDOS } from "@/lib/reservasValidation";
 import { CONDICIONES_RESERVA_VERSION } from "@/lib/mensualidadesCondiciones";
 import {
-  bloquesDeAgenda, cantidadSimuladoresValida, duracionValidaPara,
-  fechaDentroDeVentana, fechaValida, horariosDe,
+  bloquesDeAgendaPara, cantidadSimuladoresValidaPara, diaHabilitadoPara,
+  duracionValidaPara, fechaDentroDeVentana, fechaValida, horariosDe,
+  REGLAS_POR_PRODUCTO,
 } from "@/lib/agenda";
 
 // Reserva de Mensualidades pagada 100% con saldo (Bloque M5A). SOLO SERVIDOR.
@@ -20,7 +21,7 @@ import {
 // Lo que NO hace: recibir el nombre, el teléfono, el email ni los minutos desde
 // el navegador. Esos datos salen de la billetera dentro de la RPC.
 
-/** Minutos que consume una selección: duración x escuderías. Siempre múltiplo de 15. */
+/** Minutos que consume una selección: duración x simuladores. Siempre múltiplo de 15. */
 export function minutosRequeridos(duracion: number, cantidadSimuladores: number): number {
   return duracion * cantidadSimuladores;
 }
@@ -83,6 +84,13 @@ export function validarSeleccion(
       error: "Solo se puede reservar desde mañana y hasta 15 días de anticipación.",
     };
   }
+  // (M5C.1) Mensualidades opera de lunes a viernes.
+  if (!diaHabilitadoPara("mensualidad", fecha)) {
+    return {
+      ok: false, codigo: "dia_no_habilitado",
+      error: "Con la mensualidad se reserva de lunes a viernes.",
+    };
+  }
 
   // Duración: las cuatro de Mensualidades. 45 y 60 no existen para Reservas
   // normales y eso lo decide DURACIONES_POR_PRODUCTO, no este archivo.
@@ -95,25 +103,31 @@ export function validarSeleccion(
   if (!horariosDe(fecha).includes(hora)) {
     return { ok: false, codigo: "hora_invalida", error: "Elegí un horario válido." };
   }
-  const bloques = bloquesDeAgenda(fecha, hora, duracion);
+  // (M5C.1) Además de la agenda, el turno tiene que TERMINAR antes del cierre.
+  const bloques = bloquesDeAgendaPara("mensualidad", fecha, hora, duracion);
   if (!bloques) {
     return {
       ok: false, codigo: "sin_bloques",
-      error: "Ese horario no tiene tiempo consecutivo suficiente para esa duración.",
+      error: "Ese horario no sirve para esa duración: la experiencia tiene que terminar antes de las 22:00.",
     };
   }
 
+  // (M5C.1) Mensualidades exige de 2 a 4 simuladores: no se reserva uno solo.
+  const { simuladoresMin, simuladoresMax } = REGLAS_POR_PRODUCTO.mensualidad;
   const crudos = b.simuladores;
-  if (!Array.isArray(crudos) || !cantidadSimuladoresValida(crudos.length)) {
-    return { ok: false, codigo: "simuladores_invalidos", error: "Elegí entre 1 y 4 escuderías." };
+  if (!Array.isArray(crudos) || !cantidadSimuladoresValidaPara("mensualidad", crudos.length)) {
+    return {
+      ok: false, codigo: "simuladores_invalidos",
+      error: `Elegí entre ${simuladoresMin} y ${simuladoresMax} simuladores.`,
+    };
   }
   const simuladores = crudos.map((s) => String(s));
   if (new Set(simuladores).size !== simuladores.length) {
-    return { ok: false, codigo: "simuladores_duplicados", error: "No se puede repetir una escudería." };
+    return { ok: false, codigo: "simuladores_duplicados", error: "No se puede repetir un simulador." };
   }
   for (const s of simuladores) {
     if (!(SIMULADORES_VALIDOS as readonly string[]).includes(s)) {
-      return { ok: false, codigo: "simulador_desconocido", error: "Elegí escuderías de la lista." };
+      return { ok: false, codigo: "simulador_desconocido", error: "Elegí simuladores de la lista." };
     }
   }
 
@@ -144,9 +158,9 @@ const MAPA_ERRORES: Record<string, { status: number; error: string }> = {
     error: "Solo se puede reservar desde mañana y hasta 15 días de anticipación.",
   },
   saldo_insuficiente: { status: 422, error: "No te alcanza el saldo para esa selección." },
-  simuladores_duplicados: { status: 422, error: "No se puede repetir una escudería." },
-  simulador_desconocido: { status: 422, error: "Elegí escuderías de la lista." },
-  cantidad_simuladores_invalida: { status: 422, error: "Elegí entre 1 y 4 escuderías." },
+  simuladores_duplicados: { status: 422, error: "No se puede repetir un simulador." },
+  simulador_desconocido: { status: 422, error: "Elegí simuladores de la lista." },
+  cantidad_simuladores_invalida: { status: 422, error: "Elegí entre 2 y 4 simuladores." },
   duracion_invalida: { status: 422, error: "Elegí una duración de 15, 30, 45 o 60 minutos." },
   condiciones_requeridas: { status: 422, error: "Tenés que aceptar las condiciones para reservar." },
   idempotency_key_invalida: { status: 400, error: "Solicitud inválida." },
@@ -226,7 +240,7 @@ export async function reservarConSaldo(
 
   if (!esReintento) {
     // 1) Disponibilidad real por la fuente única (M6), incluyendo bloqueos,
-    //    pendientes de pago y la intersección de escuderías en todos los
+    //    pendientes de pago y la intersección de simuladores en todos los
     //    bloques. Es una comprobación temprana: la garantía definitiva contra
     //    carreras sigue siendo reserva_slots_activa_uq + trg_reserva_slot_bloqueo.
     const disp = await hayDisponibilidadPara({

@@ -159,7 +159,9 @@ assert.ok(CONDICIONES_MENSUALIDAD.length >= 12, "faltan condiciones obligatorias
 const textoCondiciones = CONDICIONES_MENSUALIDAD.join(" ").toLowerCase();
 for (const obligatoria of [
   "30 días", "23:59", "renovación automática", "reserv", "disponibilidad",
-  "15, 30, 45 o 60", "1 a 4 simuladores", "60 minutos", "no se recupera",
+  "15, 30, 45 o 60", "2, 3 o 4 simuladores", "60 minutos", "no se recupera",
+  // (M5C.1) Las restricciones operativas también tienen que estar escritas.
+  "lunes a viernes", "22:00", "15 días de anticipación",
   "1,35", "110 kg", "descuento",
 ]) {
   assert.ok(textoCondiciones.includes(obligatoria.toLowerCase()), `falta la condición: ${obligatoria}`);
