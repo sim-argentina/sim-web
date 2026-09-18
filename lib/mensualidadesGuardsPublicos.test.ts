@@ -116,6 +116,42 @@ async function main() {
     }
   }
 
+  // ── 4b) (M7.2) La página y la API de resultado se protegen POR SEPARADO ──
+  // Son dos superficies distintas: una sirve HTML y la otra sirve los datos.
+  // Cada una tiene que traer su propio guard, porque cerrar una no cierra la
+  // otra — que es exactamente lo que pasaba antes de M7.2.
+  {
+    const pagina = read("app/mensualidades/resultado/page.tsx");
+    const api = read("app/api/mensualidades/resultado/route.ts");
+    for (const [nombre, src] of [["la página", pagina], ["la API", api]] as const) {
+      assert.ok(/mensualidadesHabilitadas\(\)/.test(src),
+        `M7.2 ${nombre} de resultado comprueba la flag por su cuenta`);
+    }
+    // En la API el guard es lo PRIMERO del handler: antes del rate limit, antes
+    // de leer un parámetro y antes de cualquier consulta.
+    const cuerpo = api.slice(api.indexOf("export async function GET"));
+    const posGuard = cuerpo.indexOf("mensualidadesHabilitadas()");
+    for (const [nota, marca] of [
+      ["el rate limit", "rateLimit("],
+      ["la lectura de parámetros", "searchParams"],
+      ["la primera consulta", "leerCompra("],
+    ] as const) {
+      const pos = cuerpo.indexOf(marca);
+      assert.ok(pos > posGuard, `M7.2 el guard va antes que ${nota}`);
+    }
+  }
+
+  // ── 4c) (M7.2) El webhook NO depende de la flag ──
+  // Un pago ya iniciado tiene que poder acreditarse aunque la superficie
+  // pública esté apagada: si no, se pierden confirmaciones de Mercado Pago.
+  {
+    const src = read("app/api/mensualidades/webhook/route.ts");
+    assert.ok(
+      !/mensualidadesHabilitadas\s*\(|process\.env\.MENSUALIDADES_ENABLED/.test(src),
+      "M7.2 el webhook de Mercado Pago sigue sin depender de la feature flag",
+    );
+  }
+
   // ── 5) El sitemap no publica Mensualidades ──
   {
     const src = read("app/sitemap.ts");

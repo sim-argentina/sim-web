@@ -398,6 +398,11 @@ async function main() {
   console.log("M3-10/28 bloqueo administrativo OK");
 
   // ── M3-29/30/31/33 · Endpoint de resultado ───────────────────────────────
+  // (M7.2) La API de resultado pasó a estar detrás de la feature flag, así que
+  // para probar lo que hace de verdad hay que encenderla. El caso contrario
+  // —flag apagada— se prueba abajo, en M3-33.
+  const flagPrevia = process.env.MENSUALIDADES_ENABLED;
+  process.env.MENSUALIDADES_ENABLED = "true";
   const { GET } = await import("@/app/api/mensualidades/resultado/route");
   const pedir = async (t: string) =>
     GET(new Request(`https://simexperience.com.ar/api/mensualidades/resultado?t=${encodeURIComponent(t)}`));
@@ -433,12 +438,20 @@ async function main() {
     assert.equal(prohibido in jOk, false, `M3-30 la respuesta no debe exponer ${prohibido}`);
   }
 
-  // Con la venta apagada, el resultado sigue disponible.
-  const flagPrevia = process.env.MENSUALIDADES_ENABLED;
+  // (M7.2) Con la venta apagada, el resultado TAMPOCO está disponible: mientras
+  // Mensualidades no exista para el público, su API de consulta tampoco. Antes
+  // de M7.2 esto devolvía 200 con el código adentro.
+  //
+  // La razón histórica de M3 —quien ya pagó tiene que poder ver su código— sigue
+  // valiendo después del lanzamiento, pero entonces se va a resolver con una
+  // configuración propia para pausar ventas, no dejando la API abierta.
   delete process.env.MENSUALIDADES_ENABLED;
   const resFlagOff = await pedir(cVenc.token_publico);
-  assert.equal(resFlagOff.status, 200, "M3-33 el resultado no depende de la feature flag");
-  assert.equal((await resFlagOff.json()).codigo, mensVenc.codigo);
+  assert.equal(resFlagOff.status, 404, "M3-33 con la flag apagada el resultado no existe");
+  const jOff = await resFlagOff.json();
+  assert.deepEqual(jOff, { error: "No encontrado" }, "M3-33 respuesta neutral del módulo");
+  assert.ok(!JSON.stringify(jOff).includes(mensVenc.codigo),
+    "M3-33 con la flag apagada NO se filtra el código");
   console.log("M3-29/30/31/33 pantalla de resultado OK");
 
   // ── M3-1b · La flag apagada impide comprar ───────────────────────────────

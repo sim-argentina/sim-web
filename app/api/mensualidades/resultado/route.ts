@@ -2,14 +2,28 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { failResponse } from "@/lib/apiError";
+import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import { reconciliarCompra } from "@/lib/mensualidadesPago";
 
 // Estado público de una compra, identificada SOLO por su token (Bloque M3).
 //
-// NO depende de la feature flag: apagar la venta no puede dejar a alguien que ya
-// pagó sin poder ver su código. Los query params que agrega Mercado Pago al
-// volver (collection_status y compañía) se ignoran por completo: la única verdad
-// es lo que la base dice que se aplicó.
+// (M7.2) SÍ depende de la feature flag: mientras Mensualidades no exista para el
+// público, esta API tampoco. El guard es la PRIMERA sentencia del handler, así
+// que con la flag apagada no se lee un parámetro, no se gasta un cupo de rate
+// limit y no se toca la base.
+//
+// La razón histórica de M3 —"apagar la venta no puede dejar a alguien que ya pagó
+// sin poder ver su código"— sigue siendo válida DESPUÉS del lanzamiento, pero no
+// se resuelve dejando abierta hoy la API de un módulo que todavía no se lanzó y
+// que tiene cero compras. Cuando haya compradores reales, pausar las ventas va a
+// necesitar su propia configuración, separada de MENSUALIDADES_ENABLED.
+//
+// El WEBHOOK no lleva este guard y no debe llevarlo: un pago ya iniciado tiene
+// que poder acreditarse aunque se apague la superficie pública.
+//
+// Los query params que agrega Mercado Pago al volver (collection_status y
+// compañía) se ignoran por completo: la única verdad es lo que la base dice que
+// se aplicó.
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +31,10 @@ export const dynamic = "force-dynamic";
 const COOLDOWN_RECONCILIACION_MS = 15_000;
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
+
+// Un 404 de feature flag no se cachea: el día que la flag se encienda, la
+// respuesta vieja no puede quedar pegada en ningún borde.
+const SIN_CACHE = { "Cache-Control": "no-store, max-age=0" };
 
 // El proyecto no genera tipos de Supabase, así que la fila se tipa acá.
 type CompraResultado = {
@@ -54,6 +72,13 @@ const noEncontrado = () =>
   NextResponse.json({ error: "No encontramos esa compra." }, { status: 404 });
 
 export async function GET(req: Request) {
+  // (M7.2) Lo primero de todo: con la flag apagada el módulo no existe. Misma
+  // respuesta neutral que el resto de las APIs de Mensualidades, distinta a
+  // propósito de "No encontramos esa compra": esa diría que la ruta existe.
+  if (!mensualidadesHabilitadas()) {
+    return NextResponse.json({ error: "No encontrado" }, { status: 404, headers: SIN_CACHE });
+  }
+
   if (!(await rateLimit(`mens-result:${clientIp(req)}`, 60, 60_000))) return tooManyResponse();
 
   const token = new URL(req.url).searchParams.get("t") ?? "";
