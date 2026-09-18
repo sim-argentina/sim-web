@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { disponibilidadDelDia, hayDisponibilidadPara } from "@/lib/disponibilidad";
-import { bloquesDeAgenda } from "@/lib/agenda";
+import { bloquesDeAgenda, diaHabilitadoPara, fechasPublicasPara } from "@/lib/agenda";
 import { precioPorSimulador } from "@/lib/reservasSlots";
 import { reservarConCodigo } from "@/lib/empresasServer";
 
@@ -253,6 +253,12 @@ async function main() {
     return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
   })();
 
+  // (M5C.1) Para Mensualidades, "mañana" no siempre es un día operativo: si es
+  // sábado, no lo es. Reservas normales sí opera los siete, así que `manana`
+  // sigue sirviendo para ese lado —y de paso comprueba que el fin de semana le
+  // sigue funcionando.
+  const mananaHabil = fechasPublicasPara("mensualidad", hoyReal)[0];
+
   const res = await pedir(`fecha=${manana}&duracion=15&producto=reserva`);
   assert.equal(res.status, 200);
   assert.ok(/no-store/i.test(res.headers.get("cache-control") ?? ""), "M6-34 Cache-Control no-store");
@@ -277,13 +283,27 @@ async function main() {
   // M6-35 · Con la flag apagada, Mensualidades no expone disponibilidad.
   const flagPrevia = process.env.MENSUALIDADES_ENABLED;
   delete process.env.MENSUALIDADES_ENABLED;
-  const oculto = await pedir(`fecha=${manana}&duracion=45&producto=mensualidad`);
+  const oculto = await pedir(`fecha=${mananaHabil}&duracion=45&producto=mensualidad`);
   assert.equal(oculto.status, 404, "M6-35 mensualidad oculta con la flag apagada");
   assert.equal((await oculto.json()).error, "No encontrado");
   process.env.MENSUALIDADES_ENABLED = "true";
-  const visible = await pedir(`fecha=${manana}&duracion=45&producto=mensualidad`);
+  const visible = await pedir(`fecha=${mananaHabil}&duracion=45&producto=mensualidad`);
   assert.equal(visible.status, 200, "con la flag encendida sí responde");
   assert.deepEqual((await visible.json()).duraciones, [15, 30, 45, 60]);
+  // Y el fin de semana, que para Reservas normales sigue existiendo, para
+  // Mensualidades no: son productos distintos sobre la misma agenda.
+  const finde = [1, 2, 3, 4, 5, 6, 7]
+    .map((i) => {
+      const [y, m, d] = hoyReal.split("-").map(Number);
+      const t = new Date(Date.UTC(y, m - 1, d) + i * 86_400_000);
+      return t.toISOString().slice(0, 10);
+    })
+    .find((d) => !diaHabilitadoPara("mensualidad", d))!;
+  assert.equal((await pedir(`fecha=${finde}&duracion=15&producto=reserva`)).status, 200,
+    "M6-35 el fin de semana sigue siendo reservable en el flujo normal");
+  assert.equal((await pedir(`fecha=${finde}&duracion=15&producto=mensualidad`)).status, 400,
+    "M6-35 pero Mensualidades no opera ese día");
+
   if (flagPrevia !== undefined) process.env.MENSUALIDADES_ENABLED = flagPrevia;
   else delete process.env.MENSUALIDADES_ENABLED;
   console.log("M6-33/34/35 endpoint público OK");

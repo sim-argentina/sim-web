@@ -65,6 +65,13 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin", "staff"],
     },
     {
+      // (M7) Staff entra a consultar para atender; gestionar es solo de admin,
+      // y eso lo decide la API, no esta lista.
+      label: "Mensualidades",
+      href: "/admin/mensualidades",
+      roles: ["admin", "staff"],
+    },
+    {
       label: "Finanzas",
       href: "/admin/finanzas",
       roles: ["admin"],

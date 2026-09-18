@@ -60,6 +60,11 @@ const MAPA: Record<string, { status: number; error: string }> = {
     error: "Solo se puede reservar desde mañana y hasta 15 días de anticipación.",
   },
   reserva_sin_simuladores: { status: 409, error: "Esa reserva no se puede reprogramar." },
+  // (M7) Una mensualidad bloqueada no mueve turnos por su cuenta. Cancelar sí.
+  mensualidad_bloqueada: {
+    status: 409,
+    error: "Tu mensualidad está bloqueada: no se pueden reprogramar turnos. Escribinos y lo vemos.",
+  },
   idempotency_key_invalida: { status: 400, error: "Solicitud inválida." },
   bloques_incoherentes: { status: 400, error: "Solicitud inválida." },
   bloques_desordenados: { status: 400, error: "Solicitud inválida." },
@@ -210,6 +215,12 @@ export async function reprogramarReserva(
   fecha: string,
   hora: string,
   idempotencyKey: string,
+  /**
+   * (M7) `ignorarBloqueo` SOLO lo pasa la administración. El bloqueo existe
+   * contra el titular, no contra la operación interna. Por defecto va en false,
+   * así que el flujo público de M5C se comporta exactamente igual que antes.
+   */
+  opts: { ignorarBloqueo?: boolean } = {},
 ): Promise<ResultadoReprogramacion> {
   if (!IDEM_RE.test(idempotencyKey)) {
     return fail(400, "idempotency_invalida", "Solicitud inválida.");
@@ -271,6 +282,7 @@ export async function reprogramarReserva(
     p_hora: hora,
     p_slots: bloques,
     p_idempotency_key: idempotencyKey,
+    p_ignorar_bloqueo: opts.ignorarBloqueo === true,
   });
   if (error) {
     return traducir(String(error.message ?? ""), String((error as { code?: string }).code ?? ""));
