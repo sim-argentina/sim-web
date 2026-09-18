@@ -134,6 +134,24 @@ async function main() {
   assert.ok(POR_PAGINA > 0 && POR_PAGINA <= POR_PAGINA_MAX);
   assert.equal(POR_PAGINA_MAX, 100, "el tope de página es el mismo que aplica la base");
 
+  // ── 9) La vista previa del ajuste no puede prometer un resultado imposible ──
+  // Salió de la pasada visual: descontar más de lo que hay mostraba
+  // "→ resultante: 0 min" porque la cuenta se recortaba con Math.max(..., 0).
+  // El servidor rechaza esa operación, así que la pantalla estaba anunciando
+  // algo que no iba a pasar. La cuenta tiene que poder dar negativo para que la
+  // interfaz pueda decir que no alcanza.
+  {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(
+      "app/admin/(panel)/mensualidades/[id]/DetalleMensualidadCliente.tsx", "utf8",
+    );
+    const panel = src.slice(src.indexOf("Saldo actual:"), src.indexOf("Es un ajuste administrativo"));
+    assert.ok(!/Math\.max\(/.test(panel),
+      "el resultado del ajuste NO se recorta a cero: eso prometía un resultado que el servidor rechaza");
+    assert.ok(/no alcanza/.test(panel),
+      "cuando el descuento supera al saldo, la vista previa lo dice");
+  }
+
   console.log("mensualidadesM7.test.ts OK (validaciones previas a la base)");
 }
 

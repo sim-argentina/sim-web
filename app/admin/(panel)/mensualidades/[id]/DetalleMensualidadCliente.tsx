@@ -426,15 +426,20 @@ export default function DetalleMensualidadCliente({ id, rol }: { id: string; rol
                 </div>
                 <p className="text-xs text-zinc-500">
                   Saldo actual: <span className="font-bold text-zinc-300">{minutosATexto(d.saldo_minutos)}</span>
-                  {minutos > 0 && minutos % 15 === 0 && (
-                    <> → resultante:{" "}
-                      <span className="font-bold text-white">
-                        {minutosATexto(Math.max(
-                          d.saldo_minutos + (operacion === "agregar" ? minutos : -minutos), 0,
-                        ))}
-                      </span>
-                    </>
-                  )}
+                  {minutos > 0 && minutos % 15 === 0 && (() => {
+                    const resultante = d.saldo_minutos + (operacion === "agregar" ? minutos : -minutos);
+                    // Recortar a cero prometería un resultado que el servidor va
+                    // a rechazar. Si no alcanza, la vista previa lo dice.
+                    return resultante < 0 ? (
+                      <> → <span className="font-bold text-red-300">
+                        no alcanza, faltan {minutosATexto(-resultante)}
+                      </span></>
+                    ) : (
+                      <> → resultante:{" "}
+                        <span className="font-bold text-white">{minutosATexto(resultante)}</span>
+                      </>
+                    );
+                  })()}
                 </p>
                 <p className="text-xs text-zinc-600">
                   Es un ajuste administrativo: no crea una compra, no mueve el vencimiento y no genera
