@@ -47,10 +47,16 @@ const MAPA: Record<string, { status: number; error: string }> = {
     status: 409,
     error: "Ese turno ya empezó, así que no se puede modificar.",
   },
+  // (M5C.2) Este mensaje aparece cuando faltan MENOS de 24 h. Antes decía
+  // "faltan más de 24 horas", que es exactamente lo contrario de la situación:
+  // lo leía el titular en Mi Plan y también quien atiende desde el panel.
   fuera_de_plazo: {
     status: 409,
-    error: "Para reprogramar faltan más de 24 horas. Podés cancelar, pero los minutos no se devuelven.",
+    error: "La reserva solo se puede reprogramar con al menos 24 horas de anticipación. Podés cancelar, pero los minutos no se devuelven.",
   },
+  // (M5C.2) El actor de la cancelación lo fija el servidor, así que esto solo
+  // puede saltar por un error de programación, nunca por una solicitud.
+  actor_invalido: { status: 400, error: "Solicitud inválida." },
   turno_posterior_al_vencimiento: {
     status: 422,
     error: "Esa fecha cae después del vencimiento de tu mensualidad. Elegí una anterior.",
@@ -115,14 +121,26 @@ type FilaCancelar = {
 };
 
 /**
+ * (M5C.2) Quién originó la cancelación. Es un tipo cerrado a propósito: el
+ * valor no se construye a partir de nada que venga del navegador, se elige
+ * según la puerta por la que entró la solicitud.
+ */
+export type ActorCancelacion = "titular" | "admin";
+
+/**
  * Cancela una reserva de la billetera de la sesión. La regla de las 24 horas la
  * decide la RPC con la hora de Córdoba: acá no se calcula nada de eso, para que
  * no existan dos criterios.
+ *
+ * (M5C.2) `actor` va al libro mayor: es quién canceló de verdad. Por defecto es
+ * el titular, que es el caso del flujo público; la administración pasa "admin"
+ * explícitamente después de requireAdmin().
  */
 export async function cancelarReserva(
   mensualidadId: string,
   referencia: string,
   idempotencyKey: string,
+  actor: ActorCancelacion = "titular",
 ): Promise<ResultadoCancelacion> {
   if (!IDEM_RE.test(idempotencyKey)) {
     return fail(400, "idempotency_invalida", "Solicitud inválida.");
@@ -136,6 +154,7 @@ export async function cancelarReserva(
     p_mensualidad_id: mensualidadId,
     p_referencia: referencia,
     p_idempotency_key: idempotencyKey,
+    p_actor: actor,
   });
   if (error) {
     return traducir(String(error.message ?? ""), String((error as { code?: string }).code ?? ""));

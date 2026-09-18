@@ -340,7 +340,9 @@ export async function cancelarReservaAdmin(
     return fail(404, "reserva_inexistente", "No encontramos esa reserva.");
   }
 
-  const r = await cancelarReserva(mensualidadId, referencia, ctx.idempotencyKey);
+  // (M5C.2) "admin" lo pone el servidor, después de requireAdmin(). El cuerpo
+  // de la solicitud no participa: no hay forma de que alguien se atribuya esto.
+  const r = await cancelarReserva(mensualidadId, referencia, ctx.idempotencyKey, "admin");
   if (r.ok && !r.data.idempotente) {
     await auditarReserva(mensualidadId, "cancelar_reserva", referencia, motivo, ctx, {
       restituyo: r.data.restituyo,
