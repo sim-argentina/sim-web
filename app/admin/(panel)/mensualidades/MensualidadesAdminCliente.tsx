@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Loader2, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { AlertTriangle, Loader2, Plus, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import NuevaMensualidadModal, { type PlanOpcion } from "./NuevaMensualidadModal";
 
 // Listado administrativo de Mensualidades (Bloque M7).
 //
@@ -79,10 +80,19 @@ export function telefonoLegible(t: string): string {
   return `${t.slice(0, 3)} ${t.slice(3, 6)}-${t.slice(6)}`;
 }
 
-export default function MensualidadesAdminCliente({ rol }: { rol: string }) {
+export default function MensualidadesAdminCliente({
+  rol,
+  planes = [],
+}: {
+  rol: string;
+  planes?: PlanOpcion[];
+}) {
   const [texto, setTexto] = useState("");
   const [filtro, setFiltro] = useState<string>("todas");
   const [pagina, setPagina] = useState(1);
+  // (M7.4) Solo admin puede registrar. Esconder el botón es cortesía visual: el
+  // control real es requireAdmin() en la ruta, que devuelve 403 a staff.
+  const [abrirAlta, setAbrirAlta] = useState(false);
 
   const [datos, setDatos] = useState<Listado | null>(null);
   const [cargando, setCargando] = useState(true);
@@ -139,14 +149,36 @@ export default function MensualidadesAdminCliente({ rol }: { rol: string }) {
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-16 sm:px-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-black text-white sm:text-3xl">Mensualidades</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          {rol === "admin"
-            ? "Consulta y gestión de las mensualidades de los clientes."
-            : "Consulta de mensualidades. Las modificaciones las hace un administrador."}
-        </p>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-black text-white sm:text-3xl">Mensualidades</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {rol === "admin"
+              ? "Consulta y gestión de las mensualidades de los clientes."
+              : "Consulta de mensualidades. Las modificaciones las hace un administrador."}
+          </p>
+        </div>
+        {rol === "admin" && planes.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setAbrirAlta(true)}
+            className="flex shrink-0 items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-500 focus-visible:ring-2 focus-visible:ring-red-500/40"
+          >
+            <Plus className="h-4 w-4" />
+            Nueva mensualidad
+          </button>
+        )}
       </header>
+
+      {abrirAlta && (
+        <NuevaMensualidadModal
+          planes={planes}
+          onCerrar={() => setAbrirAlta(false)}
+          // Al registrar, la lista se recarga: no puede quedar mostrando un
+          // saldo, un estado o un vencimiento viejo.
+          onCreada={() => void cargar(texto, filtro, pagina)}
+        />
+      )}
 
       {/* ── Búsqueda y filtros ── */}
       <div className="mb-5 space-y-3">

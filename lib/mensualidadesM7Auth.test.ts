@@ -21,7 +21,16 @@ const LECTURAS = [
   "app/api/admin/mensualidades/route.ts",
   "app/api/admin/mensualidades/[id]/route.ts",
 ];
-const ESCRITURA = "app/api/admin/mensualidades/[id]/acciones/route.ts";
+// (M7.4) Toda ruta que ESCRIBE. El alta administrativa entra acá: crea una
+// mensualidad, una compra, un movimiento y un ingreso.
+const ESCRITURAS = [
+  "app/api/admin/mensualidades/[id]/acciones/route.ts",
+  "app/api/admin/mensualidades/nueva/route.ts",
+];
+const ESCRITURA = ESCRITURAS[0];
+// (M7.4) Solo lee, pero es material de administración y lleva el teléfono del
+// titular, así que exige admin igual.
+const PREVIA = "app/api/admin/mensualidades/nueva/previa/route.ts";
 
 // ── 1) Las lecturas: admin y staff, y SOLO lecturas ──
 for (const ruta of LECTURAS) {
@@ -65,7 +74,7 @@ for (const ruta of LECTURAS) {
     }
   };
   recorrer(base);
-  assert.equal(rutas.length, 3, `se esperaban 3 rutas admin de Mensualidades, hay ${rutas.length}`);
+  assert.equal(rutas.length, 5, `se esperaban 5 rutas admin de Mensualidades, hay ${rutas.length}`);
   for (const p of rutas) {
     const src = readFileSync(p, "utf8");
     assert.ok(
@@ -79,7 +88,7 @@ for (const ruta of LECTURAS) {
 // MENSUALIDADES_ENABLED oculta la experiencia del cliente. La administración
 // tiene que poder trabajar ANTES del lanzamiento: si alguien la ata a la flag,
 // el panel se apaga justo cuando más se lo necesita.
-for (const ruta of [...LECTURAS, ESCRITURA]) {
+for (const ruta of [...LECTURAS, ...ESCRITURAS, PREVIA]) {
   const src = read(ruta);
   assert.ok(
     // Se busca el USO, no la mención: los comentarios explican justamente que
@@ -87,6 +96,49 @@ for (const ruta of [...LECTURAS, ESCRITURA]) {
     !/mensualidadesHabilitadas\s*\(|process\.env\.MENSUALIDADES_ENABLED/.test(src),
     `${ruta}: la administración no se apaga con la flag pública`,
   );
+}
+
+// ── 2 bis) (M7.4) El alta administrativa: admin, origen y nada del cuerpo ──
+{
+  const src = read("app/api/admin/mensualidades/nueva/route.ts");
+  const handlers = [...src.matchAll(/export async function (GET|POST|PUT|PATCH|DELETE)\b/g)].map((m) => m[1]);
+  assert.deepEqual(handlers, ["POST"], "alta: solo expone POST");
+  assert.ok(/requireAdmin\(\)/.test(src), "alta: usa requireAdmin");
+  assert.ok(!/requireStaffOrAdmin/.test(src), "alta: NO acepta staff");
+  assert.ok(/isAllowedOrigin\(req\)/.test(src), "alta: comprueba el origen");
+  assert.ok(/actor: auth\.role/.test(src), "alta: el actor sale de la sesión firmada");
+
+  // Nada monetario ni identitario puede leerse del cuerpo. La ruta solo pasa
+  // body al validador y la clave idempotente; el resto lo decide la base.
+  for (const prohibido of [
+    "body.actor", "body.actor_rol", "body.rol", "body.canal",
+    "body.precio", "body.plan_precio", "body.importe_bruto", "body.comision",
+    "body.minutos", "body.plan_minutos", "body.saldo_minutos",
+    "body.vence_el", "body.vencimiento", "body.codigo",
+    "body.mp_payment_id", "body.payment_id", "body.estado_pago", "body.procesamiento",
+  ]) {
+    assert.ok(!src.includes(prohibido), `alta: NO acepta ${prohibido} del cuerpo`);
+  }
+
+  // La previa es admin y POST: el teléfono es PII y no puede ir en la URL.
+  const prev = read(PREVIA);
+  const hPrev = [...prev.matchAll(/export async function (GET|POST|PUT|PATCH|DELETE)\b/g)].map((m) => m[1]);
+  assert.deepEqual(hPrev, ["POST"], "previa: es POST, no GET, porque lleva el teléfono");
+  assert.ok(/requireAdmin\(\)/.test(prev), "previa: usa requireAdmin");
+  assert.ok(!/requireStaffOrAdmin/.test(prev), "previa: NO acepta staff");
+
+  // El módulo de servidor tiene su propia puerta, además de la de la ruta.
+  const modulo = read("lib/mensualidadesAdminAlta.ts");
+  assert.ok(/ctx\.rol !== "admin"/.test(modulo), "alta: el módulo también exige admin");
+  assert.match(modulo, /MEDIOS_PAGO = \["efectivo", "qr", "debito", "credito"\]/,
+    "alta: los medios de pago son una lista cerrada");
+  assert.match(modulo, /MODALIDADES = \["venta", "cortesia"\]/,
+    "alta: la modalidad es una lista cerrada");
+
+  // La pantalla esconde el botón para staff, pero eso es cortesía visual.
+  const cliente = read("app/admin/(panel)/mensualidades/MensualidadesAdminCliente.tsx");
+  assert.match(cliente, /rol === "admin" && planes\.length > 0/,
+    "alta: staff no ve la acción");
 }
 
 // ── 5) Las pantallas resuelven el rol en el servidor ──
