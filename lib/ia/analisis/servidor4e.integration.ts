@@ -322,6 +322,114 @@ async function main() {
     console.log(`OK — 4E (parte 13, hotfix): reproduce el caso productivo — turnos ${turnos.valorA}→${turnos.valorB}, diferencia ${turnos.diferenciaFormateada}, variación ${turnos.variacionFormateada} (base = mes pasado, con signo preservado).`);
   } finally { await limpiar(conv13); }
 
+  // ── 14) HOTFIX 3 — el modelo OMITE la referencia del mes completo en su narración, pero la
+  // respuesta FINAL (lo que recibe el cliente) la incluye igual: el servidor la agrega
+  // DETERMINÍSTICAMENTE a partir del resultado estructurado, sin depender de que el modelo la
+  // haya mencionado (mes/año dinámicos, turnos/facturación reales, sin diferencia/variación/0%,
+  // con formato argentino, al final del texto, y persistida en la conversación).
+  const conv14 = await nuevaConv();
+  try {
+    const p14 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "comparar_periodos", input: { modo: "equipo", periodo_a: { relativo: "este_mes" }, periodo_b: { relativo: "mes_pasado" } } }] },
+      { tipo: "texto", texto: "Este mes tuvo menos actividad que el mes pasado en el tramo comparable." },
+    ]);
+    const r14 = await correrChat({ owner: OWNER, conversacionId: conv14, pregunta: "Compará los turnos de este mes con el mes pasado." }, { provider: p14 });
+    assert.ok(r14.ok, "ok"); if (!r14.ok) return;
+    const h14 = (r14.herramientas as Array<{ nombre: string; ok: boolean; resumen?: Record<string, unknown> }>).find((h) => h.nombre === "comparar_periodos");
+    const resumen14 = h14!.resumen as { modoPeriodo: string; referenciaCompleta: { etiqueta: string; metricas: Array<{ clave: string; valorBFormateado: string }> } | null };
+    assert.equal(resumen14.modoPeriodo, "equivalente", "precondición del caso: hay tramo equivalente");
+    assert.ok(resumen14.referenciaCompleta, "precondición del caso: el motor SÍ trae la referencia completa");
+    const refTurnos = resumen14.referenciaCompleta!.metricas.find((m) => m.clave === "turnos")!;
+    const refFacturacion = resumen14.referenciaCompleta!.metricas.find((m) => m.clave === "facturacion_bruta")!;
+    const nombreMesRef = resumen14.referenciaCompleta!.etiqueta.replace(/\s*\(mes completo.*\)\s*$/i, "").trim();
+
+    assert.ok(r14.texto.toLowerCase().includes("referencia del mes completo"), "la respuesta FINAL incluye la referencia aunque el modelo no la haya mencionado");
+    assert.ok(r14.texto.includes(nombreMesRef), "el mes de la referencia es DINÁMICO (el mes real, no hardcodeado)");
+    assert.ok(r14.texto.includes(refTurnos.valorBFormateado), "los turnos de la referencia son los del resultado estructurado real");
+    assert.ok(r14.texto.includes(refFacturacion.valorBFormateado), "la facturación bruta de la referencia es la del resultado estructurado real");
+    assert.ok(/\$\d{1,3}(\.\d{3})*/.test(refFacturacion.valorBFormateado), "la facturación de la referencia usa formato argentino ($ y separador de miles)");
+    const bloque = r14.texto.slice(r14.texto.toLowerCase().indexOf("referencia del mes completo"));
+    assert.ok(!/^[-*]?\s*(diferencia|variaci[oó]n)\s*:/im.test(bloque), "el bloque de referencia no tiene una línea de diferencia/variación CALCULADA");
+    assert.ok(!/%/.test(bloque), "el bloque de referencia no tiene ningún porcentaje (ni 0%)");
+    assert.ok(r14.texto.trim().endsWith("tramo equivalente._"), "el bloque de referencia es lo ÚLTIMO del texto (queda antes de donde la UI agrega 'Fuentes', que es una sección aparte — ver IAChat.tsx)");
+
+    const { data: msgs } = await supabaseAdmin.from("ia_mensajes").select("contenido").eq("conversacion_id", conv14).eq("rol", "assistant").order("created_at", { ascending: false }).limit(1);
+    assert.ok((msgs?.[0]?.contenido as string ?? "").toLowerCase().includes("referencia del mes completo"), "la referencia queda en el texto PERSISTIDO de la conversación, no solo en memoria");
+    assert.equal(r14.claseModelo, "economico");
+    console.log(`OK — 4E (parte 14, hotfix 3): el modelo omite la referencia de ${nombreMesRef} y el servidor la agrega igual, dinámica y real (${refTurnos.valorBFormateado} turnos, ${refFacturacion.valorBFormateado}), sin diferencia/variación/0%, persistida.`);
+  } finally { await limpiar(conv14); }
+
+  // ── 15) HOTFIX 3 — el modelo termina INMEDIATAMENTE después de la comparación (respuesta
+  // mínima, sin narrar nada de la referencia): igual se agrega. ────────────────────────────────
+  const conv15 = await nuevaConv();
+  try {
+    const p15 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "comparar_periodos", input: { modo: "equipo", periodo_a: { relativo: "este_mes" }, periodo_b: { relativo: "mes_pasado" } } }] },
+      { tipo: "texto", texto: "Listo." },
+    ]);
+    const r15 = await correrChat({ owner: OWNER, conversacionId: conv15, pregunta: "Compará los turnos de este mes con el mes pasado." }, { provider: p15 });
+    assert.ok(r15.ok, "ok"); if (!r15.ok) return;
+    assert.ok(r15.texto.toLowerCase().includes("referencia del mes completo"), "incluso con una respuesta brevísima del modelo, la referencia se agrega igual");
+    console.log("OK — 4E (parte 15, hotfix 3): el modelo termina inmediatamente tras la comparación (respuesta mínima) y la referencia se agrega de todas formas.");
+  } finally { await limpiar(conv15); }
+
+  // ── 16) HOTFIX 3 — el modelo MENCIONA accidentalmente la referencia: el resultado final NO la
+  // duplica (dedup por el marcador propio del ensamblador, no por buscar una palabra genérica). ─
+  const conv16 = await nuevaConv();
+  try {
+    const p16 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "comparar_periodos", input: { modo: "equipo", periodo_a: { relativo: "este_mes" }, periodo_b: { relativo: "mes_pasado" } } }] },
+      { tipo: "texto", texto: "Este mes bajó respecto al mes pasado.\n\n**Referencia del mes completo:** el modelo la mencionó igual (no debería duplicarse)." },
+    ]);
+    const r16 = await correrChat({ owner: OWNER, conversacionId: conv16, pregunta: "Compará los turnos de este mes con el mes pasado." }, { provider: p16 });
+    assert.ok(r16.ok, "ok"); if (!r16.ok) return;
+    const ocurrencias = (r16.texto.toLowerCase().match(/referencia del mes completo/g) ?? []).length;
+    assert.equal(ocurrencias, 1, "si el modelo ya mencionó la referencia por su cuenta, el servidor NO agrega una segunda");
+    console.log("OK — 4E (parte 16, hotfix 3): el modelo menciona la referencia por accidente y el resultado final no la duplica (una sola aparición).");
+  } finally { await limpiar(conv16); }
+
+  // ── 17) HOTFIX 3 — dos meses YA CERRADOS: no hay tramo equivalente que recortar, así que NO
+  // se agrega el bloque de referencia (no aplica). ────────────────────────────────────────────
+  const conv17 = await nuevaConv();
+  try {
+    const p17 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "comparar_periodos", input: { modo: "equipo", periodo_a: { anio: 2026, mes: 7 }, periodo_b: { anio: 2026, mes: 8 } } }] },
+      { tipo: "texto", texto: "Julio y agosto, ambos cerrados." },
+    ]);
+    const r17 = await correrChat({ owner: OWNER, conversacionId: conv17, pregunta: "Compará los turnos de julio con agosto." }, { provider: p17 });
+    assert.ok(r17.ok, "ok"); if (!r17.ok) return;
+    assert.ok(!r17.texto.toLowerCase().includes("referencia del mes completo"), "dos meses YA CERRADOS no llevan bloque de referencia");
+    console.log("OK — 4E (parte 17, hotfix 3): comparación de dos meses ya cerrados NO agrega el bloque de referencia.");
+  } finally { await limpiar(conv17); }
+
+  // ── 18) HOTFIX 3 — mismo mes en dos años DISTINTOS, ambos cerrados ("interanual" sin mes en
+  // curso): tampoco aplica el bloque. ─────────────────────────────────────────────────────────
+  const conv18 = await nuevaConv();
+  try {
+    const p18 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "comparar_periodos", input: { modo: "equipo", periodo_a: { anio: 2025, mes: 8 }, periodo_b: { anio: 2026, mes: 8 } } }] },
+      { tipo: "texto", texto: "Agosto de un año contra el otro, ambos cerrados." },
+    ]);
+    const r18 = await correrChat({ owner: OWNER, conversacionId: conv18, pregunta: "Compará agosto de este año con agosto del año pasado." }, { provider: p18 });
+    assert.ok(r18.ok, "ok"); if (!r18.ok) return;
+    assert.ok(!r18.texto.toLowerCase().includes("referencia del mes completo"), "comparación interanual con ambos lados cerrados NO agrega el bloque de referencia");
+    console.log("OK — 4E (parte 18, hotfix 3): mismo mes en dos años, ambos cerrados, NO agrega el bloque de referencia.");
+  } finally { await limpiar(conv18); }
+
+  // ── 19) HOTFIX 3 — una herramienta AJENA a comparar_periodos (detectar_anomalias) nunca
+  // agrega el bloque de referencia. ───────────────────────────────────────────────────────────
+  const conv19 = await nuevaConv();
+  try {
+    const p19 = new FakeProviderGuionado([
+      { tipo: "herramientas", llamadas: [{ nombre: "detectar_anomalias", input: { anio: 2026, mes: 8 } }] },
+      { tipo: "texto", texto: "No se detectaron anomalías importantes en agosto." },
+    ]);
+    const r19 = await correrChat({ owner: OWNER, conversacionId: conv19, pregunta: "Detectá anomalías en agosto." }, { provider: p19 });
+    assert.ok(r19.ok, "ok"); if (!r19.ok) return;
+    assert.ok(!r19.texto.toLowerCase().includes("referencia del mes completo"), "una herramienta ajena a comparar_periodos nunca agrega el bloque de referencia");
+    console.log("OK — 4E (parte 19, hotfix 3): detectar_anomalias no agrega el bloque de referencia (ajeno a comparar_periodos).");
+  } finally { await limpiar(conv19); }
+
   const { count } = await supabaseAdmin.from("ia_conversaciones").select("id", { count: "exact", head: true }).eq("owner", OWNER);
   console.log("Limpieza ZZTEST verificada:", (count ?? 0) === 0);
 }
