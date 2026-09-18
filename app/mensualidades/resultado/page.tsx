@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { pageMetadata } from "@/lib/seo";
 import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import ResultadoCliente from "./ResultadoCliente";
 
@@ -14,6 +15,19 @@ import ResultadoCliente from "./ResultadoCliente";
 // prerenderiza en el build y la flag se evaluaría una sola vez, al compilar.
 
 export const dynamic = "force-dynamic";
+
+// (M8A) Esta pantalla muestra el CÓDIGO y el saldo de quien acaba de comprar.
+// Hoy no se indexa porque con la flag apagada devuelve 404, pero eso deja de ser
+// cierto el día que el módulo se publique: el noindex tiene que ser explícito y
+// no un efecto secundario de la flag. Mismo criterio que Mi Plan y Reservar.
+export const metadata = {
+  ...pageMetadata({
+    title: "Resultado de tu compra — Mensualidades SIM",
+    description: "Estado de tu compra de Mensualidad SIM.",
+    path: "/mensualidades/resultado",
+  }),
+  robots: { index: false, follow: false },
+};
 
 export default function ResultadoPage() {
   if (!mensualidadesHabilitadas()) notFound();

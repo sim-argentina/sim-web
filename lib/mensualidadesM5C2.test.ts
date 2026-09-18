@@ -110,11 +110,15 @@ const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
     "no puede quedar ningún texto que diga 'faltan más de 24' cuando faltan menos");
 }
 
-// ── 4) Un solo lugar decide el mensaje ──────────────────────────────────────
+// ── 4) Un solo lugar decide el MENSAJE DE ERROR ─────────────────────────────
 // Si el texto se duplicara, una corrección futura arreglaría una copia y
 // dejaría la otra. Mi Plan y el panel muestran lo que responde el servidor.
+//
+// (M8A) Se busca el mensaje dentro de un `error:`, no la frase suelta: desde que
+// las condiciones públicas explican la regla de las 24 h, la frase aparece
+// legítimamente en otro lado, y eso no es una duplicación del mensaje de error.
 {
-  let copias = 0;
+  const copias: string[] = [];
   const recorrer = (dir: string) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       if (e.name === "node_modules" || e.name === ".next") continue;
@@ -122,12 +126,14 @@ const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
       if (e.isDirectory()) { recorrer(p); continue; }
       if (![".ts", ".tsx"].includes(extname(e.name))) continue;
       if (/M5C2\.(test|integration)\.ts$/.test(e.name)) continue;  // las pruebas lo citan
-      if (readFileSync(p, "utf8").includes("al menos 24 horas de anticipación")) copias++;
+      const src = readFileSync(p, "utf8");
+      if (/error:\s*"[^"]*al menos 24 horas de anticipación/.test(src)) copias.push(p);
     }
   };
   recorrer(join(ROOT, "lib"));
   recorrer(join(ROOT, "app"));
-  assert.equal(copias, 1, "el mensaje vive en UN solo archivo, no duplicado");
+  assert.equal(copias.length, 1,
+    `el mensaje de error vive en UN solo archivo, no duplicado (${copias.join(", ")})`);
 }
 
 console.log("mensualidadesM5C2.test.ts OK (actor por la puerta, mensaje correcto y sin duplicar)");

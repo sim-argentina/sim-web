@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Loader2, Plus, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import NuevaMensualidadModal, { type PlanOpcion } from "./NuevaMensualidadModal";
+import EstadoComercial from "./EstadoComercial";
 
 // Listado administrativo de Mensualidades (Bloque M7).
 //
@@ -179,6 +180,9 @@ export default function MensualidadesAdminCliente({
           onCreada={() => void cargar(texto, filtro, pagina)}
         />
       )}
+
+      {/* ── (M8A) Estado comercial: las dos llaves, separadas ── */}
+      <EstadoComercial rol={rol} />
 
       {/* ── Búsqueda y filtros ── */}
       <div className="mb-5 space-y-3">

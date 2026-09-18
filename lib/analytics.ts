@@ -136,7 +136,7 @@ export function trackPurchase(kind: "reserva" | "gift_card" | "campeonato", tran
   }
 }
 
-export type Funnel = "reserva" | "gift_card";
+export type Funnel = "reserva" | "gift_card" | "mensualidad";
 
 // ── Funnel comercial (Reservas / Gift Cards) ─────────────────────────────────
 // Todos estos helpers pasan por gaEvent() (guard de producción pública) y NO envían
@@ -219,4 +219,102 @@ export function trackLeadOnce(method: string): void {
     /* noop */
   }
   gaEvent("generate_lead", { method });
+}
+
+// ── Embudo de Mensualidades (Bloque M8A) ────────────────────────────────────
+// Reutiliza gaEvent(), así que hereda el guard de producción pública: nada se
+// emite en localhost, en previews ni bajo /admin.
+//
+// NUNCA se envía nada que identifique a una persona: ni nombre, ni apellido, ni
+// teléfono, ni correo, ni el código de la mensualidad, ni el token de sesión.
+// Lo que viaja es operativo y de baja cardinalidad: plan, minutos, precio, etapa
+// y resultado. El cruce con la venta concreta se hace en Supabase, que sí tiene
+// la identidad y está protegida.
+
+/** Slug del plan: '1h' | '2h' | '4h'. Es catálogo, no una persona. */
+export type PlanSlug = string;
+
+/** Llegó a la landing de Mensualidades. Una sola vez por carga. */
+export function trackMensualidadesView(params: { ventas_pausadas: boolean }): void {
+  gaEvent("view_item_list", {
+    funnel: "mensualidad",
+    item_list_name: "mensualidades",
+    ventas_pausadas: params.ventas_pausadas ? 1 : 0,
+  });
+}
+
+/** Eligió un plan. Sin datos del comprador. */
+export function trackMensualidadPlan(params: { plan: PlanSlug; minutos: number; value: number }): void {
+  gaEvent("select_item", {
+    funnel: "mensualidad",
+    item_list_name: "mensualidades",
+    plan: params.plan,
+    duration_minutes: Math.round(Number(params.minutos) || 0),
+    value: Math.round(Number(params.value) || 0),
+    currency: "ARS",
+  });
+}
+
+/** Empezó a completar el formulario. Una sola vez por carga. */
+export function trackMensualidadFormStart(): void {
+  gaEvent("begin_checkout", { funnel: "mensualidad" });
+}
+
+/**
+ * Intentó comprar. Se emite ANTES de saber el resultado, así el embudo muestra
+ * la diferencia entre intentos y preferencias creadas.
+ */
+export function trackMensualidadIntento(params: {
+  plan: PlanSlug; value: number; tipo: "compra" | "renovacion";
+}): void {
+  gaEvent("checkout_attempt", {
+    funnel: "mensualidad",
+    plan: params.plan,
+    value: Math.round(Number(params.value) || 0),
+    currency: "ARS",
+    operation: params.tipo,
+  });
+}
+
+/**
+ * El servidor rechazó el intento porque las ventas están pausadas. Es un evento
+ * PROPIO y no un checkout_error: no es una falla técnica, es una decisión
+ * comercial, y mezclarlos haría ilegible la tasa de error real.
+ */
+export function trackMensualidadVentasPausadas(params: {
+  plan?: PlanSlug; tipo: "compra" | "renovacion";
+}): void {
+  const p: DL = { funnel: "mensualidad", operation: params.tipo, reason: "ventas_pausadas" };
+  if (params.plan) p.plan = params.plan;
+  gaEvent("checkout_blocked", p);
+}
+
+/** Entró a Mi Plan con una sesión válida. Sin código ni identificadores. */
+export function trackMiPlanAcceso(params: { estado: string }): void {
+  gaEvent("mi_plan_view", { funnel: "mensualidad", plan_status: params.estado });
+}
+
+/** Tocó "renovar" desde Mi Plan. */
+export function trackMensualidadRenovacionInicio(params: { pausadas: boolean }): void {
+  gaEvent("renewal_start", {
+    funnel: "mensualidad",
+    ventas_pausadas: params.pausadas ? 1 : 0,
+  });
+}
+
+/** Empezó a armar una reserva con saldo. */
+export function trackMensualidadReservaInicio(): void {
+  gaEvent("reservation_start", { funnel: "mensualidad" });
+}
+
+/** La reserva con saldo quedó confirmada. Sin fecha ni hora concretas. */
+export function trackMensualidadReservaConfirmada(params: {
+  duration_minutes: number; quantity: number; minutos_consumidos: number;
+}): void {
+  gaEvent("reservation_confirmed", {
+    funnel: "mensualidad",
+    duration_minutes: Math.round(Number(params.duration_minutes) || 0),
+    quantity: Math.round(Number(params.quantity) || 0),
+    minutes_used: Math.round(Number(params.minutos_consumidos) || 0),
+  });
 }

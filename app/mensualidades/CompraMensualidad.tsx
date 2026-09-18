@@ -1,12 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CONDICIONES_MENSUALIDAD } from "@/lib/mensualidadesCondiciones";
 import type { Plan } from "@/lib/mensualidades";
+import {
+  trackMensualidadesView, trackMensualidadPlan, trackMensualidadFormStart,
+  trackMensualidadIntento, trackMensualidadVentasPausadas, trackPaymentRedirect,
+  trackCheckoutError, setPendingPurchase,
+} from "@/lib/analytics";
 
 // Formulario público de compra (Bloque M3). El navegador solo manda el SLUG del
 // plan y los datos del comprador: precio, minutos y vigencia los relee el
 // servidor de mensualidad_planes. Nada monetario viaja desde acá.
+//
+// (M8A) `ventasActivas` llega del SERVIDOR y solo decide qué se dibuja. Si
+// alguien lo manipulara desde el navegador, el POST igual recibiría 503: la
+// autoridad está en /api/mensualidades/preference, que consulta la base justo
+// antes de crear la preferencia.
 
 function formatearPrecio(v: number) {
   return `$${Math.round(v).toLocaleString("es-AR")}`;
@@ -17,7 +27,13 @@ function horas(minutos: number) {
   return Number.isInteger(h) ? `${h} ${h === 1 ? "hora" : "horas"}` : `${minutos} minutos`;
 }
 
-export default function CompraMensualidad({ planes }: { planes: Plan[] }) {
+export default function CompraMensualidad({
+  planes,
+  ventasActivas = true,
+}: {
+  planes: Plan[];
+  ventasActivas?: boolean;
+}) {
   const [slug, setSlug] = useState<string>(planes[0]?.slug ?? "");
   const [nombre, setNombre] = useState("");
   const [apellido, setApellido] = useState("");
@@ -29,14 +45,43 @@ export default function CompraMensualidad({ planes }: { planes: Plan[] }) {
   const [error, setError] = useState("");
   // Una clave por intento lógico: el doble clic reusa la misma y no crea dos compras.
   const [idemKey, setIdemKey] = useState<string>(() => crypto.randomUUID());
+  // (M8A) Si el servidor avisa que las ventas se pausaron mientras la página
+  // estaba abierta, la pantalla pasa al mismo estado que si hubiera cargado
+  // pausada: no queda un error suelto ni un botón que no va a funcionar.
+  const [pausadaEnVivo, setPausadaEnVivo] = useState(false);
+  const vendiendo = ventasActivas && !pausadaEnVivo;
 
   const plan = planes.find((p) => p.slug === slug) ?? planes[0];
-  const puedeComprar = Boolean(nombre.trim() && apellido.trim() && telefono.trim() && email.trim() && acepto && plan && !enviando);
+  const puedeComprar = Boolean(
+    vendiendo && nombre.trim() && apellido.trim() && telefono.trim() && email.trim() && acepto && plan && !enviando,
+  );
+
+  // Una vista por carga, no una por render.
+  const vistaRef = useRef(false);
+  useEffect(() => {
+    if (vistaRef.current) return;
+    vistaRef.current = true;
+    trackMensualidadesView({ ventas_pausadas: !ventasActivas });
+  }, [ventasActivas]);
+
+  // Un begin_checkout por carga, en cuanto se empieza a completar.
+  const inicioRef = useRef(false);
+  function marcarInicio() {
+    if (inicioRef.current) return;
+    inicioRef.current = true;
+    trackMensualidadFormStart();
+  }
+
+  function elegirPlan(p: Plan) {
+    setSlug(p.slug);
+    trackMensualidadPlan({ plan: p.slug, minutos: p.minutos, value: p.precio });
+  }
 
   async function comprar() {
     if (!puedeComprar || !plan) return;
     setEnviando(true);
     setError("");
+    trackMensualidadIntento({ plan: plan.slug, value: plan.precio, tipo: "compra" });
     try {
       const res = await fetch("/api/mensualidades/preference", {
         method: "POST",
@@ -49,14 +94,36 @@ export default function CompraMensualidad({ planes }: { planes: Plan[] }) {
         }),
       });
       const data = await res.json().catch(() => null);
+
+      // (M8A) Pausa comercial: no es una falla técnica. Se cambia la pantalla
+      // entera en vez de mostrar un error genérico al pie del formulario.
+      if (res.status === 503 && data?.codigo === "ventas_publicas_pausadas") {
+        setPausadaEnVivo(true);
+        setError("");
+        setEnviando(false);
+        trackMensualidadVentasPausadas({ plan: plan.slug, tipo: "compra" });
+        return;
+      }
+
       if (!res.ok || !data?.init_point) {
         setError(data?.error || "No pudimos iniciar el pago. Probá de nuevo.");
         // Intento nuevo = clave nueva, así un reintento deliberado no queda pegado
         // a la compra anterior.
         setIdemKey(crypto.randomUUID());
         setEnviando(false);
+        // Solo se mide como error TÉCNICO lo que lo es: un rechazo de validación
+        // o una mensualidad bloqueada no son fallas del checkout.
+        if (res.status >= 500) trackCheckoutError("mensualidad");
         return;
       }
+
+      setPendingPurchase({ value: plan.precio, currency: "ARS", type: "mensualidad" });
+      trackPaymentRedirect({
+        funnel: "mensualidad",
+        value: plan.precio,
+        duration_minutes: plan.minutos,
+        quantity: 1,
+      });
       window.location.href = data.init_point;
     } catch {
       setError("Error de conexión. Probá de nuevo.");
@@ -69,6 +136,23 @@ export default function CompraMensualidad({ planes }: { planes: Plan[] }) {
 
   return (
     <>
+      {/* ── (M8A) Ventas pausadas: se dice una vez, arriba, sin dramatismo ── */}
+      {!vendiendo && (
+        <div
+          role="status"
+          className="mb-8 rounded-[26px] border border-amber-500/30 bg-amber-500/[0.06] px-6 py-5"
+        >
+          <p className="text-sm font-black uppercase tracking-[0.14em] text-amber-300">
+            Compras pausadas
+          </p>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            Las compras y renovaciones están temporalmente pausadas. Si ya tenés una
+            mensualidad, podés ingresar a Mi Plan y usar tu saldo normalmente:
+            reservar, cancelar y reprogramar siguen funcionando.
+          </p>
+        </div>
+      )}
+
       {/* ── Planes ── */}
       <div className="grid items-stretch gap-5 md:grid-cols-3">
         {planes.map((p) => {
@@ -77,7 +161,7 @@ export default function CompraMensualidad({ planes }: { planes: Plan[] }) {
             <button
               key={p.slug}
               type="button"
-              onClick={() => setSlug(p.slug)}
+              onClick={() => elegirPlan(p)}
               aria-pressed={activo}
               className={`flex flex-col rounded-[26px] border p-6 text-left transition md:p-7 ${
                 activo
@@ -117,7 +201,16 @@ export default function CompraMensualidad({ planes }: { planes: Plan[] }) {
         })}
       </div>
 
-      {/* ── Datos del titular ── */}
+      {/* ── Datos del titular ──
+          Con las ventas pausadas el formulario no se muestra: pedir datos que no
+          van a servir para nada es peor que no pedirlos. Los planes y los precios
+          sí quedan visibles, que es lo que la persona vino a ver. */}
+      {!vendiendo ? (
+        <div className="mt-10 rounded-[26px] border border-white/10 bg-[#0b0b0d] p-6 text-sm leading-6 text-zinc-400 md:p-8">
+          En cuanto se reanuden las compras vas a poder elegir tu plan y pagarlo desde
+          esta misma página.
+        </div>
+      ) : (
       <div className="mt-10 rounded-[26px] border border-white/10 bg-[#0b0b0d] p-6 md:p-8">
         <h2 className="text-2xl font-black uppercase tracking-tight">Tus datos</h2>
         <p className="mt-2 text-sm text-zinc-400">
@@ -131,7 +224,7 @@ export default function CompraMensualidad({ planes }: { planes: Plan[] }) {
               Nombre
             </label>
             <input id="mens-nombre" className={inp} value={nombre} maxLength={60}
-              autoComplete="given-name" onChange={(e) => setNombre(e.target.value)} />
+              autoComplete="given-name" onChange={(e) => { marcarInicio(); setNombre(e.target.value); }} />
           </div>
           <div>
             <label htmlFor="mens-apellido" className="mb-1.5 block text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
@@ -201,6 +294,7 @@ export default function CompraMensualidad({ planes }: { planes: Plan[] }) {
           El pago se procesa en Mercado Pago. SIM no guarda datos de tu tarjeta.
         </p>
       </div>
+      )}
     </>
   );
 }

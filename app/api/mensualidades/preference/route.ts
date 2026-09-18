@@ -4,6 +4,10 @@ import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import {
+  ventasPublicasHabilitadas, VENTAS_PAUSADAS, VENTAS_PAUSADAS_MENSAJE,
+  VENTAS_PAUSADAS_STATUS,
+} from "@/lib/mensualidadesVentas";
+import {
   validarDatosCompra, tieneMensualidadBloqueada, crearCompraYPreferencia,
 } from "@/lib/mensualidadesCompra";
 
@@ -11,6 +15,11 @@ import {
 // Detrás de la feature flag: con la venta apagada la ruta no existe (404), sin
 // filtrar planes ni revelar que la función está en construcción.
 // El precio SIEMPRE sale de mensualidad_planes; el navegador solo manda el slug.
+//
+// (M8A) Es el ÚNICO endpoint público capaz de iniciar una venta: la compra
+// inicial y la renovación entran las dos por acá, porque "renovar" desde Mi Plan
+// es un enlace a la landing. Por eso la pausa comercial se comprueba en un solo
+// lugar y no puede quedar un camino sin cubrir.
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +49,19 @@ export async function POST(req: Request) {
   }
 
   try {
+    // (M8A) La pausa comercial se consulta EN LA BASE, justo antes de operar, no
+    // al cargar el módulo: si un administrador pausa mientras alguien tiene el
+    // formulario abierto, ese envío ya no crea ninguna preferencia.
+    //
+    // Se comprueba antes de validar el formulario para no hacerle corregir
+    // campos a quien no va a poder comprar igual.
+    if (!(await ventasPublicasHabilitadas())) {
+      return NextResponse.json(
+        { error: VENTAS_PAUSADAS_MENSAJE, codigo: VENTAS_PAUSADAS },
+        { status: VENTAS_PAUSADAS_STATUS, headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+    }
+
     const v = validarDatosCompra(body);
     if (!v.ok) return NextResponse.json({ error: v.error, campo: v.campo }, { status: v.status });
 

@@ -27,6 +27,9 @@ const ESCRITURAS = [
   "app/api/admin/mensualidades/[id]/acciones/route.ts",
   "app/api/admin/mensualidades/nueva/route.ts",
 ];
+// (M8A) El estado comercial se LEE con staff y se ESCRIBE solo con admin, así
+// que la ruta expone los dos verbos y se comprueba aparte.
+const VENTAS = "app/api/admin/mensualidades/ventas/route.ts";
 const ESCRITURA = ESCRITURAS[0];
 // (M7.4) Solo lee, pero es material de administración y lleva el teléfono del
 // titular, así que exige admin igual.
@@ -74,7 +77,7 @@ for (const ruta of LECTURAS) {
     }
   };
   recorrer(base);
-  assert.equal(rutas.length, 5, `se esperaban 5 rutas admin de Mensualidades, hay ${rutas.length}`);
+  assert.equal(rutas.length, 6, `se esperaban 6 rutas admin de Mensualidades, hay ${rutas.length}`);
   for (const p of rutas) {
     const src = readFileSync(p, "utf8");
     assert.ok(
@@ -88,7 +91,7 @@ for (const ruta of LECTURAS) {
 // MENSUALIDADES_ENABLED oculta la experiencia del cliente. La administración
 // tiene que poder trabajar ANTES del lanzamiento: si alguien la ata a la flag,
 // el panel se apaga justo cuando más se lo necesita.
-for (const ruta of [...LECTURAS, ...ESCRITURAS, PREVIA]) {
+for (const ruta of [...LECTURAS, ...ESCRITURAS, PREVIA, VENTAS]) {
   const src = read(ruta);
   assert.ok(
     // Se busca el USO, no la mención: los comentarios explican justamente que
@@ -165,3 +168,25 @@ for (const pagina of [
 }
 
 console.log("mensualidadesM7Auth.test.ts OK (permisos en servidor, no en la interfaz)");
+
+// ── 7) (M8A) El estado comercial: leer con staff, escribir solo con admin ──
+{
+  const src = read(VENTAS);
+  const handlers = [...src.matchAll(/export async function (GET|POST|PUT|PATCH|DELETE)\b/g)].map((m) => m[1]);
+  assert.deepEqual(handlers.sort(), ["GET", "POST"], "ventas: expone leer y escribir, nada más");
+  // La lectura es información operativa: quien atiende necesita saber si se está
+  // vendiendo. La escritura es una decisión comercial y es solo de admin.
+  assert.ok(/requireStaffOrAdmin\(\)/.test(src), "ventas: la lectura acepta staff");
+  assert.ok(/requireAdmin\(\)/.test(src), "ventas: la escritura exige admin");
+  assert.ok(/isAllowedOrigin\(req\)/.test(src), "ventas: la escritura comprueba el origen");
+  assert.ok(/actor: auth\.role/.test(src), "ventas: el actor sale de la sesión firmada");
+  for (const prohibido of ["body.actor", "body.actor_rol", "body.rol", "body.estado_anterior"]) {
+    assert.ok(!src.includes(prohibido), `ventas: NO acepta ${prohibido} del cuerpo`);
+  }
+  // La pantalla esconde el botón para staff, pero eso es cortesía visual.
+  const panel = read("app/admin/(panel)/mensualidades/EstadoComercial.tsx");
+  assert.ok(/estado\.puedeEditar && rol === "admin"/.test(panel),
+    "ventas: staff no ve el control modificable");
+}
+
+console.log("mensualidadesM7Auth.test.ts OK (M8A: estado comercial con permisos separados)");

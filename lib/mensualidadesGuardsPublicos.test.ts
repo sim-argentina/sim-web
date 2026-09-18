@@ -152,11 +152,33 @@ async function main() {
     );
   }
 
-  // ── 5) El sitemap no publica Mensualidades ──
+  // ── 5) El sitemap no publica Mensualidades con el módulo oculto ──
+  // (M8A) Antes se comprobaba que el archivo no NOMBRARA Mensualidades. Desde
+  // que el sitemap depende de la flag eso ya no alcanza ni es lo que importa:
+  // se ejecuta la función con la flag en cada estado y se mira lo que DEVUELVE.
   {
-    const src = read("app/sitemap.ts");
-    assert.ok(!/mensualidad/i.test(src),
-      "el sitemap no menciona Mensualidades mientras el módulo no exista para el público");
+    const flagPrevia = process.env.MENSUALIDADES_ENABLED;
+    const { default: sitemap } = await import("@/app/sitemap");
+
+    delete process.env.MENSUALIDADES_ENABLED;
+    const apagado = sitemap().map((e) => e.url);
+    assert.ok(!apagado.some((u) => /mensualidad/i.test(u)),
+      "con el módulo oculto el sitemap no lista ninguna URL de Mensualidades");
+
+    process.env.MENSUALIDADES_ENABLED = "true";
+    const encendido = sitemap().map((e) => e.url);
+    assert.ok(encendido.some((u) => u.endsWith("/mensualidades")),
+      "con el módulo publicado se lista la landing");
+    // Las páginas con datos del titular NUNCA se listan, en ningún estado.
+    for (const privada of ["/mensualidades/mi-plan", "/mensualidades/reservar", "/mensualidades/resultado"]) {
+      assert.ok(!encendido.some((u) => u.endsWith(privada)),
+        `${privada} no va al sitemap ni con el módulo publicado`);
+    }
+    assert.equal(encendido.length, apagado.length + 1,
+      "publicar Mensualidades agrega exactamente una URL");
+
+    if (flagPrevia === undefined) delete process.env.MENSUALIDADES_ENABLED;
+    else process.env.MENSUALIDADES_ENABLED = flagPrevia;
   }
 
   // ── 6) El panel administrativo NO queda afectado ──

@@ -331,9 +331,12 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
 export default function MiPlanCliente({
   plan,
   reservas,
+  ventasActivas = true,
 }: {
   plan: MiPlan;
   reservas?: HistorialReservas;
+  /** (M8A) Con las ventas pausadas no se puede renovar, pero todo lo demás sí. */
+  ventasActivas?: boolean;
 }) {
   const router = useRouter();
   const [copiado, setCopiado] = useState(false);
@@ -466,7 +469,25 @@ export default function MiPlanCliente({
           </div>
         )}
 
+        {/* (M8A) Renovación pausada: el botón no desaparece —se explica—, así
+            quien entra entiende qué pasa en vez de buscar una opción que no ve. */}
+        {!ventasActivas && (
+          <p
+            role="status"
+            className="mt-7 rounded-2xl border border-amber-500/30 bg-amber-500/[0.06] px-5 py-4 text-sm leading-6 text-zinc-300"
+          >
+            <span className="font-black uppercase tracking-[0.14em] text-amber-300">
+              Renovación pausada
+            </span>
+            <br />
+            Las compras y renovaciones están temporalmente pausadas. Tu saldo, tus
+            reservas y tu vigencia no cambian: podés seguir reservando, cancelando y
+            reprogramando con normalidad.
+          </p>
+        )}
+
         <div className="mt-7 flex flex-wrap gap-3">
+          {ventasActivas ? (
           <Link
             href="/mensualidades"
             className="inline-flex items-center gap-2 rounded-2xl bg-red-600 px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-white transition hover:bg-red-500"
@@ -474,6 +495,15 @@ export default function MiPlanCliente({
             <ShoppingCart className="h-4 w-4" />
             {vencida ? "Comprar mensualidad" : "Renovar mensualidad"}
           </Link>
+          ) : (
+          <span
+            aria-disabled="true"
+            className="inline-flex cursor-not-allowed items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-3.5 text-sm font-black uppercase tracking-[0.18em] text-white/30"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            {vencida ? "Comprar mensualidad" : "Renovar mensualidad"}
+          </span>
+          )}
           <button
             type="button"
             onClick={cerrarSesion}
