@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { HistorialTurno, IAProvider } from "@/lib/ia/provider";
-import { ejecutarChat } from "@/lib/ia/orchestrator";
+import { ejecutarChat, type HerramientaEjecutada } from "@/lib/ia/orchestrator";
 import { crearProvider } from "@/lib/ia/providerFactory";
 import { getLimites, getModelos, getProveedor, estimarCostoUSD, iaEstaConfigurada, variablesFaltantes, PRECIOS_VERSION, getPresupuestoWeb } from "@/lib/ia/config";
 import { buscarConocimiento, listarDocumentosActivos, normalizar } from "@/lib/ia/docs/conocimientoServer";
@@ -33,6 +33,7 @@ import { elegirModelo } from "@/lib/ia/router";
 import { SYSTEM_PROMPT } from "@/lib/ia/systemPrompt";
 import { construirContextoInternoFoda } from "@/lib/ia/analisis/contextoInternoFoda";
 import { ejecutarSintesisFoda, type ResultadoSintesisFoda } from "@/lib/ia/analisis/sintesisFoda";
+import { NOMBRE_COMPARAR_PERIODOS, MARCADOR_REFERENCIA_COMPLETA, construirBloqueReferenciaCompleta } from "@/lib/ia/analisis/herramientas";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -74,6 +75,20 @@ async function construirHistorial(conversacionId: string): Promise<HistorialTurn
 function tituloAuto(pregunta: string): string {
   const t = (pregunta || "").trim().replace(/\s+/g, " ");
   return t.length > 60 ? t.slice(0, 57) + "…" : t || "Nueva conversación";
+}
+
+// Bloque 4E (hotfix 3) — agrega DETERMINÍSTICAMENTE la referencia del mes completo de la
+// última ejecución OK de comparar_periodos, sin depender de que el modelo la haya narrado (el
+// payload estructurado ya la traía; el modelo simplemente no siempre la incluía en su texto
+// final). Si el modelo ya la mencionó por su cuenta, no se duplica: el marcador es el propio
+// encabezado que usa el ensamblador (MARCADOR_REFERENCIA_COMPLETA), no una palabra genérica.
+function conReferenciaCompletaAnexada(texto: string, herramientas: HerramientaEjecutada[]): string {
+  const ejecucion = [...herramientas].reverse().find((h) => h.nombre === NOMBRE_COMPARAR_PERIODOS && h.ok);
+  if (!ejecucion) return texto;
+  const bloque = construirBloqueReferenciaCompleta(ejecucion.resumen);
+  if (!bloque) return texto;
+  if (texto.toLowerCase().includes(MARCADOR_REFERENCIA_COMPLETA)) return texto;
+  return `${texto}\n\n${bloque}`;
 }
 
 // 4D.5 — auditoría interna del paso de búsqueda web (Tavily), antes de decidir si se llama a Claude.
@@ -259,7 +274,7 @@ export async function correrChat(
     const contenido = borrador
       ? (huboTimeoutPosterior ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos." : res.texto)
       : (truncado ? MSG_TRUNCADO
-        : res.estado === "completa" ? res.texto + notaValidacion + notaWebNoDisp
+        : res.estado === "completa" ? conReferenciaCompletaAnexada(res.texto + notaValidacion + notaWebNoDisp, res.herramientas)
         : esTimeout ? msgTimeout
         : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
 
@@ -637,7 +652,7 @@ export async function correrChat(
   const contenido = borrador
     ? (huboTimeoutPosterior ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos." : res.texto)
     : (truncado ? MSG_TRUNCADO
-      : res.estado === "completa" ? res.texto
+      : res.estado === "completa" ? conReferenciaCompletaAnexada(res.texto, res.herramientas)
       : esTimeout ? msgTimeout
       : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`);
 
