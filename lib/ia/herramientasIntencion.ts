@@ -3,7 +3,9 @@
 // necesitar. Determinístico y testeable. Reduce el contexto facturable sin perder capacidad.
 
 // Núcleo de datos internos (siempre disponible: son la base de cualquier análisis de SIM).
-const NUCLEO_INTERNO = ["consultar_metricas_equipo", "consultar_cronograma", "consultar_finanzas", "consultar_metricas_stand_reservas", "consultar_empleados"];
+// Bloque 5A — consulta_analitica_interna entra al núcleo: es la que resuelve las preguntas con
+// métrica + período + filtros + agrupación que antes no tenían ninguna herramienta capaz.
+const NUCLEO_INTERNO = ["consultar_metricas_equipo", "consultar_cronograma", "consultar_finanzas", "consultar_metricas_stand_reservas", "consultar_empleados", "consulta_analitica_interna"];
 const CONOCIMIENTO = ["buscar_conocimiento_sim", "obtener_fragmento_documento", "listar_documentos_conocimiento"];
 const COLECTIVO = ["consultar_colectivo"];
 const INFORME = ["preparar_informe"];

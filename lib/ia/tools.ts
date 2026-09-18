@@ -10,6 +10,7 @@ import { idsReembolsadas } from "@/lib/reservasReembolsos";
 import { HERRAMIENTAS_CONOCIMIENTO } from "@/lib/ia/docs/conocimientoTools";
 import { preparar_informe } from "@/lib/ia/informes/informeTool";
 import { HERRAMIENTAS_ANALISIS } from "@/lib/ia/analisis/herramientas";
+import { consulta_analitica_interna } from "@/lib/ia/analisis/herramientaAnalitica";
 import { estadoPeriodoCalendario, fraseEstado } from "@/lib/ia/periodo";
 
 // IA SIM · Bloque 4A — REGISTRO CERRADO de herramientas de SOLO LECTURA.
@@ -278,6 +279,8 @@ export const HERRAMIENTAS: Record<string, ToolDef> = {
   // Bloque 4E — comparaciones, anomalías, proyecciones (determinístico; el FODA usa su propio
   // flujo de síntesis estructurada terminal, ver lib/ia/analisis/sintesisFoda.ts).
   ...HERRAMIENTAS_ANALISIS,
+  // Bloque 5A — consulta analítica interna flexible (métrica + período + filtros + agrupación).
+  [consulta_analitica_interna.nombre]: consulta_analitica_interna,
 };
 
 // Definiciones para el proveedor. Con `soloNombres` se ofrece SOLO ese subconjunto (por
