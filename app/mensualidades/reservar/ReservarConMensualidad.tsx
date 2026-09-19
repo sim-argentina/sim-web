@@ -71,6 +71,10 @@ export default function ReservarConMensualidad({
   condiciones: string[];
 }) {
   const [disp, setDisp] = useState<Disponibilidad | null>(null);
+  // (M8B.2.1) La lista de fechas se guarda APARTE de la disponibilidad del día
+  // elegido. Antes vivían juntas, así que un error en una fecha borraba el
+  // selector entero y dejaba a la persona sin forma de elegir otra.
+  const [fechas, setFechas] = useState<string[]>([]);
   const [fecha, setFecha] = useState("");
   const [duracion, setDuracion] = useState(15);
   const [hora, setHora] = useState("");
@@ -91,13 +95,18 @@ export default function ReservarConMensualidad({
       if (f) qs.set("fecha", f);
       const res = await fetch(`/api/mensualidades/disponibilidad?${qs}`, { cache: "no-store" });
       if (!res.ok) {
-        // Sin fecha todavía no se puede pedir: la primera carga usa la de mañana.
+        // Solo se pierde la disponibilidad de ESA fecha. La lista de fechas se
+        // conserva para poder elegir otra: sin ella no habría cómo recuperarse.
         setDisp(null);
-        setError("No pudimos cargar la disponibilidad. Probá de nuevo.");
+        setError("No pudimos cargar esa fecha. Probá con otro día.");
         return;
       }
       const data = (await res.json()) as Disponibilidad;
       setDisp(data);
+      setFechas(data.fechas);
+      // La fecha vigente es la que confirma el SERVIDOR, no la que pidió el
+      // navegador: en la primera carga es la que él eligió.
+      setFecha(data.fecha);
       // Si el horario elegido ya no está, se limpia la selección de abajo.
       setHora((prev) => (data.horarios.some((h) => h.hora === prev) ? prev : ""));
       setSims([]);
@@ -108,16 +117,20 @@ export default function ReservarConMensualidad({
     }
   }, []);
 
-  // Primera carga: se pide mañana, que es la primera fecha pública. El servidor
-  // devuelve la ventana completa y con eso se arma el selector.
+  // (M8B.2.1) Primera carga SIN fecha: el servidor elige la primera operativa y
+  // devuelve la ventana completa.
+  //
+  // Antes el navegador calculaba "mañana" y lo mandaba, dando por sentado que
+  // mañana siempre era un día operativo. Dejó de ser cierto en M5C.1, cuando
+  // Mensualidades pasó a lunes–viernes: abierta un viernes pedía sábado y
+  // abierta un sábado pedía domingo, la API los rechazaba con 400 —bien— y la
+  // pantalla se quedaba sin fechas y sin salida.
+  //
+  // El calendario lo decide el servidor, que es donde viven las reglas. El
+  // cliente ya no calcula ninguna fecha, así que tampoco puede equivocarse por
+  // la zona horaria ni por el reloj del visitante.
   useEffect(() => {
-    const manana = new Date(Date.now() + 86_400_000);
-    const iso = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "America/Argentina/Cordoba",
-      year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(manana);
-    setFecha(iso);
-    void cargar(iso, 15);
+    void cargar("", 15);
   }, [cargar]);
 
   const libresDelHorario = useMemo(
@@ -263,7 +276,7 @@ export default function ReservarConMensualidad({
         <div className="mt-7">
           <p className={ROTULO}>Fecha</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {(disp?.fechas ?? []).map((f) => (
+            {fechas.map((f) => (
               <button
                 key={f}
                 type="button"
