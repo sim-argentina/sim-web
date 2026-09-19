@@ -109,8 +109,11 @@ assert.equal(codigoDe(sel({ acepto_condiciones: undefined })), "condiciones");
 assert.equal(codigoDe(sel({ acepto_condiciones: "true" })), "condiciones", "un string no acepta nada");
 assert.equal(codigoDe(sel({ acepto_condiciones: 1 })), "condiciones");
 assert.ok(CONDICIONES_RESERVA.length >= 4, "hay texto de condiciones de reserva");
-assert.match(CONDICIONES_RESERVA_VERSION, /^\d{4}-\d{2}-m5a$/);
-assert.ok(CONDICIONES_RESERVA.some((c) => c.includes("1,35 m")), "declara la altura mínima");
+// (M8A.1) La versión ya no queda fijada al bloque que la creó: el texto cambió
+// cuando se corrigió la altura mínima. Lo que importa es que tenga forma de
+// versión y que suba cuando el contenido cambia de fondo.
+assert.match(CONDICIONES_RESERVA_VERSION, /^\d{4}-\d{2}-[a-z0-9]+$/);
+assert.ok(CONDICIONES_RESERVA.some((c) => c.includes("1,40 m")), "declara la altura mínima vigente");
 assert.ok(CONDICIONES_RESERVA.some((c) => c.includes("110 kg")), "declara el peso máximo");
 assert.ok(CONDICIONES_RESERVA.some((c) => /cancelación|reprogramación/i.test(c)),
   "avisa de las políticas de cancelación y reprogramación");

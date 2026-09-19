@@ -205,10 +205,12 @@ const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 // ── 10) Los textos públicos no prometen lo que no hay ───────────────────────
 {
   const cond = read("lib/mensualidadesCondiciones.ts");
-  // La altura mínima vigente es 1,35 m: la vieja 1,40 no puede reaparecer.
-  assert.ok(!/1,40|1\.40/.test(cond), "no queda la altura vieja de 1,40 m");
-  assert.match(cond, /1,35 m/);
-  assert.match(cond, /110 kg/);
+  // (M8A.1) La altura sale de la fuente única, no de un literal escrito a mano:
+  // así es imposible que Mensualidades vuelva a decir una cifra distinta de la
+  // del resto del sitio.
+  assert.match(cond, /REQUISITOS_TEXTO/, "la condición de compra usa la fuente única");
+  assert.match(cond, /ALTURA_MINIMA_M/, "y la de reserva también");
+  assert.match(cond, /PESO_MAXIMO_KG/);
   // Lo que no puede aparecer es una PROMESA de disponibilidad. Decir que NO se
   // garantiza es exactamente lo contrario y tiene que poder decirse.
   for (const promesa of [

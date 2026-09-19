@@ -162,7 +162,8 @@ for (const obligatoria of [
   "15, 30, 45 o 60", "2, 3 o 4 simuladores", "60 minutos", "no se recupera",
   // (M5C.1) Las restricciones operativas también tienen que estar escritas.
   "lunes a viernes", "22:00", "15 días de anticipación",
-  "1,35", "110 kg", "descuento",
+  // (M8A.1) 1,40 m es el valor vigente de SIM; antes decía 1,35 por error.
+  "1,40", "110 kg", "descuento",
 ]) {
   assert.ok(textoCondiciones.includes(obligatoria.toLowerCase()), `falta la condición: ${obligatoria}`);
 }

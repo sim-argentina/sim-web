@@ -1,13 +1,23 @@
+import { ALTURA_MINIMA_M, PESO_MAXIMO_KG, REQUISITOS_TEXTO } from "@/lib/requisitos";
+
 // Condiciones de compra de Mensualidades SIM (Bloque M3).
 // Módulo PURO: lo usa la página pública para mostrarlas y el servidor para
 // registrar qué versión aceptó cada comprador. Si el texto cambia de fondo, se
 // sube la versión: las compras viejas conservan la que aceptaron.
 
-// (M8A) Se sube la versión porque el texto cambió de fondo: se agregaron las
+// (M8A) Se subió la versión porque el texto cambió de fondo: se agregaron las
 // reglas de cancelación, reprogramación y no-show, que M5C ya aplicaba pero que
-// el comprador no veía al aceptar. Las compras viejas conservan la versión que
-// aceptaron.
-export const CONDICIONES_VERSION = "2026-09-m8a";
+// el comprador no veía al aceptar.
+//
+// (M8A.1) Se vuelve a subir: la altura mínima decía 1,35 m, que era incorrecto.
+// El valor vigente de SIM siempre fue 1,40 m, y así lo dicen las otras siete
+// pantallas del sitio, incluidos los Términos. Ahora sale de lib/requisitos.ts,
+// para que Mensualidades no pueda volver a divergir por su cuenta.
+//
+// Las compras viejas conservan la versión que aceptaron. Hoy no hay ninguna:
+// el módulo nunca se lanzó, así que no se le atribuye a nadie un texto que no
+// aceptó.
+export const CONDICIONES_VERSION = "2026-09-m8a1";
 
 export const CONDICIONES_MENSUALIDAD: readonly string[] = [
   "La mensualidad dura 30 días desde que Mercado Pago aprueba el pago.",
@@ -32,7 +42,7 @@ export const CONDICIONES_MENSUALIDAD: readonly string[] = [
   "Las reservas están sujetas a disponibilidad real: comprar una mensualidad no reserva ningún turno ni garantiza horarios.",
   "Las mensualidades no aceptan códigos de descuento ni se combinan con otras promociones.",
   "El titular puede reservar para otras personas y es responsable del grupo.",
-  "Requisitos para usar los simuladores: altura mínima 1,35 m y peso máximo 110 kg.",
+  `Requisitos para usar los simuladores: ${REQUISITOS_TEXTO}.`,
   "Al comprar, el titular declara que todos los participantes cumplen esos requisitos.",
 ];
 
@@ -41,10 +51,13 @@ export const CONDICIONES_MENSUALIDAD: readonly string[] = [
 // la reserva es qué aceptó el titular ESE día, no lo que dice la web hoy.
 // El texto no pide datos de los acompañantes: el titular acepta por el grupo.
 
-export const CONDICIONES_RESERVA_VERSION = "2026-09-m5a";
+// (M8A.1) Sube por el mismo motivo que la de compra: la altura mínima pasa de
+// 1,35 m —incorrecto— a 1,40 m, el valor vigente. No hay reservas de
+// Mensualidades hechas, así que no se reescribe ninguna aceptación histórica.
+export const CONDICIONES_RESERVA_VERSION = "2026-09-m8a1";
 
 export const CONDICIONES_RESERVA: readonly string[] = [
-  "El titular declara que todos los participantes cumplen la altura mínima de 1,35 m y el peso máximo de 110 kg.",
+  `El titular declara que todos los participantes cumplen la altura mínima de ${ALTURA_MINIMA_M} m y el peso máximo de ${PESO_MAXIMO_KG} kg.`,
   "El titular acepta estas condiciones en nombre de todo el grupo y es responsable de que se cumplan.",
   "La reserva queda a nombre del titular de la mensualidad, aunque el titular no asista.",
   "El saldo se descuenta al confirmar: la duración del turno multiplicada por la cantidad de simuladores.",
