@@ -154,7 +154,11 @@ export default function CompraMensualidad({
       )}
 
       {/* ── Planes ── */}
-      <div className="grid items-stretch gap-5 md:grid-cols-3">
+      {/* (M8B.1.1) A 768 px había TRES columnas y el precio no entraba:
+          "$100.000" necesitaba 231 px en una tarjeta de 164 px y se cortaba
+          contra el borde. Ahora son dos columnas en tablet y tres recién desde
+          1024 px, que es donde cada tarjeta tiene ancho de sobra. */}
+      <div className="grid items-stretch gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {planes.map((p) => {
           const activo = p.slug === slug;
           return (
@@ -179,7 +183,11 @@ export default function CompraMensualidad({
               <p className="text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
                 {horas(p.minutos)}
               </p>
-              <p className="mt-2 text-4xl font-black tracking-tight md:text-5xl">
+              {/* (M8B.1.1) El salto a 5xl pasa a xl: en lg las tres columnas
+                  dejan ~256 px por tarjeta y "$100.000" a 48 px necesita 231,
+                  demasiado al límite. A 36 px sigue siendo lo más grande de la
+                  tarjeta, así que la jerarquía no cambia. */}
+              <p className="mt-2 text-4xl font-black tracking-tight xl:text-5xl">
                 {formatearPrecio(p.precio)}
               </p>
               <p className="mt-2 text-sm font-bold text-zinc-400">
@@ -200,6 +208,26 @@ export default function CompraMensualidad({
           );
         })}
       </div>
+
+      {/* ── Condiciones ──
+          (M8B.1.1) Contenido informativo PERMANENTE. Antes vivía dentro del
+          formulario y desaparecía con las ventas pausadas: justo cuando alguien
+          está decidiendo si esperar a que reabran, se quedaba sin las reglas.
+          Se dibuja UNA sola vez, en los dos estados, desde la misma fuente
+          autoritativa: no hay una lista para pausado y otra para habilitado. */}
+      <section className="mt-10 rounded-[26px] border border-white/10 bg-white/[0.02] p-6 md:p-8">
+        <h2 className="text-sm font-black uppercase tracking-[0.1em]">
+          Condiciones de la mensualidad
+        </h2>
+        <ul className="mt-4 space-y-2">
+          {CONDICIONES_MENSUALIDAD.map((c) => (
+            <li key={c} className="flex gap-2.5 text-sm leading-6 text-zinc-400">
+              <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-red-500" />
+              <span>{c}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       {/* ── Datos del titular ──
           Con las ventas pausadas el formulario no se muestra: pedir datos que no
@@ -254,20 +282,11 @@ export default function CompraMensualidad({
           </div>
         </div>
 
-        {/* ── Condiciones ── */}
-        <div className="mt-8 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-          <h3 className="text-sm font-black uppercase tracking-[0.1em]">Condiciones de la mensualidad</h3>
-          <ul className="mt-3 space-y-2">
-            {CONDICIONES_MENSUALIDAD.map((c) => (
-              <li key={c} className="flex gap-2.5 text-sm leading-6 text-zinc-400">
-                <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-red-500" />
-                <span>{c}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <label className="mt-6 flex cursor-pointer items-start gap-3 text-sm text-zinc-300">
+        {/* (M8B.1.1) La lista de condiciones ya NO vive acá: se dibuja una sola
+            vez arriba, fuera del formulario, para que se lea también con las
+            ventas pausadas. La casilla de aceptación sí se queda, porque solo
+            tiene sentido cuando hay algo que aceptar. */}
+        <label className="mt-8 flex cursor-pointer items-start gap-3 text-sm text-zinc-300">
           <input type="checkbox" checked={acepto} onChange={(e) => setAcepto(e.target.checked)}
             className="mt-1 h-4 w-4 shrink-0 accent-red-600" />
           <span>
