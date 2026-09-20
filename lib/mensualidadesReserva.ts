@@ -112,7 +112,8 @@ export function validarSeleccion(
     };
   }
 
-  // (M5C.1) Mensualidades exige de 2 a 4 simuladores: no se reserva uno solo.
+  // (M8C) De 1 a 4 simuladores. Los límites salen de REGLAS_POR_PRODUCTO, que es
+  // la única fuente: no se escriben acá ni se repiten en el mensaje.
   const { simuladoresMin, simuladoresMax } = REGLAS_POR_PRODUCTO.mensualidad;
   const crudos = b.simuladores;
   if (!Array.isArray(crudos) || !cantidadSimuladoresValidaPara("mensualidad", crudos.length)) {
@@ -160,7 +161,13 @@ const MAPA_ERRORES: Record<string, { status: number; error: string }> = {
   saldo_insuficiente: { status: 422, error: "No te alcanza el saldo para esa selección." },
   simuladores_duplicados: { status: 422, error: "No se puede repetir un simulador." },
   simulador_desconocido: { status: 422, error: "Elegí simuladores de la lista." },
-  cantidad_simuladores_invalida: { status: 422, error: "Elegí entre 2 y 4 simuladores." },
+  // (M8C) El rango sale de la fuente de dominio: si mañana cambia, el mensaje
+  // que ve la persona cambia con él. Antes decía "entre 2 y 4" escrito a mano,
+  // así que la RPC y la pantalla podían contradecirse.
+  cantidad_simuladores_invalida: {
+    status: 422,
+    error: `Elegí entre ${REGLAS_POR_PRODUCTO.mensualidad.simuladoresMin} y ${REGLAS_POR_PRODUCTO.mensualidad.simuladoresMax} simuladores.`,
+  },
   duracion_invalida: { status: 422, error: "Elegí una duración de 15, 30, 45 o 60 minutos." },
   condiciones_requeridas: { status: 422, error: "Tenés que aceptar las condiciones para reservar." },
   idempotency_key_invalida: { status: 400, error: "Solicitud inválida." },

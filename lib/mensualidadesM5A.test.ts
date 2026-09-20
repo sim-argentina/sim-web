@@ -88,14 +88,14 @@ const r45 = sel({ duracion_minutos: 45, hora: "12:00" });
 assert.ok(r45.ok);
 if (r45.ok) assert.deepEqual(r45.value.bloques, ["12:00", "12:20", "12:40"]);
 
-// ── Simuladores (M5C.1: de 2 a 4, nunca uno solo) ──────────────────────────
+// ── Simuladores (M8C: de 1 a 4) ────────────────────────────────────────────
+// M5C.1 había exigido dos como mínimo; M8C lo devolvió a uno. Cero y cinco
+// siguen siendo inválidos.
 const TODAS = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
-for (let n = 2; n <= 4; n++) {
+for (let n = 1; n <= 4; n++) {
   assert.equal(codigoDe(sel({ simuladores: TODAS.slice(0, n) })), "ok", `${n} simuladores`);
 }
 assert.equal(codigoDe(sel({ simuladores: [] })), "simuladores_invalidos", "0 no");
-assert.equal(codigoDe(sel({ simuladores: ["Ferrari"] })), "simuladores_invalidos",
-  "(M5C.1) uno solo tampoco, aunque esté libre");
 assert.equal(codigoDe(sel({ simuladores: [...TODAS, "Ferrari"] })), "simuladores_invalidos", "5 no");
 assert.equal(codigoDe(sel({ simuladores: "Ferrari" })), "simuladores_invalidos", "tiene que ser lista");
 assert.equal(codigoDe(sel({ simuladores: ["Ferrari", "Ferrari"] })), "simuladores_duplicados");

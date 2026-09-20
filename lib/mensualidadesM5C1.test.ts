@@ -50,8 +50,12 @@ function main() {
     assert.equal(diaHabilitadoPara("mensualidad", malo), false, `fecha inválida: ${malo}`);
   }
 
-  // ── 2) Cantidad de simuladores: 2, 3 o 4. Nunca 1, nunca 5 ──
-  assert.equal(cantidadSimuladoresValidaPara("mensualidad", 1), false, "un simulador rechazado");
+  // ── 2) Cantidad de simuladores: 1, 2, 3 o 4. Nunca 0, nunca 5 ──
+  // (M8C) El mínimo bajó de 2 a 1. M5C.1 lo había subido por una lectura
+  // equivocada del producto: el consumo es duración × cantidad, así que un solo
+  // simulador nunca cobró de menos, y exigir dos solo bloqueaba a quien viene
+  // a manejar solo.
+  assert.equal(cantidadSimuladoresValidaPara("mensualidad", 1), true, "un simulador permitido");
   assert.equal(cantidadSimuladoresValidaPara("mensualidad", 2), true, "dos permitidos");
   assert.equal(cantidadSimuladoresValidaPara("mensualidad", 3), true, "tres permitidos");
   assert.equal(cantidadSimuladoresValidaPara("mensualidad", 4), true, "cuatro permitidos");
@@ -62,7 +66,7 @@ function main() {
   assert.equal(cantidadSimuladoresValidaPara("mensualidad", " 2 "), false, "string sucio rechazado");
   assert.equal(cantidadSimuladoresValidaPara("mensualidad", "2"), true, "string limpio aceptado");
 
-  // Espejo: en Reservas normales UNO sigue siendo válido.
+  // Espejo: Reservas normales nunca cambió y sigue aceptando uno.
   assert.equal(cantidadSimuladoresValidaPara("reserva", 1), true,
     "Reservas normales sigue aceptando un simulador");
   assert.equal(cantidadSimuladoresValidaPara("reserva", 4), true);
@@ -171,7 +175,7 @@ function main() {
 
   // ── 7) Las reglas están en un solo lugar y dicen lo que deben decir ──
   const r = REGLAS_POR_PRODUCTO.mensualidad;
-  assert.equal(r.simuladoresMin, 2);
+  assert.equal(r.simuladoresMin, 1, "(M8C) el mínimo volvió a 1");
   assert.equal(r.simuladoresMax, 4);
   assert.equal(r.cierreMin, 22 * 60);
   assert.deepEqual([...r.diasHabilitados], [1, 2, 3, 4, 5]);

@@ -208,9 +208,15 @@ const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
   // (M8A.1) La altura sale de la fuente única, no de un literal escrito a mano:
   // así es imposible que Mensualidades vuelva a decir una cifra distinta de la
   // del resto del sitio.
-  assert.match(cond, /REQUISITOS_TEXTO/, "la condición de compra usa la fuente única");
-  assert.match(cond, /ALTURA_MINIMA_M/, "y la de reserva también");
-  assert.match(cond, /PESO_MAXIMO_KG/);
+  // (M8C) La redacción cambió al reagrupar en ocho condiciones, así que ya no
+  // se arma con REQUISITOS_TEXTO. Lo que importa no es qué helper se use sino
+  // que las cifras NO estén escritas a mano: se comprueba las dos cosas.
+  assert.match(cond, /ALTURA_MINIMA_M/, "la altura sale de la fuente única");
+  assert.match(cond, /PESO_MAXIMO_KG/, "y el peso también");
+  for (const literal of ["1,40", "1.40", "110 kg"]) {
+    assert.ok(!cond.includes(literal),
+      `la cifra "${literal}" no puede estar escrita a mano en las condiciones`);
+  }
   // Lo que no puede aparecer es una PROMESA de disponibilidad. Decir que NO se
   // garantiza es exactamente lo contrario y tiene que poder decirse.
   for (const promesa of [
@@ -222,12 +228,14 @@ const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
   ]) {
     assert.ok(!promesa.test(cond), `las condiciones no prometen disponibilidad (${promesa})`);
   }
-  assert.match(cond, /sujetas a disponibilidad real/i,
+  // (M8C) La redacción cambió a "Los turnos están sujetos a...". Se acepta
+  // cualquiera de las dos concordancias: lo que se vigila es que la frase esté.
+  assert.match(cond, /sujet[oa]s a disponibilidad real/i,
     "y dicen explícitamente que la reserva depende de la disponibilidad");
   // Las reglas de M5C tienen que estar a la vista de quien acepta.
   assert.match(cond, /24 horas de anticipación/);
   assert.match(cond, /no se devuelven/);
-  assert.match(cond, /se consumen igual/);
+  assert.match(cond, /se consumen/, "el no-show consume los minutos");
   assert.match(cond, /código nuevo/);
   assert.match(cond, /30 días/);
   assert.match(cond, /23:59/);

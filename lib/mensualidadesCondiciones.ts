@@ -1,60 +1,116 @@
-import { ALTURA_MINIMA_M, PESO_MAXIMO_KG, REQUISITOS_TEXTO } from "@/lib/requisitos";
+import { ALTURA_MINIMA_M, PESO_MAXIMO_KG } from "@/lib/requisitos";
+import { REGLAS_POR_PRODUCTO } from "@/lib/agenda";
 
-// Condiciones de compra de Mensualidades SIM (Bloque M3).
-// Módulo PURO: lo usa la página pública para mostrarlas y el servidor para
-// registrar qué versión aceptó cada comprador. Si el texto cambia de fondo, se
-// sube la versión: las compras viejas conservan la que aceptaron.
-
-// (M8A) Se subió la versión porque el texto cambió de fondo: se agregaron las
-// reglas de cancelación, reprogramación y no-show, que M5C ya aplicaba pero que
-// el comprador no veía al aceptar.
+// Condiciones de Mensualidades SIM. Módulo PURO: lo usa la landing para
+// mostrarlas y el servidor para registrar qué versión aceptó cada comprador.
+// Si el texto cambia de fondo, sube la versión y las compras viejas conservan
+// la que aceptaron.
 //
-// (M8A.1) Se vuelve a subir: la altura mínima decía 1,35 m, que era incorrecto.
-// El valor vigente de SIM siempre fue 1,40 m, y así lo dicen las otras siete
-// pantallas del sitio, incluidos los Términos. Ahora sale de lib/requisitos.ts,
-// para que Mensualidades no pueda volver a divergir por su cuenta.
-//
-// Las compras viejas conservan la versión que aceptaron. Hoy no hay ninguna:
-// el módulo nunca se lanzó, así que no se le atribuye a nadie un texto que no
-// aceptó.
-export const CONDICIONES_VERSION = "2026-09-m8a1";
+// (M8C) La lista pasó de 22 renglones sueltos a OCHO condiciones agrupadas por
+// tema. No es un resumen ni un extracto: son las condiciones completas. No hay
+// lista larga escondida detrás de un "ver más", ni acordeón, ni modal. Veintidós
+// viñetas planas eran una pared de texto que nadie leía; ocho bloques con título
+// se recorren de un vistazo y dicen exactamente lo mismo.
 
-export const CONDICIONES_MENSUALIDAD: readonly string[] = [
-  "La mensualidad dura 30 días desde que Mercado Pago aprueba el pago.",
-  "Se puede usar hasta las 23:59 del día de vencimiento.",
-  "No tiene renovación automática.",
-  "El saldo se usa reservando turnos desde la web, sujetos a disponibilidad real.",
-  "Las reservas pueden ser de 15, 30, 45 o 60 minutos, con 2, 3 o 4 simuladores.",
-  "Los turnos con saldo son de lunes a viernes, entre las 10:00 y las 22:00: la experiencia tiene que terminar antes de las 22:00.",
-  "Se reserva desde el día siguiente y hasta 15 días de anticipación.",
-  "El saldo consumido es la duración del turno multiplicada por la cantidad de simuladores: por ejemplo, 2 simuladores durante 30 minutos consumen 60 minutos.",
-  "Cada reserva puede durar como máximo 60 minutos.",
-  "El turno tiene que realizarse dentro de la vigencia: reservar antes del vencimiento no habilita una fecha posterior.",
-  "El saldo que no se usa antes del vencimiento se pierde y no se recupera.",
-  "Si comprás otra mensualidad antes de que venza la actual, conservás el mismo código y se trasladan hasta 60 minutos del saldo anterior.",
-  "Si comprás cuando ya venció, se genera un código nuevo y el saldo vencido no se recupera.",
-  "Reservás con tu código y tu teléfono: no hace falta crear una cuenta.",
-  // (M8A) Estas tres reglas ya las aplicaba el servidor desde M5C, pero no
-  // figuraban en lo que el comprador acepta. Ahora sí.
-  "Podés cancelar o reprogramar un turno con al menos 24 horas de anticipación, y los minutos vuelven a tu saldo.",
-  "Con menos de 24 horas todavía podés cancelar para liberar los simuladores, pero esos minutos no se devuelven.",
-  "Si no te presentás al turno, los minutos se consumen igual.",
-  "Las reservas están sujetas a disponibilidad real: comprar una mensualidad no reserva ningún turno ni garantiza horarios.",
-  "Las mensualidades no aceptan códigos de descuento ni se combinan con otras promociones.",
-  "El titular puede reservar para otras personas y es responsable del grupo.",
-  `Requisitos para usar los simuladores: ${REQUISITOS_TEXTO}.`,
-  "Al comprar, el titular declara que todos los participantes cumplen esos requisitos.",
+/** Una condición: el título es de qué habla, el texto es la regla. */
+export type Condicion = { titulo: string; texto: string };
+
+// (M8C) Sube porque cambió una regla MATERIAL: el mínimo de simuladores pasó de
+// 2 a 1. Quien acepte desde ahora acepta otra cosa que quien aceptó antes, así
+// que no se reescribe ninguna aceptación histórica: las compras y reservas
+// viejas siguen guardando la versión que efectivamente se les mostró.
+export const CONDICIONES_VERSION = "2026-09-m8c";
+
+/** "15, 30, 45 o 60" a partir de la fuente de dominio, no escrito a mano. */
+function enumerar(valores: readonly number[]): string {
+  if (valores.length === 1) return String(valores[0]);
+  return `${valores.slice(0, -1).join(", ")} o ${valores[valores.length - 1]}`;
+}
+
+const { duraciones, simuladoresMin, simuladoresMax } = REGLAS_POR_PRODUCTO.mensualidad;
+
+/** 1..4 → [1, 2, 3, 4]. Así el texto no puede contradecir a la validación. */
+const CANTIDADES = Array.from(
+  { length: simuladoresMax - simuladoresMin + 1 },
+  (_, i) => simuladoresMin + i,
+);
+
+// El máximo por reserva sale de la duración más larga que admite el producto.
+const DURACION_MAXIMA = Math.max(...duraciones);
+
+export const CONDICIONES_MENSUALIDAD: readonly Condicion[] = [
+  {
+    titulo: "Vigencia",
+    texto:
+      "Dura 30 días desde que Mercado Pago aprueba el pago y puede utilizarse hasta las 23:59 del día de vencimiento. " +
+      "No tiene renovación automática y el saldo no utilizado se pierde.",
+  },
+  {
+    titulo: "Reservas",
+    texto:
+      "Se realizan desde la web con el código y el teléfono, sin crear una cuenta. " +
+      "Podés reservar de lunes a viernes, desde el día siguiente y hasta 15 días de anticipación. " +
+      "El turno debe realizarse dentro de la vigencia y finalizar antes de las 22:00.",
+  },
+  {
+    titulo: "Duración y simuladores",
+    texto:
+      `Los turnos pueden ser de ${enumerar(duraciones)} minutos, con ${enumerar(CANTIDADES)} simuladores. ` +
+      `Cada reserva puede durar como máximo ${DURACION_MAXIMA} minutos.`,
+  },
+  {
+    titulo: "Consumo del saldo",
+    texto:
+      "Se descuenta la duración del turno multiplicada por la cantidad de simuladores elegidos. " +
+      "Por ejemplo, 4 simuladores durante 15 minutos consumen 60 minutos de saldo.",
+  },
+  {
+    titulo: "Cancelaciones y cambios",
+    texto:
+      "Con al menos 24 horas de anticipación podés cancelar o reprogramar y los minutos vuelven a tu saldo. " +
+      "Con menos de 24 horas podés cancelar para liberar los simuladores, pero los minutos no se devuelven. " +
+      "Si no te presentás, también se consumen.",
+  },
+  {
+    titulo: "Renovación",
+    texto:
+      "Si renovás antes del vencimiento, conservás el código y podés trasladar hasta 60 minutos del saldo anterior. " +
+      "Si la mensualidad ya venció, recibís un código nuevo y el saldo vencido no se recupera.",
+  },
+  {
+    titulo: "Titular y participantes",
+    texto:
+      "El titular puede reservar para otras personas y es responsable de todo el grupo. " +
+      `Todos los participantes deben medir al menos ${ALTURA_MINIMA_M} m y pesar como máximo ${PESO_MAXIMO_KG} kg. ` +
+      "Al comprar, el titular declara que todos cumplen estos requisitos.",
+  },
+  {
+    titulo: "Disponibilidad y promociones",
+    texto:
+      "Los turnos están sujetos a disponibilidad real. Comprar una mensualidad no reserva ni garantiza horarios. " +
+      "No se aceptan cupones de descuento ni se combina con otras promociones.",
+  },
 ];
+
+/**
+ * Las mismas ocho condiciones en texto plano, "Título: regla".
+ * Es una PROYECCIÓN de la lista de arriba, no una segunda copia: sirve para
+ * buscar, auditar o comparar sin tener que recorrer objetos.
+ */
+export const CONDICIONES_MENSUALIDAD_TEXTO: readonly string[] =
+  CONDICIONES_MENSUALIDAD.map((c) => `${c.titulo}: ${c.texto}`);
+
+/** Lo que dice la casilla. Obligatoria y nunca premarcada. */
+export const ACEPTACION_MENSUALIDAD = "Leí y acepto las condiciones de la mensualidad.";
 
 // ── Condiciones de CADA RESERVA hecha con saldo (Bloque M5A) ────────────────
 // Son distintas de las de compra y llevan su propia versión: lo que se guarda en
 // la reserva es qué aceptó el titular ESE día, no lo que dice la web hoy.
 // El texto no pide datos de los acompañantes: el titular acepta por el grupo.
 
-// (M8A.1) Sube por el mismo motivo que la de compra: la altura mínima pasa de
-// 1,35 m —incorrecto— a 1,40 m, el valor vigente. No hay reservas de
-// Mensualidades hechas, así que no se reescribe ninguna aceptación histórica.
-export const CONDICIONES_RESERVA_VERSION = "2026-09-m8a1";
+// (M8C) Sube junto con la de compra y por el mismo motivo: el mínimo de
+// simuladores cambió. Las reservas ya hechas conservan su versión.
+export const CONDICIONES_RESERVA_VERSION = "2026-09-m8c";
 
 export const CONDICIONES_RESERVA: readonly string[] = [
   `El titular declara que todos los participantes cumplen la altura mínima de ${ALTURA_MINIMA_M} m y el peso máximo de ${PESO_MAXIMO_KG} kg.`,

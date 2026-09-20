@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
 import { calcularMontos, idDePagoDeNotificacion, PREFIJO_EXT_REF } from "@/lib/mensualidadesPago";
 import { validarDatosCompra, nuevoTokenPublico, nuevaExternalReference } from "@/lib/mensualidadesCompra";
-import { CONDICIONES_VERSION, CONDICIONES_MENSUALIDAD } from "@/lib/mensualidadesCondiciones";
+import {
+  CONDICIONES_VERSION, CONDICIONES_MENSUALIDAD, CONDICIONES_MENSUALIDAD_TEXTO,
+} from "@/lib/mensualidadesCondiciones";
 
 // Ejecutar: npx tsx lib/mensualidadesM3.test.ts
 // Reglas PURAS de la compra pública (M3). Lo que toca base y Mercado Pago está en
@@ -155,11 +157,14 @@ assert.ok(keyRara.ok && keyRara.data.idempotencyKey !== "con espacios y $");
 
 // ── Condiciones ────────────────────────────────────────────────────────────
 assert.ok(CONDICIONES_VERSION.length > 0, "las condiciones tienen versión");
-assert.ok(CONDICIONES_MENSUALIDAD.length >= 12, "faltan condiciones obligatorias");
-const textoCondiciones = CONDICIONES_MENSUALIDAD.join(" ").toLowerCase();
+// (M8C) Ocho bloques con título en lugar de veintidós viñetas sueltas. Se
+// comprueba el CONTENIDO, no la cantidad de renglones: lo que importa es que
+// ninguna regla se haya perdido al reagrupar.
+assert.equal(CONDICIONES_MENSUALIDAD.length, 8, "son ocho condiciones, ni más ni menos");
+const textoCondiciones = CONDICIONES_MENSUALIDAD_TEXTO.join(" ").toLowerCase();
 for (const obligatoria of [
   "30 días", "23:59", "renovación automática", "reserv", "disponibilidad",
-  "15, 30, 45 o 60", "2, 3 o 4 simuladores", "60 minutos", "no se recupera",
+  "15, 30, 45 o 60", "1, 2, 3 o 4 simuladores", "60 minutos", "no se recupera",
   // (M5C.1) Las restricciones operativas también tienen que estar escritas.
   "lunes a viernes", "22:00", "15 días de anticipación",
   // (M8A.1) 1,40 m es el valor vigente de SIM; antes decía 1,35 por error.

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CONDICIONES_MENSUALIDAD } from "@/lib/mensualidadesCondiciones";
+import { CONDICIONES_MENSUALIDAD, ACEPTACION_MENSUALIDAD } from "@/lib/mensualidadesCondiciones";
 import type { Plan } from "@/lib/mensualidades";
 import {
   trackMensualidadesView, trackMensualidadPlan, trackMensualidadFormStart,
@@ -219,11 +219,18 @@ export default function CompraMensualidad({
         <h2 className="text-sm font-black uppercase tracking-[0.1em]">
           Condiciones de la mensualidad
         </h2>
-        <ul className="mt-4 space-y-2">
+        {/* (M8C) Ocho bloques con título, no veintidós viñetas planas. El título
+            dice de qué habla cada uno, así se encuentra lo que se busca sin
+            leer todo. Es la lista COMPLETA: no hay nada plegado ni detrás de un
+            "ver más". */}
+        <ul className="mt-5 grid gap-4 md:grid-cols-2">
           {CONDICIONES_MENSUALIDAD.map((c) => (
-            <li key={c} className="flex gap-2.5 text-sm leading-6 text-zinc-400">
-              <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-red-500" />
-              <span>{c}</span>
+            <li key={c.titulo} className="flex gap-2.5">
+              <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-red-500" />
+              <span className="text-sm leading-6 text-zinc-400">
+                <span className="font-black text-zinc-200">{c.titulo}: </span>
+                {c.texto}
+              </span>
             </li>
           ))}
         </ul>
@@ -289,10 +296,10 @@ export default function CompraMensualidad({
         <label className="mt-8 flex cursor-pointer items-start gap-3 text-sm text-zinc-300">
           <input type="checkbox" checked={acepto} onChange={(e) => setAcepto(e.target.checked)}
             className="mt-1 h-4 w-4 shrink-0 accent-red-600" />
-          <span>
-            Leí y acepto las condiciones, y declaro que todos los participantes cumplen
-            los requisitos de altura y peso.
-          </span>
+          {/* (M8C) El texto sale de la fuente canónica. La declaración de altura
+              y peso ya la hace la condición "Titular y participantes", que está
+              arriba: repetirla acá duplicaba la regla en dos lugares. */}
+          <span>{ACEPTACION_MENSUALIDAD}</span>
         </label>
 
         {error && (

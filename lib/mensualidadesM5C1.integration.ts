@@ -6,7 +6,7 @@ import { validarSeleccion } from "@/lib/mensualidadesReserva";
 import { disponibilidadDelDia, simuladoresLibresDelDia } from "@/lib/disponibilidad";
 import {
   bloquesDeAgenda, diaHabilitadoPara, diasEntre, fechasPublicas, fechasPublicasPara,
-  horariosPosiblesPara, sumarDias,
+  horariosPosiblesPara, sumarDias, REGLAS_POR_PRODUCTO,
 } from "@/lib/agenda";
 
 // Integración del Bloque M5C.1 contra la DB REAL: las restricciones que son
@@ -236,8 +236,15 @@ async function main() {
     assert.equal(dto.fechas.includes(SABADO), false, "M5C1-A3 el sábado no está en el calendario");
     assert.equal(dto.fechas.includes(DOMINGO), false, "M5C1-A3 el domingo tampoco");
     assert.equal(dto.fechas.every((f: string) => diaHabilitadoPara("mensualidad", f)), true);
-    assert.equal(dto.simuladores_min, 2, "M5C1-A3 el DTO publica el mínimo");
-    assert.equal(dto.simuladores_max, 4, "M5C1-A3 y el máximo");
+    // (M8C) El DTO publica los límites de dominio, sean los que sean: se
+    // comparan contra REGLAS_POR_PRODUCTO en vez de contra números escritos a
+    // mano, para que cambiar la regla no obligue a tocar este archivo.
+    assert.equal(dto.simuladores_min, REGLAS_POR_PRODUCTO.mensualidad.simuladoresMin,
+      "M5C1-A3 el DTO publica el mínimo de dominio");
+    assert.equal(dto.simuladores_max, REGLAS_POR_PRODUCTO.mensualidad.simuladoresMax,
+      "M5C1-A3 y el máximo");
+    assert.equal(dto.simuladores_min, 1, "M5C1-A3 que hoy es 1");
+    assert.equal(dto.simuladores_max, 4, "M5C1-A3 y 4");
 
     // A4 · El saldo no se movió por ninguno de los rechazos.
     const consumido = 30 * 2 * 2; // las dos reservas válidas de arriba
@@ -303,7 +310,9 @@ async function main() {
   }
   console.log("M5C1-B horario 10:00-22:00 con cierre inclusivo OK");
 
-  // ── C · CANTIDAD: 2, 3 o 4 simuladores. Nunca 1, nunca 5 ─────────────────
+  // ── C · CANTIDAD: 1, 2, 3 o 4 simuladores. Nunca 0, nunca 5 ──────────────
+  // (M8C) El mínimo bajó de 2 a 1. Antes este bloque comprobaba lo contrario:
+  // que un solo simulador fuera rechazado en las tres capas.
   {
     const mid = await crearBilletera();
     const tok = (await crearSesion(mid))!;
@@ -311,13 +320,12 @@ async function main() {
     assert.ok(horas.length >= 4, "M5C1-C hacen falta cuatro horarios libres");
     const [h1, h2, h3, h4] = horas.slice(-4);
 
-    // C1 · Uno solo: rechazado en las tres capas, sin tocar el saldo.
+    // C1 · Uno solo: ACEPTADO en las tres capas y consume 15, no 30.
     const v1 = validarSeleccion({
       fecha: VIERNES, hora: h1, duracion_minutos: 15, simuladores: ["Ferrari"],
       acepto_condiciones: true, idempotency_key: clave(),
     }, hoy);
-    assert.equal(v1.ok, false, "M5C1-C1 un simulador no pasa la validación");
-    if (!v1.ok) assert.equal(v1.codigo, "simuladores_invalidos");
+    assert.equal(v1.ok, true, "M5C1-C1 un simulador pasa la validación");
 
     const res1 = await postReservar(pedido("/api/mensualidades/reservar", {
       metodo: "POST", cookie: tok,
@@ -326,18 +334,25 @@ async function main() {
         acepto_condiciones: true, idempotency_key: clave(),
       },
     }));
-    assert.equal(res1.status, 422, "M5C1-C1 el endpoint responde 422");
+    assert.equal(res1.status, 201, "M5C1-C1 el endpoint la crea");
     const cuerpo1 = await res1.json();
-    assert.equal(cuerpo1.codigo, "simuladores_invalidos");
-    assert.match(String(cuerpo1.error), /2 y 4 simuladores/,
-      "M5C1-C1 el mensaje habla de simuladores, no de escuderías");
+    assert.equal(cuerpo1.minutos_consumidos, 15,
+      "M5C1-C1 un simulador durante 15 minutos consume 15, no 30");
+    assert.equal(await saldoDe(mid), 900 - 15, "M5C1-C1 el débito es exacto");
 
-    const rpc1 = await rpcCrear({ mid, fecha: VIERNES, hora: h1, duracion: 15, sims: ["Ferrari"] });
-    assert.ok(String(rpc1.error?.message).includes("cantidad_simuladores_invalida"),
-      `M5C1-C1 la base lo rechaza sola (fue: ${rpc1.error?.message})`);
+    // C1b · Cero simuladores: sigue siendo inválido en las tres capas.
+    const v0 = validarSeleccion({
+      fecha: VIERNES, hora: h2, duracion_minutos: 15, simuladores: [],
+      acepto_condiciones: true, idempotency_key: clave(),
+    }, hoy);
+    assert.equal(v0.ok, false, "M5C1-C1b cero no pasa la validación");
+    if (!v0.ok) assert.equal(v0.codigo, "simuladores_invalidos");
+    const rpc0 = await rpcCrear({ mid, fecha: VIERNES, hora: h2, duracion: 15, sims: [] });
+    assert.ok(String(rpc0.error?.message).includes("cantidad_simuladores_invalida"),
+      `M5C1-C1b la base rechaza cero (fue: ${rpc0.error?.message})`);
 
     // C2 · Dos, tres y cuatro: se crean, y consumen duración x cantidad.
-    let esperado = 900;
+    let esperado = 900 - 15;
     for (const [hora, sims] of [[h2, DOS], [h3, TRES], [h4, CUATRO]] as const) {
       const r = await rpcCrear({ mid, fecha: VIERNES, hora, duracion: 15, sims: [...sims] });
       assert.ok(!r.error, `M5C1-C2 ${sims.length} simuladores tienen que entrar: ${r.error?.message}`);
@@ -361,7 +376,7 @@ async function main() {
     await limpiar();
     billeteras.length = 0;
   }
-  console.log("M5C1-C cantidad de simuladores 2/3/4 OK");
+  console.log("M5C1-C cantidad de simuladores 1/2/3/4 OK");
 
   // ── D · VENTANA Y VIGENCIA ───────────────────────────────────────────────
   {
@@ -510,8 +525,14 @@ async function main() {
     }
     assert.equal(await saldoDe(mid), saldoTrasCrear, "M5C1-F3 reprogramar no cuesta saldo");
 
-    // F4 · Una reserva VIEJA con un solo simulador: no se reprograma, pero SÍ
-    //      se cancela. Las reglas nuevas no reescriben lo que ya existía.
+    // F4 · Una reserva de UN SOLO simulador: se reprograma y se cancela con
+    //      normalidad.
+    //
+    //      (M8C) Este caso comprobaba lo contrario. Con el mínimo en 2, una
+    //      reserva de un simulador quedaba atrapada: existía, pero la RPC de
+    //      reprogramación la rechazaba con cantidad_simuladores_invalida y la
+    //      única salida era cancelarla. Ese callejón sin salida era el defecto,
+    //      no la regla, y M8C lo cerró en las dos funciones.
     const legado = habiles[3];
     const horasLegado = await librisimos(legado, 15);
     const hLegado = horasLegado[horasLegado.length - 1];
@@ -530,19 +551,26 @@ async function main() {
       reserva_id: vieja!.id, fecha: legado, hora: hLegado, simulador: "Alpine", estado: "activa",
     });
 
-    const pVieja = await reprogramarReserva(mid, "RES-ZZZ7-ZZZ7", destino, hDestino, clave());
-    assert.equal(pVieja.ok, false, "M5C1-F4 una reserva de un simulador no se reprograma");
-    if (!pVieja.ok) {
-      assert.equal(pVieja.codigo, "simuladores_invalidos");
-      assert.match(pVieja.error, /cancelar/i, "M5C1-F4 el mensaje ofrece la salida: cancelar");
-    }
+    // Se reprograma a otro día hábil libre, distinto del que usó F3.
+    const legadoDestino = habiles[4];
+    const horasLD = await librisimos(legadoDestino, 15);
+    assert.ok(horasLD.length, "M5C1-F4 hace falta un horario libre de destino");
+    const hLD = horasLD[horasLD.length - 1];
+
+    const saldoAntesF4 = await saldoDe(mid);
+    const pVieja = await reprogramarReserva(mid, "RES-ZZZ7-ZZZ7", legadoDestino, hLD, clave());
+    assert.ok(pVieja.ok,
+      `M5C1-F4 una reserva de un simulador SÍ se reprograma: ${!pVieja.ok ? pVieja.error : ""}`);
     const eVieja2 = await estadoDe("RES-ZZZ7-ZZZ7");
-    assert.equal(eVieja2.fecha, legado, "M5C1-F4 la reserva vieja no se modificó sola");
+    assert.equal(eVieja2.fecha, legadoDestino, "M5C1-F4 quedó en la fecha nueva");
     assert.equal(eVieja2.estado, "activa");
+    assert.equal(await saldoDe(mid), saldoAntesF4, "M5C1-F4 reprogramar no vuelve a debitar");
 
     const cVieja = await cancelarReserva(mid, "RES-ZZZ7-ZZZ7", clave());
-    assert.ok(cVieja.ok, "M5C1-F4 pero cancelarla sí se puede");
+    assert.ok(cVieja.ok, "M5C1-F4 y cancelarla también se puede");
     if (cVieja.ok) assert.equal(cVieja.data.restituyo, true, "M5C1-F4 y devuelve sus minutos");
+    assert.equal(await saldoDe(mid), saldoAntesF4 + 15,
+      "M5C1-F4 la devolución es de 15: lo que consumía un solo simulador");
 
     // F5 · La regla de 24 h sigue mandando (M5C sin tocar).
     const cerca = new Date(Date.now() + 20 * 3600_000 - 3 * 3600_000);

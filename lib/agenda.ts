@@ -61,7 +61,9 @@ export type Producto = "reserva" | "mensualidad";
  *
  * Reservas normales conservan exactamente lo que tenían: todos los días
  * (semana y fin de semana), 15 y 30 minutos, de 1 a 4 simuladores.
- * Mensualidades es más acotada: solo días hábiles y mínimo 2 simuladores.
+ * Mensualidades es más acotada SOLO en el calendario: días hábiles y
+ * duraciones de hasta 60 minutos. La cantidad de simuladores es la misma que
+ * en Reservas normales, de 1 a 4.
  */
 export type ReglasProducto = {
   /** Duraciones que ese producto puede pedir. */
@@ -92,10 +94,14 @@ export const REGLAS_POR_PRODUCTO: Record<Producto, ReglasProducto> = {
     diasHabilitados: TODOS_LOS_DIAS,
     cierreMin: CIERRE_22,
   },
-  // (M5C.1) Mensualidades: lunes a viernes y de 2 a 4 simuladores.
+  // (M5C.1) Mensualidades: lunes a viernes, 15/30/45/60 minutos.
+  // (M8C) El mínimo vuelve a 1. M5C.1 lo había subido a 2 por una lectura
+  // equivocada del producto: nada en el negocio impide usar el saldo en un solo
+  // simulador, y el consumo —duración × cantidad— ya cobra lo justo en cualquier
+  // caso. El mínimo de 2 solo bloqueaba a quien viene a manejar solo.
   mensualidad: {
     duraciones: [15, 30, 45, 60],
-    simuladoresMin: 2,
+    simuladoresMin: 1,
     simuladoresMax: 4,
     diasHabilitados: LUNES_A_VIERNES,
     cierreMin: CIERRE_22,
@@ -281,7 +287,7 @@ export function diaHabilitadoPara(producto: Producto, fecha: string): boolean {
   return REGLAS_POR_PRODUCTO[producto].diasHabilitados.includes(diaDeLaSemana(fecha));
 }
 
-/** Cantidad de simuladores admitida por el producto. Mensualidades: de 2 a 4. */
+/** Cantidad de simuladores admitida por el producto. Hoy los dos: de 1 a 4. */
 export function cantidadSimuladoresValidaPara(producto: Producto, n: unknown): boolean {
   if (typeof n === "string" && !/^\d+$/.test(n)) return false;
   const v = Number(n);

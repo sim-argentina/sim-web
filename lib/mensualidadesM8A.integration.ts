@@ -1,4 +1,7 @@
 import { strict as assert } from "node:assert";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { sumarDias } from "@/lib/agenda";
@@ -31,6 +34,49 @@ import { getMiPlan } from "@/lib/mensualidadesMiPlan";
 
 const MARCA = `ZZ M8A ${Date.now()}`;
 const EMAIL = `m8a-${Date.now()}@test.local`;
+
+// ── EL INTERRUPTOR COMERCIAL ES DE PRODUCCIÓN ───────────────────────────────
+//
+// Esta suite apaga y prende `ventas_publicas_habilitadas`, que es la llave real
+// con la que se compran mensualidades. El 2026-09-20 dejó las ventas pausadas
+// 75 segundos: se había escrito antes del lanzamiento, cuando producción estaba
+// en `false`, y tenía esa suposición incrustada —exigía arrancar en false y
+// fijaba false a mano al terminar—. Nadie intentó comprar en ese rato, pero el
+// riesgo era real y silencioso.
+//
+// Lo que cambió:
+//   · no se corre sola: hace falta pedirlo explícitamente (ver ARRANQUE);
+//   · lee y guarda el estado real ANTES de tocarlo;
+//   · si no puede leerlo, aborta sin escribir nada;
+//   · nunca usa `false` —ni ningún literal— como valor a restaurar;
+//   · restaura en `finally`, ante señales, y comprueba la postcondición;
+//   · si un corte brutal impide todo eso, deja un resguardo en disco que la
+//     próxima corrida detecta y repara antes de hacer nada más.
+
+/** Hace falta pedir esto a propósito. Sin la variable, la suite no corre. */
+const PERMISO = "M8A_VENTAS_REALES";
+
+/**
+ * Resguardo en disco con el valor original. Se escribe ANTES de tocar la
+ * configuración y se borra recién cuando la restauración quedó verificada.
+ * Sobrevive a un SIGKILL, que es lo único que ni el `finally` ni las señales
+ * pueden atrapar.
+ */
+const RESGUARDO = join(tmpdir(), "sim-m8a-ventas-publicas.json");
+
+/**
+ * Cómo estaban las ventas públicas ANTES de correr esto. `null` significa que
+ * todavía no se leyó, y en ese caso NO se toca nada: sin un valor real que
+ * restaurar, la suite no tiene derecho a escribir la configuración.
+ */
+let estadoInicial: boolean | null = null;
+
+/**
+ * Cuántas auditorías de `config_ventas_publicas` había ANTES de esta corrida.
+ * La suite tiene que terminar sin haber agregado ninguna propia; las que ya
+ * existían —el lanzamiento, por ejemplo— son historia real y se conservan.
+ */
+let auditoriasConfigAlInicio = 0;
 const billeteras = new Set<string>();
 const compras = new Set<string>();
 const claves = new Set<string>();
@@ -50,11 +96,79 @@ async function hoyCordoba(): Promise<string> {
   return String(data);
 }
 
-/** Estado crudo de la configuración, sin pasar por el helper. */
+/**
+ * Estado crudo de la configuración, sin pasar por el helper.
+ *
+ * LANZA si no puede leerlo. Antes devolvía `false` ante cualquier problema, y
+ * ese `false` terminaba siendo el valor que se "restauraba": un error de
+ * lectura podía apagar las ventas. Un valor desconocido no es un valor.
+ */
 async function estadoEnBase(): Promise<boolean> {
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("mensualidad_config").select("ventas_publicas_habilitadas").eq("id", 1).single();
-  return data!.ventas_publicas_habilitadas === true;
+  if (error) throw new Error(`no se pudo leer el estado comercial: ${error.message}`);
+  const v = data?.ventas_publicas_habilitadas;
+  if (typeof v !== "boolean") {
+    throw new Error(`el estado comercial no es booleano: ${JSON.stringify(v)}`);
+  }
+  return v;
+}
+
+/** Escribe el interruptor. Solo se llama con un booleano explícito. */
+async function escribirEstado(valor: boolean): Promise<void> {
+  const { error } = await supabaseAdmin.from("mensualidad_config")
+    .update({ ventas_publicas_habilitadas: valor }).eq("id", 1);
+  if (error) throw new Error(`no se pudo escribir el estado comercial: ${error.message}`);
+}
+
+/**
+ * Repara una corrida anterior que murió sin restaurar. Se ejecuta ANTES de
+ * cualquier otra cosa: si hay resguardo, ese valor es el que producción debería
+ * tener, y se repone antes de seguir.
+ */
+async function repararCorridaAnterior(): Promise<void> {
+  if (!existsSync(RESGUARDO)) return;
+  let guardado: unknown;
+  try {
+    guardado = JSON.parse(readFileSync(RESGUARDO, "utf8"));
+  } catch {
+    console.error(`AVISO: resguardo ilegible en ${RESGUARDO}. Revisalo a mano y borralo.`);
+    return;
+  }
+  const valor = (guardado as { valor?: unknown })?.valor;
+  if (typeof valor !== "boolean") {
+    console.error(`AVISO: resguardo sin valor usable. Revisalo a mano: ${RESGUARDO}`);
+    return;
+  }
+  const actual = await estadoEnBase();
+  if (actual !== valor) {
+    await escribirEstado(valor);
+    console.error(
+      `REPARADO: una corrida anterior dejó ventas_publicas_habilitadas en ${actual}; ` +
+      `se restauró a ${valor}, que es como estaba antes de aquella corrida.`,
+    );
+  }
+  rmSync(RESGUARDO, { force: true });
+}
+
+/** Devuelve el interruptor a como estaba y verifica que quedó así. */
+async function restaurarEstado(): Promise<void> {
+  if (estadoInicial === null) {
+    // Nunca se leyó, así que tampoco se escribió: no hay nada que devolver.
+    rmSync(RESGUARDO, { force: true });
+    return;
+  }
+  await escribirEstado(estadoInicial);
+  const quedo = await estadoEnBase();
+  if (quedo !== estadoInicial) {
+    console.error(
+      `ALERTA: ventas_publicas_habilitadas quedó en ${quedo} y tenía que volver a ` +
+      `${estadoInicial}. El resguardo se conserva en ${RESGUARDO}.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  rmSync(RESGUARDO, { force: true });
 }
 
 const auditoriasDeConfig = async () => {
@@ -98,9 +212,22 @@ async function main() {
   const antes = await contarTodo();
   console.log("contadores antes:", JSON.stringify(antes));
 
-  // El estado REAL con el que arranca todo. Se restaura al final pase lo que pase.
-  const estadoInicial = await estadoEnBase();
-  assert.equal(estadoInicial, false, "M8A arranca con las ventas PAUSADAS en producción");
+  auditoriasConfigAlInicio = (await supabaseAdmin.from("mensualidad_auditoria")
+    .select("*", { count: "exact", head: true }).eq("accion", "config_ventas_publicas")).count ?? 0;
+
+  // La suite NO opina sobre cómo tiene que estar producción: anota cómo la
+  // encontró —sea true o false—, la deja como necesitan sus casos y después la
+  // devuelve exactamente a ese valor. Si la lectura falla, estadoEnBase() lanza
+  // y no se escribe nada.
+  estadoInicial = await estadoEnBase();
+  console.log(`estado comercial encontrado: ${estadoInicial} (se restaurará a ese valor)`);
+
+  // El resguardo se escribe ANTES del primer cambio. A partir de acá, aunque el
+  // proceso muera de la peor manera, la próxima corrida sabe qué reponer.
+  writeFileSync(RESGUARDO, JSON.stringify({ valor: estadoInicial, ts: new Date().toISOString() }), "utf8");
+
+  if (estadoInicial) await escribirEstado(false);
+  assert.equal(await estadoEnBase(), false, "M8A necesita arrancar sus casos con las ventas pausadas");
 
   // ── 1 · Valor inicial y lectura ───────────────────────────────────────────
   {
@@ -397,25 +524,66 @@ async function main() {
   assert.equal(despues.pagos_web, antes.pagos_web, "fin_pagos_web no cambia");
 }
 
-main()
+// ── ARRANQUE ────────────────────────────────────────────────────────────────
+// Sin permiso explícito la suite no corre. Así no puede colarse en una batería
+// desatendida contra producción, que es como terminó pausando las ventas.
+if (process.env[PERMISO] !== "1") {
+  console.log(
+    "\nOMITIDA: mensualidadesM8A.integration.ts NO se ejecutó.\n" +
+    "Enciende y apaga ventas_publicas_habilitadas, que es la llave comercial REAL\n" +
+    "de producción, así que no corre dentro de una batería desatendida.\n" +
+    `Para correrla a propósito: ${PERMISO}=1 npx tsx --env-file=.env.local lib/mensualidadesM8A.integration.ts\n`,
+  );
+  process.exit(0);
+}
+
+// Señales que SÍ se pueden atrapar: se restaura antes de irse. Un SIGKILL no se
+// puede interceptar, y para ese caso está el resguardo en disco.
+for (const senal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.once(senal, () => {
+    void (async () => {
+      console.error(`\n${senal}: restaurando el estado comercial antes de salir…`);
+      try { await restaurarEstado(); } catch (e) { console.error("no se pudo restaurar:", e); }
+      process.exit(1);
+    })();
+  });
+}
+
+repararCorridaAnterior()
+  .then(main)
   .catch((e) => { console.error("\nFALLÓ:", e instanceof Error ? e.message : e); process.exitCode = 1; })
   .finally(async () => {
     await limpiar();
-    // SIEMPRE se deja pausado: es el estado de producción durante M8A.
-    await supabaseAdmin.from("mensualidad_config")
-      .update({ ventas_publicas_habilitadas: false }).eq("id", 1);
+    // El interruptor vuelve a como estaba. Nunca a un literal.
+    await restaurarEstado();
 
     const { count: bill } = await supabaseAdmin.from("mensualidades")
       .select("*", { count: "exact", head: true }).eq("titular_email", EMAIL);
     const { count: comp } = await supabaseAdmin.from("mensualidad_compras")
       .select("*", { count: "exact", head: true }).eq("comprador_email", EMAIL);
-    const { count: aud } = await supabaseAdmin.from("mensualidad_auditoria")
+    // (M8C) Las auditorías de config se comparan contra el CONTEO INICIAL, no
+    // contra cero. El lanzamiento dejó una entrada legítima y real, y exigir
+    // cero convertía ese registro verdadero en un falso positivo eterno.
+    const { count: audTotal } = await supabaseAdmin.from("mensualidad_auditoria")
       .select("*", { count: "exact", head: true }).eq("accion", "config_ventas_publicas");
+    const aud = (audTotal ?? 0) - auditoriasConfigAlInicio;
     const { data: cfg } = await supabaseAdmin.from("mensualidad_config")
       .select("ventas_publicas_habilitadas").eq("id", 1).single();
 
-    console.log(`limpieza: ${bill ?? 0} billeteras, ${comp ?? 0} compras y ${aud ?? 0} auditorías de config (deben ser 0)`);
-    console.log(`ventas_publicas_habilitadas = ${cfg?.ventas_publicas_habilitadas} (debe ser false)`);
-    if ((bill ?? 0) !== 0 || (comp ?? 0) !== 0 || (aud ?? 0) !== 0) process.exitCode = 1;
-    if (cfg?.ventas_publicas_habilitadas !== false) process.exitCode = 1;
+    console.log(`limpieza: ${bill ?? 0} billeteras, ${comp ?? 0} compras y ${aud} auditorías de config NUEVAS (deben ser 0)`);
+    if ((bill ?? 0) !== 0 || (comp ?? 0) !== 0 || aud !== 0) process.exitCode = 1;
+
+    // POSTCONDICIÓN: terminó exactamente donde empezó, sea cual sea ese valor.
+    console.log(
+      `ventas_publicas_habilitadas = ${cfg?.ventas_publicas_habilitadas} ` +
+      `(tenía que volver a ${estadoInicial})`,
+    );
+    if (cfg?.ventas_publicas_habilitadas !== estadoInicial) {
+      console.error("ALERTA: el estado comercial NO volvió a como estaba.");
+      process.exitCode = 1;
+    }
+    if (existsSync(RESGUARDO)) {
+      console.error(`ALERTA: quedó un resguardo sin cerrar en ${RESGUARDO}.`);
+      process.exitCode = 1;
+    }
   });

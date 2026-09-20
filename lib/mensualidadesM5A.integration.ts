@@ -305,9 +305,10 @@ async function main() {
     const malos: Array<[string, () => PromiseLike<{ error: unknown }>]> = [
       ["duración 20", () => supabaseAdmin.rpc("crear_reserva_mensualidad", { p_mensualidad_id: m.id, p_fecha: limite, p_hora: H1, p_duracion: 20, p_simuladores: DOS, p_slots: [H1], p_idempotency_key: nuevaClave(), p_condiciones_version: "v" })],
       ["0 simuladores", () => rpc(m.id, limite, H1, 15, [], nuevaClave())],
-      // (M5C.1) Uno solo ya no alcanza, aunque el simulador esté libre.
-      ["1 simulador", () => rpc(m.id, limite, H1, 15, ["Ferrari"], nuevaClave())],
-      // (M5C.1) Y el día tiene que ser hábil, aunque todo lo demás esté bien.
+      // (M8C) "1 simulador" ya NO está en esta lista: M5C.1 lo daba por
+      // inválido y M8C lo devolvió a válido. Se comprueba abajo, como caso
+      // legítimo, que es lo que ahora corresponde.
+      // (M5C.1) El día tiene que ser hábil, aunque todo lo demás esté bien.
       ["sábado", () => rpc(m.id, sabadoDeLaVentana, "11:00", 15, DOS, nuevaClave())],
       ["5 simuladores", () => rpc(m.id, limite, H1, 15, ["Ferrari", "McLaren", "Red Bull", "Alpine", "Ferrari"], nuevaClave())],
       ["duplicado", () => rpc(m.id, limite, H1, 30, ["Ferrari", "Ferrari"], nuevaClave())],
@@ -321,6 +322,14 @@ async function main() {
       assert.ok(r.error, `M5A-15/17/18/19 "${nota}" tiene que fallar`);
     }
     assert.equal(await saldoDe(m.id), 600, "ninguna entrada manipulada tocó el saldo");
+
+    // (M8C) UN simulador es una selección legítima y descuenta lo que
+    // corresponde: 15 minutos, no 30. Antes esto vivía en la lista de entradas
+    // rechazadas.
+    const rUno = await rpc(m.id, limite, H1, 15, ["Ferrari"], nuevaClave());
+    assert.ok(!rUno.error, `M5A-20b un simulador tiene que entrar: ${rUno.error?.message}`);
+    assert.equal(await saldoDe(m.id), 600 - 15, "M5A-20b descuenta 15, no 30");
+
     await limpiar();
     creados.mensualidades.length = 0;
   }
@@ -832,9 +841,15 @@ main()
   .catch((e) => { console.error("\nFALLÓ:", e instanceof Error ? e.message : e); process.exitCode = 1; })
   .finally(async () => {
     await limpiar();
+    // (M8C) Se cuenta SOLO lo que creó esta corrida, por el email marcado.
+    // Antes contaba todas las reservas con origen 'mensualidad' del sistema y
+    // avisaba "debe ser 0": desde que existe una mensualidad real con
+    // historial, ese cartel informaba una fuga que no existía.
     const { count } = await supabaseAdmin.from("reservas")
-      .select("*", { count: "exact", head: true }).eq("origen", "mensualidad");
+      .select("*", { count: "exact", head: true })
+      .eq("origen", "mensualidad").eq("email", `${MARCA}@test.local`);
     const { count: cm } = await supabaseAdmin.from("mensualidades")
       .select("*", { count: "exact", head: true }).eq("titular_email", `${MARCA}@test.local`);
-    console.log(`limpieza: ${count ?? 0} reservas de mensualidad y ${cm ?? 0} billeteras temporales (debe ser 0 y 0)`);
+    console.log(`limpieza: ${count ?? 0} reservas y ${cm ?? 0} billeteras de ESTA corrida (deben ser 0 y 0)`);
+    if ((count ?? 0) !== 0 || (cm ?? 0) !== 0) process.exitCode = 1;
   });

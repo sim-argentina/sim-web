@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Check, Loader2, RefreshCw, AlertTriangle } from "lucide-react";
+import SelectorFecha from "./SelectorFecha";
 
 // Pantalla de reserva con saldo (Bloque M5A).
 //
@@ -138,9 +139,11 @@ export default function ReservarConMensualidad({
     [disp, hora],
   );
 
-  // (M5C.1) Los límites llegan del servidor. El fallback 2..4 solo cubre el
-  // instante previo a la primera respuesta, cuando todavía no hay nada elegido.
-  const minSims = disp?.simuladores_min ?? 2;
+  // Los límites llegan del servidor. El fallback solo cubre el instante previo a
+  // la primera respuesta, cuando todavía no hay nada elegido.
+  // (M8C) El fallback pasa de 2 a 1: si se quedaba en 2, durante ese instante la
+  // pantalla pedía dos simuladores para algo que el servidor ya acepta con uno.
+  const minSims = disp?.simuladores_min ?? 1;
   const maxSims = disp?.simuladores_max ?? 4;
 
   const minutos = duracion * sims.length;
@@ -265,32 +268,32 @@ export default function ReservarConMensualidad({
   // ── Selección ─────────────────────────────────────────────────────────────
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-      <div className={CAJA}>
+      {/* (M8C) `min-w-0` es imprescindible: un ítem de grilla tiene
+          `min-width: auto` y no puede achicarse por debajo de su contenido
+          mínimo. El control de fecha, que muestra la fecha completa en una
+          línea, fijaba ese mínimo en 300 px y a 320 px empujaba la tarjeta
+          entera fuera de la pantalla. Como `overflow-x` está en `hidden`, no
+          aparecía barra: simplemente se recortaba. Con min-w-0 la tarjeta se
+          adapta y el `truncate` del control hace su trabajo. */}
+      <div className={`${CAJA} min-w-0`}>
         <h1 className="text-2xl font-black md:text-3xl">Elegí tu turno</h1>
         <p className="mt-2 text-sm text-zinc-400">
           Tenés {minutosATexto(saldo)} de saldo. Tu mensualidad vence el{" "}
           {fechaLarga(venceEl).toLocaleLowerCase("es-AR")}.
         </p>
 
-        {/* FECHA */}
+        {/* FECHA
+            (M8C) Una sola fecha a la vista. Las otras están en el calendario,
+            que solo deja elegir las que mandó el servidor: `fechas` es la única
+            fuente de lo que es seleccionable. */}
         <div className="mt-7">
-          <p className={ROTULO}>Fecha</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {fechas.map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => void cambiarFecha(f)}
-                className={`rounded-2xl border px-4 py-2.5 text-left text-xs font-bold transition ${
-                  f === fecha
-                    ? "border-red-500 bg-red-500/10 text-white"
-                    : "border-white/10 text-zinc-400 hover:border-white/30"
-                }`}
-              >
-                {fechaLarga(f)}
-              </button>
-            ))}
-          </div>
+          <SelectorFecha
+            fechas={fechas}
+            valor={fecha}
+            etiquetaLarga={fechaLarga}
+            onElegir={(f) => void cambiarFecha(f)}
+            deshabilitado={enviando}
+          />
         </div>
 
         {/* DURACIÓN */}
@@ -377,6 +380,7 @@ export default function ReservarConMensualidad({
             </div>
             <p className="mt-2 text-xs text-zinc-600">
               Elegí entre {minSims} y {maxSims} simuladores. Solo aparecen los libres durante todo el turno.
+              {" "}Cada uno consume {duracion} minutos.
             </p>
           </div>
         )}
@@ -410,12 +414,15 @@ export default function ReservarConMensualidad({
           <p className="mt-1 text-2xl font-black">
             {minutos > 0 ? minutosATexto(minutos) : "—"}
           </p>
+          {/* (M8C) Con el mínimo en 1 el singular existe de verdad: "1
+              simuladores" se leería mal, y el aviso de "elegí al menos 1
+              simuladores" peor todavía. */}
           <p className="mt-1 text-xs text-zinc-500">
             {sims.length >= minSims
-              // Con el mínimo en 2 siempre es plural, pero el plural correcto
-              // de "simulador" es "simuladores", no "simuladors".
-              ? `${duracion} min x ${sims.length} simuladores`
-              : `Elegí al menos ${minSims} simuladores`}
+              ? `${duracion} min x ${sims.length} ${sims.length === 1 ? "simulador" : "simuladores"}`
+              : minSims === 1
+                ? "Elegí al menos un simulador"
+                : `Elegí al menos ${minSims} simuladores`}
           </p>
           <p className="mt-3 text-xs text-zinc-500">
             Saldo actual: <span className="font-bold text-zinc-300">{minutosATexto(saldo)}</span>

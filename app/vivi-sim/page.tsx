@@ -35,9 +35,13 @@ type Stat = { icon: React.ReactNode; label: string; value: string };
 // no desbordar. Con 2 cards queda exactamente como estaba en producción.
 function StatRow({ stats, compacto }: { stats: Stat[]; compacto: boolean }) {
   const pad = compacto ? "px-3 lg:px-2" : "px-3";
+  // (M8C) El rótulo más largo pasó de "Pilotos" (7) a "Simuladores" (11). A
+  // 320 px llegaba justo al borde de la tarjeta, invadiendo su padding: entraba
+  // por un píxel. Se achica el cuerpo y se afloja el interletrado SOLO en el
+  // ancho más angosto; desde sm queda exactamente como estaba.
   const label = compacto
-    ? "text-[9px] md:text-[10px] lg:text-[9px]"
-    : "text-[9px] md:text-[10px]";
+    ? "text-[8px] tracking-[0.06em] sm:text-[9px] sm:tracking-[0.12em] md:text-[10px] lg:text-[9px]"
+    : "text-[9px] tracking-[0.12em] md:text-[10px]";
   const valor = compacto
     ? "text-lg md:text-2xl lg:text-base xl:text-lg"
     : "text-lg md:text-2xl";
@@ -48,7 +52,7 @@ function StatRow({ stats, compacto }: { stats: Stat[]; compacto: boolean }) {
         <div key={s.label} className={`${pad} first:pl-0 last:pr-0`}>
           <div className="mb-2 flex items-center gap-1.5 text-red-500">
             {s.icon}
-            <span className={`font-black uppercase tracking-[0.12em] text-zinc-500 ${label}`}>
+            <span className={`font-black uppercase text-zinc-500 ${label}`}>
               {s.label}
             </span>
           </div>
@@ -65,6 +69,7 @@ function ExperienceCard({
   href,
   image,
   imageAlt,
+  imagePos,
   badge,
   title,
   titleClass,
@@ -77,7 +82,14 @@ function ExperienceCard({
 }: {
   href: string;
   image: string;
+  /** Vacío = decorativa: la card ya dice en texto todo lo que la imagen muestra. */
   imageAlt: string;
+  /**
+   * (M8C) Recorte vertical. Las fotos de las otras dos cards funcionan
+   * centradas; la credencial de Mensualidades es un objeto concreto que no
+   * puede quedar cortado, así que esa card fija su propio punto.
+   */
+  imagePos?: string;
   badge: string;
   title: string;
   titleClass: string;
@@ -101,7 +113,7 @@ function ExperienceCard({
           fill
           priority={priority}
           sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw"
-          className="object-cover transition-transform duration-[900ms] ease-out group-hover:scale-[1.07]"
+          className={`object-cover transition-transform duration-[900ms] ease-out group-hover:scale-[1.07] ${imagePos ?? ""}`}
         />
         {/* Funde la imagen hacia el cuerpo de la card */}
         <div className="absolute inset-0 bg-gradient-to-t from-[#0b0b0d] via-[#0b0b0d]/55 to-transparent" />
@@ -248,8 +260,13 @@ export default function ViviSimPage() {
           {conMensualidades && (
             <ExperienceCard
               href="/mensualidades"
-              image="/sim-driver.jpg"
-              imageAlt="Piloto en un simulador de SIM Argentina"
+              image="/sim-mensualidades.webp"
+              // (M8C) Decorativa a propósito: la credencial muestra "membresía"
+              // y "30 días", que es exactamente lo que ya dicen el título, la
+              // descripción y los stats. Con texto alternativo, un lector de
+              // pantalla leería dos veces lo mismo.
+              imageAlt=""
+              imagePos="object-[50%_42%]"
               badge="Plan prepago"
               title="Mensualidades"
               titleClass={tituloCls}
@@ -258,7 +275,7 @@ export default function ViviSimPage() {
               stats={[
                 { icon: <Clock3 className={iconCls} />, label: "Desde", value: "$30.000" },
                 { icon: <CalendarCheck className={iconCls} />, label: "Validez", value: "30 días" },
-                { icon: <Users className={iconCls} />, label: "Pilotos", value: "1-4" },
+                { icon: <Users className={iconCls} />, label: "Simuladores", value: "1–4" },
               ]}
               cta="Ver mensualidades"
               ctaVariant={variante("primary")}

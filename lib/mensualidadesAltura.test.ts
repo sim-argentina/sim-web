@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
 import { ALTURA_MINIMA_M, PESO_MAXIMO_KG, REQUISITOS_TEXTO } from "@/lib/requisitos";
 import {
-  CONDICIONES_MENSUALIDAD, CONDICIONES_RESERVA,
+  CONDICIONES_MENSUALIDAD_TEXTO, CONDICIONES_RESERVA,
   CONDICIONES_VERSION, CONDICIONES_RESERVA_VERSION,
 } from "@/lib/mensualidadesCondiciones";
 
@@ -32,7 +32,7 @@ const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
 // ── 2) Las condiciones de Mensualidades dicen 1,40 m ────────────────────────
 {
-  const compra = CONDICIONES_MENSUALIDAD.join(" ");
+  const compra = CONDICIONES_MENSUALIDAD_TEXTO.join(" ");
   const reserva = CONDICIONES_RESERVA.join(" ");
 
   assert.ok(compra.includes("1,40 m"), "la compra declara 1,40 m");
