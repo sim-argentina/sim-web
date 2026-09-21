@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { cancelarReserva, reprogramarReserva } from "@/lib/mensualidadesGestionReserva";
 import { crearSesion, revocarSesion } from "@/lib/mensualidadSesion";
-import { diasEntre, fechasPublicasPara } from "@/lib/agenda";
+import { diasEntre, esFinDeSemana, fechasPublicasPara } from "@/lib/agenda";
 
 // Integración del Bloque M5C contra la DB REAL, con datos TEMPORALES marcados
 // con MARCA y eliminados al final.
@@ -125,10 +125,13 @@ async function limpiar() {
 
 async function main() {
   const hoy = await hoyCordoba();
-  // (M5C.1) Mensualidades opera de lunes a viernes: las dos fechas de trabajo
-  // salen de la ventana hábil, no de un offset fijo que puede caer sábado.
-  const habiles = fechasPublicasPara("mensualidad", hoy);
-  assert.ok(habiles.length >= 7, "la ventana hábil necesita al menos siete días");
+  // (M8C.1) Mensualidades opera los siete días, pero este archivo trabaja con
+  // horarios de tarde (16:00) que solo existen de lunes a viernes: el fin de
+  // semana la grilla termina a las 14:00. Así que las dos fechas de trabajo se
+  // eligen entre semana, no porque el sábado esté cerrado sino porque a esa
+  // hora no hay agenda.
+  const habiles = fechasPublicasPara("mensualidad", hoy).filter((f) => !esFinDeSemana(f));
+  assert.ok(habiles.length >= 7, "la ventana necesita al menos siete días de semana");
   const D5 = habiles[3];
   const D8 = habiles[6];
   console.log(`base: hoy=${hoy} dias hábiles de trabajo=${D5} y ${D8}`);
@@ -392,8 +395,11 @@ async function main() {
   // ── M5C-13 · No-show: ni cancelación ni reprogramación, sin restitución ─
   {
     const mid = await crearBilletera(120);
-    const r = await crearReserva({ mid, fecha: D5, hora: "09:00", duracion: 15,
-      sims: ["Red Bull", "Alpine"], slots: ["09:00"] });
+    // (M8C.1) Antes este caso usaba las 09:00, que NO es un horario de inicio:
+    // la RPC vieja lo aceptaba porque solo miraba que el turno terminara antes
+    // de las 22:00. Ahora la base exige que el inicio exista en la grilla.
+    const r = await crearReserva({ mid, fecha: D5, hora: "19:00", duracion: 15,
+      sims: ["Red Bull", "Alpine"], slots: ["19:00"] });
     await supabaseAdmin.from("reservas").update({ no_show: true }).eq("id", r.reservaId);
     const saldoAntes = await saldoDe(mid);
 

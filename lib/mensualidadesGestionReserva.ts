@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  bloquesDeAgendaPara, cantidadSimuladoresValidaPara, diaHabilitadoPara,
+  bloquesDeAgendaPara, cantidadSimuladoresValidaPara, diaHabilitadoPara, limiteDeTurno,
   fechaDentroDeVentana, fechaValida, horariosDe,
 } from "@/lib/agenda";
 import { hayDisponibilidadPara } from "@/lib/disponibilidad";
@@ -254,9 +254,10 @@ export async function reprogramarReserva(
     return fail(422, "fecha_fuera_de_ventana",
       "Solo se puede reservar desde mañana y hasta 15 días de anticipación.");
   }
-  // (M5C.1) Mensualidades opera de lunes a viernes: no se reprograma a un finde.
+  // (M8C.1) Los siete días están habilitados; esta guarda queda para fechas
+  // inexistentes. Que el turno entre en el horario del día lo comprueba la RPC.
   if (!diaHabilitadoPara("mensualidad", fecha)) {
-    return fail(422, "dia_no_habilitado", "Con la mensualidad se reserva de lunes a viernes.");
+    return fail(422, "dia_no_habilitado", "Elegí una fecha válida.");
   }
   if (!horariosDe(fecha).includes(hora)) {
     return fail(422, "hora_invalida", "Elegí un horario válido.");
@@ -273,11 +274,19 @@ export async function reprogramarReserva(
       "Esa reserva no cumple las condiciones actuales y no se puede reprogramar. Podés cancelarla.");
   }
 
-  // (M5C.1) El turno nuevo también tiene que terminar antes del cierre.
+  // (M8C.1) El turno nuevo tiene que caber en el horario de SU día, y la fecha
+  // nueva puede limitarse distinto que la vieja: mover un turno de un martes a
+  // un sábado cambia "terminar antes de las 22:00" por "empezar a las 14:00 o
+  // antes". El mensaje nombra el límite de la fecha NUEVA.
   const bloques = bloquesDeAgendaPara("mensualidad", fecha, hora, actual.duracion);
   if (!bloques) {
+    const limite = limiteDeTurno("mensualidad", fecha);
+    const grilla = horariosDe(fecha);
+    const detalle = limite.tipo === "ultimoInicio"
+      ? `el último horario para empezar es ${grilla[grilla.length - 1]}`
+      : `la experiencia tiene que terminar antes de las ${String(Math.floor(limite.minuto / 60)).padStart(2, "0")}:${String(limite.minuto % 60).padStart(2, "0")}`;
     return fail(422, "sin_bloques",
-      "Ese horario no sirve para la duración de tu reserva: la experiencia tiene que terminar antes de las 22:00.");
+      `Ese horario no sirve para la duración de tu reserva: ${detalle}.`);
   }
 
   // Disponibilidad real (M6) ANTES de tocar nada, salvo que sea el mismo turno:

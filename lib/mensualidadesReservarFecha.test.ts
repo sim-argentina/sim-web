@@ -2,14 +2,16 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  fechasPublicasPara, diaHabilitadoPara, sumarDias, REGLAS_POR_PRODUCTO,
+  fechasPublicasPara, fechasPublicas, diaHabilitadoPara, sumarDias,
+  horariosDe, horariosPosiblesPara, REGLAS_POR_PRODUCTO,
+  WEEKDAY_SLOTS, WEEKEND_SLOTS,
 } from "@/lib/agenda";
 
 // Guarda de la FECHA de /mensualidades/reservar.
 // Sin DB, sin red, con el calendario congelado en fechas concretas.
 // Ejecutar: npx tsx --env-file=.env.local lib/mensualidadesReservarFecha.test.ts
 //
-// EL DEFECTO (M8B.2.1)
+// EL DEFECTO HISTÓRICO (M8B.2.1)
 // El componente arrancaba calculando "mañana" en el navegador y mandándolo a
 // /api/mensualidades/disponibilidad, dando por sentado que mañana siempre era
 // un día operativo. Dejó de ser cierto en M5C.1, cuando Mensualidades pasó a
@@ -27,6 +29,12 @@ import {
 // M8C cambió la PRESENTACIÓN, no la fuente: las diez fechas dejaron de ser diez
 // botones apilados y pasaron a un calendario que se abre. Lo que se puede
 // elegir sigue siendo exactamente lo que mandó el servidor.
+//
+// M8C.1 devolvió los fines de semana, así que "mañana" vuelve a ser siempre una
+// fecha válida y aquel defecto ya no se puede reproducir. El arreglo se queda
+// igual: que hoy el cliente acertara por casualidad no lo autoriza a decidir el
+// calendario. El día que se cierre un feriado o una franja, el defecto volvería
+// idéntico. Por eso los grupos 5 en adelante siguen vigilando la ESTRUCTURA.
 
 const ROOT = process.cwd();
 const src = readFileSync(join(ROOT, "app/mensualidades/reservar/ReservarConMensualidad.tsx"), "utf8");
@@ -37,59 +45,67 @@ const api = readFileSync(join(ROOT, "app/api/mensualidades/disponibilidad/route.
 const SABADO = "2026-09-19";
 const VIERNES = "2026-09-25";
 
-// ── 1) El caso que rompía, con el reloj congelado ───────────────────────────
+// ── 1) La ventana siempre arranca en una fecha que el servidor ofrece ──────
+// (M8C.1) El DISPARADOR de aquel defecto desapareció: con los siete días
+// habilitados, "mañana" vuelve a ser siempre una fecha pública. El arreglo
+// estructural NO desaparece con él, y es lo que vigilan los grupos 5 en
+// adelante: el cliente no puede volver a decidir el calendario por su cuenta,
+// aunque hoy acertara por casualidad. Si mañana se restringiera otra vez algún
+// día —un feriado, una franja cerrada—, el defecto volvería intacto.
 {
   for (const [hoy, dia] of [[SABADO, "sábado"], [VIERNES, "viernes"]] as const) {
-    const manana = sumarDias(hoy, 1);
     const publicas = fechasPublicasPara("mensualidad", hoy);
-
-    assert.ok(!publicas.includes(manana),
-      `${dia} ${hoy}: "mañana" (${manana}) NO es una fecha pública — por eso pedirla rompía`);
-    assert.ok(!diaHabilitadoPara("mensualidad", manana),
-      `${dia}: ${manana} no es día operativo`);
-
-    assert.ok(publicas.length > 0, `${dia}: hay fechas operativas disponibles`);
+    assert.ok(publicas.length > 0, `${dia}: hay fechas disponibles`);
+    assert.equal(publicas[0], sumarDias(hoy, 1),
+      `${dia}: hoy la primera fecha es mañana, porque ningún día está cerrado`);
     assert.ok(diaHabilitadoPara("mensualidad", publicas[0]),
-      `${dia}: la primera fecha pública (${publicas[0]}) SÍ es operativa`);
+      `${dia}: la primera fecha pública es operativa`);
   }
 }
 
 // ── 2) Los siete días de la semana ──────────────────────────────────────────
 {
-  const rotosAntes: string[] = [];
   for (let i = 0; i < 7; i++) {
     const hoy = sumarDias(SABADO, i);
     const publicas = fechasPublicasPara("mensualidad", hoy);
-    const manana = sumarDias(hoy, 1);
-
-    assert.ok(publicas.length > 0, `${hoy}: la ventana nunca queda vacía`);
+    assert.equal(publicas.length, 15, `${hoy}: la ventana completa, sin recortes`);
     assert.ok(diaHabilitadoPara("mensualidad", publicas[0]),
       `${hoy}: la primera fecha pública es operativa`);
-
-    if (!publicas.includes(manana)) rotosAntes.push(hoy);
+    assert.equal(publicas[0], sumarDias(hoy, 1), `${hoy}: arranca mañana`);
   }
-  assert.equal(rotosAntes.length, 2,
-    `el defecto afectaba 2 días de cada 7, encontrados: ${rotosAntes.join(", ")}`);
-  assert.deepEqual(rotosAntes.sort(), [SABADO, VIERNES].sort());
 }
 
-// ── 3) La política sigue siendo lunes a viernes ─────────────────────────────
+// ── 3) (M8C.1) La política es los SIETE días, con el cierre de cada uno ────
 {
   const dias = REGLAS_POR_PRODUCTO.mensualidad.diasHabilitados;
-  assert.deepEqual([...dias].sort(), [1, 2, 3, 4, 5], "lunes(1) a viernes(5), sin 0 ni 6");
+  assert.deepEqual([...dias].sort(), [0, 1, 2, 3, 4, 5, 6],
+    "de domingo(0) a sábado(6): Mensualidades ya no recorta días");
 
   for (let i = 0; i < 21; i++) {
     const f = sumarDias(SABADO, i);
-    const dow = new Date(`${f}T12:00:00Z`).getUTCDay();
-    assert.equal(diaHabilitadoPara("mensualidad", f), dow >= 1 && dow <= 5,
-      `${f}: operativo solo de lunes a viernes`);
+    assert.equal(diaHabilitadoPara("mensualidad", f), true, `${f}: operativo`);
   }
+
+  // La ventana de Mensualidades es EXACTAMENTE la pública, sin filtrar.
   for (const hoy of [SABADO, VIERNES, "2026-09-20", "2026-09-23"]) {
-    for (const f of fechasPublicasPara("mensualidad", hoy)) {
-      const dow = new Date(`${f}T12:00:00Z`).getUTCDay();
-      assert.ok(dow >= 1 && dow <= 5, `${f} no puede ofrecerse: cae fin de semana`);
-    }
+    assert.deepEqual(fechasPublicasPara("mensualidad", hoy), fechasPublicas(hoy),
+      `${hoy}: misma ventana que Reservas`);
   }
+
+  // Lo que sí distingue al fin de semana es CÓMO se limita el turno.
+  const l = REGLAS_POR_PRODUCTO.mensualidad.limiteTurno;
+  assert.deepEqual(l.semana, { tipo: "cierre", minuto: 22 * 60 }, "22:00 de lunes a viernes");
+  assert.deepEqual(l.finDeSemana, { tipo: "ultimoInicio" },
+    "el fin de semana manda el último inicio, no un cierre");
+  // Un sábado, la grilla de horarios es la corta.
+  assert.deepEqual(horariosDe("2026-09-26"), [...WEEKEND_SLOTS]);
+  assert.deepEqual(horariosDe("2026-09-21"), [...WEEKDAY_SLOTS]);
+  // El fin de semana se ofrece la grilla entera con cualquier duración.
+  assert.deepEqual(horariosPosiblesPara("mensualidad", "2026-09-26", 15).slice(-1), ["14:00"]);
+  assert.deepEqual(horariosPosiblesPara("mensualidad", "2026-09-26", 60).slice(-1), ["14:00"]);
+  // Entre semana, en cambio, la duración recorta los últimos inicios.
+  assert.deepEqual(horariosPosiblesPara("mensualidad", "2026-09-21", 15).slice(-1), ["21:40"]);
+  assert.deepEqual(horariosPosiblesPara("mensualidad", "2026-09-21", 60).slice(-1), ["20:40"]);
 }
 
 // ── 4) Las fechas no se corren por UTC ──────────────────────────────────────
@@ -99,8 +115,10 @@ const VIERNES = "2026-09-25";
     process.env.TZ = tz;
     assert.equal(sumarDias(SABADO, 1), "2026-09-20", `sumarDias estable en ${tz}`);
     assert.equal(sumarDias("2026-12-31", 1), "2027-01-01", `cambio de año estable en ${tz}`);
+    // (M8C.1) Desde el sábado 19 la ventana arranca el domingo 20: los siete
+    // días están habilitados, así que ya no se saltea el fin de semana.
     assert.deepEqual(fechasPublicasPara("mensualidad", SABADO).slice(0, 3),
-      ["2026-09-21", "2026-09-22", "2026-09-23"], `ventana estable en ${tz}`);
+      ["2026-09-20", "2026-09-21", "2026-09-22"], `ventana estable en ${tz}`);
   }
   if (previo === undefined) delete process.env.TZ; else process.env.TZ = previo;
 }

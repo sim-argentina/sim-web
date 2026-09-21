@@ -55,9 +55,9 @@ async function libresPorHorario(args: {
   if (!fechaValida(fecha)) return fail(400, "Fecha inválida");
   if (!fechaDentroDeVentana(fecha, hoy)) return fail(400, "Fecha fuera del rango disponible");
   if (!duracionValidaPara(producto, duracion)) return fail(400, "Duración inválida");
-  // (M5C.1) El producto puede no operar ese día: Mensualidades es de lunes a
-  // viernes. Reservas normales tienen habilitados los siete, así que para ellas
-  // esto nunca corta.
+  // (M8C.1) Hoy los dos productos operan los siete días, así que esta guarda ya
+  // no corta ninguna fecha real: queda para fechas que no existen y como el
+  // punto único donde volvería a vivir una restricción por día.
   if (!diaHabilitadoPara(producto, fecha)) {
     return fail(400, "Ese día no está disponible para este producto.");
   }
@@ -89,9 +89,10 @@ async function libresPorHorario(args: {
   // El Map conserva el orden de inserción, así que sale cronológico.
   const libres = new Map<string, string[]>();
   for (const hora of horariosDe(fecha)) {
-    // (M5C.1) Suma al chequeo de agenda de M6 el día habilitado y el cierre a
-    // las 22:00 del producto. Para "reserva" es equivalente a bloquesDeAgenda:
-    // mismos días, misma grilla, mismo resultado que antes.
+    // (M8C.1) Suma al chequeo de agenda de M6 el día habilitado y el cierre DE
+    // ESE DÍA para ese producto: 22:00 de lunes a viernes, y 14:00 el fin de
+    // semana en Mensualidades. Para "reserva" sigue siendo equivalente a
+    // bloquesDeAgenda: mismos días, misma grilla, mismo resultado que antes.
     const bloques = bloquesDeAgendaPara(producto, fecha, hora, duracion);
     // null = no entra completa, hay discontinuidad, o el producto no lo admite.
     if (!bloques) continue;

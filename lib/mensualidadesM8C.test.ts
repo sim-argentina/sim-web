@@ -48,10 +48,13 @@ function seleccion(extra: Record<string, unknown>) {
   assert.deepEqual([...rn.duraciones], [15, 30],
     "y sus dos duraciones: 45 y 60 siguen siendo de Mensualidades");
 
-  // El calendario de Mensualidades NO cambió con este bloque.
-  assert.deepEqual([...r.diasHabilitados], [1, 2, 3, 4, 5], "sigue siendo lunes a viernes");
+  // (M8C.1) El calendario pasó a los siete días, con cierre por tipo de día.
+  assert.deepEqual([...r.diasHabilitados], [0, 1, 2, 3, 4, 5, 6], "los siete días");
   assert.deepEqual([...r.duraciones], [15, 30, 45, 60]);
-  assert.equal(r.cierreMin, 22 * 60);
+  assert.deepEqual(r.limiteTurno, {
+    semana: { tipo: "cierre", minuto: 22 * 60 },
+    finDeSemana: { tipo: "ultimoInicio" },
+  });
 }
 
 // ── 2) Cantidades aceptadas y rechazadas ───────────────────────────────────

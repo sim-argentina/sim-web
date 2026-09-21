@@ -3,7 +3,7 @@ import { hayDisponibilidadPara } from "@/lib/disponibilidad";
 import { SIMULADORES_VALIDOS } from "@/lib/reservasValidation";
 import { CONDICIONES_RESERVA_VERSION } from "@/lib/mensualidadesCondiciones";
 import {
-  bloquesDeAgendaPara, cantidadSimuladoresValidaPara, diaHabilitadoPara,
+  bloquesDeAgendaPara, cantidadSimuladoresValidaPara, diaHabilitadoPara, limiteDeTurno,
   duracionValidaPara, fechaDentroDeVentana, fechaValida, horariosDe,
   REGLAS_POR_PRODUCTO,
 } from "@/lib/agenda";
@@ -24,6 +24,11 @@ import {
 /** Minutos que consume una selección: duración x simuladores. Siempre múltiplo de 15. */
 export function minutosRequeridos(duracion: number, cantidadSimuladores: number): number {
   return duracion * cantidadSimuladores;
+}
+
+/** 1320 → "22:00", para armar mensajes con la hora real del día. */
+function hhmm(minutos: number): string {
+  return `${String(Math.floor(minutos / 60)).padStart(2, "0")}:${String(minutos % 60).padStart(2, "0")}`;
 }
 
 export type SeleccionReserva = {
@@ -84,11 +89,13 @@ export function validarSeleccion(
       error: "Solo se puede reservar desde mañana y hasta 15 días de anticipación.",
     };
   }
-  // (M5C.1) Mensualidades opera de lunes a viernes.
+  // (M8C.1) Mensualidades opera los siete días, así que esta guarda ya no
+  // rechaza ningún día real: queda para fechas que no existen. El horario de
+  // cada día lo aplica bloquesDeAgendaPara(), más abajo.
   if (!diaHabilitadoPara("mensualidad", fecha)) {
     return {
       ok: false, codigo: "dia_no_habilitado",
-      error: "Con la mensualidad se reserva de lunes a viernes.",
+      error: "Elegí una fecha válida.",
     };
   }
 
@@ -103,13 +110,18 @@ export function validarSeleccion(
   if (!horariosDe(fecha).includes(hora)) {
     return { ok: false, codigo: "hora_invalida", error: "Elegí un horario válido." };
   }
-  // (M5C.1) Además de la agenda, el turno tiene que TERMINAR antes del cierre.
+  // (M8C.1) Además de la agenda, el turno tiene que caber en el horario DE ESE
+  // DÍA, y los dos tipos de día se limitan distinto: de lunes a viernes la
+  // experiencia tiene que terminar a las 22:00, y el fin de semana lo único que
+  // manda es el último inicio. El mensaje dice cuál de las dos cosas falló.
   const bloques = bloquesDeAgendaPara("mensualidad", fecha, hora, duracion);
   if (!bloques) {
-    return {
-      ok: false, codigo: "sin_bloques",
-      error: "Ese horario no sirve para esa duración: la experiencia tiene que terminar antes de las 22:00.",
-    };
+    const limite = limiteDeTurno("mensualidad", fecha);
+    const grilla = horariosDe(fecha);
+    const detalle = limite.tipo === "ultimoInicio"
+      ? `el último horario para empezar es ${grilla[grilla.length - 1]}`
+      : `la experiencia tiene que terminar antes de las ${hhmm(limite.minuto)}`;
+    return { ok: false, codigo: "sin_bloques", error: `Ese horario no sirve para esa duración: ${detalle}.` };
   }
 
   // (M8C) De 1 a 4 simuladores. Los límites salen de REGLAS_POR_PRODUCTO, que es

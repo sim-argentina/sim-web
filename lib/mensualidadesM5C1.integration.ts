@@ -5,8 +5,8 @@ import { cancelarReserva, reprogramarReserva } from "@/lib/mensualidadesGestionR
 import { validarSeleccion } from "@/lib/mensualidadesReserva";
 import { disponibilidadDelDia, simuladoresLibresDelDia } from "@/lib/disponibilidad";
 import {
-  bloquesDeAgenda, diaHabilitadoPara, diasEntre, fechasPublicas, fechasPublicasPara,
-  horariosPosiblesPara, sumarDias, REGLAS_POR_PRODUCTO,
+  bloquesDeAgenda, bloquesDeAgendaPara, diaHabilitadoPara, diasEntre, esFinDeSemana, fechasPublicas,
+  fechasPublicasPara, horariosPosiblesPara, sumarDias, REGLAS_POR_PRODUCTO,
 } from "@/lib/agenda";
 
 // Integración del Bloque M5C.1 contra la DB REAL: las restricciones que son
@@ -70,7 +70,9 @@ async function rpcCrear(args: {
   return supabaseAdmin.rpc("crear_reserva_mensualidad", {
     p_mensualidad_id: args.mid, p_fecha: args.fecha, p_hora: args.hora,
     p_duracion: args.duracion, p_simuladores: args.sims,
-    p_slots: args.slots ?? bloquesDeAgenda(args.fecha, args.hora, args.duracion) ?? [args.hora],
+    // (M8C.1) Por PRODUCTO: el fin de semana un turno puede ocupar posiciones
+    // posteriores al último inicio, y la función sin producto no las devuelve.
+    p_slots: args.slots ?? bloquesDeAgendaPara("mensualidad", args.fecha, args.hora, args.duracion) ?? [args.hora],
     p_idempotency_key: clave(), p_condiciones_version: "cond-m5c1",
   });
 }
@@ -152,9 +154,11 @@ async function main() {
   const hoy = await hoyCordoba();
   const ventana = fechasPublicas(hoy);
   const habiles = fechasPublicasPara("mensualidad", hoy);
-  const noHabiles = ventana.filter((f) => !diaHabilitadoPara("mensualidad", f));
-  assert.ok(habiles.length >= 7, "la ventana necesita al menos siete días hábiles");
-  assert.ok(noHabiles.length >= 4, "quince días corridos tienen al menos dos fines de semana");
+  // (M8C.1) Ya no hay días cerrados: los quince operan. El fin de semana se
+  // sigue distinguiendo, pero por su HORARIO, no por estar deshabilitado.
+  const findes = ventana.filter(esFinDeSemana);
+  assert.equal(habiles.length, 15, "(M8C.1) la ventana de Mensualidades ya no se recorta");
+  assert.ok(findes.length >= 4, "quince días corridos tienen al menos dos fines de semana");
 
   const dow = (f: string) => {
     const [y, m, d] = f.split("-").map(Number);
@@ -162,8 +166,8 @@ async function main() {
   };
   const LUNES = habiles.find((f) => dow(f) === 1)!;
   const VIERNES = habiles.find((f) => dow(f) === 5)!;
-  const SABADO = noHabiles.find((f) => dow(f) === 6)!;
-  const DOMINGO = noHabiles.find((f) => dow(f) === 0)!;
+  const SABADO = findes.find((f) => dow(f) === 6)!;
+  const DOMINGO = findes.find((f) => dow(f) === 0)!;
   assert.ok(LUNES && VIERNES && SABADO && DOMINGO, "la ventana tiene lunes, viernes, sábado y domingo");
 
   // Contadores ANTES, para poder demostrar al final que no quedó nada.
@@ -183,7 +187,7 @@ async function main() {
 
   process.env.MENSUALIDADES_ENABLED = "true";
 
-  // ── A · DÍAS: lunes a viernes, nunca fin de semana ───────────────────────
+  // ── A · DÍAS: (M8C.1) los siete, con el cierre de cada uno ───────────────
   {
     const mid = await crearBilletera();
     const tok = (await crearSesion(mid))!;
@@ -202,14 +206,14 @@ async function main() {
       assert.equal(res.status, 201, `M5C1-A1 ${nota} es un día habilitado`);
     }
 
-    // A2 · Sábado y domingo: rechazados en las tres capas.
+    // A2 · (M8C.1) Sábado y domingo: ACEPTADOS a la mañana, en las tres capas.
+    // Lo que se rechaza ahora es lo que se pasa del cierre de las 14:00.
     for (const [nota, fecha] of [["sábado", SABADO], ["domingo", DOMINGO]] as const) {
       const v = validarSeleccion({
         fecha, hora: "11:00", duracion_minutos: 30, simuladores: DOS,
         acepto_condiciones: true, idempotency_key: clave(),
       }, hoy);
-      assert.equal(v.ok, false, `M5C1-A2 ${nota}: la validación lo corta`);
-      if (!v.ok) assert.equal(v.codigo, "dia_no_habilitado");
+      assert.equal(v.ok, true, `M5C1-A2 ${nota} a las 11:00 pasa la validación`);
 
       const res = await postReservar(pedido("/api/mensualidades/reservar", {
         metodo: "POST", cookie: tok,
@@ -218,23 +222,42 @@ async function main() {
           acepto_condiciones: true, idempotency_key: clave(),
         },
       }));
-      assert.equal(res.status, 422, `M5C1-A2 ${nota}: el endpoint responde 422`);
-      assert.equal((await res.json()).codigo, "dia_no_habilitado");
+      assert.equal(res.status, 201, `M5C1-A2 ${nota}: el endpoint la crea`);
 
-      // Y la RPC tampoco, aunque se la llame directo con todo bien armado.
-      const r = await rpcCrear({ mid, fecha, hora: "11:00", duracion: 30, sims: DOS });
-      assert.ok(String(r.error?.message).includes("dia_no_habilitado"),
-        `M5C1-A2 ${nota}: la base lo rechaza sola (fue: ${r.error?.message})`);
+      // (M8C.1) El último inicio del finde es 14:00 y vale con cualquier
+      // duración: el turno puede terminar después. Lo que no existe es empezar
+      // fuera de la grilla.
+      const alUltimo = validarSeleccion({
+        fecha, hora: "14:00", duracion_minutos: 60, simuladores: DOS,
+        acepto_condiciones: true, idempotency_key: clave(),
+      }, hoy);
+      assert.equal(alUltimo.ok, true, `M5C1-A2 ${nota} 14:00 + 60 se acepta`);
+
+      const fuera = validarSeleccion({
+        fecha, hora: "14:20", duracion_minutos: 30, simuladores: DOS,
+        acepto_condiciones: true, idempotency_key: clave(),
+      }, hoy);
+      assert.equal(fuera.ok, false, `M5C1-A2 ${nota} 14:20 no es un inicio`);
+      if (!fuera.ok) assert.equal(fuera.codigo, "hora_invalida");
+
+      const r = await rpcCrear({ mid, fecha, hora: "14:20", duracion: 30, sims: DOS });
+      assert.ok(String(r.error?.message).includes("fuera_de_horario"),
+        `M5C1-A2 ${nota}: la base rechaza el inicio inexistente (fue: ${r.error?.message})`);
     }
 
-    // A3 · La disponibilidad no ofrece esos días ni esas fechas.
+    // A3 · (M8C.1) La disponibilidad SÍ ofrece el fin de semana, recortado.
     const dispSab = await simuladoresLibresDelDia({ fecha: SABADO, duracion: 30, producto: "mensualidad" });
-    assert.equal(dispSab.ok, false, "M5C1-A3 no hay disponibilidad de Mensualidades el sábado");
+    assert.equal(dispSab.ok, true, "M5C1-A3 hay disponibilidad de Mensualidades el sábado");
+    if (dispSab.ok) {
+      const horas = dispSab.horarios.map((h) => h.hora);
+      assert.ok(horas.includes("14:00"),
+        "M5C1-A3 y se ofrece el último inicio, las 14:00");
+    }
     const dto = await (await getDisp(pedido(
       `/api/mensualidades/disponibilidad?fecha=${LUNES}&duracion=30`, { cookie: tok },
     ))).json();
-    assert.equal(dto.fechas.includes(SABADO), false, "M5C1-A3 el sábado no está en el calendario");
-    assert.equal(dto.fechas.includes(DOMINGO), false, "M5C1-A3 el domingo tampoco");
+    assert.equal(dto.fechas.includes(SABADO), true, "M5C1-A3 el sábado está en el calendario");
+    assert.equal(dto.fechas.includes(DOMINGO), true, "M5C1-A3 y el domingo también");
     assert.equal(dto.fechas.every((f: string) => diaHabilitadoPara("mensualidad", f)), true);
     // (M8C) El DTO publica los límites de dominio, sean los que sean: se
     // comparan contra REGLAS_POR_PRODUCTO en vez de contra números escritos a
@@ -247,7 +270,9 @@ async function main() {
     assert.equal(dto.simuladores_max, 4, "M5C1-A3 y 4");
 
     // A4 · El saldo no se movió por ninguno de los rechazos.
-    const consumido = 30 * 2 * 2; // las dos reservas válidas de arriba
+    // (M8C.1) Ahora son CUATRO reservas válidas: lunes y viernes en A1, más
+    // sábado y domingo en A2, todas de 30 min x 2 simuladores.
+    const consumido = 30 * 2 * 4;
     assert.equal(await saldoDe(mid), 900 - consumido,
       "M5C1-A4 solo descontaron las reservas válidas");
 
@@ -270,18 +295,37 @@ async function main() {
       if (!v.ok) assert.equal(v.codigo, "hora_invalida");
     }
 
-    // B2 · El cierre, medido en la base: terminar 22:00 vale, un minuto más no.
-    const cierre = async (hora: string, duracion: number) => {
-      const { data, error } = await supabaseAdmin
-        .rpc("mensualidad_termina_antes_del_cierre", { p_hora: hora, p_duracion: duracion });
-      assert.ok(!error, `mensualidad_termina_antes_del_cierre: ${error?.message}`);
+    // B2 · El horario, medido en la base. (M8C.1) La función recibe la FECHA y
+    // comprueba dos cosas: que el INICIO exista en la grilla de ese día y, solo
+    // entre semana, que la experiencia termine a las 22:00 o antes.
+    const valido = async (fecha: string, hora: string, duracion: number) => {
+      const { data, error } = await supabaseAdmin.rpc("mensualidad_horario_valido",
+        { p_fecha: fecha, p_hora: hora, p_duracion: duracion });
+      assert.ok(!error, `mensualidad_horario_valido: ${error?.message}`);
       return data as boolean;
     };
-    for (const [hora, dur] of [["21:45", 15], ["21:30", 30], ["21:15", 45], ["21:00", 60]] as const) {
-      assert.equal(await cierre(hora, dur), true, `M5C1-B2 ${hora}+${dur} termina 22:00 justo`);
+    // Entre semana: el último inicio de cada duración entra.
+    for (const [hora, dur] of [["21:40", 15], ["21:20", 30], ["21:00", 45], ["20:40", 60]] as const) {
+      assert.equal(await valido(LUNES, hora, dur), true, `M5C1-B2 ${hora}+${dur} entra`);
     }
-    for (const [hora, dur] of [["21:46", 15], ["21:31", 30], ["21:16", 45], ["21:01", 60]] as const) {
-      assert.equal(await cierre(hora, dur), false, `M5C1-B2 ${hora}+${dur} se pasa del cierre`);
+    // Y el siguiente inicio de cada duración ya no entra: le falta un bloque.
+    for (const [hora, dur] of [["21:40", 30], ["21:20", 45], ["21:00", 60]] as const) {
+      assert.equal(await valido(LUNES, hora, dur), false,
+        `M5C1-B2 ${hora}+${dur} necesitaría un bloque que la grilla no tiene`);
+    }
+    // Un inicio fuera de la grilla tampoco, aunque terminara antes del cierre.
+    for (const hora of ["21:45", "10:10", "09:40"]) {
+      assert.equal(await valido(LUNES, hora, 15), false, `M5C1-B2 ${hora} no es un inicio`);
+    }
+    // El fin de semana: las 14:00 valen con las CUATRO duraciones.
+    for (const dur of [15, 30, 45, 60] as const) {
+      assert.equal(await valido(SABADO, "14:00", dur), true,
+        `M5C1-B2 sábado 14:00 + ${dur} entra: el turno puede terminar después`);
+      assert.equal(await valido(DOMINGO, "14:00", dur), true, `M5C1-B2 domingo 14:00 + ${dur} entra`);
+    }
+    // Y lo que no existe como inicio, no.
+    for (const hora of ["14:20", "14:40", "15:00", "20:00"]) {
+      assert.equal(await valido(SABADO, hora, 15), false, `M5C1-B2 sábado ${hora} no es un inicio`);
     }
 
     // Y la RPC lo aplica: un horario manipulado que termina 22:05 no entra.
@@ -485,14 +529,13 @@ async function main() {
     const ref = fila.referencia_publica;
     const saldoTrasCrear = await saldoDe(mid);
 
-    // F1 · A un fin de semana: rechazado, y la original queda intacta.
+    // F1 · (M8C.1) A un fin de semana SÍ se reprograma, incluido el último
+    // inicio. Lo que se rechaza es empezar fuera de la grilla, y ahí la
+    // original tiene que quedar intacta.
     for (const [nota, fecha] of [["sábado", SABADO], ["domingo", DOMINGO]] as const) {
-      const p = await reprogramarReserva(mid, ref, fecha, "11:00", clave());
-      assert.equal(p.ok, false, `M5C1-F1 no se reprograma a un ${nota}`);
-      if (!p.ok) {
-        assert.equal(p.codigo, "dia_no_habilitado");
-        assert.equal(p.status, 422);
-      }
+      const p = await reprogramarReserva(mid, ref, fecha, "14:20", clave());
+      assert.equal(p.ok, false, `M5C1-F1 ${nota} 14:20 no es un inicio de la grilla`);
+      if (!p.ok) assert.equal(p.codigo, "hora_invalida");
       const e = await estadoDe(ref);
       assert.equal(e.fecha, origen, `M5C1-F1 ${nota}: la original no se movió`);
       assert.equal(e.hora, hOrigen);
@@ -500,6 +543,17 @@ async function main() {
     }
     assert.equal(await slotsActivos(fila.reserva_id), 4, "M5C1-F1 conserva sus cuatro slots");
     assert.equal(await saldoDe(mid), saldoTrasCrear, "M5C1-F1 el saldo no se movió");
+
+    // Y a un horario del sábado que entra, se reprograma sin costo.
+    const hSab = await librisimos(SABADO, 30);
+    assert.ok(hSab.length, "M5C1-F1 hace falta un horario libre el sábado");
+    const alSabado = await reprogramarReserva(mid, ref, SABADO, hSab[0], clave());
+    assert.equal(alSabado.ok, true,
+      `M5C1-F1 al sábado temprano sí: ${!alSabado.ok ? alSabado.error : ""}`);
+    assert.equal(await saldoDe(mid), saldoTrasCrear, "M5C1-F1 reprogramar no vuelve a debitar");
+    // Se deja donde estaba para que el resto de la sección siga igual.
+    const volver = await reprogramarReserva(mid, ref, origen, hOrigen, clave());
+    assert.equal(volver.ok, true, "M5C1-F1 vuelve al origen");
 
     // F2 · A un horario fuera de la agenda: rechazado.
     for (const hora of ["09:00", "22:00", "10:10"]) {

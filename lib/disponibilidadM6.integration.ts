@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { disponibilidadDelDia, hayDisponibilidadPara } from "@/lib/disponibilidad";
-import { bloquesDeAgenda, diaHabilitadoPara, fechasPublicasPara } from "@/lib/agenda";
+import {
+  bloquesDeAgenda, esFinDeSemana, fechasPublicasPara,
+} from "@/lib/agenda";
 import { precioPorSimulador } from "@/lib/reservasSlots";
 import { reservarConCodigo } from "@/lib/empresasServer";
 
@@ -94,13 +96,29 @@ async function main() {
     const r60 = await disp(60);
     assert.ok(r60.ok);
     if (r60.ok) assert.equal(r60.horarios.length, 33, "60 min recorta los 3 últimos inicios");
-    // (M5C.1) El fin de semana es de Reservas normales: ahí la grilla corta de
-    // 13 inicios sigue intacta. Mensualidades, en cambio, no opera ese día.
+    // (M8C.1) El fin de semana opera para los DOS productos y con los MISMOS
+    // 13 inicios: de 10:00 a 14:00 inclusive. Las 14:00 son un horario de
+    // inicio como cualquier otro; el turno puede terminar después.
     const rFinde = await disp(15, FECHA_FINDE, "reserva");
     assert.ok(rFinde.ok && rFinde.horarios.length === 13,
       "fin de semana con 13 inicios para Reservas normales");
     const rFindeMens = await disp(15, FECHA_FINDE);
-    assert.equal(rFindeMens.ok, false, "Mensualidades no opera el fin de semana");
+    assert.equal(rFindeMens.ok, true, "(M8C.1) Mensualidades sí opera el fin de semana");
+    if (rFindeMens.ok && rFinde.ok) {
+      assert.equal(rFindeMens.horarios.length, 13, "los mismos 13 inicios");
+      assert.equal(rFindeMens.horarios[0].hora, "10:00");
+      assert.equal(rFindeMens.horarios[rFindeMens.horarios.length - 1].hora, "14:00",
+        "el último inicio del fin de semana es 14:00, para los dos productos");
+      assert.deepEqual(
+        rFindeMens.horarios.map((h) => h.hora),
+        rFinde.horarios.map((h) => h.hora),
+        "mismo sábado, misma grilla de inicios",
+      );
+    }
+    // Y con 60 minutos —que solo existe en Mensualidades— los 13 siguen ahí.
+    const rFinde60 = await disp(60, FECHA_FINDE);
+    assert.ok(rFinde60.ok && rFinde60.horarios.length === 13,
+      "con 60 min el fin de semana conserva los 13 inicios");
   }
   console.log("M6-A día limpio y recorte por duración OK");
 
@@ -290,19 +308,25 @@ async function main() {
   const visible = await pedir(`fecha=${mananaHabil}&duracion=45&producto=mensualidad`);
   assert.equal(visible.status, 200, "con la flag encendida sí responde");
   assert.deepEqual((await visible.json()).duraciones, [15, 30, 45, 60]);
-  // Y el fin de semana, que para Reservas normales sigue existiendo, para
-  // Mensualidades no: son productos distintos sobre la misma agenda.
+  // (M8C.1) El fin de semana existe para los DOS productos. Lo que los
+  // distingue es el cierre: Mensualidades corta a las 14:00 y no ofrece el
+  // último inicio de la grilla, que terminaría después.
   const finde = [1, 2, 3, 4, 5, 6, 7]
     .map((i) => {
       const [y, m, d] = hoyReal.split("-").map(Number);
       const t = new Date(Date.UTC(y, m - 1, d) + i * 86_400_000);
       return t.toISOString().slice(0, 10);
     })
-    .find((d) => !diaHabilitadoPara("mensualidad", d))!;
+    .find(esFinDeSemana)!;
   assert.equal((await pedir(`fecha=${finde}&duracion=15&producto=reserva`)).status, 200,
     "M6-35 el fin de semana sigue siendo reservable en el flujo normal");
-  assert.equal((await pedir(`fecha=${finde}&duracion=15&producto=mensualidad`)).status, 400,
-    "M6-35 pero Mensualidades no opera ese día");
+  const findeMens = await pedir(`fecha=${finde}&duracion=15&producto=mensualidad`);
+  assert.equal(findeMens.status, 200, "M6-35 y Mensualidades también opera ese día");
+  const horasFinde = (await findeMens.json()).horarios.map((h: { hora: string }) => h.hora);
+  assert.equal(horasFinde[0], "10:00", "M6-35 abre a las 10:00");
+  assert.equal(horasFinde[horasFinde.length - 1], "14:00",
+    "M6-35 y el último inicio del fin de semana es 14:00, inclusive");
+  assert.equal(horasFinde.length, 13, "M6-35 los 13 inicios de la grilla corta");
 
   if (flagPrevia !== undefined) process.env.MENSUALIDADES_ENABLED = flagPrevia;
   else delete process.env.MENSUALIDADES_ENABLED;

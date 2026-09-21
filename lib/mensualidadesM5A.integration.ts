@@ -5,8 +5,8 @@ import { COOKIE_SESION, crearSesion } from "@/lib/mensualidadSesion";
 import { getMiPlan, getReservasDeMiPlan } from "@/lib/mensualidadesMiPlan";
 import { CONDICIONES_VERSION, CONDICIONES_RESERVA_VERSION } from "@/lib/mensualidadesCondiciones";
 import {
-  bloquesDeAgenda, diaHabilitadoPara, diasEntre, fechasPublicas, fechasPublicasPara,
-  horariosPosiblesPara, sumarDias,
+  bloquesDeAgenda, diaHabilitadoPara, diasEntre, esFinDeSemana, fechasPublicas,
+  fechasPublicasPara, horariosPosiblesPara, sumarDias,
 } from "@/lib/agenda";
 import { disponibilidadDelDia } from "@/lib/disponibilidad";
 
@@ -146,10 +146,13 @@ async function main() {
     bloquesDeAgenda(limite, h, 60)!.every((b) =>
       !bloquesDeAgenda(limite, H1, 60)!.includes(b) && !bloquesDeAgenda(limite, H2, 60)!.includes(b)))!;
   assert.ok(H1 && H2 && H3, "hacen falta tres ventanas de 60 min que no se solapen");
-  // Un sábado dentro de la ventana pública: existe siempre, porque 15 días
-  // corridos contienen al menos dos. Sirve para probar el rechazo por día.
-  const sabadoDeLaVentana = fechasPublicas(hoy).find((d) => !diaHabilitadoPara("mensualidad", d))!;
+  // (M8C.1) Ya no hay días cerrados: los quince de la ventana operan. Lo que se
+  // prueba ahora es el rechazo por HORARIO del fin de semana, que es la
+  // restricción que reemplazó a la del día.
+  const sabadoDeLaVentana = fechasPublicas(hoy).find(esFinDeSemana)!;
   assert.ok(sabadoDeLaVentana, "la ventana de 15 días siempre tiene un fin de semana");
+  assert.equal(diaHabilitadoPara("mensualidad", sabadoDeLaVentana), true,
+    "(M8C.1) y ese fin de semana está habilitado");
   console.log(`base: hoy=${hoy} ventana hábil=${primerHabil}..${limite} horarios=${H1}/${H2}/${H3} no-hábil=${sabadoDeLaVentana}`);
 
   await limpiar();
@@ -308,8 +311,11 @@ async function main() {
       // (M8C) "1 simulador" ya NO está en esta lista: M5C.1 lo daba por
       // inválido y M8C lo devolvió a válido. Se comprueba abajo, como caso
       // legítimo, que es lo que ahora corresponde.
-      // (M5C.1) El día tiene que ser hábil, aunque todo lo demás esté bien.
-      ["sábado", () => rpc(m.id, sabadoDeLaVentana, "11:00", 15, DOS, nuevaClave())],
+      // (M8C.1) El sábado a las 11:00 ya es válido: lo que la base sigue
+      // rechazando es un turno que se pase del cierre de las 14:00, y un
+      // horario que el fin de semana ni siquiera existe en la grilla.
+      ["sábado 14:20", () => rpc(m.id, sabadoDeLaVentana, "14:20", 15, DOS, nuevaClave())],
+      ["sábado tarde", () => rpc(m.id, sabadoDeLaVentana, "18:00", 15, DOS, nuevaClave())],
       ["5 simuladores", () => rpc(m.id, limite, H1, 15, ["Ferrari", "McLaren", "Red Bull", "Alpine", "Ferrari"], nuevaClave())],
       ["duplicado", () => rpc(m.id, limite, H1, 30, ["Ferrari", "Ferrari"], nuevaClave())],
       ["desconocido", () => rpc(m.id, limite, H1, 15, ["Williams", "McLaren"], nuevaClave())],

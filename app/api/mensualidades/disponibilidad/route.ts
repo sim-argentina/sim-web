@@ -41,7 +41,8 @@ export async function GET(req: Request) {
     }
 
     const url = new URL(req.url);
-    // (M5C.1) Solo los días en que Mensualidades opera: lunes a viernes.
+    // (M8C.1) Los días en que Mensualidades opera: los siete. La ventana sale
+    // de la fuente canónica, igual que para Reservas.
     const publicas = fechasPublicasPara("mensualidad");
     // Sin fecha se contesta el primer día operativo. Así una pantalla puede
     // abrirse sin conocer las reglas, y una reserva vieja que cayó en un día

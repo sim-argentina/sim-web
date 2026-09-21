@@ -3,7 +3,9 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { COOKIE_SESION, crearSesion } from "@/lib/mensualidadSesion";
 import { cancelarReserva, reprogramarReserva } from "@/lib/mensualidadesGestionReserva";
 import { cancelarReservaAdmin, cambiarBloqueo } from "@/lib/mensualidadesAdminAcciones";
-import { bloquesDeAgenda, fechasPublicasPara, horariosPosiblesPara, sumarDias } from "@/lib/agenda";
+import {
+  bloquesDeAgendaPara, fechasPublicasPara, horariosPosiblesPara, sumarDias,
+} from "@/lib/agenda";
 import { simuladoresLibresDelDia } from "@/lib/disponibilidad";
 
 // Integración del hotfix M7.3 / M5C.2 contra la DB REAL.
@@ -85,7 +87,9 @@ async function reservar(mid: string, fecha: string, duracion = 30) {
   const { data, error } = await supabaseAdmin.rpc("crear_reserva_mensualidad", {
     p_mensualidad_id: mid, p_fecha: fecha, p_hora: hora, p_duracion: duracion,
     p_simuladores: ["Ferrari", "McLaren"],
-    p_slots: bloquesDeAgenda(fecha, hora, duracion) ?? [hora],
+    // (M8C.1) Por PRODUCTO: el fin de semana los bloques pueden pasar del
+    // último inicio, y la función sin producto no los devuelve.
+    p_slots: bloquesDeAgendaPara("mensualidad", fecha, hora, duracion) ?? [hora],
     p_idempotency_key: clave(), p_condiciones_version: "cond-m5c2",
   });
   if (error) throw new Error(`reservar: ${error.message}`);

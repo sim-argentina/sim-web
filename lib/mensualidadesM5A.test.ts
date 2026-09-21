@@ -69,16 +69,21 @@ for (const [d, ultimo, primeroMalo] of ultimos) {
       `semana ${d} min ya no entra a las ${primeroMalo}`);
   }
 }
-// (M5C.1) El fin de semana ya no existe para Mensualidades. La grilla corta de
-// sábado y domingo sigue viva —es la de Reservas normales—, pero acá se corta
-// antes, por el día, y no llega ni a mirar la hora.
-for (const [d, hora] of [[15, "14:00"], [30, "13:40"], [45, "13:20"], [60, "13:00"]] as const) {
-  assert.equal(codigoDe(sel({ fecha: FINDE, duracion_minutos: d, hora })), "dia_no_habilitado",
-    `finde ${d} min a las ${hora} ya no se puede con mensualidad`);
+// (M8C.1) El fin de semana VUELVE a existir para Mensualidades, con la grilla
+// corta de sábado y domingo: inicios de 10:00 a 14:00 INCLUSIVE. Lo que lo
+// limita no es una hora de cierre sino el ÚLTIMO INICIO, así que un turno que
+// arranca 14:00 puede terminar después.
+for (const d of [15, 30, 45, 60] as const) {
+  assert.equal(codigoDe(sel({ fecha: FINDE, duracion_minutos: d, hora: "14:00" })), "ok",
+    `finde ${d} min a las 14:00 se acepta: 14:00 es un inicio válido`);
+  assert.equal(codigoDe(sel({ fecha: FINDE, duracion_minutos: d, hora: "10:00" })), "ok",
+    `finde ${d} min a las 10:00 también`);
 }
-// Y tampoco en un horario que en la semana sería perfectamente válido.
-assert.equal(codigoDe(sel({ fecha: FINDE, hora: "10:00" })), "dia_no_habilitado",
-  "el sábado se rechaza por el día, no por el horario");
+// Lo que no existe es un inicio fuera de la grilla del fin de semana.
+for (const hora of ["14:20", "14:40", "15:00", "18:00"]) {
+  assert.equal(codigoDe(sel({ fecha: FINDE, hora })), "hora_invalida",
+    `el sábado a las ${hora} no hay agenda`);
+}
 
 // Los bloques que salen son los que va a recibir la RPC.
 const r60 = sel({ duracion_minutos: 60, hora: "12:00" });

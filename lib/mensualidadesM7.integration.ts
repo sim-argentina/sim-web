@@ -10,7 +10,7 @@ import {
 } from "@/lib/mensualidadesAdminAcciones";
 import { getDetalleMensualidad, listarMensualidades } from "@/lib/mensualidadesAdmin";
 import {
-  bloquesDeAgenda, fechasPublicasPara, horariosPosiblesPara, sumarDias,
+  bloquesDeAgenda, esFinDeSemana, fechasPublicasPara, horariosPosiblesPara, sumarDias,
 } from "@/lib/agenda";
 import { simuladoresLibresDelDia } from "@/lib/disponibilidad";
 
@@ -570,12 +570,22 @@ async function main() {
     const r = await crearReserva(m.id, fecha, horas[horas.length - 1], 30);
     const saldoTrasCrear = await saldoDe(m.id);
 
-    // Reprogramar respeta M5C.1: fin de semana no.
+    // (M8C.1) El fin de semana YA opera, también para la administración: lo que
+    // la sigue limitando es el cierre de las 14:00, igual que al titular.
     const finde = [...Array(16).keys()].map((i) => sumarDias(hoy, i))
-      .find((f) => !habiles.includes(f) && f > hoy)!;
-    const aFinde = await reprogramarReservaAdmin(m.id, r.referencia, finde, "11:00", "prueba", CTX());
-    assert.equal(aFinde.ok, false, "M7-9 la administración tampoco reserva un fin de semana");
-    if (!aFinde.ok) assert.equal(aFinde.codigo, "dia_no_habilitado");
+      .find((f) => f > hoy && esFinDeSemana(f))!;
+    assert.ok(finde, "M7-9 la ventana siempre tiene un fin de semana");
+    const aFindeTarde = await reprogramarReservaAdmin(m.id, r.referencia, finde, "14:20", "prueba", CTX());
+    assert.equal(aFindeTarde.ok, false,
+      "M7-9 la administración tampoco puede empezar fuera de la grilla del fin de semana");
+    if (!aFindeTarde.ok) assert.equal(aFindeTarde.codigo, "hora_invalida");
+
+    const horasFinde = await libres(finde, 30);
+    assert.ok(horasFinde.length, "M7-9 hace falta un horario libre el fin de semana");
+    const aFinde = await reprogramarReservaAdmin(m.id, r.referencia, finde, horasFinde[0], "prueba", CTX());
+    assert.equal(aFinde.ok, true,
+      `M7-9 pero a la mañana del fin de semana sí: ${!aFinde.ok ? aFinde.error : ""}`);
+    assert.equal(await saldoDe(m.id), saldoTrasCrear, "M7-9 reprogramar no cuesta saldo");
 
     // Reprogramación válida: no cuesta saldo.
     const destino = habiles[5];

@@ -61,9 +61,11 @@ export type Producto = "reserva" | "mensualidad";
  *
  * Reservas normales conservan exactamente lo que tenían: todos los días
  * (semana y fin de semana), 15 y 30 minutos, de 1 a 4 simuladores.
- * Mensualidades es más acotada SOLO en el calendario: días hábiles y
- * duraciones de hasta 60 minutos. La cantidad de simuladores es la misma que
- * en Reservas normales, de 1 a 4.
+ *
+ * (M8C.1) Mensualidades ya no restringe días: opera los mismos siete, con el
+ * mismo horario público. Lo único propio que le queda son sus duraciones —hasta
+ * 60 minutos— y que su turno tiene que terminar dentro del horario del día, que
+ * el fin de semana cierra a las 14:00.
  */
 export type ReglasProducto = {
   /** Duraciones que ese producto puede pedir. */
@@ -74,37 +76,73 @@ export type ReglasProducto = {
   /** Días de la semana habilitados (0 = domingo … 6 = sábado). */
   diasHabilitados: readonly number[];
   /**
-   * Minuto del día en que cierra la operación. La EXPERIENCIA tiene que
-   * terminar a esa hora o antes: `inicio + duración <= cierre`.
+   * Cómo se limita el FINAL del turno, por tipo de día.
+   *
+   * (M8C.1) Antes era un solo minuto de cierre por producto. No alcanzaba,
+   * porque los dos tipos de día se limitan de maneras DISTINTAS:
+   *
+   *   · `cierre`: el turno tiene que terminar a esa hora o antes
+   *     (`inicio + duración <= cierre`). Es lo que rige de lunes a viernes:
+   *     el local cierra a las 22:00 y la experiencia tiene que caber.
+   *
+   *   · `ultimoInicio`: no hay hora de cierre que verificar. Lo único que se
+   *     exige es que el INICIO esté en la grilla del día. El turno puede
+   *     terminar después del último inicio, que es exactamente lo que pasa el
+   *     fin de semana: se puede empezar a las 14:00 y manejar 60 minutos.
+   *     Modelarlo como "cierre 15:00" sería inventar una hora que nadie fijó;
+   *     lo que el negocio define es el último inicio, y eso ya lo dice la
+   *     grilla.
    */
-  cierreMin: number;
+  limiteTurno: { semana: LimiteDelTurno; finDeSemana: LimiteDelTurno };
 };
 
+/** Ver `ReglasProducto.limiteTurno`. */
+export type LimiteDelTurno =
+  | { tipo: "cierre"; minuto: number }
+  | { tipo: "ultimoInicio" };
+
 const TODOS_LOS_DIAS = [0, 1, 2, 3, 4, 5, 6] as const;
-const LUNES_A_VIERNES = [1, 2, 3, 4, 5] as const;
 /** 22:00 en minutos desde medianoche. */
-const CIERRE_22 = 22 * 60;
+const CIERRE_22: LimiteDelTurno = { tipo: "cierre", minuto: 22 * 60 };
+/** El fin de semana no tiene cierre: tiene último inicio, y lo dice la grilla. */
+const HASTA_EL_ULTIMO_INICIO: LimiteDelTurno = { tipo: "ultimoInicio" };
 
 export const REGLAS_POR_PRODUCTO: Record<Producto, ReglasProducto> = {
   // Sin cambios respecto de lo que ya regía antes de M5C.1.
+  //
+  // (M8C.1) Reservas normales queda EXACTAMENTE como estaba: cierre a las 22:00
+  // los siete días y bloques tomados de la grilla. En el fin de semana eso
+  // significa que un turno de 30 no puede arrancar 14:00, porque necesitaría un
+  // bloque a las 14:20 que la grilla no tiene. Es su comportamiento actual y
+  // este bloque no toca Reservas.
   reserva: {
     duraciones: [15, 30],
     simuladoresMin: 1,
     simuladoresMax: 4,
     diasHabilitados: TODOS_LOS_DIAS,
-    cierreMin: CIERRE_22,
+    limiteTurno: { semana: CIERRE_22, finDeSemana: CIERRE_22 },
   },
-  // (M5C.1) Mensualidades: lunes a viernes, 15/30/45/60 minutos.
-  // (M8C) El mínimo vuelve a 1. M5C.1 lo había subido a 2 por una lectura
-  // equivocada del producto: nada en el negocio impide usar el saldo en un solo
-  // simulador, y el consumo —duración × cantidad— ya cobra lo justo en cualquier
-  // caso. El mínimo de 2 solo bloqueaba a quien viene a manejar solo.
+  // (M8C) El mínimo de simuladores volvió a 1: el consumo es duración ×
+  // cantidad, así que uno solo nunca cobró de menos.
+  //
+  // (M8C.1) Y el calendario vuelve a ser el del local: los SIETE días, con el
+  // cierre que le corresponde a cada uno. M5C.1 había restringido Mensualidades
+  // a lunes–viernes sin que nada del negocio lo pidiera. Quien compró horas
+  // puede usarlas cuando el local abre, y el local abre también los fines de
+  // semana.
+  //
+  // Los días y la grilla horaria salen de la misma fuente que Reservas. Lo
+  // propio de Mensualidades son sus duraciones —hasta 60 minutos, contra 15/30
+  // de Reservas— y cómo se limita el turno el fin de semana: ahí el último
+  // inicio es 14:00 y el turno puede terminar después, porque con duraciones de
+  // hasta una hora exigir que cierre a las 14:00 dejaría el sábado sin ninguna
+  // reserva larga.
   mensualidad: {
     duraciones: [15, 30, 45, 60],
     simuladoresMin: 1,
     simuladoresMax: 4,
-    diasHabilitados: LUNES_A_VIERNES,
-    cierreMin: CIERRE_22,
+    diasHabilitados: TODOS_LOS_DIAS,
+    limiteTurno: { semana: CIERRE_22, finDeSemana: HASTA_EL_ULTIMO_INICIO },
   },
 };
 
@@ -281,7 +319,7 @@ function diaDeLaSemana(fecha: string): number {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
-/** ¿Ese producto opera ese día? Mensualidades: solo lunes a viernes. */
+/** ¿Ese producto opera ese día? Hoy los dos operan los siete. */
 export function diaHabilitadoPara(producto: Producto, fecha: string): boolean {
   if (!fechaValida(fecha)) return false;
   return REGLAS_POR_PRODUCTO[producto].diasHabilitados.includes(diaDeLaSemana(fecha));
@@ -295,26 +333,64 @@ export function cantidadSimuladoresValidaPara(producto: Producto, n: unknown): b
   return Number.isInteger(v) && v >= r.simuladoresMin && v <= r.simuladoresMax;
 }
 
+/** Cómo se limita el turno de ESE producto en ESA fecha. */
+export function limiteDeTurno(producto: Producto, fecha: string): LimiteDelTurno {
+  const l = REGLAS_POR_PRODUCTO[producto].limiteTurno;
+  return esFinDeSemana(fecha) ? l.finDeSemana : l.semana;
+}
+
 /**
- * ¿La EXPERIENCIA termina antes del cierre? Se mide sobre la duración real
- * pedida, no sobre los bloques de agenda: `inicio + duración <= cierre`.
+ * ¿La EXPERIENCIA termina dentro del horario del día? Se mide sobre la duración
+ * real pedida, no sobre los bloques de agenda: `inicio + duración <= cierre`.
  *
- * Hoy la grilla ya es más estricta que esto en las cuatro duraciones (un turno
- * de 60 no puede empezar después de las 20:40 porque no le entran los cuatro
- * bloques), así que este filtro no rechaza nada que la grilla acepte. Está
- * igual, explícito y probado, para que la regla se cumpla por decisión y no por
- * casualidad: si mañana cambia la cadencia o el mapeo de bloques, el cierre a
- * las 22:00 lo sigue garantizando esta función.
+ * Cuando el día se limita por ÚLTIMO INICIO no hay nada que verificar acá: el
+ * turno puede terminar después, y lo único que importa —que el inicio esté en
+ * la grilla— lo comprueba `bloquesDeAgendaPara`.
+ *
+ * De lunes a viernes la grilla ya es más estricta que este filtro (un turno de
+ * 60 no puede empezar después de las 20:40 porque no le entran los cuatro
+ * bloques). Se conserva igual, explícito y probado, para que el cierre a las
+ * 22:00 se cumpla por decisión y no por casualidad.
  */
 export function terminaAntesDelCierre(
-  producto: Producto, hora: string, duracion: unknown,
+  producto: Producto, fecha: string, hora: string, duracion: unknown,
 ): boolean {
+  if (!fechaValida(fecha)) return false;
   if (!/^\d{2}:\d{2}$/.test(hora)) return false;
   const d = Number(duracion);
   if (!Number.isInteger(d) || d <= 0) return false;
   const [h, m] = hora.split(":").map(Number);
   if (h > 23 || m > 59) return false;
-  return h * 60 + m + d <= REGLAS_POR_PRODUCTO[producto].cierreMin;
+
+  const limite = limiteDeTurno(producto, fecha);
+  if (limite.tipo === "ultimoInicio") return true;
+  return h * 60 + m + d <= limite.minuto;
+}
+
+/**
+ * Bloques CORRIDOS desde una hora: inicio, +20, +40, … Es la posición real que
+ * ocupa la experiencia, calculada por aritmética y no por la posición dentro de
+ * la grilla del día.
+ *
+ * Se usa donde el turno puede terminar después del último inicio: el sábado a
+ * las 14:00 una experiencia de 60 minutos ocupa 14:00, 14:20, 14:40 y 15:00,
+ * aunque esos tres últimos no sean horarios en los que alguien pueda EMPEZAR.
+ * Ocupar y poder empezar son dos cosas distintas.
+ */
+function bloquesCorridos(hora: string, duracion: unknown): string[] | null {
+  const cantidad = bloquesPara(duracion);
+  if (cantidad === null) return null;
+  const inicio = aMinutos(hora);
+  if (inicio === null) return null;
+  const out: string[] = [];
+  for (let i = 0; i < cantidad; i++) {
+    const m = inicio + i * PASO_AGENDA_MIN;
+    // Un turno no puede cruzar la medianoche: con la grilla actual es
+    // imposible, pero si alguien la corriera esto no devuelve basura.
+    if (m >= 24 * 60) return null;
+    out.push(`${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
+  }
+  return out;
 }
 
 /**
@@ -326,7 +402,20 @@ export function bloquesDeAgendaPara(
 ): string[] | null {
   if (!duracionValidaPara(producto, duracion)) return null;
   if (!diaHabilitadoPara(producto, fecha)) return null;
-  if (!terminaAntesDelCierre(producto, hora, duracion)) return null;
+
+  // El INICIO tiene que estar en la grilla del día, siempre y para los dos
+  // modos. Es lo que rechaza un 14:20 un sábado: no existe como inicio.
+  if (!horariosDe(fecha).includes(hora)) return null;
+
+  if (limiteDeTurno(producto, fecha).tipo === "ultimoInicio") {
+    // (M8C.1) Acá el turno puede terminar después del último inicio, así que
+    // los bloques se calculan corridos en vez de leerse de la grilla. Si se
+    // leyeran de la grilla, un sábado a las 14:00 solo entraría una duración de
+    // 15 minutos, porque no hay posiciones siguientes que ocupar.
+    return bloquesCorridos(hora, duracion);
+  }
+
+  if (!terminaAntesDelCierre(producto, fecha, hora, duracion)) return null;
   return bloquesDeAgenda(fecha, hora, duracion);
 }
 

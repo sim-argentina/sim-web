@@ -1,5 +1,5 @@
 import { ALTURA_MINIMA_M, PESO_MAXIMO_KG } from "@/lib/requisitos";
-import { REGLAS_POR_PRODUCTO } from "@/lib/agenda";
+import { REGLAS_POR_PRODUCTO, WEEKDAY_SLOTS, WEEKEND_SLOTS } from "@/lib/agenda";
 
 // Condiciones de Mensualidades SIM. Módulo PURO: lo usa la landing para
 // mostrarlas y el servidor para registrar qué versión aceptó cada comprador.
@@ -19,7 +19,9 @@ export type Condicion = { titulo: string; texto: string };
 // 2 a 1. Quien acepte desde ahora acepta otra cosa que quien aceptó antes, así
 // que no se reescribe ninguna aceptación histórica: las compras y reservas
 // viejas siguen guardando la versión que efectivamente se les mostró.
-export const CONDICIONES_VERSION = "2026-09-m8c";
+// (M8C.1) Vuelve a subir: Mensualidades pasa a operar los siete días, con
+// horario distinto el fin de semana. Es otra regla material.
+export const CONDICIONES_VERSION = "2026-09-m8c1";
 
 /** "15, 30, 45 o 60" a partir de la fuente de dominio, no escrito a mano. */
 function enumerar(valores: readonly number[]): string {
@@ -27,7 +29,27 @@ function enumerar(valores: readonly number[]): string {
   return `${valores.slice(0, -1).join(", ")} o ${valores[valores.length - 1]}`;
 }
 
-const { duraciones, simuladoresMin, simuladoresMax } = REGLAS_POR_PRODUCTO.mensualidad;
+const { duraciones, simuladoresMin, simuladoresMax, limiteTurno } = REGLAS_POR_PRODUCTO.mensualidad;
+
+/** 1320 → "22:00". El horario que se publica es el que aplica el motor. */
+function hhmm(minutos: number): string {
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// De lunes a viernes lo que se publica es el horario de atención: se abre a las
+// 10:00 y el turno tiene que terminar a las 22:00.
+const ABRE_SEMANA = WEEKDAY_SLOTS[0];
+const CIERRA_SEMANA = limiteTurno.semana.tipo === "cierre"
+  ? hhmm(limiteTurno.semana.minuto)
+  : WEEKDAY_SLOTS[WEEKDAY_SLOTS.length - 1];
+
+// (M8C.1) El fin de semana lo que se publica son los INICIOS, de punta a punta
+// de la grilla. No se anuncia una hora de cierre porque no hay: el turno que
+// arranca a las 14:00 termina cuando termina su duración.
+const PRIMER_INICIO_FINDE = WEEKEND_SLOTS[0];
+const ULTIMO_INICIO_FINDE = WEEKEND_SLOTS[WEEKEND_SLOTS.length - 1];
 
 /** 1..4 → [1, 2, 3, 4]. Así el texto no puede contradecir a la validación. */
 const CANTIDADES = Array.from(
@@ -46,11 +68,15 @@ export const CONDICIONES_MENSUALIDAD: readonly Condicion[] = [
       "No tiene renovación automática y el saldo no utilizado se pierde.",
   },
   {
+    // (M8C.1) Los horarios se derivan de la agenda: si mañana cambia el cierre,
+    // la condición cambia con él en vez de quedar mintiendo.
     titulo: "Reservas",
     texto:
       "Se realizan desde la web con el código y el teléfono, sin crear una cuenta. " +
-      "Podés reservar de lunes a viernes, desde el día siguiente y hasta 15 días de anticipación. " +
-      "El turno debe realizarse dentro de la vigencia y finalizar antes de las 22:00.",
+      `Podés reservar de lunes a viernes de ${ABRE_SEMANA} a ${CIERRA_SEMANA}, ` +
+      `y sábados y domingos con horarios de inicio de ${PRIMER_INICIO_FINDE} a ${ULTIMO_INICIO_FINDE}. ` +
+      "Se reserva desde el día siguiente y hasta 15 días de anticipación. " +
+      "El turno debe realizarse dentro de la vigencia y está sujeto a disponibilidad.",
   },
   {
     titulo: "Duración y simuladores",
@@ -108,9 +134,9 @@ export const ACEPTACION_MENSUALIDAD = "Leí y acepto las condiciones de la mensu
 // la reserva es qué aceptó el titular ESE día, no lo que dice la web hoy.
 // El texto no pide datos de los acompañantes: el titular acepta por el grupo.
 
-// (M8C) Sube junto con la de compra y por el mismo motivo: el mínimo de
-// simuladores cambió. Las reservas ya hechas conservan su versión.
-export const CONDICIONES_RESERVA_VERSION = "2026-09-m8c";
+// (M8C.1) Sube junto con la de compra: cambió el calendario del producto.
+// Las reservas ya hechas conservan la versión que se les mostró.
+export const CONDICIONES_RESERVA_VERSION = "2026-09-m8c1";
 
 export const CONDICIONES_RESERVA: readonly string[] = [
   `El titular declara que todos los participantes cumplen la altura mínima de ${ALTURA_MINIMA_M} m y el peso máximo de ${PESO_MAXIMO_KG} kg.`,
