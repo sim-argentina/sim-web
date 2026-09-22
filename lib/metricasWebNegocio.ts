@@ -6,8 +6,11 @@
 //    reserva bonificada) no setean origen → queda 'web'; el módulo Empresas setea
 //    'empresa'. NO existe (ni puede existir) origen NULL, así que no se asume nada:
 //    se filtra estrictamente por 'web' y se excluye 'empresa' o cualquier otro origen.
-//  - Gift Cards pagadas: su ÚNICO punto de creación es el flujo público
-//    /api/gift-cards/preference (admin y webhook solo actualizan) → web-exclusivas.
+//  - Gift Cards pagadas del canal 'web'. La columna gift_cards.canal es NOT NULL
+//    con default 'web': el flujo público (preference + webhook) las deja en 'web'
+//    y el alta administrativa del panel las marca 'admin'. Desde que existe esa
+//    emisión manual, una Gift Card paga ya NO implica una venta web, así que se
+//    filtra explícitamente: una venta de mostrador no es ingreso atribuible a la web.
 // No duplica reglas de Finanzas: son conteos/sumas directas del período.
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { DateRange } from "@/lib/metricasWebRange";
@@ -45,6 +48,7 @@ export async function negocioWeb(range: DateRange): Promise<NegocioReal> {
     .from("gift_cards")
     .select("monto, estado_pago, fecha_pago")
     .eq("estado_pago", "pagado")
+    .eq("canal", "web") // Gift Card Web = canal explícito 'web' (excluye las emitidas a mano).
     .gte("fecha_pago", desde)
     .lte("fecha_pago", hasta);
   const giftCards = (gcs ?? []).length;

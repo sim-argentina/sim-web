@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import GiftCardDownloadable from "@/components/GiftCardDownloadable";
+import CrearGiftCardModal from "./CrearGiftCardModal";
 
 type GiftCard = {
   id: string;
@@ -28,6 +29,16 @@ type GiftCard = {
   fecha_vencimiento: string | null;
   observaciones: string | null;
   deleted_at?: string | null;
+  // Origen de la emisión. Las filas anteriores a la emisión manual traen 'web'.
+  canal?: string | null;
+  medio_pago?: string | null;
+};
+
+const MEDIO_LABEL_TABLA: Record<string, string> = {
+  efectivo: "Efectivo",
+  qr: "QR",
+  debito: "Débito",
+  credito: "Crédito",
 };
 
 type GiftCardLog = {
@@ -119,6 +130,8 @@ export default function AdminGiftCardsPage() {
   const esAdmin = role === "admin";
   const [verArchivadas, setVerArchivadas] = useState(false);
   const [aEliminar, setAEliminar] = useState<GiftCard | null>(null);
+  // Emisión manual (solo admin).
+  const [crear, setCrear] = useState(false);
 
   useEffect(() => {
     fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
@@ -226,12 +239,24 @@ export default function AdminGiftCardsPage() {
 
   return (
     <div className="min-h-screen bg-black p-4 md:p-8">
-      <div className="mb-8">
-        <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500 mb-1">Panel Admin</p>
-        <h1 className="text-3xl font-black text-white">Gift Cards</h1>
-        <p className="text-zinc-500 text-sm mt-1">
-          {stats.total} vendidas · {stats.pendientes} por usar · {stats.usadas} usadas · {formatPrice(stats.recaudado)} cobrado
-        </p>
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.3em] text-red-500 mb-1">Panel Admin</p>
+          <h1 className="text-3xl font-black text-white">Gift Cards</h1>
+          <p className="text-zinc-500 text-sm mt-1">
+            {stats.total} vendidas · {stats.pendientes} por usar · {stats.usadas} usadas · {formatPrice(stats.recaudado)} cobrado
+          </p>
+        </div>
+        {/* Emitir a mano: solo admin. El botón se esconde para staff, pero lo
+            que realmente lo impide es requireAdmin() en el endpoint. */}
+        {esAdmin && (
+          <button
+            onClick={() => setCrear(true)}
+            className="rounded-xl bg-red-600 px-5 py-2.5 text-sm font-black text-white transition hover:bg-red-500"
+          >
+            + Crear Gift Card
+          </button>
+        )}
       </div>
 
       {/* Filtros */}
@@ -305,7 +330,14 @@ export default function AdminGiftCardsPage() {
                   <td className="px-4 py-3"><ModoBadge modo={c.modo_uso} /></td>
                   <td className="px-4 py-3 font-black text-white">{formatPrice(c.monto)}</td>
                   <td className="px-4 py-3"><BadgeUso estado={c.estado_uso} /></td>
-                  <td className="px-4 py-3 text-xs text-zinc-500">{formatFechaHora(c.fecha_pago || c.created_at)}</td>
+                  <td className="px-4 py-3 text-xs text-zinc-500">
+                    {formatFechaHora(c.fecha_pago || c.created_at)}
+                    {c.canal === "admin" && (
+                      <div className="text-[11px] text-zinc-600">
+                        Creada manualmente{c.medio_pago ? ` · ${MEDIO_LABEL_TABLA[c.medio_pago] ?? c.medio_pago}` : ""}
+                      </div>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -431,6 +463,13 @@ export default function AdminGiftCardsPage() {
                 ["Vendida", formatFechaHora(detalle.fecha_pago || detalle.created_at)],
                 ["Vence", formatFechaHora(detalle.fecha_vencimiento)],
                 ["Usada", formatFechaHora(detalle.fecha_uso)],
+                ["Origen", detalle.canal === "admin" ? "Creada manualmente" : "Compra web"],
+                [
+                  "Cobrada con",
+                  detalle.canal === "admin"
+                    ? (detalle.medio_pago ? MEDIO_LABEL_TABLA[detalle.medio_pago] ?? detalle.medio_pago : "—")
+                    : "Mercado Pago",
+                ],
                 ["MP Payment ID", detalle.mercado_pago_payment_id || "—"],
               ] as [string, string][]).map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4">
@@ -604,6 +643,12 @@ export default function AdminGiftCardsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Crear Gift Card a mano (solo admin). Al emitirse, el listado se recarga
+          para que aparezca junto a las compradas por web. */}
+      {crear && esAdmin && (
+        <CrearGiftCardModal onCerrar={() => setCrear(false)} onCreada={fetchCards} />
       )}
     </div>
   );

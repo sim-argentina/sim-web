@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
+import { calcularVencimientoGiftCard } from "@/lib/giftCards";
 import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { logSecurityEvent } from "@/lib/apiError";
@@ -89,6 +90,10 @@ export async function POST(req: Request) {
           estado_uso: "pendiente",
           mercado_pago_payment_id: String(paymentId),
           fecha_pago: nowIso,
+          // La vigencia arranca cuando el pago queda confirmado, con la misma
+          // fórmula que usa el alta administrativa. Es un dato más en el UPDATE
+          // que ya se hacía: no cambia el flujo ni el orden de nada.
+          fecha_vencimiento: calcularVencimientoGiftCard(nowIso),
           updated_at: nowIso,
         })
         .eq(filtro, ref)

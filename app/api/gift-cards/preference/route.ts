@@ -6,6 +6,7 @@ import {
   getProductoPorDuracion,
   generarCodigoGiftCard,
   repartirMonto,
+  calcularVencimientoGiftCard,
   GIFT_CARD_MAX_CANTIDAD,
   type ModoUso,
 } from "@/lib/giftCards";
@@ -185,6 +186,9 @@ export async function POST(req: Request) {
           estado_pago: "pagado",
           estado_uso: "pendiente",
           fecha_pago: nowIso,
+          // Misma vigencia que cualquier otra Gift Card: acá el pago ya está
+          // confirmado (no hay nada que cobrar), así que arranca ahora.
+          fecha_vencimiento: calcularVencimientoGiftCard(nowIso),
           updated_at: nowIso,
         })
         .eq("grupo_compra_id", grupoId);
