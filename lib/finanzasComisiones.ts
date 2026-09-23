@@ -5,6 +5,41 @@
 export const METODOS_CON_COMISION = ["qr", "debito", "credito"] as const;
 export const METODOS_SIN_COMISION = ["efectivo", "transferencia"] as const;
 
+// Todos los medios de cobro presencial que modela Finanzas, en el orden en que
+// se muestran. Cualquier pantalla que ofrezca "cómo se cobró" sale de acá: si
+// mañana aparece un medio nuevo, se agrega una vez.
+export const METODOS_PAGO = [...METODOS_SIN_COMISION, ...METODOS_CON_COMISION] as const;
+export type MetodoPago = (typeof METODOS_PAGO)[number];
+
+export const METODO_PAGO_LABEL: Record<string, string> = {
+  efectivo: "Efectivo",
+  transferencia: "Transferencia",
+  qr: "QR",
+  debito: "Débito",
+  credito: "Crédito",
+};
+
+// Procesadores con posnet en el local. Son los dos que reconoce mapProcesador y
+// los únicos que tienen tasas en fin_comisiones_cobro.
+export const PROCESADORES = ["mercado_pago", "payway"] as const;
+export type Procesador = (typeof PROCESADORES)[number];
+
+export const PROCESADOR_LABEL: Record<string, string> = {
+  mercado_pago: "Mercado Pago",
+  payway: "Payway",
+};
+
+// Un cobro lleva procesador exactamente cuando pasa por posnet. Efectivo y
+// transferencia no: no hay quién cobre comisión. Es la regla que decide qué
+// combinaciones son válidas; nadie debería reimplementarla.
+export function requiereProcesador(metodo: string): boolean {
+  return (METODOS_CON_COMISION as readonly string[]).includes(String(metodo).trim().toLowerCase());
+}
+
+export function esMetodoPagoValido(metodo: string): boolean {
+  return (METODOS_PAGO as readonly string[]).includes(String(metodo).trim().toLowerCase());
+}
+
 export type ComisionConfig = {
   procesador: string; // 'mercado_pago' | 'payway'
   metodo_pago: string; // 'qr' | 'debito' | 'credito'
@@ -64,7 +99,7 @@ export function claveComision(procesador: string, metodo: string): string {
 }
 
 function esMetodoConComision(m: string): boolean {
-  return (METODOS_CON_COMISION as readonly string[]).includes(m);
+  return requiereProcesador(m);
 }
 
 // Calcula comisión/neto por cada pago del array pagos_detalle.

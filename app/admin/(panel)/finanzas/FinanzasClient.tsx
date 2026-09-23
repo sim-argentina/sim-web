@@ -114,6 +114,7 @@ type ResumenApi = {
     comisionesWebTotal: number;
     comisionesTotales: number;
     comisiones: ComisionesResumen | null;
+    comisionesGiftCards: ComisionesResumen | null;
     comisionesWeb: ComisionesWebResumen | null;
     ingresos: number;
     financiamiento: number;
@@ -927,18 +928,38 @@ function BloqueComisionesWeb({ com }: { com: ComisionesWebResumen | null }) {
   );
 }
 
-function BloqueComisiones({ com }: { com: ComisionesResumen | null }) {
+function BloqueComisiones({
+  com,
+  titulo = "Comisiones e ingresos netos (stand)",
+  etiquetaBruto = "Ingresos brutos del stand",
+  etiquetaNeto = "Ingresos netos del stand",
+  detalleBruto = "Cobrado en el turnero",
+  columnaRef = "Turno",
+  prefijoRef = "#",
+  ocultarSiVacio = false,
+}: {
+  com: ComisionesResumen | null;
+  titulo?: string;
+  etiquetaBruto?: string;
+  etiquetaNeto?: string;
+  detalleBruto?: string;
+  columnaRef?: string;
+  prefijoRef?: string;
+  ocultarSiVacio?: boolean;
+}) {
   const [verDetalle, setVerDetalle] = useState(false);
   const [verAdv, setVerAdv] = useState(false);
   if (!com) return null;
+  // Un mes sin Gift Cards manuales no necesita un bloque en cero.
+  if (ocultarSiVacio && com.brutoStand === 0 && com.advertencias.length === 0) return null;
   const rows = com.detalle.filter((d) => d.metodo_pago === "qr" || d.metodo_pago === "debito" || d.metodo_pago === "credito");
   return (
     <div>
-      <h2 className="mb-3 text-lg font-black uppercase text-red-500">Comisiones e ingresos netos (stand)</h2>
+      <h2 className="mb-3 text-lg font-black uppercase text-red-500">{titulo}</h2>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <CardKpi titulo="Ingresos brutos del stand" valor={dinero(com.brutoStand)} detalle="Cobrado en el turnero" />
+        <CardKpi titulo={etiquetaBruto} valor={dinero(com.brutoStand)} detalle={detalleBruto} />
         <CardKpi titulo="Comisiones de cobro" valor={dinero(com.comisionStand)} color="rojo" detalle="QR / Débito / Crédito" />
-        <CardKpi titulo="Ingresos netos del stand" valor={dinero(com.netoStand)} color="verde" detalle="Bruto − comisiones" />
+        <CardKpi titulo={etiquetaNeto} valor={dinero(com.netoStand)} color="verde" detalle="Bruto − comisiones" />
         <CardKpi titulo="Tasa efectiva" valor={pct(com.tasaEfectiva)} detalle="Comisiones / bruto" />
       </div>
 
@@ -953,9 +974,9 @@ function BloqueComisiones({ com }: { com: ComisionesResumen | null }) {
           {verAdv && (
             <div className="mt-3 overflow-x-auto">
               <table className="w-full min-w-[520px] text-xs">
-                <thead className="text-left text-white/40"><tr><th className="pb-1">Fecha</th><th className="pb-1">Método</th><th className="pb-1 text-right">Monto</th><th className="pb-1">Turno</th><th className="pb-1">Falta</th></tr></thead>
+                <thead className="text-left text-white/40"><tr><th className="pb-1">Fecha</th><th className="pb-1">Método</th><th className="pb-1 text-right">Monto</th><th className="pb-1">{columnaRef}</th><th className="pb-1">Falta</th></tr></thead>
                 <tbody>{com.advertencias.map((a, i) => (
-                  <tr key={i} className="border-t border-white/5"><td className="py-1">{a.fecha}</td><td>{a.metodo_pago}</td><td className="text-right">{dinero(a.monto)}</td><td>#{a.turno_id}</td><td className="text-amber-300">{a.motivo === "sin_config" ? "configuración" : "procesador"}</td></tr>
+                  <tr key={i} className="border-t border-white/5"><td className="py-1">{a.fecha}</td><td>{a.metodo_pago}</td><td className="text-right">{dinero(a.monto)}</td><td>{prefijoRef}{a.turno_id}</td><td className="text-amber-300">{a.motivo === "sin_config" ? "configuración" : "procesador"}</td></tr>
                 ))}</tbody>
               </table>
             </div>
@@ -969,10 +990,10 @@ function BloqueComisiones({ com }: { com: ComisionesResumen | null }) {
           {verDetalle && (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[820px] text-xs">
-                <thead className="text-left text-white/35"><tr><th className="pb-2">Fecha</th><th className="pb-2">Turno</th><th className="pb-2">Método</th><th className="pb-2">Procesador</th><th className="pb-2 text-right">Bruto</th><th className="pb-2 text-right">% base</th><th className="pb-2 text-right">IVA</th><th className="pb-2 text-right">% total</th><th className="pb-2 text-right">Comisión</th><th className="pb-2 text-right">Neto</th></tr></thead>
+                <thead className="text-left text-white/35"><tr><th className="pb-2">Fecha</th><th className="pb-2">{columnaRef}</th><th className="pb-2">Método</th><th className="pb-2">Procesador</th><th className="pb-2 text-right">Bruto</th><th className="pb-2 text-right">% base</th><th className="pb-2 text-right">IVA</th><th className="pb-2 text-right">% total</th><th className="pb-2 text-right">Comisión</th><th className="pb-2 text-right">Neto</th></tr></thead>
                 <tbody>{rows.map((d, i) => (
                   <tr key={i} className="border-t border-white/5">
-                    <td className="py-1">{d.fecha}</td><td>#{d.turno_id}</td><td className="uppercase">{d.metodo_pago}</td><td>{d.procesador || <span className="text-amber-300">—</span>}</td>
+                    <td className="py-1">{d.fecha}</td><td>{prefijoRef}{d.turno_id}</td><td className="uppercase">{d.metodo_pago}</td><td>{d.procesador || <span className="text-amber-300">—</span>}</td>
                     <td className="text-right">{dinero2(d.monto)}</td><td className="text-right">{pctNum(d.porcentaje_base)}</td><td className="text-right">{d.iva_porcentaje}%</td><td className="text-right">{pctNum(d.porcentaje_total)}</td>
                     <td className="text-right text-red-400">{dinero2(d.comision)}</td><td className="text-right text-green-400">{dinero2(d.neto)}</td>
                   </tr>
@@ -1023,6 +1044,19 @@ function TabResumen({ resumen }: { resumen: ResumenApi }) {
 
       {/* Comisiones e ingresos netos del stand */}
       <BloqueComisiones com={r.comisiones} />
+
+      {/* Gift Cards emitidas a mano: mismo posnet y misma tasa que el stand, pero
+          su bruto entra por la fuente Gift cards, no por el turnero. */}
+      <BloqueComisiones
+        com={r.comisionesGiftCards}
+        titulo="Comisiones e ingresos netos (gift cards emitidas a mano)"
+        etiquetaBruto="Gift cards cobradas en el local"
+        etiquetaNeto="Neto de las gift cards manuales"
+        detalleBruto="Emitidas desde el panel"
+        columnaRef="Código"
+        prefijoRef=""
+        ocultarSiVacio
+      />
 
       <BloqueComisionesWeb com={r.comisionesWeb} />
 

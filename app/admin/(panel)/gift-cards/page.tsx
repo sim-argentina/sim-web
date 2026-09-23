@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import GiftCardDownloadable from "@/components/GiftCardDownloadable";
 import CrearGiftCardModal from "./CrearGiftCardModal";
+import { MEDIO_PAGO_GIFT_CARD_LABEL, PROCESADOR_GIFT_CARD_LABEL } from "@/lib/giftCards";
 
 type GiftCard = {
   id: string;
@@ -32,14 +33,17 @@ type GiftCard = {
   // Origen de la emisión. Las filas anteriores a la emisión manual traen 'web'.
   canal?: string | null;
   medio_pago?: string | null;
+  procesador?: string | null;
 };
 
-const MEDIO_LABEL_TABLA: Record<string, string> = {
-  efectivo: "Efectivo",
-  qr: "QR",
-  debito: "Débito",
-  credito: "Crédito",
-};
+// Cómo se cobró, en palabras. Las etiquetas salen del modelo de Finanzas: no se
+// reescriben acá para que no puedan quedar desalineadas.
+function comoSeCobro(c: GiftCard): string {
+  if (c.canal !== "admin") return "Mercado Pago";
+  const medio = c.medio_pago ? MEDIO_PAGO_GIFT_CARD_LABEL[c.medio_pago] ?? c.medio_pago : "—";
+  const proc = c.procesador ? PROCESADOR_GIFT_CARD_LABEL[c.procesador] ?? c.procesador : null;
+  return proc ? `${medio} · ${proc}` : medio;
+}
 
 type GiftCardLog = {
   id: string;
@@ -334,7 +338,7 @@ export default function AdminGiftCardsPage() {
                     {formatFechaHora(c.fecha_pago || c.created_at)}
                     {c.canal === "admin" && (
                       <div className="text-[11px] text-zinc-600">
-                        Creada manualmente{c.medio_pago ? ` · ${MEDIO_LABEL_TABLA[c.medio_pago] ?? c.medio_pago}` : ""}
+                        Creada manualmente · {comoSeCobro(c)}
                       </div>
                     )}
                   </td>
@@ -464,12 +468,7 @@ export default function AdminGiftCardsPage() {
                 ["Vence", formatFechaHora(detalle.fecha_vencimiento)],
                 ["Usada", formatFechaHora(detalle.fecha_uso)],
                 ["Origen", detalle.canal === "admin" ? "Creada manualmente" : "Compra web"],
-                [
-                  "Cobrada con",
-                  detalle.canal === "admin"
-                    ? (detalle.medio_pago ? MEDIO_LABEL_TABLA[detalle.medio_pago] ?? detalle.medio_pago : "—")
-                    : "Mercado Pago",
-                ],
+                ["Cobrada con", comoSeCobro(detalle)],
                 ["MP Payment ID", detalle.mercado_pago_payment_id || "—"],
               ] as [string, string][]).map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Copy, Loader2, X } from "lucide-react";
 import GiftCardDownloadable from "@/components/GiftCardDownloadable";
 import {
@@ -10,7 +10,11 @@ import {
   GIFT_CARD_VIGENCIA_DIAS,
   MEDIOS_PAGO_GIFT_CARD,
   MEDIO_PAGO_GIFT_CARD_LABEL,
+  PROCESADORES_GIFT_CARD,
+  PROCESADOR_GIFT_CARD_LABEL,
+  requiereProcesador,
 } from "@/lib/giftCards";
+import { claveComision, porcentajeTotalComision, type ComisionConfig } from "@/lib/finanzasComisiones";
 
 // Emisión manual de una Gift Card desde el panel (solo admin).
 //
@@ -105,6 +109,10 @@ export default function CrearGiftCardModal({
   const [telefono, setTelefono] = useState("");
   const [destinatario, setDestinatario] = useState("");
   const [medioPago, setMedioPago] = useState("");
+  const [procesador, setProcesador] = useState("");
+  // Tasas vigentes, leídas de la configuración REAL de Finanzas. Solo sirven
+  // para mostrar la comisión estimada: el cálculo que cuenta lo hace el servidor.
+  const [tasas, setTasas] = useState<Record<string, ComisionConfig>>({});
   const [observaciones, setObservaciones] = useState("");
 
   const [enviando, setEnviando] = useState(false);
@@ -117,6 +125,45 @@ export default function CrearGiftCardModal({
     [duracion],
   );
   const totalEstimado = (producto?.monto ?? 0) * cantidad;
+
+  // Las tasas salen de la configuración de Finanzas, no de una copia local: es
+  // el mismo endpoint que edita el admin en la pestaña Comisiones. Si falla, el
+  // formulario sigue andando y solo deja de mostrar la estimación.
+  useEffect(() => {
+    let vivo = true;
+    fetch("/api/admin/finanzas/comisiones", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!vivo || !d) return;
+        const mapa: Record<string, ComisionConfig> = {};
+        for (const c of (d.comisiones ?? []) as ComisionConfig[]) {
+          if (c.activa) mapa[claveComision(c.procesador, c.metodo_pago)] = c;
+        }
+        setTasas(mapa);
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+
+  // Estimación informativa de lo que se va a quedar el procesador. El número que
+  // vale es el que calcula Finanzas al leer, con esta misma configuración.
+  const comisionEstimada = useMemo(() => {
+    if (!requiereProcesador(medioPago) || !procesador) return null;
+    const cfg = tasas[claveComision(procesador, medioPago)];
+    if (!cfg) return null;
+    const porcentaje = porcentajeTotalComision(cfg);
+    return {
+      porcentaje,
+      comision: Math.round(((totalEstimado * porcentaje) / 100 + Number.EPSILON) * 100) / 100,
+    };
+  }, [medioPago, procesador, tasas, totalEstimado]);
+
+  // Cambiar de medio limpia el posnet: si el nuevo medio no lleva uno, mandarlo
+  // sería una combinación imposible y el backend la rechazaría.
+  function elegirMedio(m: string) {
+    setMedioPago(m);
+    if (!requiereProcesador(m)) setProcesador("");
+  }
 
   async function emitir() {
     setEnviando(true);
@@ -134,6 +181,7 @@ export default function CrearGiftCardModal({
           comprador_telefono: telefono,
           destinatario_nombre: destinatario,
           medio_pago: medioPago,
+          procesador: requiereProcesador(medioPago) ? procesador : "",
           observaciones,
         }),
       });
@@ -356,12 +404,12 @@ export default function CrearGiftCardModal({
 
           <div>
             <label className={etiqueta}>Cómo se cobró *</label>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-5 gap-2">
               {MEDIOS_PAGO_GIFT_CARD.map((m) => (
                 <button
                   key={m}
                   type="button"
-                  onClick={() => setMedioPago(m)}
+                  onClick={() => elegirMedio(m)}
                   className={`rounded-xl border px-2 py-2 text-xs font-black transition ${
                     medioPago === m
                       ? "border-red-500 bg-red-500/15 text-white"
@@ -376,6 +424,37 @@ export default function CrearGiftCardModal({
               Define en qué cuenta entra el ingreso en Finanzas.
             </p>
           </div>
+
+          {/* El posnet solo aparece para los medios que pasan por uno. La regla
+              es la misma que usa Finanzas (requiereProcesador), no una copia. */}
+          {requiereProcesador(medioPago) && (
+            <div>
+              <label className={etiqueta}>Con qué posnet *</label>
+              <div className="grid grid-cols-2 gap-2">
+                {PROCESADORES_GIFT_CARD.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setProcesador(p)}
+                    className={`rounded-xl border px-2 py-2 text-xs font-black transition ${
+                      procesador === p
+                        ? "border-red-500 bg-red-500/15 text-white"
+                        : "border-white/10 text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    {PROCESADOR_GIFT_CARD_LABEL[p]}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                {comisionEstimada
+                  ? `Comisión estimada: ${pesos(comisionEstimada.comision)} (${comisionEstimada.porcentaje.toFixed(2)}%) · neto ${pesos(totalEstimado - comisionEstimada.comision)}`
+                  : procesador
+                    ? "Sin tasa configurada para esta combinación: Finanzas lo va a marcar como comisión no disponible."
+                    : "Determina la tasa de comisión con la que Finanzas calcula el neto."}
+              </p>
+            </div>
+          )}
 
           <div>
             <label className={etiqueta}>Observación administrativa</label>
@@ -411,7 +490,10 @@ export default function CrearGiftCardModal({
           </button>
           <button
             onClick={emitir}
-            disabled={enviando || !comprador.trim() || !telefono.trim() || !medioPago}
+            disabled={
+              enviando || !comprador.trim() || !telefono.trim() || !medioPago ||
+              (requiereProcesador(medioPago) && !procesador)
+            }
             className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-6 py-2.5 text-sm font-black text-white transition hover:bg-red-500 disabled:opacity-50"
           >
             {enviando && <Loader2 className="h-4 w-4 animate-spin" />}

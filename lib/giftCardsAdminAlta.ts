@@ -5,15 +5,19 @@ import {
   GIFT_CARD_MAX_CANTIDAD,
   GIFT_CARD_OBSERVACIONES_MAX,
   GIFT_CARD_VIGENCIA_DIAS,
-  MEDIOS_PAGO_GIFT_CARD,
+  MEDIO_PAGO_GIFT_CARD_LABEL,
+  PROCESADORES_GIFT_CARD,
   calcularVencimientoGiftCard,
   generarCodigoGiftCard,
   getProductoPorDuracion,
   repartirMonto,
+  requiereProcesador,
   type GiftCardProducto,
   type MedioPagoGiftCard,
   type ModoUso,
+  type ProcesadorGiftCard,
 } from "@/lib/giftCards";
+import { esMetodoPagoValido } from "@/lib/finanzasComisiones";
 
 // Emisión administrativa de Gift Cards. SOLO SERVIDOR.
 //
@@ -25,7 +29,13 @@ import {
 // Nada monetario se acepta del navegador. El cuerpo manda la DURACIÓN (que es
 // el identificador del producto en el catálogo) y el precio lo pone el catálogo
 // server-side. Si alguien manda `monto`, `estado_pago`, `codigo_unico`,
-// `fecha_pago`, `fecha_vencimiento`, `canal` o `procesador`, no se leen.
+// `fecha_pago`, `fecha_vencimiento` o `canal`, no se leen.
+//
+// Del cobro sí se leen dos datos, porque son hechos del mostrador que el
+// servidor no puede adivinar: el medio y, cuando el medio pasa por posnet, el
+// procesador. Los dos se validan contra el modelo de Finanzas, no contra una
+// lista propia. La COMISIÓN no se acepta ni se guarda: se calcula al leer, con
+// la tasa vigente de fin_comisiones_cobro.
 //
 // EL PERMISO NO SE COMPRUEBA ACÁ: lo comprueba el route handler con
 // requireAdmin(). Este módulo asume que quien lo llama ya tiene derecho.
@@ -34,6 +44,7 @@ import {
 // es client-safe: el formulario del panel los necesita y este módulo arrastra
 // supabaseAdmin. Una sola lista para los dos lados.
 type MedioPago = MedioPagoGiftCard;
+type Procesador = ProcesadorGiftCard;
 
 const MAX_NOMBRE = 80;
 const TELEFONO_RE = /^[0-9+()\s-]{6,30}$/;
@@ -46,6 +57,7 @@ export type DatosAltaGiftCard = {
   cantidad: number;
   modoUso: ModoUso;
   medioPago: MedioPago;
+  procesador: Procesador | null;
   observaciones: string | null;
 };
 
@@ -93,9 +105,34 @@ export function validarAltaGiftCard(body: Record<string, unknown>): ResultadoAlt
 
   const modoUso: ModoUso = body.modo_uso === "juntas" ? "juntas" : "separadas";
 
-  const medioPago = texto(body.medio_pago) as MedioPago;
-  if (!(MEDIOS_PAGO_GIFT_CARD as readonly string[]).includes(medioPago)) {
+  const medioPago = texto(body.medio_pago).toLowerCase() as MedioPago;
+  if (!esMetodoPagoValido(medioPago)) {
     return fail(422, "medio_pago_invalido", "Elegí cómo se cobró.", "medio_pago");
+  }
+
+  // El procesador NO es opcional ni libre: lo decide el medio. qr/débito/crédito
+  // pasan por posnet y necesitan saber cuál, porque de ahí sale la tasa de
+  // fin_comisiones_cobro. Efectivo y transferencia no tienen quién cobre
+  // comisión, así que un procesador ahí sería una combinación imposible.
+  const procesadorCrudo = texto(body.procesador).toLowerCase();
+  let procesador: Procesador | null = null;
+  if (requiereProcesador(medioPago)) {
+    if (!(PROCESADORES_GIFT_CARD as readonly string[]).includes(procesadorCrudo)) {
+      return fail(
+        422,
+        "procesador_invalido",
+        "Elegí con qué posnet se cobró.",
+        "procesador",
+      );
+    }
+    procesador = procesadorCrudo as Procesador;
+  } else if (procesadorCrudo) {
+    return fail(
+      422,
+      "procesador_no_corresponde",
+      `Un cobro en ${MEDIO_PAGO_GIFT_CARD_LABEL[medioPago] ?? medioPago} no pasa por posnet.`,
+      "procesador",
+    );
   }
 
   const observaciones = texto(body.observaciones);
@@ -118,6 +155,7 @@ export function validarAltaGiftCard(body: Record<string, unknown>): ResultadoAlt
       cantidad,
       modoUso,
       medioPago,
+      procesador,
       observaciones: observaciones || null,
     },
   };
@@ -151,6 +189,7 @@ export type AltaRegistrada = {
   cantidad: number;
   monto_total: number;
   medio_pago: MedioPago;
+  procesador: Procesador | null;
   vigencia_dias: number;
   cards: GiftCardEmitida[];
 };
@@ -182,7 +221,7 @@ function construirFilas(datos: DatosAltaGiftCard, grupoId: string, nowIso: strin
     descuento_aplicado: 0,
     canal: "admin",
     medio_pago: datos.medioPago,
-    procesador: datos.medioPago === "efectivo" ? null : "mercado_pago",
+    procesador: datos.procesador,
     // Quién la emitió sale de la cookie firmada, nunca del cuerpo.
     registrado_por: rol,
     observaciones: datos.observaciones,
@@ -274,6 +313,7 @@ export async function emitirGiftCardAdmin(
           cantidad: cards.length,
           monto_total: montoTotal,
           medio_pago: datos.medioPago,
+          procesador: datos.procesador,
           vigencia_dias: GIFT_CARD_VIGENCIA_DIAS,
           cards,
         },

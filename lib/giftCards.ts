@@ -1,4 +1,5 @@
 import { randomInt } from "crypto";
+import type { MetodoPago, Procesador } from "@/lib/finanzasComisiones";
 
 // Catálogo de Gift Cards y helpers compartidos.
 // El precio se define acá (server-side) para que el monto no dependa del cliente.
@@ -32,24 +33,23 @@ export function getProductoPorDuracion(duracion: number): GiftCardProducto | nul
 export const GIFT_CARD_MAX_CANTIDAD = 10;
 export type ModoUso = "juntas" | "separadas";
 
-// Medios con los que se puede cobrar una Gift Card emitida desde el panel.
-// Mismos que Mensualidades M7.4: los únicos con cuenta inequívoca en el modelo
-// financiero vigente (efectivo → Efectivo; qr/débito/crédito → procesador
-// Mercado Pago → cuenta Mercado Pago). Transferencia y Payway quedan afuera a
-// propósito hasta que exista una regla de imputación para ellos.
+// Medios y procesadores con los que se puede cobrar una Gift Card emitida desde
+// el panel. NO son una lista propia de Gift Cards: son exactamente los que
+// modela Finanzas para cualquier cobro presencial (lib/finanzasComisiones.ts),
+// que es también la fuente de la regla de qué medio lleva procesador.
 //
-// Viven acá, y no en el módulo de alta, porque el formulario del panel es un
-// componente de cliente y el módulo de alta es solo-servidor: una sola lista
-// para los dos lados, sin arrastrar supabaseAdmin al navegador.
-export const MEDIOS_PAGO_GIFT_CARD = ["efectivo", "qr", "debito", "credito"] as const;
-export type MedioPagoGiftCard = (typeof MEDIOS_PAGO_GIFT_CARD)[number];
-
-export const MEDIO_PAGO_GIFT_CARD_LABEL: Record<string, string> = {
-  efectivo: "Efectivo",
-  qr: "QR",
-  debito: "Débito",
-  credito: "Crédito",
-};
+// Se re-exportan desde acá porque el formulario del panel es un componente de
+// cliente: finanzasComisiones es un módulo puro sin acceso a base, así que
+// viaja al navegador sin arrastrar nada del servidor.
+export {
+  METODOS_PAGO as MEDIOS_PAGO_GIFT_CARD,
+  METODO_PAGO_LABEL as MEDIO_PAGO_GIFT_CARD_LABEL,
+  PROCESADORES as PROCESADORES_GIFT_CARD,
+  PROCESADOR_LABEL as PROCESADOR_GIFT_CARD_LABEL,
+  requiereProcesador,
+} from "@/lib/finanzasComisiones";
+export type MedioPagoGiftCard = MetodoPago;
+export type ProcesadorGiftCard = Procesador;
 
 export const GIFT_CARD_OBSERVACIONES_MAX = 500;
 

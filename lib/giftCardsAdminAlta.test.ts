@@ -9,9 +9,16 @@ import {
   GIFT_CARD_PRODUCTOS,
   GIFT_CARD_VIGENCIA_DIAS,
   MEDIOS_PAGO_GIFT_CARD,
+  PROCESADORES_GIFT_CARD,
+  requiereProcesador,
   calcularVencimientoGiftCard,
   generarCodigoGiftCard,
 } from "@/lib/giftCards";
+import {
+  METODOS_CON_COMISION, METODOS_PAGO, METODOS_SIN_COMISION,
+  PROCESADORES, calcularComisionesPagos, claveComision, porcentajeTotalComision,
+  type ComisionConfig,
+} from "@/lib/finanzasComisiones";
 
 // Pruebas PURAS de la emisión administrativa de Gift Cards. No consultan la base
 // ni la red: solo necesitan el entorno porque el módulo construye el cliente de
@@ -81,7 +88,6 @@ const base = (over: Record<string, unknown> = {}) => ({
       fecha_pago: "2000-01-01T00:00:00.000Z",
       fecha_vencimiento: "2099-01-01T00:00:00.000Z",
       canal: "web",
-      procesador: "otro",
       registrado_por: "root",
       mercado_pago_payment_id: "123456",
       usos_disponibles: 99,
@@ -94,7 +100,7 @@ const base = (over: Record<string, unknown> = {}) => ({
     Object.keys(r.data).sort(),
     [
       "cantidad", "compradorNombre", "compradorTelefono", "destinatarioNombre",
-      "medioPago", "modoUso", "observaciones", "producto",
+      "medioPago", "modoUso", "observaciones", "procesador", "producto",
     ],
     "la validación no arrastra ningún campo extra del cuerpo",
   );
@@ -133,13 +139,133 @@ const base = (over: Record<string, unknown> = {}) => ({
   assert.ok(raro.ok && raro.data.modoUso === "separadas", "un modo desconocido cae en separadas");
 
   for (const m of MEDIOS_PAGO_GIFT_CARD) {
-    const r = validarAltaGiftCard(base({ medio_pago: m }));
+    const r = validarAltaGiftCard(
+      base({ medio_pago: m, procesador: requiereProcesador(m) ? "mercado_pago" : "" }),
+    );
     assert.ok(r.ok && r.data.medioPago === m, `el medio ${m} se acepta`);
   }
-  for (const m of ["", "transferencia", "payway", "bitcoin", null, 7]) {
+  for (const m of ["", "bitcoin", "mercadopago", "cheque", null, 7]) {
     const r = validarAltaGiftCard(base({ medio_pago: m }));
     assert.ok(!r.ok && r.campo === "medio_pago", `el medio ${String(m)} se rechaza`);
   }
+}
+
+// ── 5 bis) Medios y procesadores: los de Finanzas, no una lista propia ──────
+{
+  // La lista del formulario ES la de Finanzas. Si mañana aparece un medio nuevo
+  // en el modelo financiero, esta prueba obliga a que Gift Cards lo vea.
+  assert.deepEqual(
+    [...MEDIOS_PAGO_GIFT_CARD],
+    [...METODOS_PAGO],
+    "los medios de Gift Card son exactamente los de Finanzas",
+  );
+  assert.deepEqual([...MEDIOS_PAGO_GIFT_CARD], ["efectivo", "transferencia", "qr", "debito", "credito"]);
+  assert.deepEqual([...PROCESADORES_GIFT_CARD], [...PROCESADORES]);
+  assert.deepEqual([...PROCESADORES_GIFT_CARD], ["mercado_pago", "payway"]);
+
+  // La regla de qué medio lleva posnet es la de Finanzas, no una copia.
+  for (const m of METODOS_CON_COMISION) assert.ok(requiereProcesador(m), `${m} lleva posnet`);
+  for (const m of METODOS_SIN_COMISION) assert.ok(!requiereProcesador(m), `${m} no lleva posnet`);
+
+  // TEST F · combinación inválida: un medio sin posnet no puede traer procesador.
+  for (const m of METODOS_SIN_COMISION) {
+    for (const p of PROCESADORES) {
+      const r = validarAltaGiftCard(base({ medio_pago: m, procesador: p }));
+      assert.ok(!r.ok && r.campo === "procesador", `${m} + ${p} se rechaza`);
+      assert.ok(!r.ok && r.codigo === "procesador_no_corresponde");
+    }
+    const ok = validarAltaGiftCard(base({ medio_pago: m }));
+    assert.ok(ok.ok && ok.data.procesador === null, `${m} queda sin procesador`);
+  }
+
+  // Y un medio con posnet NO puede quedarse sin él, ni traer uno inventado.
+  for (const m of METODOS_CON_COMISION) {
+    for (const p of ["", "  ", "payway_2", "posnet", "visa", null, 3]) {
+      const r = validarAltaGiftCard(base({ medio_pago: m, procesador: p }));
+      assert.ok(!r.ok && r.campo === "procesador", `${m} + "${String(p)}" se rechaza`);
+      assert.ok(!r.ok && r.codigo === "procesador_invalido");
+    }
+    for (const p of PROCESADORES) {
+      const r = validarAltaGiftCard(base({ medio_pago: m, procesador: p }));
+      assert.ok(r.ok && r.data.procesador === p, `${m} + ${p} se acepta`);
+    }
+  }
+}
+
+// ── 5 ter) TESTS A–E · bruto, comisión y neto de cada medio ────────────────
+// El cálculo NO es de Gift Cards: es calcularComisionesPagos, el mismo del
+// turnero, alimentado con la misma configuración. Acá se comprueba que una Gift
+// Card manual entre por ese camino y dé los números correctos.
+{
+  // Config con la forma real de fin_comisiones_cobro (porcentajes de ejemplo).
+  const cfg = (procesador: string, metodo: string, base_: number): ComisionConfig => ({
+    procesador, metodo_pago: metodo, porcentaje_base: base_,
+    aplica_iva: true, iva_porcentaje: 21, activa: true,
+  });
+  const tasas: Record<string, ComisionConfig> = {};
+  for (const [proc, met, pct] of [
+    ["mercado_pago", "qr", 0.8], ["mercado_pago", "debito", 3.25], ["mercado_pago", "credito", 6.29],
+    ["payway", "qr", 0.8], ["payway", "debito", 1.0], ["payway", "credito", 1.8],
+  ] as const) {
+    tasas[claveComision(proc, met)] = cfg(proc, met, pct);
+  }
+
+  const MONTO = 12000;
+  const cobro = (metodo: string, procesador: string | null) =>
+    calcularComisionesPagos([{ metodo_pago: metodo, monto: MONTO, posnet_pago: procesador }], tasas);
+
+  // A · Efectivo: bruto = neto, comisión 0.
+  const a = cobro("efectivo", null);
+  assert.equal(a.bruto, MONTO, "A · bruto 12.000");
+  assert.equal(a.comision, 0, "A · efectivo no paga comisión");
+  assert.equal(a.neto, MONTO, "A · neto 12.000");
+  assert.equal(a.advertencias.length, 0, "A · sin advertencias");
+
+  // B · Transferencia: idéntico a efectivo.
+  const b = cobro("transferencia", null);
+  assert.equal(b.bruto, MONTO, "B · bruto 12.000");
+  assert.equal(b.comision, 0, "B · transferencia no paga comisión");
+  assert.equal(b.neto, MONTO, "B · neto 12.000");
+  assert.equal(b.advertencias.length, 0, "B · sin advertencias");
+
+  // C/D/E · con posnet: comisión = monto × (base × (1 + IVA)) y neto = bruto − comisión.
+  const esperado = (pct: number) =>
+    Math.round(((MONTO * (pct * 1.21)) / 100 + Number.EPSILON) * 100) / 100;
+
+  for (const [nombre, metodo, proc, pct] of [
+    ["C", "qr", "mercado_pago", 0.8],
+    ["D", "debito", "mercado_pago", 3.25],
+    ["D", "debito", "payway", 1.0],
+    ["E", "credito", "mercado_pago", 6.29],
+    ["E", "credito", "payway", 1.8],
+  ] as const) {
+    const r = cobro(metodo, proc);
+    assert.equal(r.bruto, MONTO, `${nombre} · ${metodo}/${proc} bruto`);
+    assert.equal(r.comision, esperado(pct), `${nombre} · ${metodo}/${proc} comisión`);
+    assert.equal(r.neto, Math.round((MONTO - esperado(pct) + Number.EPSILON) * 100) / 100, `${nombre} · ${metodo}/${proc} neto`);
+    assert.equal(r.detalle[0].procesador, proc, `${nombre} · el procesador queda registrado`);
+    // El % informado es el de la configuración (base + IVA), no uno inventado.
+    assert.ok(
+      Math.abs(r.detalle[0].porcentaje_total - porcentajeTotalComision(tasas[claveComision(proc, metodo)])) < 1e-4,
+      `${nombre} · el % total sale de la configuración`,
+    );
+    assert.ok(Math.abs(r.detalle[0].porcentaje_total - pct * 1.21) < 1e-4, `${nombre} · base × IVA`);
+    assert.equal(r.advertencias.length, 0, `${nombre} · sin advertencias`);
+  }
+
+  // Payway cobra menos que Mercado Pago en débito y crédito: no es la misma tasa
+  // repetida, sale de verdad de la configuración de cada procesador.
+  assert.ok(cobro("credito", "payway").comision < cobro("credito", "mercado_pago").comision);
+  assert.ok(cobro("debito", "payway").comision < cobro("debito", "mercado_pago").comision);
+
+  // Sin tasa configurada NO se asume comisión 0 en silencio: queda advertido,
+  // igual que en el stand.
+  const sinCfg = calcularComisionesPagos(
+    [{ metodo_pago: "credito", monto: MONTO, posnet_pago: "payway" }],
+    {},
+  );
+  assert.equal(sinCfg.comision, 0);
+  assert.equal(sinCfg.advertencias[0]?.motivo, "sin_config", "sin configuración → advertencia");
 }
 
 // ── 6) Observación administrativa ───────────────────────────────────────────

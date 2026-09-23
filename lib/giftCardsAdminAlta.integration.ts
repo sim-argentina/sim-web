@@ -2,6 +2,10 @@ import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { emitirGiftCardAdmin, validarAltaGiftCard, type DatosAltaGiftCard } from "@/lib/giftCardsAdminAlta";
 import { GIFT_CARD_PRODUCTOS, GIFT_CARD_VIGENCIA_DIAS } from "@/lib/giftCards";
+import {
+  getComisionesGiftCardsManualesMes, getComisionesStandMes, getComisionesWebMes, rangoMesAr,
+} from "@/lib/finanzas";
+import { claveComision, porcentajeTotalComision } from "@/lib/finanzasComisiones";
 
 // Integración de la emisión administrativa de Gift Cards contra la DB REAL, con
 // datos TEMPORALES marcados y eliminados al final.
@@ -11,6 +15,9 @@ import { GIFT_CARD_PRODUCTOS, GIFT_CARD_VIGENCIA_DIAS } from "@/lib/giftCards";
 //   · que su vencimiento salga de la MISMA regla, sin fórmula paralela;
 //   · que el precio lo ponga el catálogo y no el navegador;
 //   · que entre en Finanzas UNA sola vez, con el medio de pago real;
+//   · que su comisión salga de la MISMA tasa vigente que la del turnero, y que
+//     bruto − comisión = neto para cada medio y cada procesador;
+//   · que no se mezcle con los cargos reales de Checkout Pro ni toque al stand;
 //   · que el canje y el archivado se comporten igual que en una web;
 //   · que archivar no borre nada.
 //
@@ -261,13 +268,23 @@ async function main() {
     assert.deepEqual(despues.mercadopago ?? { total: 0, cantidad: 0 }, mpAntes, "F · no toca Mercado Pago");
 
     // Un cobro con QR sí imputa a Mercado Pago, con su procesador.
-    const conQr = await emitir({ duracion_minutos: 15, medio_pago: "qr" });
+    const conQr = await emitir({ duracion_minutos: 15, medio_pago: "qr", procesador: "mercado_pago" });
     const fq = (await fila(conQr.cards[0].id))!;
     assert.equal(fq.procesador, "mercado_pago", "F · qr lleva procesador Mercado Pago");
     const conQrMes = await ingresosGiftCards(mes);
     assert.equal(
       (conQrMes.qr?.total ?? 0) - (despues.qr?.total ?? 0), P15.monto,
       "F · el cobro con QR entra por su propio método",
+    );
+
+    // Y una transferencia entra por su propio método, sin comisión.
+    const conTransf = await emitir({ duracion_minutos: 15, medio_pago: "transferencia" });
+    const ft = (await fila(conTransf.cards[0].id))!;
+    assert.equal(ft.procesador, null, "F · transferencia no lleva procesador");
+    const conTransfMes = await ingresosGiftCards(mes);
+    assert.equal(
+      (conTransfMes.transferencia?.total ?? 0) - (conQrMes.transferencia?.total ?? 0), P15.monto,
+      "F · la transferencia entra por su propio método",
     );
 
     // Nada de esto generó un movimiento financiero manual: el ingreso sale de la
@@ -285,10 +302,149 @@ async function main() {
     const refs = ((com ?? []) as Array<{ producto: string; referencia: string }>)
       .filter((c) => c.producto === "gift_cards")
       .map((c) => c.referencia);
-    for (const id of [f.id, fq.id]) {
+    for (const id of [f.id, fq.id, ft.id]) {
       assert.ok(!refs.includes(String(id)), "F · una Gift Card manual no genera comisión de Checkout Pro");
     }
     console.log("F · Finanzas OK (un ingreso, método real, sin duplicación)");
+  }
+
+  // ── TESTS A–E · bruto, comisión y neto contra la configuración REAL ───────
+  // El bruto ya entró por fin_ingresos_por_mes (test F). Acá se comprueba la otra
+  // mitad: que la comisión salga, con la tasa vigente de fin_comisiones_cobro y
+  // el mismo cálculo del turnero.
+  {
+    const mes = mesAR(new Date().toISOString());
+    const { data: cfgRows } = await supabaseAdmin
+      .from("fin_comisiones_cobro").select("*").eq("activa", true);
+    const tasas: Record<string, { porcentaje_base: number; aplica_iva: boolean; iva_porcentaje: number }> = {};
+    for (const c of cfgRows ?? []) {
+      tasas[claveComision(c.procesador, c.metodo_pago)] = {
+        porcentaje_base: Number(c.porcentaje_base) || 0,
+        aplica_iva: Boolean(c.aplica_iva),
+        iva_porcentaje: Number(c.iva_porcentaje) || 0,
+      };
+    }
+
+    const antes = await getComisionesGiftCardsManualesMes(mes);
+
+    // Un cobro de cada tipo, con los dos procesadores reales.
+    const casos = [
+      { etiqueta: "A · efectivo", medio_pago: "efectivo", procesador: null, duracion: 15, monto: P15.monto },
+      { etiqueta: "B · transferencia", medio_pago: "transferencia", procesador: null, duracion: 15, monto: P15.monto },
+      { etiqueta: "C · qr + Mercado Pago", medio_pago: "qr", procesador: "mercado_pago", duracion: 30, monto: P30.monto },
+      { etiqueta: "D · débito + Mercado Pago", medio_pago: "debito", procesador: "mercado_pago", duracion: 30, monto: P30.monto },
+      { etiqueta: "D · débito + Payway", medio_pago: "debito", procesador: "payway", duracion: 15, monto: P15.monto },
+      { etiqueta: "E · crédito + Mercado Pago", medio_pago: "credito", procesador: "mercado_pago", duracion: 30, monto: P30.monto },
+      { etiqueta: "E · crédito + Payway", medio_pago: "credito", procesador: "payway", duracion: 15, monto: P15.monto },
+    ] as const;
+
+    let brutoEsperado = 0;
+    let comisionEsperada = 0;
+    const porCodigo: Record<string, { etiqueta: string; monto: number; comision: number }> = {};
+
+    for (const caso of casos) {
+      const alta = await emitir({
+        duracion_minutos: caso.duracion,
+        medio_pago: caso.medio_pago,
+        procesador: caso.procesador ?? "",
+      });
+      const codigo = alta.cards[0].codigo_unico;
+      const cfg = caso.procesador ? tasas[claveComision(caso.procesador, caso.medio_pago)] : null;
+      const pct = cfg ? porcentajeTotalComision(cfg) : 0;
+      const comision = Math.round(((caso.monto * pct) / 100 + Number.EPSILON) * 100) / 100;
+      brutoEsperado += caso.monto;
+      comisionEsperada += comision;
+      porCodigo[codigo] = { etiqueta: caso.etiqueta, monto: caso.monto, comision };
+    }
+
+    const despues = await getComisionesGiftCardsManualesMes(mes);
+    const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+    assert.equal(
+      round2(despues.brutoStand - antes.brutoStand), round2(brutoEsperado),
+      "el bruto de las gift cards manuales es la suma de los productos",
+    );
+    assert.equal(
+      round2(despues.comisionStand - antes.comisionStand), round2(comisionEsperada),
+      "la comisión sale de la configuración vigente de Finanzas",
+    );
+    assert.equal(
+      round2(despues.netoStand - antes.netoStand), round2(brutoEsperado - comisionEsperada),
+      "neto = bruto − comisión",
+    );
+
+    // Caso por caso, contra la fila del detalle que devuelve Finanzas.
+    for (const [codigo, esperado] of Object.entries(porCodigo)) {
+      const d = despues.detalle.find((x) => x.turno_id === codigo);
+      assert.ok(d, `${esperado.etiqueta} · aparece en el detalle de comisiones`);
+      assert.equal(d!.monto, esperado.monto, `${esperado.etiqueta} · bruto`);
+      assert.equal(d!.comision, esperado.comision, `${esperado.etiqueta} · comisión`);
+      assert.equal(d!.neto, round2(esperado.monto - esperado.comision), `${esperado.etiqueta} · neto`);
+      assert.equal(d!.advertencia, null, `${esperado.etiqueta} · sin advertencia`);
+      console.log(
+        `   ${esperado.etiqueta}: bruto $${esperado.monto} · comisión $${d!.comision} · neto $${d!.neto}`,
+      );
+    }
+
+    // A y B: sin comisión, el neto es el bruto.
+    for (const codigo of Object.keys(porCodigo)) {
+      const d = despues.detalle.find((x) => x.turno_id === codigo)!;
+      if (d.metodo_pago === "efectivo" || d.metodo_pago === "transferencia") {
+        assert.equal(d.comision, 0, `${d.metodo_pago} no paga comisión`);
+        assert.equal(d.neto, d.monto, `${d.metodo_pago} neto = bruto`);
+        assert.equal(d.procesador, null, `${d.metodo_pago} no tiene procesador`);
+      } else {
+        assert.ok(d.comision > 0, `${d.metodo_pago}/${d.procesador} sí paga comisión`);
+      }
+    }
+
+    // Payway cobra menos que Mercado Pago con la config real: la tasa no es una
+    // sola repetida, sale de verdad de cada procesador.
+    const porProc = despues.porProcesador;
+    assert.ok(porProc.mercado_pago && porProc.payway, "los dos procesadores aparecen por separado");
+
+    // TEST H (mitad financiera) · Gift Cards WEB siguen por Checkout Pro y NO
+    // entran acá: los dos caminos no se pisan.
+    for (const d of despues.detalle) {
+      const { data: g } = await supabaseAdmin
+        .from("gift_cards").select("canal, mercado_pago_payment_id")
+        .eq("codigo_unico", String(d.turno_id)).maybeSingle();
+      assert.equal(g?.canal, "admin", "solo entran gift cards del canal admin");
+      assert.equal(g?.mercado_pago_payment_id, null, "ninguna con payment_id de Checkout Pro");
+    }
+    const web = await getComisionesWebMes(mes);
+    const idsManuales = new Set(despues.detalle.map((d) => String(d.turno_id)));
+    for (const w of web.detalle.concat(web.sinDatos)) {
+      assert.ok(!idsManuales.has(String(w.referencia)), "ninguna manual aparece en comisiones web");
+    }
+    // Las Gift Cards web del mes siguen entrando por Checkout Pro, con sus cargos
+    // reales: emitir a mano no les cambió el camino.
+    const { data: gcWeb } = await supabaseAdmin
+      .from("gift_cards").select("id, mercado_pago_payment_id")
+      .eq("canal", "web").eq("estado_pago", "pagado")
+      .not("mercado_pago_payment_id", "is", null)
+      .gte("fecha_pago", rangoMesAr(mes).desde).lt("fecha_pago", rangoMesAr(mes).hastaExclusivo);
+    const refsWeb = new Set(
+      web.detalle.concat(web.sinDatos).filter((w) => w.producto === "gift_cards").map((w) => String(w.referencia)),
+    );
+    for (const g of gcWeb ?? []) {
+      assert.ok(refsWeb.has(String(g.id)), "cada Gift Card web del mes sigue en comisiones web");
+    }
+
+    // Y el bloque del stand no se contaminó: ahí solo hay turnos.
+    const stand = await getComisionesStandMes(mes);
+    for (const d of stand.detalle) {
+      assert.ok(
+        !idsManuales.has(String(d.turno_id)),
+        "el detalle del stand no incluye gift cards",
+      );
+    }
+
+    // El mes de la comisión es el mismo del bruto: los límites salen del helper
+    // compartido, no de un cálculo propio.
+    const { desde, hastaExclusivo } = rangoMesAr(mes);
+    assert.ok(desde.endsWith("T00:00:00-03:00") && hastaExclusivo.endsWith("T00:00:00-03:00"));
+    console.log("A–E · comisiones por medio y procesador OK");
   }
 
   // ── TEST G · monto manipulado desde el navegador ──────────────────────────
@@ -326,7 +482,7 @@ async function main() {
 
   // ── TEST H · archivado ────────────────────────────────────────────────────
   {
-    const alta = await emitir({ medio_pago: "debito" });
+    const alta = await emitir({ medio_pago: "debito", procesador: "payway" });
     const id = alta.cards[0].id;
     const antes = (await fila(id))!;
 
@@ -351,7 +507,7 @@ async function main() {
     assert.equal(f.codigo_unico, antes.codigo_unico, "H · conserva el código");
     assert.equal(f.canal, "admin", "H · conserva el origen");
     assert.equal(f.medio_pago, "debito", "H · conserva el medio de pago");
-    assert.equal(f.procesador, "mercado_pago", "H · conserva el procesador");
+    assert.equal(f.procesador, "payway", "H · conserva el procesador");
     assert.equal(Number(f.monto), antes.monto, "H · conserva el importe");
     assert.equal(f.estado_pago, "pagado", "H · conserva el pago");
     assert.equal(f.fecha_pago, antes.fecha_pago, "H · conserva la fecha de pago");
@@ -381,9 +537,12 @@ async function main() {
     // Una Gift Card admin no puede quedarse sin medio de pago…
     const rotas = [
       { canal: "admin", medio_pago: null },
-      { canal: "admin", medio_pago: "transferencia" },
+      { canal: "admin", medio_pago: "cheque" },
       { canal: "admin", medio_pago: "efectivo", procesador: "mercado_pago" },
+      { canal: "admin", medio_pago: "transferencia", procesador: "payway" },
       { canal: "admin", medio_pago: "qr", procesador: null },
+      { canal: "admin", medio_pago: "debito", procesador: null },
+      { canal: "admin", medio_pago: "credito", procesador: "visa" },
       { canal: "admin", medio_pago: "qr", procesador: "mercado_pago", mercado_pago_payment_id: "999" },
       { canal: "web", medio_pago: "efectivo" },
       { canal: "otro", medio_pago: "efectivo" },

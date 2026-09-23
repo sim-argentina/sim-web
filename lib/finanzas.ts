@@ -17,7 +17,7 @@ import {
   calcularComisionesPagos, claveComision, METODOS_CON_COMISION,
   type ComisionConfig,
 } from "@/lib/finanzasComisiones";
-import { diasEnMes as diasEnMesPuro, rangoMes as rangoMesPuro } from "@/lib/finanzasMes";
+import { diasEnMes as diasEnMesPuro, rangoMes as rangoMesPuro, rangoMesAr } from "@/lib/finanzasMes";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -152,7 +152,7 @@ export function restarMeses(mes: string, n: number): string {
 
 // Utilidades de mes puras: viven en @/lib/finanzasMes (módulo sin DB, para que la
 // regresión corra sin credenciales) y se re-exportan para no cambiar ningún import.
-export { diasEnMes, rangoMes, ultimoDiaMes } from "@/lib/finanzasMes";
+export { diasEnMes, rangoMes, rangoMesAr, ultimoDiaMes } from "@/lib/finanzasMes";
 
 // ── Mapeo método de pago → tipo de cuenta (solo efectivo / mercado_pago) ─────
 
@@ -528,11 +528,15 @@ export type ResumenMes = {
   ingresosBruto: number; // bruto (auto + manuales), antes de comisiones
   reembolsosReservas: number; // reembolsos completos de Reservas web imputados a ESTE mes (fecha_reembolso). Salida de MP.
   ingresosDespuesReembolsos: number; // ingresosBruto − reembolsosReservas (antes de comisiones)
-  comisionesCobro: number; // comisiones ESTIMADAS del stand (Point/PayWay)
+  comisionesCobro: number; // comisiones ESTIMADAS de cobro presencial (stand + gift cards manuales)
   comisionesWebTotal: number; // cargos REALES de Checkout Pro (cobros web)
   comisionesTotales: number; // comisionesCobro + comisionesWebTotal
   ingresos: number; // NETO operativo (bruto − comisiones), SIN financiamiento ni reembolsos
   comisiones: ComisionesResumen | null; // detalle informativo de comisiones del stand
+  // Gift Cards emitidas a mano: mismo posnet y misma tasa que el stand, pero su
+  // bruto entra por la fuente gift_cards, así que se lleva aparte para que
+  // "Ingresos brutos del stand" siga significando exactamente lo de siempre.
+  comisionesGiftCards: ComisionesResumen | null;
   comisionesWeb: ComisionesWebResumen | null; // detalle de cargos reales de Checkout Pro
   financiamiento: number; // préstamos / entradas de financiamiento (no es revenue)
   costos: number;
@@ -570,6 +574,7 @@ export function resumirMes(params: {
   cuentas: FinCuenta[];
   categorias: FinCategoria[];
   comisionesData?: ComisionesResumen | null;
+  comisionesGiftCardsData?: ComisionesResumen | null;
   comisionesWebData?: ComisionesWebResumen | null;
   reembolsosReservas?: number;
 }): ResumenMes {
@@ -582,17 +587,26 @@ export function resumirMes(params: {
   // se asume todo en Efectivo (compatibilidad) y el general no cambia.
   const saldoInicialEfectivo = params.saldoInicialEfectivo ?? saldoInicialGeneral;
   const saldoInicialMp = params.saldoInicialMp ?? 0;
+  const round2Monto = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
   const comisionesData = params.comisionesData ?? null;
+  const comisionesGiftCardsData = params.comisionesGiftCardsData ?? null;
   const comisionesWebData = params.comisionesWebData ?? null;
-  // Comisiones de cobro del stand: reducen el revenue/caja (Mercado Pago). Nunca
+  // Comisiones de cobro presencial: reducen el revenue/caja (Mercado Pago). Nunca
   // se vuelven a restar como costo (evita doble descuento).
-  const comisionesCobro = comisionesData ? comisionesData.comisionStand : 0;
+  //
+  // Son dos orígenes con el MISMO posnet y la MISMA tasa: los turnos del stand y
+  // las Gift Cards emitidas a mano. Se suman acá y no antes porque cada uno trae
+  // su bruto por una fuente distinta (turnero / gift_cards); el ingreso de cada
+  // uno sigue entrando UNA sola vez por su fuente.
+  const comisionesCobro = round2Monto(
+    (comisionesData ? comisionesData.comisionStand : 0) +
+      (comisionesGiftCardsData ? comisionesGiftCardsData.comisionStand : 0),
+  );
   // Cargos REALES de Checkout Pro sobre los cobros web. El ingreso automático se
   // suma en BRUTO (es lo que facturó SIM); acá se descuenta lo que Mercado Pago
   // se quedó antes de acreditar. Una sola estrategia: bruto − cargos, nunca
   // "sumar el neto" además, para no descontar dos veces.
   const comisionesWebTotal = comisionesWebData ? comisionesWebData.cargos : 0;
-  const round2Monto = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
   const comisionesTotales = round2Monto(comisionesCobro + comisionesWebTotal);
 
   const catById: Record<string, FinCategoria> = {};
@@ -734,6 +748,7 @@ export function resumirMes(params: {
     comisionesTotales,
     ingresos,
     comisiones: comisionesData,
+    comisionesGiftCards: comisionesGiftCardsData,
     comisionesWeb: comisionesWebData,
     financiamiento,
     costos,
@@ -867,6 +882,96 @@ export async function getComisionesStandMes(mes: string): Promise<ComisionesResu
   };
 }
 
+// ── Comisiones de cobro de las Gift Cards emitidas a mano ───────────────────
+//
+// Una Gift Card emitida desde el panel se cobró en el mostrador, con el mismo
+// posnet que cualquier turno: si fue qr/débito/crédito, el procesador se queda
+// con su comisión antes de acreditar. Sin esto, el bruto entraba a Finanzas y la
+// comisión no salía nunca, y el neto quedaba más alto que el real.
+//
+// NO hay tasas propias de Gift Cards: se usa la MISMA configuración
+// (fin_comisiones_cobro) y el MISMO cálculo (calcularComisionesPagos) que el
+// turnero. Cada Gift Card se traduce a un pago con la forma que ese helper ya
+// entiende, y de ahí en más el camino es idéntico.
+//
+// Tampoco se guarda la comisión en la fila: se calcula al leer, como el stand.
+//
+// El criterio de mes replica EXACTAMENTE el de fin_ingresos_por_mes (fecha_pago
+// en hora argentina), así que la comisión cae siempre en el mes donde está su
+// bruto: ningún cargo queda huérfano.
+export async function getComisionesGiftCardsManualesMes(mes: string): Promise<ComisionesResumen> {
+  const { desde, hastaExclusivo } = rangoMesAr(mes);
+  const [cfgRes, gcRes] = await Promise.all([
+    supabaseAdmin.from("fin_comisiones_cobro").select("*").eq("activa", true),
+    supabaseAdmin
+      .from("gift_cards")
+      .select("id, codigo_unico, monto, medio_pago, procesador, fecha_pago")
+      .eq("canal", "admin")
+      .eq("estado_pago", "pagado")
+      .not("fecha_pago", "is", null)
+      .gte("fecha_pago", desde)
+      .lt("fecha_pago", hastaExclusivo),
+  ]);
+
+  // Mismo criterio que el stand: un fallo técnico no puede leerse como $0.
+  if (cfgRes.error) throw new ComisionesNoCalculablesError(mes, cfgRes.error);
+  if (gcRes.error) throw new ComisionesNoCalculablesError(mes, gcRes.error);
+
+  const configByKey: Record<string, ComisionConfig> = {};
+  for (const c of cfgRes.data || []) {
+    configByKey[claveComision(c.procesador, c.metodo_pago)] = {
+      procesador: c.procesador, metodo_pago: c.metodo_pago,
+      porcentaje_base: Number(c.porcentaje_base) || 0,
+      aplica_iva: Boolean(c.aplica_iva), iva_porcentaje: Number(c.iva_porcentaje) || 0,
+      activa: Boolean(c.activa),
+    };
+  }
+
+  let bruto = 0, comision = 0, neto = 0;
+  const porMetodo: Record<string, { bruto: number; comision: number }> = {};
+  const porProcesador: Record<string, { bruto: number; comision: number }> = {};
+  const detalle: ComisionDetalleFila[] = [];
+  const advertencias: ComisionAdvertencia[] = [];
+
+  type FilaGC = {
+    id: string; codigo_unico: string; monto: number | null;
+    medio_pago: string | null; procesador: string | null; fecha_pago: string;
+  };
+  for (const g of (gcRes.data || []) as FilaGC[]) {
+    const fecha = String(g.fecha_pago).slice(0, 10);
+    // El procesador ya viene canónico en la columna; mapProcesador (vía el
+    // helper) lo reconoce igual que el "MP"/"PayWay" del turnero.
+    const r = calcularComisionesPagos(
+      [{ metodo_pago: g.medio_pago, monto: g.monto, posnet_pago: g.procesador }],
+      configByKey,
+    );
+    bruto += r.bruto; comision += r.comision; neto += r.neto;
+    for (const d of r.detalle) {
+      detalle.push({ fecha, turno_id: g.codigo_unico, ...d });
+      if ((METODOS_CON_COMISION as readonly string[]).includes(d.metodo_pago)) {
+        porMetodo[d.metodo_pago] = porMetodo[d.metodo_pago] || { bruto: 0, comision: 0 };
+        porMetodo[d.metodo_pago].bruto += d.monto;
+        porMetodo[d.metodo_pago].comision += d.comision;
+        if (d.procesador) {
+          porProcesador[d.procesador] = porProcesador[d.procesador] || { bruto: 0, comision: 0 };
+          porProcesador[d.procesador].bruto += d.monto;
+          porProcesador[d.procesador].comision += d.comision;
+        }
+      }
+    }
+    for (const a of r.advertencias) advertencias.push({ fecha, turno_id: g.codigo_unico, ...a });
+  }
+
+  const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+  bruto = round2(bruto); comision = round2(comision); neto = round2(neto);
+  return {
+    brutoStand: bruto, comisionStand: comision, netoStand: neto,
+    tasaEfectiva: bruto > 0 ? comision / bruto : 0,
+    porMetodo, porProcesador, detalle, advertencias,
+    sinConfig: (cfgRes.data || []).length === 0,
+  };
+}
+
 // ── Comisiones web: cargos REALES de Mercado Pago Checkout Pro ───────────────
 //
 // Lee fin_pagos_web (lo que MP informó por cada pago) cruzado con los cobros web
@@ -952,7 +1057,7 @@ export async function calcularMes(mes: string): Promise<{
   ingresosAuto: IngresoAutomatico[];
   movimientos: FinMovimiento[];
 }> {
-  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicialFuente, sueldo, comisiones, comisionesWeb, reembolsosReservas] = await Promise.all([
+  const [cuentas, categorias, ingresosAutoData, movimientos, saldoInicialFuente, sueldo, comisiones, comisionesGiftCards, comisionesWeb, reembolsosReservas] = await Promise.all([
     getCuentas(),
     getCategorias(),
     getIngresosAutomaticos(mes),
@@ -960,6 +1065,7 @@ export async function calcularMes(mes: string): Promise<{
     getSaldoInicialPorFuente(mes),
     getSueldoMes(mes),
     getComisionesStandMes(mes),
+    getComisionesGiftCardsManualesMes(mes),
     getComisionesWebMes(mes),
     getReembolsosReservasMes(mes),
   ]);
@@ -977,6 +1083,7 @@ export async function calcularMes(mes: string): Promise<{
     cuentas,
     categorias,
     comisionesData: comisiones,
+    comisionesGiftCardsData: comisionesGiftCards,
     comisionesWebData: comisionesWeb,
     reembolsosReservas,
   });
