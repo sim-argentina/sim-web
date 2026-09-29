@@ -218,6 +218,12 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     "lib/catalogoComercial.ts", "lib/modalidadComercial.ts", "lib/modalidadComercialDiagnostico.ts",
     "app/api/admin/modalidad-comercial/diagnostico/route.ts", "app/api/admin/modalidad-comercial/override/route.ts",
     "lib/catalogoComercial.test.ts", "lib/modalidadComercial.test.ts", "lib/modalidadComercialB1.integration.ts",
+    // (B2) Motor de agenda por intervalos: paralelo, no es un flujo comercial.
+    // lib/disponibilidadIntervalos.test.ts vigila que nada que venda lo importe.
+    "lib/agendaIntervalos.ts", "lib/disponibilidadIntervalos.ts", "lib/disponibilidadIntervalosServer.ts",
+    "lib/disponibilidadIntervalosTrigger.ts",
+    "app/api/admin/modalidad-comercial/disponibilidad-diagnostico/route.ts",
+    "lib/agendaIntervalos.test.ts", "lib/disponibilidadIntervalos.test.ts", "lib/disponibilidadIntervalos.integration.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);
