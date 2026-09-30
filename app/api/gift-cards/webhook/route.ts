@@ -83,7 +83,13 @@ export async function POST(req: Request) {
       // disponible" en Finanzas.
       await registrarPagoWebSeguro(String(paymentId), "gift_cards", paymentData as PagoMpFinanzas, "webhook");
 
-      await supabaseAdmin
+      // (B5.1) Esta transición pendiente → pagado es el ÁRBITRO de la
+      // idempotencia: un solo UPDATE condicional (payment_id IS NULL) sobre
+      // todas las filas de la compra. Si llegan dos notificaciones a la vez,
+      // Postgres bloquea las filas y la segunda, al reevaluar la condición, no
+      // actualiza ninguna. Solo la llamada que realmente hizo la transición
+      // consume el código: una vez por compra, como siempre.
+      const { data: activadas, error: errorActivar } = await supabaseAdmin
         .from("gift_cards")
         .update({
           estado_pago: "pagado",
@@ -97,14 +103,25 @@ export async function POST(req: Request) {
           updated_at: nowIso,
         })
         .eq(filtro, ref)
-        .is("mercado_pago_payment_id", null);
+        .is("mercado_pago_payment_id", null)
+        .select("id");
+      // Sin saber si esta llamada activó la compra no se consume nada:
+      // Mercado Pago reintenta y el reintento decide (fin_pagos_web es
+      // idempotente por payment_id).
+      if (errorActivar) {
+        console.error("Error activando gift card:", errorActivar.message);
+        return NextResponse.json({ error: "Error activando la Gift Card" }, { status: 500 });
+      }
 
-      // Consumir el código de descuento una sola vez (igual que reservas)
       const codigo = filas.find((f) => f.codigo_descuento)?.codigo_descuento;
-      if (codigo)
-        await consumirCodigoDescuento(codigo, {
+      if (codigo && (activadas?.length ?? 0) > 0) {
+        const consumido = await consumirCodigoDescuento(codigo, {
           mercado_pago_payment_id: String(paymentId),
         });
+        // No se finge el consumo: si no se pudo (agotado, inactivo o error),
+        // queda registrado para resolverlo. La Gift Card ya está paga y activa.
+        if (!consumido) logSecurityEvent("gift_card_codigo_no_consumido", { ref, paymentId: String(paymentId) });
+      }
     } else if (
       paymentData.status === "rejected" ||
       paymentData.status === "cancelled"
