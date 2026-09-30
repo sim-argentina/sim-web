@@ -6,7 +6,7 @@ import {
   GIFT_CARD_CONDICIONES,
   GIFT_CARD_MAX_CANTIDAD,
   GIFT_CARD_OBSERVACIONES_MAX,
-  GIFT_CARD_PRODUCTOS,
+  productosGiftCardDe,
   GIFT_CARD_VIGENCIA_DIAS,
   MEDIOS_PAGO_GIFT_CARD,
   PROCESADORES_GIFT_CARD,
@@ -45,12 +45,17 @@ const base = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+// (B5) La modalidad la resuelve el servidor en el request; acá se pasa
+// explícita. Estas pruebas son de la validación legacy salvo que digan otra.
+const validar = (body: Record<string, unknown>, modalidad: "legacy" | "v2_10" = "legacy") =>
+  validarAltaGiftCard(body, modalidad);
+
 // ── 1) El camino feliz ──────────────────────────────────────────────────────
 {
-  const r = validarAltaGiftCard(base());
+  const r = validar(base());
   assert.ok(r.ok, "una emisión válida pasa");
   assert.equal(r.data.producto.duracion, 15);
-  assert.equal(r.data.producto.monto, GIFT_CARD_PRODUCTOS[0].monto);
+  assert.equal(r.data.producto.monto, productosGiftCardDe("legacy")[0].monto);
   assert.equal(r.data.medioPago, "efectivo");
   assert.equal(r.data.cantidad, 1);
   assert.equal(r.data.modoUso, "separadas");
@@ -60,22 +65,33 @@ const base = (over: Record<string, unknown> = {}) => ({
 
 // ── 2) El producto sale del catálogo, no del cuerpo ─────────────────────────
 {
-  for (const p of GIFT_CARD_PRODUCTOS) {
-    const r = validarAltaGiftCard(base({ duracion_minutos: p.duracion }));
+  for (const p of productosGiftCardDe("legacy")) {
+    const r = validar(base({ duracion_minutos: p.duracion }));
     assert.ok(r.ok, `la duración ${p.duracion} del catálogo se acepta`);
     assert.equal(r.data.producto.monto, p.monto, "el monto es el del catálogo");
   }
   // Una duración inventada no existe como producto.
   for (const invalida of [20, 45, 0, -15, "15; drop", null, undefined]) {
-    const r = validarAltaGiftCard(base({ duracion_minutos: invalida }));
+    const r = validar(base({ duracion_minutos: invalida }));
     assert.ok(!r.ok && r.status === 422, `la duración ${String(invalida)} se rechaza`);
     assert.ok(!r.ok && r.campo === "duracion_minutos");
+  }
+  // (B5) v2: 10/20/30 a $10.000/$17.000/$23.000, del mismo catálogo; 15 ya no se vende.
+  assert.deepEqual(productosGiftCardDe("v2_10").map((p) => [p.duracion, p.monto]), [[10, 10000], [20, 17000], [30, 23000]]);
+  for (const p of productosGiftCardDe("v2_10")) {
+    const r = validar(base({ duracion_minutos: p.duracion, monto: 1 }), "v2_10");
+    assert.ok(r.ok, `v2: la duración ${p.duracion} se acepta`);
+    assert.equal(r.data.producto.monto, p.monto, "v2: el monto es el del catálogo, no el del cuerpo");
+  }
+  for (const invalida of [15, 45, 0]) {
+    const r = validar(base({ duracion_minutos: invalida }), "v2_10");
+    assert.ok(!r.ok && r.status === 422 && r.campo === "duracion_minutos", `v2: la duración ${invalida} se rechaza`);
   }
 }
 
 // ── 3) TEST G · el monto que manda el navegador NO se lee ───────────────────
 {
-  const r = validarAltaGiftCard(
+  const r = validar(
     base({
       monto: 1,
       monto_original: 1,
@@ -104,48 +120,48 @@ const base = (over: Record<string, unknown> = {}) => ({
     ],
     "la validación no arrastra ningún campo extra del cuerpo",
   );
-  assert.equal(r.data.producto.monto, GIFT_CARD_PRODUCTOS[0].monto, "el precio es el del catálogo");
+  assert.equal(r.data.producto.monto, productosGiftCardDe("legacy")[0].monto, "el precio es el del catálogo");
 }
 
 // ── 4) Comprador y teléfono ─────────────────────────────────────────────────
 {
   for (const nombre of ["", "   ", "x".repeat(81), 42, null]) {
-    const r = validarAltaGiftCard(base({ comprador_nombre: nombre }));
+    const r = validar(base({ comprador_nombre: nombre }));
     assert.ok(!r.ok && r.campo === "comprador_nombre", `nombre ${String(nombre)} rechazado`);
   }
   for (const tel of ["", "123", "x".repeat(31), "351-abc-123", "351@252"]) {
-    const r = validarAltaGiftCard(base({ comprador_telefono: tel }));
+    const r = validar(base({ comprador_telefono: tel }));
     assert.ok(!r.ok && r.campo === "comprador_telefono", `teléfono ${tel} rechazado`);
   }
   // El destinatario es opcional, pero tiene tope.
-  const sinDest = validarAltaGiftCard(base({ destinatario_nombre: "  " }));
+  const sinDest = validar(base({ destinatario_nombre: "  " }));
   assert.ok(sinDest.ok && sinDest.data.destinatarioNombre === null, "destinatario vacío → null");
-  const destLargo = validarAltaGiftCard(base({ destinatario_nombre: "y".repeat(81) }));
+  const destLargo = validar(base({ destinatario_nombre: "y".repeat(81) }));
   assert.ok(!destLargo.ok && destLargo.campo === "destinatario_nombre");
 }
 
 // ── 5) Cantidad, modo de uso y medio de pago ────────────────────────────────
 {
   for (const c of [0, -1, GIFT_CARD_MAX_CANTIDAD + 1, "muchas", NaN]) {
-    const r = validarAltaGiftCard(base({ cantidad: c }));
+    const r = validar(base({ cantidad: c }));
     assert.ok(!r.ok && r.campo === "cantidad", `cantidad ${String(c)} rechazada`);
   }
-  const tope = validarAltaGiftCard(base({ cantidad: GIFT_CARD_MAX_CANTIDAD }));
+  const tope = validar(base({ cantidad: GIFT_CARD_MAX_CANTIDAD }));
   assert.ok(tope.ok && tope.data.cantidad === GIFT_CARD_MAX_CANTIDAD, "el tope se acepta");
 
-  const juntas = validarAltaGiftCard(base({ cantidad: 3, modo_uso: "juntas" }));
+  const juntas = validar(base({ cantidad: 3, modo_uso: "juntas" }));
   assert.ok(juntas.ok && juntas.data.modoUso === "juntas");
-  const raro = validarAltaGiftCard(base({ modo_uso: "cualquiera" }));
+  const raro = validar(base({ modo_uso: "cualquiera" }));
   assert.ok(raro.ok && raro.data.modoUso === "separadas", "un modo desconocido cae en separadas");
 
   for (const m of MEDIOS_PAGO_GIFT_CARD) {
-    const r = validarAltaGiftCard(
+    const r = validar(
       base({ medio_pago: m, procesador: requiereProcesador(m) ? "mercado_pago" : "" }),
     );
     assert.ok(r.ok && r.data.medioPago === m, `el medio ${m} se acepta`);
   }
   for (const m of ["", "bitcoin", "mercadopago", "cheque", null, 7]) {
-    const r = validarAltaGiftCard(base({ medio_pago: m }));
+    const r = validar(base({ medio_pago: m }));
     assert.ok(!r.ok && r.campo === "medio_pago", `el medio ${String(m)} se rechaza`);
   }
 }
@@ -170,23 +186,23 @@ const base = (over: Record<string, unknown> = {}) => ({
   // TEST F · combinación inválida: un medio sin posnet no puede traer procesador.
   for (const m of METODOS_SIN_COMISION) {
     for (const p of PROCESADORES) {
-      const r = validarAltaGiftCard(base({ medio_pago: m, procesador: p }));
+      const r = validar(base({ medio_pago: m, procesador: p }));
       assert.ok(!r.ok && r.campo === "procesador", `${m} + ${p} se rechaza`);
       assert.ok(!r.ok && r.codigo === "procesador_no_corresponde");
     }
-    const ok = validarAltaGiftCard(base({ medio_pago: m }));
+    const ok = validar(base({ medio_pago: m }));
     assert.ok(ok.ok && ok.data.procesador === null, `${m} queda sin procesador`);
   }
 
   // Y un medio con posnet NO puede quedarse sin él, ni traer uno inventado.
   for (const m of METODOS_CON_COMISION) {
     for (const p of ["", "  ", "payway_2", "posnet", "visa", null, 3]) {
-      const r = validarAltaGiftCard(base({ medio_pago: m, procesador: p }));
+      const r = validar(base({ medio_pago: m, procesador: p }));
       assert.ok(!r.ok && r.campo === "procesador", `${m} + "${String(p)}" se rechaza`);
       assert.ok(!r.ok && r.codigo === "procesador_invalido");
     }
     for (const p of PROCESADORES) {
-      const r = validarAltaGiftCard(base({ medio_pago: m, procesador: p }));
+      const r = validar(base({ medio_pago: m, procesador: p }));
       assert.ok(r.ok && r.data.procesador === p, `${m} + ${p} se acepta`);
     }
   }
@@ -270,11 +286,11 @@ const base = (over: Record<string, unknown> = {}) => ({
 
 // ── 6) Observación administrativa ───────────────────────────────────────────
 {
-  const justo = validarAltaGiftCard(base({ observaciones: "o".repeat(GIFT_CARD_OBSERVACIONES_MAX) }));
+  const justo = validar(base({ observaciones: "o".repeat(GIFT_CARD_OBSERVACIONES_MAX) }));
   assert.ok(justo.ok, "el tope exacto de la observación se acepta");
-  const pasado = validarAltaGiftCard(base({ observaciones: "o".repeat(GIFT_CARD_OBSERVACIONES_MAX + 1) }));
+  const pasado = validar(base({ observaciones: "o".repeat(GIFT_CARD_OBSERVACIONES_MAX + 1) }));
   assert.ok(!pasado.ok && pasado.campo === "observaciones");
-  const vacia = validarAltaGiftCard(base({ observaciones: "   " }));
+  const vacia = validar(base({ observaciones: "   " }));
   assert.ok(vacia.ok && vacia.data.observaciones === null, "observación vacía → null");
 }
 

@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { emitirGiftCardAdmin, validarAltaGiftCard, type DatosAltaGiftCard } from "@/lib/giftCardsAdminAlta";
-import { GIFT_CARD_PRODUCTOS, GIFT_CARD_VIGENCIA_DIAS } from "@/lib/giftCards";
+import { GIFT_CARD_VIGENCIA_DIAS, productosGiftCardDe } from "@/lib/giftCards";
 import {
   getComisionesGiftCardsManualesMes, getComisionesStandMes, getComisionesWebMes, rangoMesAr,
 } from "@/lib/finanzas";
@@ -30,8 +30,8 @@ import { claveComision, porcentajeTotalComision } from "@/lib/finanzasComisiones
 const MARCA = `ZZ GC-ADMIN ${Date.now()}`;
 const creadas = new Set<string>();
 
-const P15 = GIFT_CARD_PRODUCTOS.find((p) => p.duracion === 15)!;
-const P30 = GIFT_CARD_PRODUCTOS.find((p) => p.duracion === 30)!;
+const P15 = productosGiftCardDe("legacy").find((p) => p.duracion === 15)!;
+const P30 = productosGiftCardDe("legacy").find((p) => p.duracion === 30)!;
 
 function cuerpo(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -48,7 +48,7 @@ function cuerpo(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 async function emitir(over: Record<string, unknown> = {}) {
-  const v = validarAltaGiftCard(cuerpo(over));
+  const v = validarAltaGiftCard(cuerpo(over), "legacy");
   assert.ok(v.ok, `el cuerpo de prueba es válido: ${!v.ok ? v.error : ""}`);
   const r = await emitirGiftCardAdmin(v.data as DatosAltaGiftCard, { rol: "admin" });
   assert.ok(r.ok, `la emisión funciona: ${!r.ok ? r.error : ""}`);
@@ -461,6 +461,7 @@ async function main() {
         codigo_unico: "SIM-AAAA-AAAA",
         fecha_vencimiento: "2099-01-01T00:00:00.000Z",
       }),
+      "legacy",
     );
     assert.ok(v.ok, "G · el cuerpo manipulado no rompe, se ignora lo que sobra");
     const r = await emitirGiftCardAdmin(v.data as DatosAltaGiftCard, { rol: "admin" });

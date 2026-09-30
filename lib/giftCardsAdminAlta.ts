@@ -9,7 +9,7 @@ import {
   PROCESADORES_GIFT_CARD,
   calcularVencimientoGiftCard,
   generarCodigoGiftCard,
-  getProductoPorDuracion,
+  productoGiftCardDe,
   repartirMonto,
   requiereProcesador,
   type GiftCardProducto,
@@ -18,6 +18,7 @@ import {
   type ProcesadorGiftCard,
 } from "@/lib/giftCards";
 import { esMetodoPagoValido } from "@/lib/finanzasComisiones";
+import type { Modalidad } from "@/lib/catalogoComercial";
 
 // Emisión administrativa de Gift Cards. SOLO SERVIDOR.
 //
@@ -72,8 +73,14 @@ const texto = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 // ── Validación de la FORMA de la solicitud ──────────────────────────────────
 // No decide reglas de negocio: el precio sale del catálogo y el vencimiento de
 // GIFT_CARD_VIGENCIA_DIAS. Acá solo se acepta o se rechaza lo que llegó.
-export function validarAltaGiftCard(body: Record<string, unknown>): ResultadoAlta<DatosAltaGiftCard> {
-  const producto = getProductoPorDuracion(Number(body.duracion_minutos));
+//
+// (B5) `modalidad` es la vigente, resuelta por el servidor en este request
+// (nunca la manda el navegador): de su catálogo salen duración y precio.
+export function validarAltaGiftCard(
+  body: Record<string, unknown>,
+  modalidad: Modalidad,
+): ResultadoAlta<DatosAltaGiftCard> {
+  const producto = productoGiftCardDe(modalidad, body.duracion_minutos);
   if (!producto) {
     return fail(422, "producto_invalido", "Elegí una Gift Card del catálogo.", "duracion_minutos");
   }

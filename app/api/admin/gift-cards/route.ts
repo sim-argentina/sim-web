@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin, requireAdmin } from "@/lib/adminGuards";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { emitirGiftCardAdmin, validarAltaGiftCard } from "@/lib/giftCardsAdminAlta";
+import { MENSAJE_GIFT_CARDS_ACTUALIZADAS_ADMIN, modalidadParaNuevaGiftCard } from "@/lib/giftCardsComercial";
 
 // Listado de Gift Cards para el panel (admin y staff).
 export async function GET(req: Request) {
@@ -74,7 +75,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Solicitud inválida." }, { status: 400, headers: sinCache });
     }
 
-    const validado = validarAltaGiftCard(body);
+    // (B5) La modalidad la resuelve el servidor, UNA vez: de su catálogo salen
+    // duración y precio. Un formulario armado con otro catálogo → 409, sin
+    // emitir nada; el navegador no puede forzar una modalidad.
+    const vigente = await modalidadParaNuevaGiftCard(body, { mensaje: MENSAJE_GIFT_CARDS_ACTUALIZADAS_ADMIN });
+    if (!vigente.ok) {
+      return NextResponse.json(
+        { error: vigente.error, codigo: vigente.codigo },
+        { status: vigente.status, headers: sinCache },
+      );
+    }
+
+    const validado = validarAltaGiftCard(body, vigente.modalidad);
     if (!validado.ok) {
       return NextResponse.json(
         { error: validado.error, codigo: validado.codigo, campo: validado.campo },

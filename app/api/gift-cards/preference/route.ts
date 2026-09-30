@@ -3,13 +3,14 @@ import { randomUUID } from "crypto";
 import MercadoPagoConfig, { Preference } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  getProductoPorDuracion,
+  productoGiftCardDe,
   generarCodigoGiftCard,
   repartirMonto,
   calcularVencimientoGiftCard,
   GIFT_CARD_MAX_CANTIDAD,
   type ModoUso,
 } from "@/lib/giftCards";
+import { MENSAJE_GIFT_CARDS_ACTUALIZADAS, modalidadParaNuevaGiftCard } from "@/lib/giftCardsComercial";
 import {
   validarCodigoDescuento,
   consumirCodigoDescuento,
@@ -48,6 +49,15 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json().catch(() => ({}));
+
+    // (B5) La modalidad se resuelve UNA vez en este request: con ella se eligen
+    // duración y precio de lo que se crea. Una pestaña armada con otro catálogo
+    // → 409, antes de crear filas, preferencia o cobro.
+    const vigente = await modalidadParaNuevaGiftCard(body, { mensaje: MENSAJE_GIFT_CARDS_ACTUALIZADAS });
+    if (!vigente.ok) {
+      return NextResponse.json({ error: vigente.error, codigo: vigente.codigo }, { status: vigente.status });
+    }
+
     const comprador_nombre = String(body?.comprador_nombre ?? "").trim();
     const comprador_telefono = String(body?.comprador_telefono ?? "").trim();
     const destinatario_nombre = body?.destinatario_nombre
@@ -63,7 +73,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Teléfono del comprador inválido" }, { status: 400 });
     }
 
-    const producto = getProductoPorDuracion(Number(duracion_minutos));
+    const producto = productoGiftCardDe(vigente.modalidad, duracion_minutos);
     if (!producto) {
       return NextResponse.json(
         { error: "Duración de Gift Card inválida" },

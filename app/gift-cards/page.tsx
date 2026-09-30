@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Gift, ArrowLeft, ShieldCheck, CircleAlert } from "lucide-react";
-import { GIFT_CARD_PRODUCTOS, GIFT_CARD_CONDICIONES, GIFT_CARD_MAX_CANTIDAD } from "@/lib/giftCards";
+import { GIFT_CARD_CONDICIONES, GIFT_CARD_MAX_CANTIDAD } from "@/lib/giftCards";
 import {
   gaEvent, setPendingPurchase,
   trackApplyPromotion, trackCheckoutError, trackPaymentRedirect,
@@ -24,8 +24,33 @@ type CodigoAplicado = {
   totalFinal: number;
 };
 
+// (B5) La oferta —duraciones, precios y textos— la resuelve el servidor en cada
+// request (/api/gift-cards/catalogo, sin caché): antes del corte legacy, desde
+// el primer request posterior v2. La página no tiene productos propios.
+type ProductoGiftCard = { duracion: number; monto: number; titulo: string; descripcion: string };
+type CatalogoGiftCards = { modalidad: string; productos: ProductoGiftCard[] };
+
+function esCatalogo(x: unknown): x is CatalogoGiftCards {
+  const c = x as CatalogoGiftCards | null;
+  return !!c && typeof c.modalidad === "string" && Array.isArray(c.productos) && c.productos.length > 0;
+}
+
+async function pedirCatalogo(): Promise<CatalogoGiftCards | null> {
+  try {
+    const res = await fetch("/api/gift-cards/catalogo", { cache: "no-store" });
+    const data = await res.json().catch(() => null);
+    return res.ok && esCatalogo(data) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function GiftCardsPage() {
-  const [duracion, setDuracion] = useState<number>(GIFT_CARD_PRODUCTOS[0].duracion);
+  const [catalogo, setCatalogo] = useState<CatalogoGiftCards | null>(null);
+  const [errorCatalogo, setErrorCatalogo] = useState(false);
+  // null = ninguna elegida (al abrir se elige la primera; tras un cambio de
+  // catálogo la persona vuelve a elegir).
+  const [duracion, setDuracion] = useState<number | null>(null);
   const [cantidad, setCantidad] = useState<number>(1);
   const [modoUso, setModoUso] = useState<"juntas" | "separadas">("separadas");
   const [compradorNombre, setCompradorNombre] = useState("");
@@ -39,32 +64,50 @@ export default function GiftCardsPage() {
   const [codigoAplicado, setCodigoAplicado] = useState<CodigoAplicado | null>(null);
   const [aplicandoCodigo, setAplicandoCodigo] = useState(false);
 
-  const producto =
-    GIFT_CARD_PRODUCTOS.find((p) => p.duracion === duracion) ??
-    GIFT_CARD_PRODUCTOS[0];
+  const producto = catalogo?.productos.find((p) => p.duracion === duracion) ?? null;
 
-  const unit = producto.monto;
+  const unit = producto?.monto ?? 0;
   const totalOriginal = unit * cantidad;
   const descuento = codigoAplicado?.descuento || 0;
   const totalFinal = Math.max(totalOriginal - descuento, 0);
 
   const telefonoDigits = compradorTelefono.replace(/\D/g, "");
   const telefonoValido = telefonoDigits.length >= 10;
-  const puedePagar = compradorNombre.trim() && telefonoValido && acepto && !loading;
+  const puedePagar = compradorNombre.trim() && telefonoValido && acepto && !loading && !!producto;
 
   // Analytics: vista del "producto" gift card (una vez al montar).
   useEffect(() => {
     gaEvent("view_item", { currency: "ARS", items: [{ item_id: "gift_card", item_name: "Gift Card", item_category: "gift_card" }] });
   }, []);
 
-  function elegirDuracion(d: number) {
-    setDuracion(d);
+  // Catálogo vigente al abrir; queda elegida la primera Gift Card.
+  useEffect(() => {
+    let vivo = true;
+    void pedirCatalogo().then((c) => {
+      if (!vivo) return;
+      if (!c) { setErrorCatalogo(true); return; }
+      setCatalogo(c);
+      setDuracion((d) => d ?? c.productos[0].duracion);
+    });
+    return () => { vivo = false; };
+  }, []);
+
+  async function recargarCatalogo() {
+    setErrorCatalogo(false);
+    const c = await pedirCatalogo();
+    if (c) setCatalogo(c);
+    else setErrorCatalogo(true);
+    return c;
+  }
+
+  function elegirDuracion(p: ProductoGiftCard) {
+    setDuracion(p.duracion);
     setCodigoAplicado(null); // el monto cambia: hay que revalidar el código
     // Funnel: selección de producto/duración (id estable, sin PII).
     gaEvent("select_item", {
       item_list_name: "Gift Cards",
-      duration_minutes: d,
-      items: [{ item_id: `gift_card_${d}`, item_name: `Gift Card ${d} min`, item_category: "gift_card" }],
+      duration_minutes: p.duracion,
+      items: [{ item_id: `gift_card_${p.duracion}`, item_name: `Gift Card ${p.duracion} min`, item_category: "gift_card", price: p.monto }],
     });
   }
 
@@ -78,6 +121,10 @@ export default function GiftCardsPage() {
     const codigo = codigoInput.trim().toUpperCase();
     if (!codigo) {
       setError("Ingresá un código promocional.");
+      return;
+    }
+    if (!producto) {
+      setError("Elegí una Gift Card.");
       return;
     }
     setAplicandoCodigo(true);
@@ -116,6 +163,10 @@ export default function GiftCardsPage() {
 
   async function comprar() {
     setError("");
+    if (!producto || !catalogo) {
+      setError("Elegí una Gift Card.");
+      return;
+    }
     if (!compradorNombre.trim()) {
       setError("Ingresá tu nombre.");
       return;
@@ -134,8 +185,8 @@ export default function GiftCardsPage() {
     gaEvent("begin_checkout", {
       currency: "ARS",
       value: totalFinal,
-      duration_minutes: duracion,
-      items: [{ item_id: `gift_card_${duracion}`, item_name: "Gift Card", item_category: "gift_card", quantity: cantidad }],
+      duration_minutes: producto.duracion,
+      items: [{ item_id: `gift_card_${producto.duracion}`, item_name: "Gift Card", item_category: "gift_card", quantity: cantidad, price: unit }],
     });
     try {
       const res = await fetch("/api/gift-cards/preference", {
@@ -145,13 +196,25 @@ export default function GiftCardsPage() {
           comprador_nombre: compradorNombre.trim(),
           comprador_telefono: compradorTelefono.trim(),
           destinatario_nombre: destinatario.trim() || null,
-          duracion_minutos: duracion,
+          duracion_minutos: producto.duracion,
           cantidad,
           modo_uso: modoUso,
           codigo_descuento: codigoAplicado?.codigo || null,
+          // El catálogo que la persona VIO. Si el servidor ya ofrece otro,
+          // responde 409 sin crear nada ni cobrar.
+          modalidad_vista: catalogo.modalidad,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data?.codigo === "catalogo_actualizado") {
+        // Cambió el catálogo (el corte): no se creó nada. Los datos personales
+        // quedan; la Gift Card elegida y el código se limpian y se vuelve a elegir.
+        setError(data.error);
+        setCodigoAplicado(null);
+        setDuracion(null);
+        await recargarCatalogo();
+        return;
+      }
       if (!res.ok) {
         // Error técnico del checkout (no se pudo crear la preferencia).
         trackCheckoutError("gift_card");
@@ -175,7 +238,7 @@ export default function GiftCardsPage() {
       trackPaymentRedirect({
         funnel: "gift_card",
         value: totalFinal,
-        duration_minutes: duracion,
+        duration_minutes: producto.duracion,
         quantity: cantidad,
         transaction_id: data.grupo_compra_id ? `gift_card_${data.grupo_compra_id}` : null,
       });
@@ -220,14 +283,28 @@ export default function GiftCardsPage() {
           {/* Selección de producto */}
           <section>
             <h2 className="mb-4 text-2xl font-black">Elegí tu Gift Card</h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {GIFT_CARD_PRODUCTOS.map((p) => {
+            {!catalogo ? (
+              <div className="rounded-3xl border border-white/10 bg-zinc-950/80 p-6 text-sm text-zinc-400">
+                {errorCatalogo ? (
+                  <>
+                    No pudimos cargar las Gift Cards.{" "}
+                    <button type="button" onClick={() => void recargarCatalogo()} className="font-bold text-red-400 underline underline-offset-2">
+                      Reintentar
+                    </button>
+                  </>
+                ) : (
+                  "Cargando Gift Cards..."
+                )}
+              </div>
+            ) : (
+            <div className={catalogo.productos.length >= 3 ? "grid gap-4 sm:grid-cols-3" : "grid gap-4 sm:grid-cols-2"}>
+              {catalogo.productos.map((p) => {
                 const activo = p.duracion === duracion;
                 return (
                   <button
                     key={p.duracion}
                     type="button"
-                    onClick={() => elegirDuracion(p.duracion)}
+                    onClick={() => elegirDuracion(p)}
                     className={`rounded-3xl border p-6 text-left transition ${
                       activo
                         ? "border-red-500/60 bg-red-950/20 shadow-[0_0_24px_rgba(239,68,68,0.12)]"
@@ -250,6 +327,7 @@ export default function GiftCardsPage() {
                 );
               })}
             </div>
+            )}
 
             {/* Cantidad + modo de uso */}
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -426,7 +504,7 @@ export default function GiftCardsPage() {
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center justify-between text-zinc-200">
                     <span>Gift Card</span>
-                    <span>{producto.duracion} min</span>
+                    <span>{producto ? `${producto.duracion} min` : "Elegí una"}</span>
                   </div>
                   <div className="flex items-center justify-between text-zinc-200">
                     <span>Cantidad</span>
@@ -437,7 +515,7 @@ export default function GiftCardsPage() {
                   </div>
                   <div className="flex items-center justify-between text-zinc-200">
                     <span>Precio unitario</span>
-                    <span>{formatPrice(unit)}</span>
+                    <span>{producto ? formatPrice(unit) : "—"}</span>
                   </div>
                   {codigoAplicado && (
                     <>
@@ -499,7 +577,9 @@ export default function GiftCardsPage() {
                     : "cursor-not-allowed bg-zinc-800 text-zinc-500"
                 }`}
               >
-                {loading
+                {!producto
+                  ? "Elegí una Gift Card"
+                  : loading
                   ? "Redirigiendo..."
                   : totalFinal <= 0
                   ? "Obtener Gift Card bonificada"

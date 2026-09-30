@@ -14,7 +14,7 @@ import {
 import {
   DURACIONES_VALIDAS, PRECIO_15, PRECIO_30_FINDE, PRECIO_30_SEMANA, precioPorSimulador,
 } from "@/lib/reservasSlots";
-import { GIFT_CARD_PRODUCTOS } from "@/lib/giftCards";
+import { productosGiftCardDe } from "@/lib/giftCards";
 import { DURACIONES_MENSUALIDAD } from "@/lib/mensualidades";
 import { MINUTOS_POR_TURNO as TURNO_STAND } from "@/lib/metricasStand";
 import { MINUTOS_POR_TURNO as TURNO_EQUIPO } from "@/lib/metricasEquipo";
@@ -42,14 +42,15 @@ const tipoDia = (fecha: string): TipoDia => (esFinDeSemana(fecha) ? "finde" : "s
   assert.deepEqual([...L.duraciones.mensualidad], [...DURACIONES_MENSUALIDAD], "7 · Mensualidades: las de lib/mensualidades.ts");
   assert.deepEqual([...L.duraciones.mensualidad], [15, 30, 45, 60]);
 
-  // Gift Cards: mismo catálogo, mismos montos.
-  assert.deepEqual(
-    L.giftCards.map(({ duracion, monto }) => ({ duracion, monto })),
-    GIFT_CARD_PRODUCTOS.map(({ duracion, monto }) => ({ duracion, monto })),
-    "7 · Gift Cards iguales a GIFT_CARD_PRODUCTOS",
-  );
+  // Gift Cards: (B5) lib/giftCards.ts ya no tiene una lista propia, deriva de
+  // este catálogo. Legacy sigue siendo EXACTAMENTE lo de siempre: productos,
+  // montos y textos.
   assert.deepEqual(L.giftCards.map((p) => [p.duracion, p.monto]), [[15, 12000], [30, 20000]]);
-  assert.deepEqual([...L.duraciones.gift_card], GIFT_CARD_PRODUCTOS.map((p) => p.duracion));
+  assert.deepEqual([...L.duraciones.gift_card], L.giftCards.map((p) => p.duracion));
+  assert.deepEqual(productosGiftCardDe("legacy"), [
+    { duracion: 15, monto: 12000, titulo: "Gift Card · 15 min", descripcion: "Una sesión de simulador de Fórmula 1 de 15 minutos." },
+    { duracion: 30, monto: 20000, titulo: "Gift Card · 30 min", descripcion: "Una sesión doble de 30 minutos (dos turnos consecutivos)." },
+  ], "7 · Gift Cards legacy: los productos y textos de siempre");
 
   // Precios de Reserva: constantes y fórmula (semana/finde) sobre cuatro meses.
   assert.equal(PRECIO_15, 12000);

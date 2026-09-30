@@ -1,8 +1,15 @@
 import { randomInt } from "crypto";
 import type { MetodoPago, Procesador } from "@/lib/finanzasComisiones";
+import { productoGiftCard, productosGiftCard, type Modalidad } from "@/lib/catalogoComercial";
 
 // Catálogo de Gift Cards y helpers compartidos.
-// El precio se define acá (server-side) para que el monto no dependa del cliente.
+//
+// (B5) Duraciones y montos salen del catálogo comercial VERSIONADO
+// (lib/catalogoComercial.ts): legacy 15/30 a $12.000/$20.000, v2_10 10/20/30 a
+// $10.000/$17.000/$23.000. Acá solo se les agregan los textos. Qué modalidad
+// rige para una Gift Card NUEVA lo decide el servidor en cada request
+// (lib/giftCardsComercial.ts); una Gift Card ya emitida no vuelve a mirar el
+// catálogo: su duración y su monto son los de su fila.
 
 export type GiftCardProducto = {
   duracion: number;
@@ -11,23 +18,32 @@ export type GiftCardProducto = {
   descripcion: string;
 };
 
-export const GIFT_CARD_PRODUCTOS: GiftCardProducto[] = [
-  {
-    duracion: 15,
-    monto: 12000,
-    titulo: "Gift Card · 15 min",
-    descripcion: "Una sesión de simulador de Fórmula 1 de 15 minutos.",
-  },
-  {
-    duracion: 30,
-    monto: 20000,
-    titulo: "Gift Card · 30 min",
-    descripcion: "Una sesión doble de 30 minutos (dos turnos consecutivos).",
-  },
-];
+// Legacy conserva EXACTAMENTE los textos de siempre. v2 (y cualquier otra
+// duración) usa el genérico: nada de "dos turnos" ni de sesiones de 15.
+const DESCRIPCION_LEGACY: Readonly<Record<number, string>> = {
+  15: "Una sesión de simulador de Fórmula 1 de 15 minutos.",
+  30: "Una sesión doble de 30 minutos (dos turnos consecutivos).",
+};
 
-export function getProductoPorDuracion(duracion: number): GiftCardProducto | null {
-  return GIFT_CARD_PRODUCTOS.find((p) => p.duracion === Number(duracion)) ?? null;
+function descripcionGiftCard(modalidad: Modalidad, duracion: number): string {
+  return (modalidad === "legacy" ? DESCRIPCION_LEGACY[duracion] : undefined)
+    ?? `Una sesión de simulador de Fórmula 1 de ${duracion} minutos.`;
+}
+
+/** Los productos de Gift Card que se venden en esa modalidad, con sus textos. */
+export function productosGiftCardDe(modalidad: Modalidad): GiftCardProducto[] {
+  return productosGiftCard(modalidad).map(({ duracion, monto }) => ({
+    duracion,
+    monto,
+    titulo: `Gift Card · ${duracion} min`,
+    descripcion: descripcionGiftCard(modalidad, duracion),
+  }));
+}
+
+/** El producto de esa duración en esa modalidad, o null si esa modalidad no lo vende. */
+export function productoGiftCardDe(modalidad: Modalidad, duracion: unknown): GiftCardProducto | null {
+  const p = productoGiftCard(modalidad, duracion);
+  return p ? productosGiftCardDe(modalidad).find((x) => x.duracion === p.duracion) ?? null : null;
 }
 
 export const GIFT_CARD_MAX_CANTIDAD = 10;

@@ -6,7 +6,6 @@ import GiftCardDownloadable from "@/components/GiftCardDownloadable";
 import {
   GIFT_CARD_MAX_CANTIDAD,
   GIFT_CARD_OBSERVACIONES_MAX,
-  GIFT_CARD_PRODUCTOS,
   GIFT_CARD_VIGENCIA_DIAS,
   MEDIOS_PAGO_GIFT_CARD,
   MEDIO_PAGO_GIFT_CARD_LABEL,
@@ -15,6 +14,25 @@ import {
   requiereProcesador,
 } from "@/lib/giftCards";
 import { claveComision, porcentajeTotalComision, type ComisionConfig } from "@/lib/finanzasComisiones";
+
+// (B5) Los productos (duración, precio, textos) son los del catálogo VIGENTE,
+// el mismo de la compra web: los resuelve el servidor en cada request
+// (/api/gift-cards/catalogo). El alta manda la modalidad que se vio; si cambió
+// (el corte), el servidor responde 409 y no emite nada.
+type ProductoGiftCard = { duracion: number; monto: number; titulo: string; descripcion: string };
+type CatalogoGiftCards = { modalidad: string; productos: ProductoGiftCard[] };
+
+async function pedirCatalogo(): Promise<CatalogoGiftCards | null> {
+  try {
+    const res = await fetch("/api/gift-cards/catalogo", { cache: "no-store" });
+    const data = (await res.json().catch(() => null)) as CatalogoGiftCards | null;
+    return res.ok && data && typeof data.modalidad === "string" && Array.isArray(data.productos) && data.productos.length > 0
+      ? data
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 // Emisión manual de una Gift Card desde el panel (solo admin).
 //
@@ -102,7 +120,11 @@ export default function CrearGiftCardModal({
   onCerrar: () => void;
   onCreada: () => void;
 }) {
-  const [duracion, setDuracion] = useState(String(GIFT_CARD_PRODUCTOS[0]?.duracion ?? 15));
+  const [catalogo, setCatalogo] = useState<CatalogoGiftCards | null>(null);
+  const [errorCatalogo, setErrorCatalogo] = useState(false);
+  // "" = ninguna elegida (al abrir se elige la primera; tras un cambio de
+  // catálogo se vuelve a elegir).
+  const [duracion, setDuracion] = useState("");
   const [cantidad, setCantidad] = useState(1);
   const [modoUso, setModoUso] = useState<"separadas" | "juntas">("separadas");
   const [comprador, setComprador] = useState("");
@@ -121,10 +143,22 @@ export default function CrearGiftCardModal({
   const [emitido, setEmitido] = useState<Emitido | null>(null);
 
   const producto = useMemo(
-    () => GIFT_CARD_PRODUCTOS.find((p) => String(p.duracion) === duracion) ?? null,
-    [duracion],
+    () => catalogo?.productos.find((p) => String(p.duracion) === duracion) ?? null,
+    [catalogo, duracion],
   );
   const totalEstimado = (producto?.monto ?? 0) * cantidad;
+
+  // Catálogo vigente al abrir: queda elegida la primera Gift Card.
+  useEffect(() => {
+    let vivo = true;
+    void pedirCatalogo().then((c) => {
+      if (!vivo) return;
+      if (!c) { setErrorCatalogo(true); return; }
+      setCatalogo(c);
+      setDuracion((d) => d || String(c.productos[0].duracion));
+    });
+    return () => { vivo = false; };
+  }, []);
 
   // Las tasas salen de la configuración de Finanzas, no de una copia local: es
   // el mismo endpoint que edita el admin en la pestaña Comisiones. Si falla, el
@@ -166,6 +200,11 @@ export default function CrearGiftCardModal({
   }
 
   async function emitir() {
+    if (!catalogo || !producto) {
+      setError("Elegí una Gift Card del catálogo.");
+      setCampoError("duracion_minutos");
+      return;
+    }
     setEnviando(true);
     setError(null);
     setCampoError(null);
@@ -174,7 +213,10 @@ export default function CrearGiftCardModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          duracion_minutos: Number(duracion),
+          // El catálogo con el que se armó el formulario: si ya no es el
+          // vigente, el servidor responde 409 y no emite nada.
+          modalidad_vista: catalogo.modalidad,
+          duracion_minutos: producto.duracion,
           cantidad,
           modo_uso: cantidad > 1 ? modoUso : "separadas",
           comprador_nombre: comprador,
@@ -186,6 +228,17 @@ export default function CrearGiftCardModal({
         }),
       });
       const data = await res.json().catch(() => null);
+      if (res.status === 409 && data?.codigo === "catalogo_actualizado") {
+        // Cambió la modalidad comercial: no se emitió nada. Se recarga el
+        // catálogo vigente y se vuelve a elegir la Gift Card; el resto queda.
+        setError(data.error);
+        setCampoError("duracion_minutos");
+        setDuracion("");
+        const c = await pedirCatalogo();
+        if (c) setCatalogo(c);
+        else setErrorCatalogo(true);
+        return;
+      }
       if (!res.ok) {
         setError(data?.error || "No se pudo emitir la Gift Card.");
         setCampoError(typeof data?.campo === "string" ? data.campo : null);
@@ -328,9 +381,14 @@ export default function CrearGiftCardModal({
             <select
               className={borde("duracion_minutos")}
               value={duracion}
-              onChange={(e) => setDuracion(e.target.value)}
+              disabled={!catalogo}
+              onChange={(e) => { setDuracion(e.target.value); if (campoError === "duracion_minutos") setCampoError(null); }}
             >
-              {GIFT_CARD_PRODUCTOS.map((p) => (
+              {!catalogo && (
+                <option value="">{errorCatalogo ? "No se pudo cargar el catálogo" : "Cargando catálogo..."}</option>
+              )}
+              {catalogo && !producto && <option value="">Elegí una Gift Card</option>}
+              {catalogo?.productos.map((p) => (
                 <option key={p.duracion} value={String(p.duracion)}>
                   {p.titulo} — {pesos(p.monto)}
                 </option>
@@ -491,7 +549,7 @@ export default function CrearGiftCardModal({
           <button
             onClick={emitir}
             disabled={
-              enviando || !comprador.trim() || !telefono.trim() || !medioPago ||
+              enviando || !producto || !comprador.trim() || !telefono.trim() || !medioPago ||
               (requiereProcesador(medioPago) && !procesador)
             }
             className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-6 py-2.5 text-sm font-black text-white transition hover:bg-red-500 disabled:opacity-50"

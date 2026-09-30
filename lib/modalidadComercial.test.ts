@@ -230,13 +230,18 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     // única puerta que resuelve la modalidad vigente; precio, validación y
     // slots reciben la modalidad como parámetro (la del pedido o la guardada).
     // La página /reservas importa únicamente el código/mensaje del 409.
-    // Gift Cards, Mensualidades y Empresas siguen sin importar el núcleo.
     "lib/reservasComercial.ts", "lib/reservasPricing.ts", "lib/reservasValidation.ts", "lib/reservasSlots.ts",
     "lib/reservasPresentacion.ts", "app/reservas/page.tsx",
     "lib/reservasComercial.test.ts", "lib/reservasComercial.integration.ts",
     // (B4) Precios especiales del panel: qué duraciones se editan sale del
     // catálogo de la modalidad efectiva, resuelta en el servidor.
     "lib/preciosEspeciales.ts", "lib/preciosEspeciales.test.ts",
+    // (B5) Gift Cards: productos del catálogo (lib/giftCards.ts, client-safe);
+    // giftCardsComercial es la única que resuelve la modalidad para CREAR una;
+    // el alta del panel la recibe como parámetro. Mensualidades y Empresas
+    // siguen sin importar el núcleo.
+    "lib/giftCards.ts", "lib/giftCardsComercial.ts", "lib/giftCardsAdminAlta.ts",
+    "lib/giftCardsComercial.test.ts", "lib/giftCardsComercial.integration.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);
