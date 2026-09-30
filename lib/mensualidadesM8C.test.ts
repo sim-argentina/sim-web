@@ -130,7 +130,8 @@ function seleccion(extra: Record<string, unknown>) {
   if (conTotal.ok) {
     assert.deepEqual(
       Object.keys(conTotal.value).sort(),
-      ["aceptoCondiciones", "bloques", "duracion", "fecha", "hora", "idempotencyKey", "simuladores"],
+      // (B6) `modalidad` es la del plan, que pasa el servidor.
+      ["aceptoCondiciones", "bloques", "duracion", "fecha", "hora", "idempotencyKey", "modalidad", "simuladores"],
       "la validación solo devuelve la selección, nunca un total del cliente",
     );
   }

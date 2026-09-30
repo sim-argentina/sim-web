@@ -7,8 +7,15 @@ import {
   simularCompra,
   type EstadoMensualidad,
 } from "@/lib/mensualidades";
-import { getPlanesActivos } from "@/lib/mensualidadesCompra";
+import {
+  MENSAJE_MENSUALIDADES_ACTUALIZADAS_ADMIN, catalogoMensualidadesVigente, type CatalogoMensualidades,
+} from "@/lib/mensualidadesComercial";
 import { fechaValida } from "@/lib/agenda";
+
+// (B6) El precio y la modalidad COMERCIAL (legacy / v2_10) de un alta del panel
+// los resuelve la ruta UNA vez por request (catalogoParaCrear, con 409 si el
+// formulario se armó con otra) y llegan acá como `catalogo`. Ojo con el nombre:
+// en este módulo "modalidad" es venta / cortesía, desde M7.4.
 
 // Alta y renovación administrativa de mensualidades (Bloque M7.4). SOLO SERVIDOR.
 //
@@ -114,6 +121,10 @@ const MAPA: Record<string, { status: number; error: string; campo?: string }> = 
     error: "Esa operación ya se registró con otros datos. Recargá y volvé a intentar.",
   },
   compra_no_web: { status: 409, error: "Solicitud inválida." },
+  // (B6) El precio o la modalidad comercial no corresponden a una versión real
+  // del plan: el formulario quedó viejo. Mismo contrato que el 409 del catálogo.
+  modalidad_comercial_invalida: { status: 409, error: MENSAJE_MENSUALIDADES_ACTUALIZADAS_ADMIN },
+  precio_no_corresponde: { status: 409, error: MENSAJE_MENSUALIDADES_ACTUALIZADAS_ADMIN },
 };
 
 function traducir(mensaje: string): FalloAlta {
@@ -303,6 +314,11 @@ export async function previsualizarAlta(
   telefonoCrudo: string,
   planSlug: string,
   modalidad: Modalidad,
+  /**
+   * (B6) Catálogo de la modalidad comercial vigente. Las rutas lo resuelven
+   * (con el 409 de modalidad_vista) y lo pasan; sin él, se resuelve acá.
+   */
+  catalogoRuta?: CatalogoMensualidades,
 ): Promise<ResultadoAlta<PreviaAlta>> {
   const tel = normalizarTelefonoDetallado(telefonoCrudo);
   if (!tel.ok || !telefonoNormalizadoValido(tel.valor)) {
@@ -317,8 +333,9 @@ export async function previsualizarAlta(
     return fail(422, "modalidad_invalida", "Elegí si es una venta o una cortesía.", "modalidad");
   }
 
-  const planes = await getPlanesActivos();
-  const plan = planes.find((p) => p.slug === planSlug);
+  // (B6) El plan con el precio de la modalidad comercial vigente.
+  const catalogo = catalogoRuta ?? await catalogoMensualidadesVigente();
+  const plan = catalogo.planes.find((p) => p.slug === planSlug);
   if (!plan) return fail(404, "plan_inexistente", "Ese plan no está disponible.", "plan_slug");
 
   const { data: hoyRaw } = await supabaseAdmin.rpc("mensualidad_hoy");
@@ -404,7 +421,14 @@ export type AltaRegistrada = {
   idempotente: boolean;
 };
 
-export type ContextoAlta = { actor: string; rol: AdminRole; idempotencyKey: string };
+export type ContextoAlta = {
+  actor: string; rol: AdminRole; idempotencyKey: string;
+  /**
+   * (B6) Catálogo de la modalidad comercial vigente. Las rutas lo resuelven
+   * (con el 409 de modalidad_vista) y lo pasan; sin él, se resuelve acá.
+   */
+  catalogo?: CatalogoMensualidades;
+};
 
 /**
  * Registra el alta o la renovación. Una sola llamada a una RPC que hace TODO
@@ -429,7 +453,18 @@ export async function registrarAltaAdministrativa(
     return fail(403, "rol_no_autorizado", "No tenés permiso para registrar mensualidades.");
   }
 
-  const { data, error } = await supabaseAdmin.rpc("mensualidad_admin_alta", {
+  // (B6) El plan tiene que tener precio en la modalidad vigente.
+  const catalogo = ctx.catalogo ?? await catalogoMensualidadesVigente();
+  const plan = catalogo.planes.find((p) => p.slug === datos.planSlug);
+  if (!plan) return fail(404, "plan_inexistente", "Ese plan no está disponible.", "plan_slug");
+
+  // (B6) mensualidad_admin_alta_v2: igual a la de M7.4 más la modalidad
+  // comercial y el precio de esa versión, que la RPC exige que sea una versión
+  // real del plan (mensualidad_plan_precios). La compra y el plan quedan con
+  // esa modalidad.
+  const { data, error } = await supabaseAdmin.rpc("mensualidad_admin_alta_v2", {
+    p_modalidad_comercial: catalogo.modalidad,
+    p_precio: plan.precio,
     p_plan_slug: datos.planSlug,
     p_nombre: datos.nombre,
     p_apellido: datos.apellido,

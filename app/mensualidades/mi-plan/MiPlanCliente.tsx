@@ -92,8 +92,12 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
     setCargando(true);
     setHora("");
     try {
+      // (B6) Con la referencia, el servidor usa la modalidad y la duración DE ESTA
+      // reserva (una legacy se mueve con su grilla aunque el plan haya renovado
+      // a v2) y no la cuenta como ocupación propia.
       const res = await fetch(
-        `/api/mensualidades/disponibilidad?fecha=${encodeURIComponent(f)}&duracion=${r.duracion}`,
+        `/api/mensualidades/disponibilidad?fecha=${encodeURIComponent(f)}&duracion=${r.duracion}` +
+          `&referencia=${encodeURIComponent(r.referencia)}`,
         { cache: "no-store" },
       );
       if (!res.ok) { setHorarios([]); return; }
@@ -108,7 +112,7 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
     } finally {
       setCargando(false);
     }
-  }, [r.duracion, r.simuladores, fechas.length]);
+  }, [r.duracion, r.referencia, r.simuladores, fechas.length]);
 
   useEffect(() => {
     if (panel !== "reprogramar") return;
@@ -122,6 +126,7 @@ function FilaReserva({ r, gestionable }: { r: ReservaDeMiPlan; gestionable?: boo
       try {
         const pedir = (f: string) => fetch(
           `/api/mensualidades/disponibilidad?duracion=${r.duracion}` +
+            `&referencia=${encodeURIComponent(r.referencia)}` +
             (f ? `&fecha=${encodeURIComponent(f)}` : ""),
           { cache: "no-store" },
         );

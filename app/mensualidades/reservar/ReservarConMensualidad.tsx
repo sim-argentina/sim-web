@@ -16,6 +16,8 @@ import SelectorFecha from "./SelectorFecha";
 type Horario = { hora: string; simuladores: string[] };
 
 type Disponibilidad = {
+  /** (B6) La modalidad del plan, tal como la resolvió el servidor. Vuelve al reservar. */
+  modalidad: string;
   fecha: string;
   duracion: number;
   duraciones: number[];
@@ -77,7 +79,9 @@ export default function ReservarConMensualidad({
   // selector entero y dejaba a la persona sin forma de elegir otra.
   const [fechas, setFechas] = useState<string[]>([]);
   const [fecha, setFecha] = useState("");
-  const [duracion, setDuracion] = useState(15);
+  // (B6) La duración inicial la elige el SERVIDOR según el plan (legacy 15/30/45/60,
+  // v2 10/20/30). 0 = todavía no llegó la primera respuesta.
+  const [duracion, setDuracion] = useState(0);
   const [hora, setHora] = useState("");
   const [sims, setSims] = useState<string[]>([]);
   const [acepto, setAcepto] = useState(false);
@@ -92,9 +96,28 @@ export default function ReservarConMensualidad({
     setCargando(true);
     setError(null);
     try {
-      const qs = new URLSearchParams({ duracion: String(d) });
+      const qs = new URLSearchParams();
+      if (d > 0) qs.set("duracion", String(d));
       if (f) qs.set("fecha", f);
       const res = await fetch(`/api/mensualidades/disponibilidad?${qs}`, { cache: "no-store" });
+      if (res.status === 409) {
+        // (B6) El plan cambió de modalidad con esta pantalla abierta (por
+        // ejemplo, se aprobó una renovación): se vuelve a pedir SIN duración
+        // para que el servidor mande las opciones del plan de ahora.
+        const aviso = await res.json().catch(() => ({}));
+        const r2 = await fetch(`/api/mensualidades/disponibilidad${f ? `?fecha=${encodeURIComponent(f)}` : ""}`, { cache: "no-store" });
+        if (r2.ok) {
+          const data2 = (await r2.json()) as Disponibilidad;
+          setDisp(data2);
+          setFechas(data2.fechas);
+          setFecha(data2.fecha);
+          setDuracion(data2.duracion);
+          setHora("");
+          setSims([]);
+        }
+        setError(String(aviso.error ?? "Tu mensualidad se actualizó. Revisá los turnos disponibles."));
+        return;
+      }
       if (!res.ok) {
         // Solo se pierde la disponibilidad de ESA fecha. La lista de fechas se
         // conserva para poder elegir otra: sin ella no habría cómo recuperarse.
@@ -108,6 +131,8 @@ export default function ReservarConMensualidad({
       // La fecha vigente es la que confirma el SERVIDOR, no la que pidió el
       // navegador: en la primera carga es la que él eligió.
       setFecha(data.fecha);
+      // (B6) Igual con la duración: en la primera carga la elige el servidor.
+      setDuracion(data.duracion);
       // Si el horario elegido ya no está, se limpia la selección de abajo.
       setHora((prev) => (data.horarios.some((h) => h.hora === prev) ? prev : ""));
       setSims([]);
@@ -130,8 +155,11 @@ export default function ReservarConMensualidad({
   // El calendario lo decide el servidor, que es donde viven las reglas. El
   // cliente ya no calcula ninguna fecha, así que tampoco puede equivocarse por
   // la zona horaria ni por el reloj del visitante.
+  //
+  // (B6) Tampoco elige la duración: la primera carga va sin fecha y sin
+  // duración, y el servidor contesta con las opciones DEL PLAN.
   useEffect(() => {
-    void cargar("", 15);
+    void cargar("", 0);
   }, [cargar]);
 
   const libresDelHorario = useMemo(
@@ -185,6 +213,9 @@ export default function ReservarConMensualidad({
         body: JSON.stringify({
           fecha, hora, duracion_minutos: duracion, simuladores: sims,
           acepto_condiciones: true, idempotency_key: clave,
+          // (B6) Con qué opciones se armó esta pantalla. Si el plan cambió de
+          // modalidad, el servidor responde 409 sin crear nada.
+          modalidad_vista: disp?.modalidad,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -192,6 +223,13 @@ export default function ReservarConMensualidad({
       if (res.ok) {
         setConfirmada(data as Confirmada);
         setSaldo(Number((data as Confirmada).saldo_restante) || 0);
+        return;
+      }
+      if (res.status === 409 && data.codigo === "catalogo_actualizado") {
+        // (B6) El plan cambió de modalidad: se recargan plan y opciones desde
+        // cero (sin la duración vieja) y RECIÉN DESPUÉS se avisa.
+        await cargar("", 0);
+        setError(String(data.error ?? "Tu mensualidad se actualizó. Revisá los turnos disponibles."));
         return;
       }
       if (res.status === 409) {
@@ -300,7 +338,7 @@ export default function ReservarConMensualidad({
         <div className="mt-7">
           <p className={ROTULO}>Duración</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {(disp?.duraciones ?? [15, 30, 45, 60]).map((d) => (
+            {(disp?.duraciones ?? []).map((d) => (
               <button
                 key={d}
                 type="button"

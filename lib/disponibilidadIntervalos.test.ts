@@ -509,17 +509,24 @@ async function main() {
       "lib/reservasComercial.ts", "lib/reservasValidation.ts", "lib/reservasEstado.ts",
       "app/api/admin/bloqueos/route.ts",
       "lib/reservasComercial.test.ts", "lib/reservasComercial.integration.ts",
+      // (B6) Mensualidades: SOLO a través de lib/mensualidadesAgenda.ts, con la
+      // modalidad del plan (reservar) o de la reserva (reprogramar).
+      "lib/mensualidadesAgenda.ts",
     ]);
     const ajenos = archivos.filter((f) => MODULOS.test(leer(f)) && !PERMITIDOS.has(f));
-    assert.deepEqual(ajenos, [], `el motor solo lo usan Reservas web y el admin; lo importan: ${ajenos.join(", ")}`);
+    assert.deepEqual(ajenos, [], `el motor solo lo usan Reservas web, Mensualidades y el admin; lo importan: ${ajenos.join(", ")}`);
     for (const f of archivos) {
       if (/^\s*["']use client["']/m.test(leer(f))) assert.ok(!MODULOS.test(leer(f)), `${f} es "use client": el navegador no calcula disponibilidad`);
     }
-    // Mensualidades (B6) —y su rama de /api/disponibilidad— siguen con el motor actual.
-    for (const f of ["app/api/disponibilidad/route.ts",
-      "app/api/mensualidades/disponibilidad/route.ts", "lib/mensualidadesReserva.ts", "lib/mensualidadesGestionReserva.ts"]) {
-      assert.ok(leer(f).includes("@/lib/disponibilidad\""), `${f} sigue usando lib/disponibilidad.ts`);
+    // (B6) Mensualidades ya NO usa el motor actual: su disponibilidad, su reserva
+    // y su reprogramación pasan por lib/mensualidadesAgenda.ts (motor B2).
+    for (const f of ["app/api/mensualidades/disponibilidad/route.ts", "lib/mensualidadesReserva.ts", "lib/mensualidadesGestionReserva.ts"]) {
+      assert.ok(leer(f).includes("@/lib/mensualidadesAgenda\""), `${f} usa lib/mensualidadesAgenda.ts`);
+      assert.ok(!leer(f).includes("@/lib/disponibilidad\""), `${f} ya no usa lib/disponibilidad.ts`);
     }
+    // La rama genérica de /api/disponibilidad (cantidades, sin sesión) no es de B6: sigue igual.
+    assert.ok(leer("app/api/disponibilidad/route.ts").includes("@/lib/disponibilidad\""),
+      "app/api/disponibilidad/route.ts sigue usando lib/disponibilidad.ts");
     // (B3) Lo que VENDE Reservas web ya no usa el motor actual: pasa por reservasComercial.
     for (const f of ["app/api/reservas/route.ts", "app/api/mercadopago/preference/route.ts"]) {
       assert.ok(leer(f).includes("@/lib/reservasComercial\""), `${f} usa lib/reservasComercial.ts`);

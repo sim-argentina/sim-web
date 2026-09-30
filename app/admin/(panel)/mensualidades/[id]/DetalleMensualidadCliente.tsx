@@ -418,15 +418,16 @@ export default function DetalleMensualidadCliente({ id, rol }: { id: string; rol
                   ))}
                 </div>
                 <div>
-                  <label className={ROTULO} htmlFor="minutos">Minutos (múltiplos de 15)</label>
+                  {/* (B6) Múltiplos de 5: conviven saldos legacy y v2. */}
+                  <label className={ROTULO} htmlFor="minutos">Minutos (múltiplos de 5)</label>
                   <input
-                    id="minutos" type="number" min={15} step={15} value={minutos}
+                    id="minutos" type="number" min={5} step={5} value={minutos}
                     onChange={(e) => setMinutos(Number(e.target.value))} className={`${INPUT} mt-1`}
                   />
                 </div>
                 <p className="text-xs text-zinc-500">
                   Saldo actual: <span className="font-bold text-zinc-300">{minutosATexto(d.saldo_minutos)}</span>
-                  {minutos > 0 && minutos % 15 === 0 && (() => {
+                  {minutos > 0 && minutos % 5 === 0 && (() => {
                     const resultante = d.saldo_minutos + (operacion === "agregar" ? minutos : -minutos);
                     // Recortar a cero prometería un resultado que el servidor va
                     // a rechazar. Si no alcanza, la vista previa lo dice.
@@ -554,7 +555,7 @@ export default function DetalleMensualidadCliente({ id, rol }: { id: string; rol
                   !motivoOk || enviando
                   || (panel === "extender_vencimiento" && !fecha)
                   || (panel === "cambiar_telefono" && !telefono.trim())
-                  || (panel === "ajustar_saldo" && (!minutos || minutos <= 0 || minutos % 15 !== 0))
+                  || (panel === "ajustar_saldo" && (!minutos || minutos <= 0 || minutos % 5 !== 0))
                   || (panel === "reprogramar_reserva" && (!fecha || !hora))
                 }
                 onClick={() => {

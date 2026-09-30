@@ -1,34 +1,31 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { hayDisponibilidadPara } from "@/lib/disponibilidad";
 import { SIMULADORES_VALIDOS } from "@/lib/reservasValidation";
 import { CONDICIONES_RESERVA_VERSION } from "@/lib/mensualidadesCondiciones";
+import type { Modalidad } from "@/lib/catalogoComercial";
+import { evaluarTurnoMensualidad, mensajeDuracion, turnoMensualidad } from "@/lib/mensualidadesAgenda";
+import { MENSAJE_PLAN_ACTUALIZADO } from "@/lib/mensualidadesComercial";
 import {
-  bloquesDeAgendaPara, cantidadSimuladoresValidaPara, diaHabilitadoPara, limiteDeTurno,
-  duracionValidaPara, fechaDentroDeVentana, fechaValida, horariosDe,
-  REGLAS_POR_PRODUCTO,
+  cantidadSimuladoresValidaPara, diaHabilitadoPara,
+  fechaDentroDeVentana, fechaValida, REGLAS_POR_PRODUCTO,
 } from "@/lib/agenda";
 
 // Reserva de Mensualidades pagada 100% con saldo (Bloque M5A). SOLO SERVIDOR.
 //
-// Este módulo es el único que llama a la RPC crear_reserva_mensualidad. Su
-// trabajo es:
-//   1. validar la selección con la MISMA fuente de agenda que Reservas (M6);
-//   2. comprobar disponibilidad real antes de tocar la billetera;
+// Este módulo es el único que llama a las RPC crear_reserva_mensualidad (legacy)
+// y crear_reserva_mensualidad_v2 (B6). Su trabajo es:
+//   1. validar la selección con las reglas de la modalidad DEL PLAN;
+//   2. comprobar disponibilidad real antes de tocar la billetera (motor B2);
 //   3. delegar la atomicidad a la RPC (saldo + reserva + slots + movimiento);
 //   4. traducir los errores del motor a mensajes que se le pueden mostrar a una
 //      persona, sin filtrar SQL, saldo interno, ids ni PII.
 //
-// Lo que NO hace: recibir el nombre, el teléfono, el email ni los minutos desde
-// el navegador. Esos datos salen de la billetera dentro de la RPC.
+// Lo que NO hace: recibir el nombre, el teléfono, el email, los minutos ni la
+// modalidad desde el navegador. La modalidad sale del plan (mensualidades
+// .modalidad) y la RPC la vuelve a exigir con la billetera bloqueada.
 
-/** Minutos que consume una selección: duración x simuladores. Siempre múltiplo de 15. */
+/** Minutos COMERCIALES que consume una selección: duración x simuladores. El buffer no cuenta. */
 export function minutosRequeridos(duracion: number, cantidadSimuladores: number): number {
   return duracion * cantidadSimuladores;
-}
-
-/** 1320 → "22:00", para armar mensajes con la hora real del día. */
-function hhmm(minutos: number): string {
-  return `${String(Math.floor(minutos / 60)).padStart(2, "0")}:${String(minutos % 60).padStart(2, "0")}`;
 }
 
 export type SeleccionReserva = {
@@ -38,6 +35,8 @@ export type SeleccionReserva = {
   simuladores: string[];
   idempotencyKey: string;
   aceptoCondiciones: boolean;
+  /** (B6) La modalidad del PLAN con la que se validó. Decide qué RPC se llama. */
+  modalidad: Modalidad;
 };
 
 export type ReservaCreada = {
@@ -65,12 +64,17 @@ const fail = (
 const IDEM_RE = /^[A-Za-z0-9_-]{16,64}$/;
 
 /**
- * Valida la selección con la fuente única de M6. Puro respecto de la base: no
- * consulta nada, así que sirve también para los tests sin DB.
+ * Valida la selección con las reglas de la modalidad del PLAN. Puro respecto de
+ * la base: no consulta nada, así que sirve también para los tests sin DB.
+ *
+ * (B6) `modalidad` es la del plan (legacy por defecto: lo que regía antes). En
+ * legacy los códigos y mensajes son exactamente los de siempre; en v2 las
+ * duraciones son 10/20/30 y la grilla, de 10.
  */
 export function validarSeleccion(
   body: unknown,
   hoy?: string,
+  modalidad: Modalidad = "legacy",
 ): { ok: true; value: SeleccionReserva & { bloques: string[] } } | { ok: false; codigo: string; error: string } {
   const b = (body ?? {}) as Record<string, unknown>;
 
@@ -99,30 +103,15 @@ export function validarSeleccion(
     };
   }
 
-  // Duración: las cuatro de Mensualidades. 45 y 60 no existen para Reservas
-  // normales y eso lo decide DURACIONES_POR_PRODUCTO, no este archivo.
+  // Duración y horario según la modalidad del plan (lib/mensualidadesAgenda).
+  // Legacy: 15/30/45/60, grilla de 20; de lunes a viernes terminar a las 22:00
+  // y el fin de semana último inicio 14:00 (M8C.1). v2: 10/20/30, grilla de 10,
+  // mismas horas. El mensaje dice cuál de las cosas falló.
   const duracion = Number(b.duracion_minutos);
-  if (!duracionValidaPara("mensualidad", b.duracion_minutos)) {
-    return { ok: false, codigo: "duracion_invalida", error: "Elegí una duración de 15, 30, 45 o 60 minutos." };
-  }
-
   const hora = String(b.hora ?? "");
-  if (!horariosDe(fecha).includes(hora)) {
-    return { ok: false, codigo: "hora_invalida", error: "Elegí un horario válido." };
-  }
-  // (M8C.1) Además de la agenda, el turno tiene que caber en el horario DE ESE
-  // DÍA, y los dos tipos de día se limitan distinto: de lunes a viernes la
-  // experiencia tiene que terminar a las 22:00, y el fin de semana lo único que
-  // manda es el último inicio. El mensaje dice cuál de las dos cosas falló.
-  const bloques = bloquesDeAgendaPara("mensualidad", fecha, hora, duracion);
-  if (!bloques) {
-    const limite = limiteDeTurno("mensualidad", fecha);
-    const grilla = horariosDe(fecha);
-    const detalle = limite.tipo === "ultimoInicio"
-      ? `el último horario para empezar es ${grilla[grilla.length - 1]}`
-      : `la experiencia tiene que terminar antes de las ${hhmm(limite.minuto)}`;
-    return { ok: false, codigo: "sin_bloques", error: `Ese horario no sirve para esa duración: ${detalle}.` };
-  }
+  const turno = turnoMensualidad(modalidad, fecha, hora, b.duracion_minutos);
+  if (!turno.ok) return { ok: false, codigo: turno.codigo, error: turno.error };
+  const bloques = turno.bloques;
 
   // (M8C) De 1 a 4 simuladores. Los límites salen de REGLAS_POR_PRODUCTO, que es
   // la única fuente: no se escriben acá ni se repiten en el mensaje.
@@ -152,7 +141,7 @@ export function validarSeleccion(
 
   return {
     ok: true,
-    value: { fecha, hora, duracion, simuladores, idempotencyKey, aceptoCondiciones: true, bloques },
+    value: { fecha, hora, duracion, simuladores, idempotencyKey, aceptoCondiciones: true, bloques, modalidad },
   };
 }
 
@@ -180,7 +169,15 @@ const MAPA_ERRORES: Record<string, { status: number; error: string }> = {
     status: 422,
     error: `Elegí entre ${REGLAS_POR_PRODUCTO.mensualidad.simuladoresMin} y ${REGLAS_POR_PRODUCTO.mensualidad.simuladoresMax} simuladores.`,
   },
-  duracion_invalida: { status: 422, error: "Elegí una duración de 15, 30, 45 o 60 minutos." },
+  // El texto real sale de la modalidad del pedido (ver traducir()).
+  duracion_invalida: { status: 422, error: "Elegí una duración válida." },
+  // (B6) La RPC vuelve a controlar horario y modalidad con la billetera
+  // bloqueada. El plan pudo cambiar de modalidad (renovación aprobada en otra
+  // pestaña) entre la validación y la operación: no se crea nada y la pantalla
+  // recarga el plan.
+  fuera_de_horario: { status: 422, error: "Ese horario no sirve para esa duración." },
+  dia_no_habilitado: { status: 422, error: "Elegí una fecha válida." },
+  modalidad_no_corresponde: { status: 409, error: MENSAJE_PLAN_ACTUALIZADO },
   condiciones_requeridas: { status: 422, error: "Tenés que aceptar las condiciones para reservar." },
   idempotency_key_invalida: { status: 400, error: "Solicitud inválida." },
   idempotency_key_con_otro_payload: {
@@ -199,10 +196,13 @@ function esConflictoDeTurno(mensaje: string, code: string): boolean {
   return code === "23505" && mensaje.includes("reserva_slots_activa_uq");
 }
 
-function traducir(mensaje: string, code: string): ResultadoReserva {
+function traducir(mensaje: string, code: string, modalidad: Modalidad): ResultadoReserva {
   for (const clave of Object.keys(MAPA_ERRORES)) {
     if (mensaje.includes(clave)) {
       const m = MAPA_ERRORES[clave];
+      if (clave === "duracion_invalida") return fail(m.status, clave, mensajeDuracion(modalidad));
+      // Para la pantalla es el mismo contrato que el 409 del catálogo: recargar.
+      if (clave === "modalidad_no_corresponde") return fail(m.status, "catalogo_actualizado", m.error);
       return fail(m.status, clave, m.error);
     }
   }
@@ -258,16 +258,17 @@ export async function reservarConSaldo(
   const esReintento = await existeClave(seleccion.idempotencyKey);
 
   if (!esReintento) {
-    // 1) Disponibilidad real por la fuente única (M6), incluyendo bloqueos,
-    //    pendientes de pago y la intersección de simuladores en todos los
-    //    bloques. Es una comprobación temprana: la garantía definitiva contra
-    //    carreras sigue siendo reserva_slots_activa_uq + trg_reserva_slot_bloqueo.
-    const disp = await hayDisponibilidadPara({
+    // 1) Disponibilidad real con el motor de B2 en la modalidad del plan:
+    //    bloqueos, pendientes web vigentes y cada simulador libre durante TODO
+    //    el turno (legacy: sus bloques; v2: duración + 10). Es una comprobación
+    //    temprana: la garantía definitiva contra carreras sigue siendo
+    //    reserva_slots_activa_uq + trg_reserva_slot_bloqueo dentro de la RPC.
+    const disp = await evaluarTurnoMensualidad({
+      modalidad: seleccion.modalidad,
       fecha: seleccion.fecha,
       hora: seleccion.hora,
       duracion: seleccion.duracion,
       simuladores: seleccion.simuladores,
-      producto: "mensualidad",
     });
     if (!disp.ok) {
       // 409 = se ocupó mientras elegía; 422 = la selección nunca fue válida.
@@ -288,16 +289,29 @@ export async function reservarConSaldo(
   }
 
   // 3) Operación atómica. Solo datos ya identificados por el backend.
-  const llamar = () => supabaseAdmin.rpc("crear_reserva_mensualidad", {
-    p_mensualidad_id: mensualidadId,
-    p_fecha: seleccion.fecha,
-    p_hora: seleccion.hora,
-    p_duracion: seleccion.duracion,
-    p_simuladores: seleccion.simuladores,
-    p_slots: seleccion.bloques,
-    p_idempotency_key: seleccion.idempotencyKey,
-    p_condiciones_version: CONDICIONES_RESERVA_VERSION,
-  });
+  //    (B6) Plan legacy → RPC legacy con sus bloques de 20. Plan v2 → RPC v2:
+  //    una fila por simulador con ocupacion_min = duración + 10. Las dos
+  //    vuelven a exigir la modalidad del plan con la billetera bloqueada.
+  const llamar = () => seleccion.modalidad === "v2_10"
+    ? supabaseAdmin.rpc("crear_reserva_mensualidad_v2", {
+        p_mensualidad_id: mensualidadId,
+        p_fecha: seleccion.fecha,
+        p_hora: seleccion.hora,
+        p_duracion: seleccion.duracion,
+        p_simuladores: seleccion.simuladores,
+        p_idempotency_key: seleccion.idempotencyKey,
+        p_condiciones_version: CONDICIONES_RESERVA_VERSION,
+      })
+    : supabaseAdmin.rpc("crear_reserva_mensualidad", {
+        p_mensualidad_id: mensualidadId,
+        p_fecha: seleccion.fecha,
+        p_hora: seleccion.hora,
+        p_duracion: seleccion.duracion,
+        p_simuladores: seleccion.simuladores,
+        p_slots: seleccion.bloques,
+        p_idempotency_key: seleccion.idempotencyKey,
+        p_condiciones_version: CONDICIONES_RESERVA_VERSION,
+      });
 
   let { data, error } = await llamar();
 
@@ -309,7 +323,7 @@ export async function reservarConSaldo(
   }
 
   if (error) {
-    const r = traducir(String(error.message ?? ""), String((error as { code?: string }).code ?? ""));
+    const r = traducir(String(error.message ?? ""), String((error as { code?: string }).code ?? ""), seleccion.modalidad);
     // Si el saldo se fue entre la lectura de arriba y el consumo (una carrera con
     // otra reserva del mismo titular), el 422 igual tiene que llevar los números.
     if (!r.ok && r.codigo === "saldo_insuficiente") {

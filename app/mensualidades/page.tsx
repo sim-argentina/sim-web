@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { pageMetadata } from "@/lib/seo";
 import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import { ventasPublicasHabilitadas } from "@/lib/mensualidadesVentas";
-import { getPlanesActivos } from "@/lib/mensualidadesCompra";
+import { catalogoMensualidadesVigente } from "@/lib/mensualidadesComercial";
 import CompraMensualidad from "./CompraMensualidad";
 import IdentificarMensualidad from "./IdentificarMensualidad";
 
@@ -41,10 +41,17 @@ export default async function MensualidadesPage() {
   // Los planes salen SIEMPRE de la base, nunca de constantes del front.
   // (M8A) El estado comercial también: se consulta por request, así una pausa
   // se ve enseguida sin esperar a que caduque ninguna caché.
-  const [planes, ventasActivas] = await Promise.all([
-    getPlanesActivos(),
+  // (B6) Y la modalidad: el catálogo (precio vigente de cada plan, condiciones)
+  // se resuelve en ESTE request, así el primero posterior al corte ya muestra
+  // la oferta nueva. La página es force-dynamic: no hay nada prerenderizado.
+  const [catalogo, ventasActivas] = await Promise.all([
+    catalogoMensualidadesVigente(),
     ventasPublicasHabilitadas(),
   ]);
+  const planes = catalogo.planes.map((p) => ({
+    slug: p.slug, nombre: p.nombre, minutos: p.minutos, precio: p.precio,
+    vigencia_dias: p.vigencia_dias, etiqueta: p.etiqueta,
+  }));
 
   return (
     <main className="min-h-screen bg-black text-white">
@@ -75,7 +82,12 @@ export default async function MensualidadesPage() {
             No hay planes disponibles en este momento.
           </p>
         ) : (
-          <CompraMensualidad planes={planes} ventasActivas={ventasActivas} />
+          <CompraMensualidad
+            planes={planes}
+            modalidad={catalogo.modalidad}
+            condiciones={catalogo.condiciones}
+            ventasActivas={ventasActivas}
+          />
         )}
 
         {/* Acceso para quien ya compró: código + teléfono, sin cuentas. */}

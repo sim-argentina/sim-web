@@ -14,7 +14,8 @@ import {
 // Inicio de compra de una Mensualidad SIM (Bloque M3).
 // Detrás de la feature flag: con la venta apagada la ruta no existe (404), sin
 // filtrar planes ni revelar que la función está en construcción.
-// El precio SIEMPRE sale de mensualidad_planes; el navegador solo manda el slug.
+// El precio SIEMPRE lo resuelve el servidor; el navegador solo manda el slug.
+// (B6) Desde B6 sale de mensualidad_plan_precios para la modalidad vigente.
 //
 // (M8A) Es el ÚNICO endpoint público capaz de iniciar una venta: la compra
 // inicial y la renovación entran las dos por acá, porque "renovar" desde Mi Plan
@@ -81,8 +82,16 @@ export async function POST(req: Request) {
       });
     }
 
-    const r = await crearCompraYPreferencia(v.data, baseUrl);
-    if (!r.ok) return NextResponse.json({ error: r.error, campo: r.campo }, { status: r.status });
+    // (B6) El cuerpo viaja para resolver la modalidad UNA vez y comparar con la
+    // que vio la pantalla (modalidad_vista): si no coincide, 409
+    // catalogo_actualizado sin crear compra ni preferencia.
+    const r = await crearCompraYPreferencia(v.data, baseUrl, { body });
+    if (!r.ok) {
+      return NextResponse.json(
+        { error: r.error, campo: r.campo, ...(r.codigo ? { codigo: r.codigo } : {}) },
+        { status: r.status, headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+    }
 
     // 5) Solo lo imprescindible: a dónde ir a pagar y el token del resultado.
     return NextResponse.json({

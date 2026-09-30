@@ -1,5 +1,6 @@
 import { ALTURA_MINIMA_M, PESO_MAXIMO_KG } from "@/lib/requisitos";
 import { REGLAS_POR_PRODUCTO, WEEKDAY_SLOTS, WEEKEND_SLOTS } from "@/lib/agenda";
+import { duracionesPermitidas, type Modalidad } from "@/lib/catalogoComercial";
 
 // Condiciones de Mensualidades SIM. Módulo PURO: lo usa la landing para
 // mostrarlas y el servidor para registrar qué versión aceptó cada comprador.
@@ -60,36 +61,37 @@ const CANTIDADES = Array.from(
 // El máximo por reserva sale de la duración más larga que admite el producto.
 const DURACION_MAXIMA = Math.max(...duraciones);
 
-export const CONDICIONES_MENSUALIDAD: readonly Condicion[] = [
-  {
-    titulo: "Vigencia",
-    texto:
-      "Dura 30 días desde que Mercado Pago aprueba el pago y puede utilizarse hasta las 23:59 del día de vencimiento. " +
-      "No tiene renovación automática y el saldo no utilizado se pierde.",
-  },
-  {
-    // (M8C.1) Los horarios se derivan de la agenda: si mañana cambia el cierre,
-    // la condición cambia con él en vez de quedar mintiendo.
-    titulo: "Reservas",
-    texto:
-      "Se realizan desde la web con el código y el teléfono, sin crear una cuenta. " +
-      `Podés reservar de lunes a viernes de ${ABRE_SEMANA} a ${CIERRA_SEMANA}, ` +
-      `y sábados y domingos con horarios de inicio de ${PRIMER_INICIO_FINDE} a ${ULTIMO_INICIO_FINDE}. ` +
-      "Se reserva desde el día siguiente y hasta 15 días de anticipación. " +
-      "El turno debe realizarse dentro de la vigencia y está sujeto a disponibilidad.",
-  },
-  {
-    titulo: "Duración y simuladores",
-    texto:
-      `Los turnos pueden ser de ${enumerar(duraciones)} minutos, con ${enumerar(CANTIDADES)} simuladores. ` +
-      `Cada reserva puede durar como máximo ${DURACION_MAXIMA} minutos.`,
-  },
-  {
-    titulo: "Consumo del saldo",
-    texto:
-      "Se descuenta la duración del turno multiplicada por la cantidad de simuladores elegidos. " +
-      "Por ejemplo, 4 simuladores durante 15 minutos consumen 60 minutos de saldo.",
-  },
+// (B6) Las condiciones se arman para UNA modalidad. Solo cambian dos bloques:
+// qué duraciones existen y el ejemplo de consumo. Todo lo demás (vigencia,
+// horario, anticipación, cancelación, renovación, requisitos) es idéntico en
+// las dos, porque el producto es el mismo.
+function armarCondiciones(bloques: { duracionYSimuladores: string; consumo: string }): readonly Condicion[] {
+  return [
+    {
+      titulo: "Vigencia",
+      texto:
+        "Dura 30 días desde que Mercado Pago aprueba el pago y puede utilizarse hasta las 23:59 del día de vencimiento. " +
+        "No tiene renovación automática y el saldo no utilizado se pierde.",
+    },
+    {
+      // (M8C.1) Los horarios se derivan de la agenda: si mañana cambia el cierre,
+      // la condición cambia con él en vez de quedar mintiendo.
+      titulo: "Reservas",
+      texto:
+        "Se realizan desde la web con el código y el teléfono, sin crear una cuenta. " +
+        `Podés reservar de lunes a viernes de ${ABRE_SEMANA} a ${CIERRA_SEMANA}, ` +
+        `y sábados y domingos con horarios de inicio de ${PRIMER_INICIO_FINDE} a ${ULTIMO_INICIO_FINDE}. ` +
+        "Se reserva desde el día siguiente y hasta 15 días de anticipación. " +
+        "El turno debe realizarse dentro de la vigencia y está sujeto a disponibilidad.",
+    },
+    { titulo: "Duración y simuladores", texto: bloques.duracionYSimuladores },
+    { titulo: "Consumo del saldo", texto: bloques.consumo },
+    ...CONDICIONES_COMUNES,
+  ];
+}
+
+// Los cuatro bloques finales son idénticos en las dos modalidades.
+const CONDICIONES_COMUNES: readonly Condicion[] = [
   {
     titulo: "Cancelaciones y cambios",
     texto:
@@ -117,6 +119,48 @@ export const CONDICIONES_MENSUALIDAD: readonly Condicion[] = [
       "No se aceptan cupones de descuento ni se combina con otras promociones.",
   },
 ];
+
+/** Legacy: las ocho condiciones de siempre, EXACTAMENTE con el mismo texto. */
+export const CONDICIONES_MENSUALIDAD: readonly Condicion[] = armarCondiciones({
+  duracionYSimuladores:
+    `Los turnos pueden ser de ${enumerar(duraciones)} minutos, con ${enumerar(CANTIDADES)} simuladores. ` +
+    `Cada reserva puede durar como máximo ${DURACION_MAXIMA} minutos.`,
+  consumo:
+    "Se descuenta la duración del turno multiplicada por la cantidad de simuladores elegidos. " +
+    "Por ejemplo, 4 simuladores durante 15 minutos consumen 60 minutos de saldo.",
+});
+
+// (B6) v2_10: las duraciones salen del catálogo central (10/20/30) y el máximo
+// es por simulador. El buffer operativo no se menciona: no es tiempo vendido ni
+// consume saldo.
+const DURACIONES_V2 = duracionesPermitidas("v2_10", "mensualidad");
+const DURACION_MAXIMA_V2 = Math.max(...DURACIONES_V2);
+
+export const CONDICIONES_MENSUALIDAD_V2: readonly Condicion[] = armarCondiciones({
+  duracionYSimuladores:
+    `Los turnos pueden ser de ${enumerar(DURACIONES_V2)} minutos, con ${enumerar(CANTIDADES)} simuladores. ` +
+    `Cada reserva puede durar como máximo ${DURACION_MAXIMA_V2} minutos por simulador.`,
+  consumo:
+    "Se descuenta la duración del turno multiplicada por la cantidad de simuladores elegidos. " +
+    "Por ejemplo, 2 simuladores durante 20 minutos consumen 40 minutos de saldo.",
+});
+
+/**
+ * (B6) Versión de las condiciones de COMPRA de las Mensualidades v2. Las compras
+ * legacy siguen guardando CONDICIONES_VERSION: no se reescribe ninguna
+ * aceptación histórica.
+ */
+export const CONDICIONES_VERSION_V2 = "2026-10-v2";
+
+/** Las condiciones de compra de UNA modalidad (la resuelve siempre el servidor). */
+export function condicionesMensualidad(modalidad: Modalidad): readonly Condicion[] {
+  return modalidad === "v2_10" ? CONDICIONES_MENSUALIDAD_V2 : CONDICIONES_MENSUALIDAD;
+}
+
+/** Qué versión de condiciones acepta quien compra en esa modalidad. */
+export function versionCondicionesMensualidad(modalidad: Modalidad): string {
+  return modalidad === "v2_10" ? CONDICIONES_VERSION_V2 : CONDICIONES_VERSION;
+}
 
 /**
  * Las mismas ocho condiciones en texto plano, "Título: regla".

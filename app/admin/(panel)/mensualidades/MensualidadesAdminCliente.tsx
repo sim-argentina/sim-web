@@ -84,9 +84,12 @@ export function telefonoLegible(t: string): string {
 export default function MensualidadesAdminCliente({
   rol,
   planes = [],
+  modalidadComercial = "legacy",
 }: {
   rol: string;
   planes?: PlanOpcion[];
+  /** (B6) Modalidad comercial con la que el servidor armó `planes`. */
+  modalidadComercial?: string;
 }) {
   const [texto, setTexto] = useState("");
   const [filtro, setFiltro] = useState<string>("todas");
@@ -174,6 +177,7 @@ export default function MensualidadesAdminCliente({
       {abrirAlta && (
         <NuevaMensualidadModal
           planes={planes}
+          modalidadComercial={modalidadComercial}
           onCerrar={() => setAbrirAlta(false)}
           // Al registrar, la lista se recarga: no puede quedar mostrando un
           // saldo, un estado o un vencimiento viejo.

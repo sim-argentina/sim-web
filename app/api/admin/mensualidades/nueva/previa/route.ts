@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/adminGuards";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 import { previsualizarAlta, type Modalidad } from "@/lib/mensualidadesAdminAlta";
+import { MENSAJE_MENSUALIDADES_ACTUALIZADAS_ADMIN, catalogoParaCrear } from "@/lib/mensualidadesComercial";
 
 // Vista previa del alta administrativa (Bloque M7.4).
 //
@@ -38,10 +39,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Solicitud inválida." }, { status: 400, headers: sinCache });
     }
 
+    // (B6) Mismo 409 que el alta: la vista previa no muestra un precio que ya
+    // no es el que se va a cobrar.
+    const cat = await catalogoParaCrear(body, { mensaje: MENSAJE_MENSUALIDADES_ACTUALIZADAS_ADMIN });
+    if (!cat.ok) {
+      return NextResponse.json({ error: cat.error, codigo: cat.codigo }, { status: cat.status, headers: sinCache });
+    }
+
     const r = await previsualizarAlta(
       String(body.telefono ?? ""),
       String(body.plan_slug ?? ""),
       String(body.modalidad ?? "") as Modalidad,
+      cat.catalogo,
     );
     if (!r.ok) {
       return NextResponse.json(

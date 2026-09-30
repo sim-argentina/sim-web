@@ -73,15 +73,17 @@ async function main() {
     );
   }
 
-  // ── 3) Ajuste de saldo: cantidad POSITIVA y múltiplo de 15 ──
+  // ── 3) Ajuste de saldo: cantidad POSITIVA y múltiplo de 5 (B6) ──
   // La dirección viaja aparte, así que no existe "agregar -60".
   assert.equal(await codigoDe(ajustarSaldo(ID, "agregar", 0, "m", CTX) as never), "minutos_invalidos",
     "cero minutos no es una operación");
   assert.equal(await codigoDe(ajustarSaldo(ID, "agregar", -60, "m", CTX) as never), "minutos_invalidos",
     "una cantidad negativa no descuenta: para eso está 'descontar'");
   assert.equal(await codigoDe(ajustarSaldo(ID, "descontar", -60, "m", CTX) as never), "minutos_invalidos");
-  assert.equal(await codigoDe(ajustarSaldo(ID, "agregar", 7, "m", CTX) as never), "minutos_no_multiplo_15",
-    "el modelo entero trabaja en múltiplos de 15");
+  // (B6) Conviven saldos legacy y v2: la unidad pasa de 15 a 5, la misma que
+  // exigen los CHECK de la base desde B1.
+  assert.equal(await codigoDe(ajustarSaldo(ID, "agregar", 7, "m", CTX) as never), "minutos_no_multiplo_5",
+    "el modelo entero trabaja en múltiplos de 5");
   assert.equal(await codigoDe(ajustarSaldo(ID, "agregar", 22.5 as number, "m", CTX) as never), "minutos_invalidos",
     "fraccionario tampoco");
   assert.equal(

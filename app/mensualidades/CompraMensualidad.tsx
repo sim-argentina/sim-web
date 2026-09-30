@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CONDICIONES_MENSUALIDAD, ACEPTACION_MENSUALIDAD } from "@/lib/mensualidadesCondiciones";
-import type { Plan } from "@/lib/mensualidades";
+import { ACEPTACION_MENSUALIDAD, type Condicion } from "@/lib/mensualidadesCondiciones";
 import {
   trackMensualidadesView, trackMensualidadPlan, trackMensualidadFormStart,
   trackMensualidadIntento, trackMensualidadVentasPausadas, trackPaymentRedirect,
@@ -10,13 +9,28 @@ import {
 } from "@/lib/analytics";
 
 // Formulario público de compra (Bloque M3). El navegador solo manda el SLUG del
-// plan y los datos del comprador: precio, minutos y vigencia los relee el
-// servidor de mensualidad_planes. Nada monetario viaja desde acá.
+// plan y los datos del comprador: precio, minutos y vigencia los resuelve el
+// servidor. Nada monetario viaja desde acá.
 //
 // (M8A) `ventasActivas` llega del SERVIDOR y solo decide qué se dibuja. Si
 // alguien lo manipulara desde el navegador, el POST igual recibiría 503: la
 // autoridad está en /api/mensualidades/preference, que consulta la base justo
 // antes de crear la preferencia.
+//
+// (B6) El catálogo (modalidad, planes con su precio vigente y condiciones) lo
+// resuelve el SERVIDOR por request. El envío devuelve la modalidad y el precio
+// que se mostraron; si al confirmar rige otra oferta (pestaña abierta antes del
+// corte), el servidor responde 409 catalogo_actualizado sin crear nada y esta
+// pantalla recarga el catálogo, conserva los datos personales y pide volver a
+// elegir el plan.
+
+/** Un plan tal como lo publica el servidor, con el precio de SU modalidad. */
+export type PlanPublico = {
+  slug: string; nombre: string; minutos: number; precio: number;
+  vigencia_dias: number; etiqueta: string | null;
+};
+
+type Catalogo = { modalidad: string; planes: PlanPublico[]; condiciones: Condicion[] };
 
 function formatearPrecio(v: number) {
   return `$${Math.round(v).toLocaleString("es-AR")}`;
@@ -28,13 +42,23 @@ function horas(minutos: number) {
 }
 
 export default function CompraMensualidad({
-  planes,
+  planes: planesIniciales,
+  modalidad: modalidadInicial,
+  condiciones: condicionesIniciales,
   ventasActivas = true,
 }: {
-  planes: Plan[];
+  planes: PlanPublico[];
+  modalidad: string;
+  condiciones: Condicion[];
   ventasActivas?: boolean;
 }) {
-  const [slug, setSlug] = useState<string>(planes[0]?.slug ?? "");
+  // (B6) El catálogo vive en estado: después de un 409 se reemplaza por el que
+  // mande el servidor, sin recargar la página ni perder lo que se escribió.
+  const [catalogo, setCatalogo] = useState<Catalogo>({
+    modalidad: modalidadInicial, planes: planesIniciales, condiciones: condicionesIniciales,
+  });
+  const planes = catalogo.planes;
+  const [slug, setSlug] = useState<string>(planesIniciales[0]?.slug ?? "");
   const [nombre, setNombre] = useState("");
   const [apellido, setApellido] = useState("");
   const [telefono, setTelefono] = useState("");
@@ -51,7 +75,8 @@ export default function CompraMensualidad({
   const [pausadaEnVivo, setPausadaEnVivo] = useState(false);
   const vendiendo = ventasActivas && !pausadaEnVivo;
 
-  const plan = planes.find((p) => p.slug === slug) ?? planes[0];
+  // (B6) Sin plan por defecto después de un 409: hay que volver a elegirlo.
+  const plan = planes.find((p) => p.slug === slug);
   const puedeComprar = Boolean(
     vendiendo && nombre.trim() && apellido.trim() && telefono.trim() && email.trim() && acepto && plan && !enviando,
   );
@@ -72,7 +97,7 @@ export default function CompraMensualidad({
     trackMensualidadFormStart();
   }
 
-  function elegirPlan(p: Plan) {
+  function elegirPlan(p: PlanPublico) {
     setSlug(p.slug);
     trackMensualidadPlan({ plan: p.slug, minutos: p.minutos, value: p.precio });
   }
@@ -91,9 +116,36 @@ export default function CompraMensualidad({
           plan_slug: plan.slug,
           acepto_condiciones: acepto,
           idempotency_key: idemKey,
+          // (B6) Lo que se mostró. El servidor NO lo usa para cobrar: solo para
+          // no cobrar en silencio algo distinto de lo que se vio.
+          modalidad_vista: catalogo.modalidad,
+          precio_visto: plan.precio,
         }),
       });
       const data = await res.json().catch(() => null);
+
+      // (B6) Cambió la oferta mientras la pantalla estaba abierta: no se creó
+      // nada. Se recarga el catálogo, se conservan los datos personales y hay
+      // que volver a elegir el plan y a aceptar las condiciones (pueden ser
+      // otras).
+      if (res.status === 409 && data?.codigo === "catalogo_actualizado") {
+        try {
+          const r2 = await fetch("/api/mensualidades/catalogo", { cache: "no-store" });
+          const nuevo = r2.ok ? await r2.json() : null;
+          if (nuevo?.planes) {
+            setCatalogo({ modalidad: nuevo.modalidad, planes: nuevo.planes, condiciones: nuevo.condiciones });
+          }
+        } catch {
+          // Sin catálogo nuevo igual se obliga a elegir de nuevo: el próximo
+          // envío vuelve a pasar por el servidor.
+        }
+        setSlug("");
+        setAcepto(false);
+        setIdemKey(crypto.randomUUID());
+        setError(data?.error || "Actualizamos nuestras Mensualidades y precios. Revisá los nuevos planes antes de continuar.");
+        setEnviando(false);
+        return;
+      }
 
       // (M8A) Pausa comercial: no es una falla técnica. Se cambia la pantalla
       // entera en vez de mostrar un error genérico al pie del formulario.
@@ -124,7 +176,7 @@ export default function CompraMensualidad({
         duration_minutes: plan.minutos,
         quantity: 1,
       });
-      window.location.href = data.init_point;
+      window.location.assign(data.init_point);
     } catch {
       setError("Error de conexión. Probá de nuevo.");
       setEnviando(false);
@@ -224,7 +276,7 @@ export default function CompraMensualidad({
             leer todo. Es la lista COMPLETA: no hay nada plegado ni detrás de un
             "ver más". */}
         <ul className="mt-5 grid gap-4 md:grid-cols-2">
-          {CONDICIONES_MENSUALIDAD.map((c) => (
+          {catalogo.condiciones.map((c) => (
             <li key={c.titulo} className="flex gap-2.5">
               <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-red-500" />
               <span className="text-sm leading-6 text-zinc-400">

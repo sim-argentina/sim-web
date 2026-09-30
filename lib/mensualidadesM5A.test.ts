@@ -140,9 +140,11 @@ const conBasura = sel({
 });
 assert.ok(conBasura.ok, "los campos de más se ignoran, no rompen");
 if (conBasura.ok) {
+  // (B6) `modalidad` es la del PLAN, que pasa el servidor: no sale del cuerpo.
   assert.deepEqual(Object.keys(conBasura.value).sort(), [
-    "aceptoCondiciones", "bloques", "duracion", "fecha", "hora", "idempotencyKey", "simuladores",
+    "aceptoCondiciones", "bloques", "duracion", "fecha", "hora", "idempotencyKey", "modalidad", "simuladores",
   ], "la selección validada no arrastra nada del titular ni del importe");
+  assert.equal(conBasura.value.modalidad, "legacy", "sin modalidad explícita, la validación es la legacy de siempre");
 }
 
 console.log("mensualidadesM5A.test.ts OK");

@@ -6,6 +6,9 @@ import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import { leerSesion, tokenDeRequest } from "@/lib/mensualidadSesion";
 import { huellaCodigo } from "@/lib/mensualidadHuella";
 import { validarSeleccion, reservarConSaldo } from "@/lib/mensualidadesReserva";
+import {
+  MENSAJE_PLAN_ACTUALIZADO, falloMensualidadesActualizadas, modalidadDeMensualidad, modalidadVista,
+} from "@/lib/mensualidadesComercial";
 
 // Confirmación de una reserva pagada 100% con saldo (Bloque M5A).
 //
@@ -55,7 +58,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Formato inválido." }, { status: 400, headers: sinCache });
     }
 
-    const v = validarSeleccion(body);
+    // (B6) La modalidad es la DEL PLAN, leída ahora: nunca la global ni la que
+    // diga el navegador. Si la pantalla se armó con otra (una renovación v2 se
+    // aprobó con esta pestaña abierta), 409 sin crear nada y la pantalla
+    // recarga el plan y sus opciones.
+    const modalidad = await modalidadDeMensualidad(sesion.mensualidadId);
+    if (!modalidad) return sinSesion();
+    if (modalidadVista(body) !== modalidad) {
+      const f = falloMensualidadesActualizadas(MENSAJE_PLAN_ACTUALIZADO);
+      return NextResponse.json({ error: f.error, codigo: f.codigo }, { status: f.status, headers: sinCache });
+    }
+
+    const v = validarSeleccion(body, undefined, modalidad);
     if (!v.ok) {
       // 400 para lo que nunca fue una solicitud válida; 422 para una selección
       // bien formada que no se puede aceptar.

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle, ArrowLeft, Check, CircleAlert, Loader2, Lock, X,
 } from "lucide-react";
@@ -111,13 +112,17 @@ const campoBase =
 
 export default function NuevaMensualidadModal({
   planes,
+  modalidadComercial,
   onCerrar,
   onCreada,
 }: {
   planes: PlanOpcion[];
+  /** (B6) Con qué modalidad comercial armó el servidor estos planes y precios. */
+  modalidadComercial: string;
   onCerrar: () => void;
   onCreada: () => void;
 }) {
+  const router = useRouter();
   const [paso, setPaso] = useState<"form" | "resumen" | "listo">("form");
 
   const [nombre, setNombre] = useState("");
@@ -162,7 +167,22 @@ export default function NuevaMensualidadModal({
     motivo: motivo.trim(),
     declaracion,
     idempotency_key: claveRef.current,
-  }), [nombre, apellido, telefono, email, planSlug, modalidad, medioPago, cortesiaTipo, motivo, declaracion]);
+    // (B6) Lo que se mostró: si cambió la modalidad comercial, el servidor
+    // responde 409 sin registrar nada.
+    modalidad_vista: modalidadComercial,
+    precio_visto: planes.find((p) => p.slug === planSlug)?.precio,
+  }), [nombre, apellido, telefono, email, planSlug, modalidad, medioPago, cortesiaTipo, motivo, declaracion,
+    modalidadComercial, planes]);
+
+  // (B6) La oferta cambió con el formulario abierto: se recargan los planes del
+  // servidor y se vuelve al formulario. No se registró nada.
+  function catalogoActualizado(mensaje: string | undefined) {
+    setError(mensaje ?? "Cambió la modalidad comercial. Revisá los nuevos planes antes de registrar la mensualidad.");
+    setPaso("form");
+    setPrevia(null);
+    claveRef.current = nuevaClave();
+    router.refresh();
+  }
 
   // ── Paso 1 → 2: el SERVIDOR dice qué va a pasar ──
   async function verResumen() {
@@ -185,9 +205,17 @@ export default function NuevaMensualidadModal({
       const res = await fetch("/api/admin/mensualidades/nueva/previa", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ telefono: telefono.trim(), plan_slug: planSlug, modalidad }),
+        body: JSON.stringify({
+          telefono: telefono.trim(), plan_slug: planSlug, modalidad,
+          modalidad_vista: modalidadComercial,
+          precio_visto: planes.find((p) => p.slug === planSlug)?.precio,
+        }),
       });
-      const json = (await res.json()) as Previa & { error?: string; campo?: string };
+      const json = (await res.json()) as Previa & { error?: string; campo?: string; codigo?: string };
+      if (res.status === 409 && json.codigo === "catalogo_actualizado") {
+        catalogoActualizado(json.error);
+        return;
+      }
       if (!res.ok) {
         setError(json.error ?? "No pudimos calcular la vista previa.");
         setCampoMal(json.campo ?? null);
@@ -218,7 +246,11 @@ export default function NuevaMensualidadModal({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(cuerpo()),
       });
-      const json = (await res.json()) as Registrada & { error?: string; campo?: string };
+      const json = (await res.json()) as Registrada & { error?: string; campo?: string; codigo?: string };
+      if (res.status === 409 && json.codigo === "catalogo_actualizado") {
+        catalogoActualizado(json.error);
+        return;
+      }
       if (!res.ok) {
         setError(json.error ?? "No pudimos registrar la mensualidad.");
         setCampoMal(json.campo ?? null);

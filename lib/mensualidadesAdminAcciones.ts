@@ -52,7 +52,8 @@ const MAPA: Record<string, { status: number; error: string }> = {
   },
   operacion_invalida: { status: 400, error: "Solicitud inválida." },
   minutos_invalidos: { status: 422, error: "La cantidad de minutos tiene que ser mayor a cero." },
-  minutos_no_multiplo_15: { status: 422, error: "Los minutos tienen que ser múltiplo de 15." },
+  // (B6) Múltiplos de 5: conviven saldos legacy y v2 (un saldo puede terminar en 35).
+  minutos_no_multiplo_5: { status: 422, error: "Los minutos tienen que ser múltiplo de 5." },
   saldo_insuficiente: {
     status: 422,
     error: "No se puede descontar esa cantidad: el saldo quedaría negativo.",
@@ -170,8 +171,9 @@ export async function ajustarSaldo(
   if (!Number.isInteger(minutos) || minutos <= 0) {
     return fail(422, "minutos_invalidos", "La cantidad de minutos tiene que ser mayor a cero.");
   }
-  if (minutos % 15 !== 0) {
-    return fail(422, "minutos_no_multiplo_15", "Los minutos tienen que ser múltiplo de 15.");
+  // (B6) La misma unidad que exigen la RPC y los CHECK de la base: 5.
+  if (minutos % 5 !== 0) {
+    return fail(422, "minutos_no_multiplo_5", "Los minutos tienen que ser múltiplo de 5.");
   }
 
   return llamar<SaldoAjustado>("mensualidad_admin_ajustar_saldo", {

@@ -134,9 +134,12 @@ const VIERNES = "2026-09-25";
         `el ${archivo} no puede calcular fechas por su cuenta (${patron})`);
     }
   }
-  // La primera carga va SIN fecha.
-  assert.match(src, /void cargar\(""\s*,\s*15\)/,
+  // La primera carga va SIN fecha. (B6) Y sin duración: la elige el servidor
+  // según la modalidad del plan (legacy 15, v2 10).
+  assert.match(src, /void cargar\(""\s*,\s*0\)/,
     "la primera carga no manda fecha: la elige el servidor");
+  assert.match(src, /if \(d > 0\) qs\.set\("duracion"/, "la duración solo viaja cuando ya la eligió alguien");
+  assert.match(src, /setDuracion\(data\.duracion\)/, "la duración mostrada es la que devolvió el servidor");
   // Y la fecha vigente es la que confirma el servidor.
   assert.match(src, /setFecha\(data\.fecha\)/,
     "la fecha mostrada es la que devolvió el servidor");
@@ -166,7 +169,8 @@ const VIERNES = "2026-09-25";
 {
   const efectos = [...src.matchAll(/useEffect\(/g)].length;
   assert.equal(efectos, 1, "la pantalla tiene un solo useEffect: no puede haber cargas encadenadas");
-  assert.match(src, /useEffect\(\(\) => \{\s*void cargar\(""\s*,\s*15\);\s*\}, \[cargar\]\)/,
+  // (B6) La primera carga va sin fecha y SIN duración (0): las elige el servidor.
+  assert.match(src, /useEffect\(\(\) => \{\s*void cargar\(""\s*,\s*0\);\s*\}, \[cargar\]\)/,
     "el efecto depende solo de cargar(), que es useCallback con deps vacías");
   assert.match(src, /const cargar = useCallback\(async \(f: string, d: number\) => \{[\s\S]*?\}, \[\]\)/,
     "cargar() es estable: no se recrea en cada render");

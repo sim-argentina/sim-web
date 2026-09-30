@@ -242,6 +242,14 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     // siguen sin importar el núcleo.
     "lib/giftCards.ts", "lib/giftCardsComercial.ts", "lib/giftCardsAdminAlta.ts",
     "lib/giftCardsComercial.test.ts", "lib/giftCardsComercial.integration.ts",
+    // (B6) Mensualidades: mensualidadesComercial es la única que resuelve la
+    // modalidad vigente para VENDER (web y panel) y lee los precios versionados;
+    // un plan existente usa la suya persistida. La agenda (motor B2), la
+    // validación de la reserva y las condiciones reciben la modalidad como
+    // parámetro. Empresas sigue sin importar el núcleo.
+    "lib/mensualidadesComercial.ts", "lib/mensualidadesAgenda.ts", "lib/mensualidadesReserva.ts",
+    "lib/mensualidadesCondiciones.ts",
+    "lib/mensualidadesB6.test.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);
@@ -250,13 +258,14 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
   const ajenos = importadores.filter((f) => !PERMITIDOS.has(f));
   assert.deepEqual(ajenos, [], `B0 no conecta flujos comerciales; importan el núcleo: ${ajenos.join(", ")}`);
 
-  // mensualidad_plan_precios: preparada, pero ningún flujo público la LEE (se
-  // buscan consultas reales, no menciones en comentarios).
+  // mensualidad_plan_precios: preparada en B1 y conectada en B6. La lee el
+  // diagnóstico y UNA sola puerta comercial (se buscan consultas reales, no
+  // menciones en comentarios).
   const leenPrecios = archivos
     .filter((f) => /^(app|lib|components)\//.test(f) && !/\.(test|integration)\.m?ts$/.test(f))
     .filter((f) => /\.from\(\s*["']mensualidad_plan_precios["']\s*\)/.test(leer(f)));
-  assert.deepEqual(leenPrecios, ["lib/modalidadComercialDiagnostico.ts"],
-    "solo el diagnóstico lee mensualidad_plan_precios (los flujos públicos la conectan en B6)");
+  assert.deepEqual(leenPrecios.sort(), ["lib/mensualidadesComercial.ts", "lib/modalidadComercialDiagnostico.ts"],
+    "solo el diagnóstico y lib/mensualidadesComercial.ts (B6) leen mensualidad_plan_precios");
 
   // La RPC del override tiene un solo llamador.
   const llamanRpc = archivos

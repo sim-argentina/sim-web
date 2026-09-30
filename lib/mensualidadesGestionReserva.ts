@@ -1,9 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  bloquesDeAgendaPara, cantidadSimuladoresValidaPara, diaHabilitadoPara, limiteDeTurno,
-  fechaDentroDeVentana, fechaValida, horariosDe,
+  cantidadSimuladoresValidaPara, diaHabilitadoPara, fechaDentroDeVentana, fechaValida,
 } from "@/lib/agenda";
-import { hayDisponibilidadPara } from "@/lib/disponibilidad";
+import { evaluarTurnoMensualidad, turnoMensualidad } from "@/lib/mensualidadesAgenda";
+import { MENSAJE_PLAN_ACTUALIZADO, modalidadPersistida } from "@/lib/mensualidadesComercial";
 
 // Cancelación y reprogramación de reservas de Mensualidades (Bloque M5C).
 // SOLO SERVIDOR.
@@ -75,6 +75,10 @@ const MAPA: Record<string, { status: number; error: string }> = {
   bloques_incoherentes: { status: 400, error: "Solicitud inválida." },
   bloques_desordenados: { status: 400, error: "Solicitud inválida." },
   hora_invalida: { status: 400, error: "Elegí un horario válido." },
+  // (B6) La RPC vuelve a controlar horario y modalidad de la reserva.
+  fuera_de_horario: { status: 422, error: "Ese horario no sirve para la duración de tu reserva." },
+  dia_no_habilitado: { status: 422, error: "Elegí una fecha válida." },
+  modalidad_no_corresponde: { status: 409, error: MENSAJE_PLAN_ACTUALIZADO },
 };
 
 /** El conflicto de turno llega como índice único o como el trigger de bloqueos. */
@@ -199,8 +203,12 @@ type FilaReprogramar = {
   sin_cambios: boolean;
 };
 
-/** Duración y simuladores de la reserva, para resolver los bloques del nuevo horario. */
-type Actual = { duracion: number; simuladores: string[]; fecha: string; hora: string };
+/** Duración, simuladores y modalidad de la reserva, para resolver el nuevo horario. */
+type Actual = {
+  id: number | string; duracion: number; simuladores: string[]; fecha: string; hora: string;
+  /** (B6) La de la RESERVA (NULL = legacy): no cambia al reprogramar. */
+  modalidad: "legacy" | "v2_10";
+};
 
 async function leerReservaPropia(
   mensualidadId: string,
@@ -208,7 +216,7 @@ async function leerReservaPropia(
 ): Promise<Actual | null> {
   const { data } = await supabaseAdmin
     .from("reservas")
-    .select("duracion_minutos, simuladores, fecha, hora")
+    .select("id, duracion_minutos, simuladores, fecha, hora, modalidad")
     .eq("referencia_publica", referencia)
     .eq("mensualidad_id", mensualidadId)
     .eq("origen", "mensualidad")
@@ -216,10 +224,12 @@ async function leerReservaPropia(
     .maybeSingle();
   if (!data) return null;
   return {
+    id: data.id as number,
     duracion: Number(data.duracion_minutos) || 0,
     simuladores: Array.isArray(data.simuladores) ? data.simuladores.map(String) : [],
     fecha: String(data.fecha),
     hora: String(data.hora),
+    modalidad: modalidadPersistida(data.modalidad),
   };
 }
 
@@ -259,11 +269,8 @@ export async function reprogramarReserva(
   if (!diaHabilitadoPara("mensualidad", fecha)) {
     return fail(422, "dia_no_habilitado", "Elegí una fecha válida.");
   }
-  if (!horariosDe(fecha).includes(hora)) {
-    return fail(422, "hora_invalida", "Elegí un horario válido.");
-  }
 
-  // La duración manda y sale de la reserva, nunca del cliente.
+  // La duración y la MODALIDAD mandan y salen de la reserva, nunca del cliente.
   const actual = await leerReservaPropia(mensualidadId, referencia);
   if (!actual) return fail(404, "reserva_inexistente", "No encontramos esa reserva.");
 
@@ -278,24 +285,24 @@ export async function reprogramarReserva(
   // nueva puede limitarse distinto que la vieja: mover un turno de un martes a
   // un sábado cambia "terminar antes de las 22:00" por "empezar a las 14:00 o
   // antes". El mensaje nombra el límite de la fecha NUEVA.
-  const bloques = bloquesDeAgendaPara("mensualidad", fecha, hora, actual.duracion);
-  if (!bloques) {
-    const limite = limiteDeTurno("mensualidad", fecha);
-    const grilla = horariosDe(fecha);
-    const detalle = limite.tipo === "ultimoInicio"
-      ? `el último horario para empezar es ${grilla[grilla.length - 1]}`
-      : `la experiencia tiene que terminar antes de las ${String(Math.floor(limite.minuto / 60)).padStart(2, "0")}:${String(limite.minuto % 60).padStart(2, "0")}`;
-    return fail(422, "sin_bloques",
-      `Ese horario no sirve para la duración de tu reserva: ${detalle}.`);
+  // (B6) Con la grilla de la modalidad DE LA RESERVA: una legacy se mueve con
+  // la de 20 y sus bloques; una v2, con la de 10 y su buffer.
+  const turno = turnoMensualidad(actual.modalidad, fecha, hora, actual.duracion);
+  if (!turno.ok) {
+    if (turno.codigo === "sin_bloques") {
+      return fail(422, "sin_bloques", turno.error.replace("para esa duración", "para la duración de tu reserva"));
+    }
+    return fail(422, turno.codigo, turno.error);
   }
 
-  // Disponibilidad real (M6) ANTES de tocar nada, salvo que sea el mismo turno:
-  // ahí la reserva se vería a sí misma como ocupada y diría que no hay lugar.
+  // Disponibilidad real (motor B2, modalidad de la reserva) ANTES de tocar
+  // nada. La reserva se excluye de la cuenta: su lugar actual también le sirve
+  // (la RPC libera sus slots antes de ocupar los nuevos).
   const mismoTurno = actual.fecha === fecha && actual.hora === hora;
   if (!mismoTurno) {
-    const disp = await hayDisponibilidadPara({
-      fecha, hora, duracion: actual.duracion,
-      simuladores: actual.simuladores, producto: "mensualidad",
+    const disp = await evaluarTurnoMensualidad({
+      modalidad: actual.modalidad, fecha, hora, duracion: actual.duracion,
+      simuladores: actual.simuladores, excluirReservaId: actual.id,
     });
     if (!disp.ok) {
       const status = disp.status === 409 ? 409 : 422;
@@ -303,15 +310,24 @@ export async function reprogramarReserva(
     }
   }
 
-  const { data, error } = await supabaseAdmin.rpc("reprogramar_reserva_mensualidad", {
-    p_mensualidad_id: mensualidadId,
-    p_referencia: referencia,
-    p_fecha: fecha,
-    p_hora: hora,
-    p_slots: bloques,
-    p_idempotency_key: idempotencyKey,
-    p_ignorar_bloqueo: opts.ignorarBloqueo === true,
-  });
+  const { data, error } = actual.modalidad === "v2_10"
+    ? await supabaseAdmin.rpc("reprogramar_reserva_mensualidad_v2", {
+        p_mensualidad_id: mensualidadId,
+        p_referencia: referencia,
+        p_fecha: fecha,
+        p_hora: hora,
+        p_idempotency_key: idempotencyKey,
+        p_ignorar_bloqueo: opts.ignorarBloqueo === true,
+      })
+    : await supabaseAdmin.rpc("reprogramar_reserva_mensualidad", {
+        p_mensualidad_id: mensualidadId,
+        p_referencia: referencia,
+        p_fecha: fecha,
+        p_hora: hora,
+        p_slots: turno.bloques,
+        p_idempotency_key: idempotencyKey,
+        p_ignorar_bloqueo: opts.ignorarBloqueo === true,
+      });
   if (error) {
     return traducir(String(error.message ?? ""), String((error as { code?: string }).code ?? ""));
   }

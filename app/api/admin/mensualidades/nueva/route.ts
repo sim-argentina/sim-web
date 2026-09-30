@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/adminGuards";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse, logSecurityEvent } from "@/lib/apiError";
 import { registrarAltaAdministrativa, validarAlta } from "@/lib/mensualidadesAdminAlta";
+import { MENSAJE_MENSUALIDADES_ACTUALIZADAS_ADMIN, catalogoParaCrear } from "@/lib/mensualidadesComercial";
 
 // Alta y renovación administrativa de una mensualidad (Bloque M7.4).
 //
@@ -45,6 +46,14 @@ export async function POST(req: Request) {
       return malaSolicitud();
     }
 
+    // (B6) La modalidad comercial (y con ella el precio del plan) se resuelve
+    // UNA vez, acá. Si el formulario se armó con otra —abierto antes del corte—,
+    // 409 antes de validar nada y sin escribir.
+    const cat = await catalogoParaCrear(body, { mensaje: MENSAJE_MENSUALIDADES_ACTUALIZADAS_ADMIN });
+    if (!cat.ok) {
+      return NextResponse.json({ error: cat.error, codigo: cat.codigo }, { status: cat.status, headers: sinCache });
+    }
+
     const validado = validarAlta(body);
     if (!validado.ok) {
       return NextResponse.json(
@@ -58,6 +67,7 @@ export async function POST(req: Request) {
       actor: auth.role,
       rol: auth.role,
       idempotencyKey: String(body.idempotency_key ?? ""),
+      catalogo: cat.catalogo,
     });
 
     if (!r.ok) {

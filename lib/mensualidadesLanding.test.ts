@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  CONDICIONES_MENSUALIDAD, CONDICIONES_MENSUALIDAD_TEXTO,
+  CONDICIONES_MENSUALIDAD, CONDICIONES_MENSUALIDAD_TEXTO, CONDICIONES_MENSUALIDAD_V2,
   ACEPTACION_MENSUALIDAD, CONDICIONES_VERSION, CONDICIONES_RESERVA_VERSION,
 } from "@/lib/mensualidadesCondiciones";
 import { ALTURA_MINIMA_M, PESO_MAXIMO_KG } from "@/lib/requisitos";
@@ -40,14 +40,16 @@ const codigo = src
   .replace(/^\s*\/\/.*$/gm, "");
 
 // ── 1) La lista de condiciones se dibuja UNA vez y fuera del formulario ─────
+// (B6) Las condiciones llegan del SERVIDOR con el catálogo de la modalidad
+// vigente (catalogo.condiciones): la pantalla ya no importa la lista legacy.
 {
-  const usos = src.split("CONDICIONES_MENSUALIDAD.map").length - 1;
+  const usos = src.split("catalogo.condiciones.map").length - 1;
   assert.equal(usos, 1,
     "la lista de condiciones se dibuja UNA sola vez: ni duplicada al habilitar ventas, ni con una copia por estado");
 
   // Está fuera de la rama que depende de `vendiendo`. Se comprueba por posición:
   // la lista aparece ANTES del bloque condicional del formulario.
-  const iLista = src.indexOf("CONDICIONES_MENSUALIDAD.map");
+  const iLista = src.indexOf("catalogo.condiciones.map");
   const iCondicional = src.indexOf("{!vendiendo ? (");
   assert.ok(iCondicional > 0, "sigue existiendo la rama pausado/vendiendo");
   assert.ok(iLista < iCondicional,
@@ -81,9 +83,12 @@ const codigo = src
   assert.match(src, /\{c\.titulo\}/, "se dibuja el título");
   assert.match(src, /\{c\.texto\}/, "se dibuja el texto");
 
-  // Ninguna condición puede estar escrita literalmente en el componente.
-  assert.match(src, /import \{ CONDICIONES_MENSUALIDAD, ACEPTACION_MENSUALIDAD \} from "@\/lib\/mensualidadesCondiciones"/);
-  for (const c of CONDICIONES_MENSUALIDAD) {
+  // Ninguna condición puede estar escrita literalmente en el componente: llegan
+  // del servidor (B6), que las arma con lib/mensualidadesCondiciones.
+  assert.match(src, /import \{ ACEPTACION_MENSUALIDAD, type Condicion \} from "@\/lib\/mensualidadesCondiciones"/);
+  const pagina = readFileSync(join(ROOT, "app/mensualidades/page.tsx"), "utf8");
+  assert.match(pagina, /condiciones=\{catalogo\.condiciones\}/, "la página pasa las condiciones del catálogo vigente");
+  for (const c of [...CONDICIONES_MENSUALIDAD, ...CONDICIONES_MENSUALIDAD_V2]) {
     assert.ok(!src.includes(c.texto.slice(0, 40)),
       `la condición "${c.titulo}" no puede estar copiada en el componente`);
   }
