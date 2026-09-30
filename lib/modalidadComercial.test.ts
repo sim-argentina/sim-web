@@ -234,6 +234,9 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     "lib/reservasComercial.ts", "lib/reservasPricing.ts", "lib/reservasValidation.ts", "lib/reservasSlots.ts",
     "lib/reservasPresentacion.ts", "app/reservas/page.tsx",
     "lib/reservasComercial.test.ts", "lib/reservasComercial.integration.ts",
+    // (B4) Precios especiales del panel: qué duraciones se editan sale del
+    // catálogo de la modalidad efectiva, resuelta en el servidor.
+    "lib/preciosEspeciales.ts", "lib/preciosEspeciales.test.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);
