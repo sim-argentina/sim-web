@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "../../../../lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
-import { getOccupiedSlots } from "@/lib/reservasSlots";
+import { cambiarEstadoReserva } from "@/lib/reservasEstado";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -9,14 +8,21 @@ type RouteContext = {
 
 const ESTADOS_PERMITIDOS = new Set(["activa", "cancelada"]);
 
+// Cancelar o reactivar una reserva desde la administración.
+//
+// (B3) Reactivar ya no marca 'activa' primero: verifica disponibilidad con el
+// motor por intervalos, crea TODOS los slots de SU modalidad guardada en una
+// sola sentencia y recién entonces cambia el estado. Si algo falla, la reserva
+// conserva su estado y no quedan slots parciales (ver lib/reservasEstado.ts).
 export async function PATCH(req: Request, { params }: RouteContext) {
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
 
   try {
     const { id } = await params;
+    const reservaId = Number(id);
 
-    if (!id) {
+    if (!id || !Number.isSafeInteger(reservaId) || reservaId <= 0) {
       return NextResponse.json({ error: "ID de reserva inválido" }, { status: 400 });
     }
 
@@ -27,53 +33,14 @@ export async function PATCH(req: Request, { params }: RouteContext) {
       return NextResponse.json({ error: "Estado no permitido" }, { status: 400 });
     }
 
-    // Una reserva reembolsada es terminal: no puede reactivarse ni cambiarse de estado
-    // desde acá (la baja/liberación de cupo ya la hizo el registro del reembolso).
-    const { data: actual } = await supabaseAdmin
-      .from("reservas")
-      .select("estado")
-      .eq("id", id)
-      .maybeSingle();
-    if (actual?.estado === "reembolsada") {
-      return NextResponse.json({ error: "La reserva está reembolsada y no puede modificarse." }, { status: 409 });
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from("reservas")
-      .update({ estado: nuevoEstado })
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: "No se pudo actualizar la reserva" }, { status: 500 });
-    }
-
-    // Mantener reserva_slots en sync: cancelar libera el turno; reactivar lo vuelve a tomar.
-    if (nuevoEstado === "cancelada") {
-      await supabaseAdmin.from("reserva_slots").delete().eq("reserva_id", id);
-    } else if (nuevoEstado === "activa" && data) {
-      const sims: string[] = Array.isArray(data.simuladores)
-        ? data.simuladores.map((s: unknown) => String(s))
-        : [];
-      const dur = Number(data.duracion_minutos) || 15;
-      const rows = getOccupiedSlots(data.fecha, data.hora, dur).flatMap((slot) =>
-        sims.map((sim) => ({
-          reserva_id: Number(id),
-          fecha: data.fecha,
-          hora: slot,
-          simulador: sim,
-          estado: "activa",
-        }))
+    const r = await cambiarEstadoReserva(reservaId, nuevoEstado);
+    if (!r.ok) {
+      return NextResponse.json(
+        { error: r.error, ...(r.motivo ? { motivo: r.motivo } : {}) },
+        { status: r.status },
       );
-      await supabaseAdmin.from("reserva_slots").delete().eq("reserva_id", id);
-      if (rows.length > 0) {
-        const { error: slotErr } = await supabaseAdmin.from("reserva_slots").insert(rows);
-        if (slotErr) console.error("reserva_slots reactivación:", slotErr.message);
-      }
     }
-
-    return NextResponse.json(data, { status: 200 });
+    return NextResponse.json(r.data, { status: 200 });
   } catch {
     return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
   }

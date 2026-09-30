@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getOccupiedSlots } from "@/lib/reservasSlots";
+import { rangoV2 } from "@/lib/reservasPresentacion";
 
 type Reembolso = {
   reserva_id: number;
@@ -26,6 +27,9 @@ type Reserva = {
   estado?: string;
   created_at?: string;
   reembolso?: Reembolso | null;
+  /** (B3) NULL = legacy. */
+  modalidad?: string | null;
+  mercado_pago_payment_id?: string | null;
 };
 
 type Filtro = "dia" | "semana" | "mes" | "personalizado";
@@ -77,7 +81,11 @@ function sumar20Minutos(hora: string) {
 // duración existente, reutilizando la misma lógica de ocupación del sistema
 // (getOccupiedSlots): 15 min → 1 slot de 20'; 30 min → 2 slots consecutivos.
 // El fin visible = hora final del último slot ocupado (último slot + 20').
-function rangoVisual(reserva: Pick<Reserva, "fecha" | "hora" | "duracion_minutos">) {
+function rangoVisual(reserva: Pick<Reserva, "fecha" | "hora" | "duracion_minutos" | "modalidad">) {
+  // (B3) Una reserva v2 no está en la grilla de 20: se muestra inicio – fin
+  // COMERCIAL. El buffer se informa aparte en el detalle ("ocupa hasta").
+  const v2 = rangoV2(reserva);
+  if (v2) return `${v2.inicio} - ${v2.finComercial}`;
   const duracion = Number(reserva.duracion_minutos) || 15;
   const slots = getOccupiedSlots(reserva.fecha, reserva.hora, duracion);
   const ultimoSlot = slots[slots.length - 1] ?? reserva.hora;
@@ -168,6 +176,35 @@ export default function CalendarioAdminPage() {
     cargarReservas();
   }, []);
 
+  // (B3) Una reserva pagada sin turno (conflicto_pago) se intenta reactivar: el
+  // servidor verifica disponibilidad, crea TODOS sus slots y recién entonces la
+  // marca activa. Si el turno sigue ocupado o bloqueado, no cambia nada.
+  const [reintentando, setReintentando] = useState(false);
+  const [errorReintento, setErrorReintento] = useState<string | null>(null);
+
+  async function reintentarTurno(reserva: Reserva) {
+    setReintentando(true);
+    setErrorReintento(null);
+    try {
+      const res = await fetch(`/api/reservas/${reserva.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estado: "activa" }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setErrorReintento(data?.error || "No se pudo tomar el turno.");
+        return;
+      }
+      setReservas((prev) => prev.map((r) => (r.id === reserva.id ? { ...r, estado: "activa" } : r)));
+      setReservaSeleccionada((sel) => (sel && sel.id === reserva.id ? { ...sel, estado: "activa" } : sel));
+    } catch {
+      setErrorReintento("Error de red al reintentar el turno.");
+    } finally {
+      setReintentando(false);
+    }
+  }
+
   function abrirReembolso(reserva: Reserva) {
     setReembolsoDe(reserva);
     setFechaReembolso(fechaLocalISO());
@@ -216,8 +253,10 @@ export default function CalendarioAdminPage() {
   const reservasFiltradas = useMemo(() => {
     return reservas
       // Reservas con pago aprobado ("activa") y también las "reembolsada" (para
-      // que el admin las vea marcadas). Se excluyen pendientes, errores y canceladas.
-      .filter((reserva) => reserva.estado === "activa" || reserva.estado === "reembolsada")
+      // que el admin las vea marcadas). (B3) También "conflicto_pago": pagadas
+      // SIN turno, para resolverlas. Se excluyen pendientes, errores y canceladas.
+      .filter((reserva) =>
+        reserva.estado === "activa" || reserva.estado === "reembolsada" || reserva.estado === "conflicto_pago")
       .filter((reserva) => {
         const texto = busqueda.toLowerCase().trim();
 
@@ -420,7 +459,7 @@ export default function CalendarioAdminPage() {
                     return (
                       <button
                         key={reserva.id}
-                        onClick={() => setReservaSeleccionada(reserva)}
+                        onClick={() => { setErrorReintento(null); setReservaSeleccionada(reserva); }}
                         className="w-full rounded-2xl border border-white/10 bg-black p-5 text-left transition hover:border-red-500 hover:bg-red-950/20"
                       >
                         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -442,6 +481,11 @@ export default function CalendarioAdminPage() {
                             {reserva.estado === "reembolsada" && (
                               <span className="rounded-full bg-amber-500/20 px-4 py-2 text-sm font-black uppercase text-amber-400 ring-1 ring-amber-500/40">
                                 Reembolsada
+                              </span>
+                            )}
+                            {reserva.estado === "conflicto_pago" && (
+                              <span className="rounded-full bg-orange-500/20 px-4 py-2 text-sm font-black uppercase text-orange-400 ring-1 ring-orange-500/40">
+                                Pagada sin turno
                               </span>
                             )}
                             <span className="rounded-full bg-red-600 px-4 py-2 text-sm font-bold text-white">
@@ -512,6 +556,12 @@ export default function CalendarioAdminPage() {
                 <p className="text-lg font-bold">
                   {rangoVisual(reservaSeleccionada)}
                 </p>
+                {rangoV2(reservaSeleccionada) && (
+                  <p className="mt-1 text-xs text-white/50">
+                    {reservaSeleccionada.duracion_minutos} min comerciales · el simulador queda ocupado hasta{" "}
+                    {rangoV2(reservaSeleccionada)?.finOcupacion} (buffer)
+                  </p>
+                )}
               </div>
 
               <div className="rounded-2xl bg-white/[0.04] p-4">
@@ -578,7 +628,30 @@ export default function CalendarioAdminPage() {
                   )}
                 </div>
               )}
+
+              {reservaSeleccionada.estado === "conflicto_pago" && (
+                <div className="rounded-2xl border border-orange-500/40 bg-orange-500/10 p-4">
+                  <p className="text-sm font-black uppercase text-orange-400">Pagada sin turno</p>
+                  <p className="mt-2 text-sm text-orange-100/90">
+                    El pago se aprobó pero el turno ya estaba ocupado o bloqueado, así que la reserva
+                    NO quedó activa. Pago de Mercado Pago:{" "}
+                    <span className="font-bold">{reservaSeleccionada.mercado_pago_payment_id || "—"}</span>.
+                    Podés reintentar tomar el turno o resolverla con el cliente.
+                  </p>
+                  {errorReintento && <p className="mt-2 text-sm font-bold text-red-400">{errorReintento}</p>}
+                </div>
+              )}
             </div>
+
+            {esAdmin && reservaSeleccionada.estado === "conflicto_pago" && (
+              <button
+                onClick={() => reintentarTurno(reservaSeleccionada)}
+                disabled={reintentando}
+                className="mt-6 w-full rounded-2xl border border-orange-500/50 bg-orange-500/10 px-5 py-3 font-black uppercase text-orange-400 transition hover:bg-orange-500/20 disabled:opacity-50"
+              >
+                {reintentando ? "Reintentando..." : "Reintentar tomar el turno"}
+              </button>
+            )}
 
             {esAdmin &&
               reservaSeleccionada.estado === "activa" &&

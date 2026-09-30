@@ -5,6 +5,13 @@ import { getPreciosEfectivos } from "@/lib/reservasPricing";
 // GET público: precio EFECTIVO por simulador de una fecha (especial si existe, si no el
 // normal), para que la web muestre el importe correcto. Solo devuelve montos (sin PII).
 // El servidor sigue siendo la fuente de verdad al crear la preferencia/reserva.
+//
+// (B3) Es la forma LEGACY (precio_15 / precio_30): la página de Reservas ya toma
+// precios y catálogo de /api/reservas/disponibilidad. Queda para clientes viejos
+// y sin caché: un precio no puede sobrevivir al corte ni un segundo. Si un cliente
+// viejo intenta comprar después del corte, recibe 409 catalogo_actualizado.
+export const dynamic = "force-dynamic";
+
 export async function GET(req: Request) {
   if (!(await rateLimit(`resv-precio:${clientIp(req)}`, 120, 60_000))) {
     return tooManyResponse();
@@ -15,7 +22,7 @@ export async function GET(req: Request) {
   }
   try {
     const precios = await getPreciosEfectivos(fecha);
-    return NextResponse.json(precios, { headers: { "Cache-Control": "public, max-age=30" } });
+    return NextResponse.json(precios, { headers: { "Cache-Control": "no-store, max-age=0" } });
   } catch {
     return NextResponse.json({ error: "No se pudo obtener el precio" }, { status: 500 });
   }

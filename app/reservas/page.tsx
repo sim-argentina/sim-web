@@ -16,33 +16,46 @@ import {
   trackSelectDate, trackSelectTime, trackApplyPromotion,
   trackCheckoutError, trackPaymentRedirect, trackFreePurchase,
 } from "@/lib/analytics";
-import {
-  esFinDeSemana,
-  fechasPublicas,
-  horariosDe,
-} from "@/lib/agenda";
-import {
-  getOccupiedSlots,
-  getNextSlot,
-  precioPorSimulador,
-} from "@/lib/reservasSlots";
+import { esFinDeSemana } from "@/lib/agenda";
+// Solo el código y el mensaje del 409: la oferta la decide el servidor.
+import { CATALOGO_ACTUALIZADO } from "@/lib/catalogoComercial";
 
 type TeamKey = "Ferrari" | "McLaren" | "Red Bull" | "Alpine";
-type ReservationMap = Record<string, TeamKey[]>;
-type Duracion = 15 | 30;
 
-type ReservaApi = {
-  id: number;
-  nombre: string;
-  telefono: string;
-  fecha: string;
-  hora: string;
-  simuladores: TeamKey[] | string[] | string | null;
-  cantidad_turnos: number;
-  total: number;
-  estado?: string | null;
-  duracion_minutos?: number | null;
+// (B3) La oferta —modalidad, duraciones, precios, grilla y disponibilidad— la
+// resuelve el servidor en cada request (/api/reservas/disponibilidad y
+// /api/reservas/catalogo, sin caché). La página solo la muestra: no calcula
+// disponibilidad ni tiene duraciones, precios u horarios propios.
+type RangoHorario = { desde: string; hasta: string };
+
+type Catalogo = {
+  modalidad: string;
+  duraciones: number[];
+  duracion_inicial: number;
+  desde_precio: number;
+  paso_min: number;
+  horario: { semana: RangoHorario; fin_de_semana: RangoHorario };
+  ventana: string[];
 };
+
+type Oferta = Catalogo & {
+  fecha: string;
+  duracion: number;
+  precio: number;
+  precios: Record<string, number>;
+  grilla: string[];
+  horarios: { hora: string; disponibles: number; libres: string[] }[];
+};
+
+type Respuesta<T> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; error: string | null };
+
+// Por qué se recarga la oferta. Define qué pasa con el horario elegido.
+type Motivo = "inicio" | "fecha" | "duracion" | "refresco" | "catalogo_actualizado";
+
+// Lo que la persona ya había elegido y se conserva si sigue siendo válido.
+type Preferencia = { hora: string; equipos: TeamKey[] };
 
 type FeedbackModalState = {
   open: boolean;
@@ -57,8 +70,6 @@ type CodigoAplicado = {
   totalOriginal: number;
   totalFinal: number;
 };
-
-const PRICE = 12000;
 
 const teams = [
   {
@@ -107,8 +118,6 @@ const teams = [
   },
 ];
 
-
-
 function cn(...classes: string[]) {
   return classes.filter(Boolean).join(" ");
 }
@@ -139,72 +148,97 @@ function formatFullDateLabel(dateKey: string) {
   return capitalizeFirst(formatted);
 }
 
-function createReservationKey(date: string, time: string) {
-  return `${date}__${time}`;
-}
-
-// (M6) Estos helpers ya no definen política: la toman de lib/agenda, la misma
-// fuente que valida el servidor. Se conservan los nombres para no tocar el
-// resto de la página.
+// (M6) El tipo de día lo define lib/agenda, la misma fuente que el servidor.
 function isWeekendDate(dateKey: string) {
   return esFinDeSemana(dateKey);
-}
-
-function getTimeSlotsForDate(dateKey: string) {
-  return horariosDe(dateKey);
-}
-
-function getAvailableDates() {
-  // fechasPublicas() usa el "hoy" de Córdoba, no la zona del dispositivo.
-  return fechasPublicas().map((value) => ({
-    value,
-    fullLabel: formatFullDateLabel(value),
-  }));
 }
 
 function getPhoneDigits(value: string) {
   return value.replace(/\D/g, "");
 }
 
-function normalizeSimuladores(value: ReservaApi["simuladores"]): TeamKey[] {
-  const validTeams: TeamKey[] = ["Ferrari", "McLaren", "Red Bull", "Alpine"];
+// "15 o 30", "10, 20 o 30".
+function listaDuraciones(duraciones: number[]) {
+  if (duraciones.length <= 1) return duraciones.join("");
+  return `${duraciones.slice(0, -1).join(", ")} o ${duraciones[duraciones.length - 1]}`;
+}
 
-  if (Array.isArray(value)) {
-    return value.filter((sim) =>
-      validTeams.includes(String(sim) as TeamKey)
-    ) as TeamKey[];
-  }
+function esCatalogo(x: unknown): x is Catalogo {
+  const c = x as Catalogo | null;
+  return (
+    !!c &&
+    typeof c.modalidad === "string" &&
+    Array.isArray(c.duraciones) &&
+    c.duraciones.length > 0 &&
+    typeof c.duracion_inicial === "number" &&
+    typeof c.desde_precio === "number" &&
+    typeof c.paso_min === "number" &&
+    !!c.horario?.semana &&
+    !!c.horario?.fin_de_semana &&
+    Array.isArray(c.ventana) &&
+    c.ventana.length > 0
+  );
+}
 
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
+function esOferta(x: unknown): x is Oferta {
+  const o = x as Oferta | null;
+  return (
+    esCatalogo(o) &&
+    typeof o.fecha === "string" &&
+    typeof o.duracion === "number" &&
+    typeof o.precio === "number" &&
+    !!o.precios &&
+    Array.isArray(o.grilla) &&
+    Array.isArray(o.horarios)
+  );
+}
 
-      if (Array.isArray(parsed)) {
-        return parsed.filter((sim) =>
-          validTeams.includes(String(sim) as TeamKey)
-        ) as TeamKey[];
-      }
-    } catch {
-      return [];
-    }
-  }
+async function pedirOferta(fecha: string | null, duracion: number | null): Promise<Respuesta<Oferta>> {
+  const qs = new URLSearchParams();
+  if (fecha) qs.set("fecha", fecha);
+  if (duracion !== null) qs.set("duracion", String(duracion));
+  const q = qs.toString();
+  const response = await fetch(`/api/reservas/disponibilidad${q ? `?${q}` : ""}`, {
+    cache: "no-store",
+  });
+  const result = await response.json().catch(() => null);
+  if (response.ok && esOferta(result)) return { ok: true, data: result };
+  return {
+    ok: false,
+    status: response.status,
+    error: typeof result?.error === "string" ? result.error : null,
+  };
+}
 
-  return [];
+async function pedirCatalogo(): Promise<Catalogo | null> {
+  const response = await fetch("/api/reservas/catalogo", { cache: "no-store" });
+  const result = await response.json().catch(() => null);
+  return response.ok && esCatalogo(result) ? result : null;
+}
+
+// ¿El servidor rechazó la compra porque la oferta que se veía ya no es la vigente?
+function esCatalogoActualizado(response: Response, result: unknown) {
+  return (
+    response.status === CATALOGO_ACTUALIZADO.status &&
+    (result as { codigo?: unknown } | null)?.codigo === CATALOGO_ACTUALIZADO.codigo
+  );
 }
 
 export default function ReservasPage() {
-  const [isMounted, setIsMounted] = useState(false);
-  const [availableDates, setAvailableDates] = useState<
-    { value: string; fullLabel: string }[]
-  >([]);
-
   const dateInputRef = useRef<HTMLInputElement | null>(null);
+
+  // La oferta vigente que se está mostrando (catálogo + disponibilidad de la
+  // fecha y duración elegidas), tal cual la devolvió el servidor.
+  const [oferta, setOferta] = useState<Oferta | null>(null);
+  const [errorCarga, setErrorCarga] = useState(false);
+  const ofertaRef = useRef<Oferta | null>(null);
+  // Cada carga tiene un número: una respuesta vieja nunca pisa a una nueva.
+  const solicitudRef = useRef(0);
 
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedTime, setSelectedTime] = useState<string>("");
-  const [duracion, setDuracion] = useState<Duracion>(15);
+  const [duracion, setDuracion] = useState<number>(0);
   const [selectedTeams, setSelectedTeams] = useState<TeamKey[]>([]);
-  const [reservations, setReservations] = useState<ReservationMap>({});
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [acceptedConditions, setAcceptedConditions] = useState(false);
@@ -224,44 +258,19 @@ export default function ReservasPage() {
     message: "",
   });
 
-  useEffect(() => {
-    const dates = getAvailableDates();
-    setAvailableDates(dates);
+  const minDate = oferta?.ventana[0] ?? "";
+  const maxDate = oferta?.ventana[oferta.ventana.length - 1] ?? "";
 
-    const firstDate = dates[0]?.value ?? "";
-    const firstTime = getTimeSlotsForDate(firstDate)[0] ?? "";
-
-    setSelectedDate(firstDate);
-    setSelectedTime(firstTime);
-    setIsMounted(true);
-  }, []);
-
-  const minDate = availableDates[0]?.value ?? "";
-  const maxDate = availableDates[availableDates.length - 1]?.value ?? "";
-
-  const availableTimeSlots = useMemo(
-    () => getTimeSlotsForDate(selectedDate),
-    [selectedDate]
+  // Simuladores libres durante TODO el turno, por inicio (lo calcula el servidor).
+  const libresPorHora = useMemo(
+    () => new Map((oferta?.horarios ?? []).map((h) => [h.hora, h.libres])),
+    [oferta]
   );
-
-  // Slots de 20 min que ocupa la selección actual (1 para 15 min, 2 para 30 min).
-  const occupiedSlotsForSelection = useMemo(
-    () => getOccupiedSlots(selectedDate, selectedTime, duracion),
-    [selectedDate, selectedTime, duracion]
-  );
-
-  // Para 30 min: no se puede reservar si no existe el turno consecutivo.
-  const cannotFit30 = duracion === 30 && occupiedSlotsForSelection.length < 2;
 
   const reservedForCurrentSelection = useMemo<TeamKey[]>(() => {
-    if (cannotFit30) return teams.map((t) => t.key);
-    const set = new Set<TeamKey>();
-    for (const slot of occupiedSlotsForSelection) {
-      const key = createReservationKey(selectedDate, slot);
-      for (const t of reservations[key] ?? []) set.add(t);
-    }
-    return Array.from(set);
-  }, [cannotFit30, occupiedSlotsForSelection, reservations, selectedDate]);
+    const libres = libresPorHora.get(selectedTime) ?? [];
+    return teams.map((t) => t.key).filter((key) => !libres.includes(key));
+  }, [libresPorHora, selectedTime]);
 
   const availableTeams = useMemo(() => {
     return teams.map((team) => ({
@@ -273,29 +282,21 @@ export default function ReservasPage() {
 
   const availableCount = availableTeams.filter((team) => !team.reserved).length;
 
-  // Precio EFECTIVO de la fecha (especial si el admin cargó uno; si no, el normal).
-  // El servidor lo recalcula al crear la preferencia/reserva: acá es solo para mostrar.
-  const [precioEfectivo, setPrecioEfectivo] = useState<{ precio_15: number; precio_30: number } | null>(null);
-  useEffect(() => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) { setPrecioEfectivo(null); return; }
-    let cancel = false;
-    fetch(`/api/reservas/precio?fecha=${selectedDate}`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancel && d && typeof d.precio_15 === "number" && typeof d.precio_30 === "number") setPrecioEfectivo(d); })
-      .catch(() => { /* al fallar, se usa el precio normal local como fallback */ });
-    return () => { cancel = true; };
-  }, [selectedDate]);
-
-  const pricePerSim = useMemo(
-    () => (precioEfectivo ? (Number(duracion) >= 30 ? precioEfectivo.precio_30 : precioEfectivo.precio_15) : precioPorSimulador(selectedDate, duracion)),
-    [precioEfectivo, selectedDate, duracion]
-  );
+  // Precio EFECTIVO por simulador (con precio especial si el admin cargó uno),
+  // calculado por el servidor. Se manda como `precio_visto`: si al pagar ya no
+  // es el vigente, el servidor responde 409 y no cobra.
+  const pricePerSim = oferta?.precios[String(duracion)] ?? 0;
   const totalOriginal = selectedTeams.length * pricePerSim;
   const descuentoAplicado = codigoAplicado?.descuento || 0;
   const totalFinal = Math.max(totalOriginal - descuentoAplicado, 0);
   const selectedDateLabel = selectedDate ? formatFullDateLabel(selectedDate) : "";
   const phoneDigits = getPhoneDigits(phone);
   const isPhoneValid = phoneDigits.length >= 10;
+  const horarioDelDia = oferta
+    ? isWeekendDate(selectedDate)
+      ? oferta.horario.fin_de_semana
+      : oferta.horario.semana
+    : null;
 
   // Analytics: vista del "producto" reserva (una vez al montar la página).
   useEffect(() => {
@@ -306,10 +307,151 @@ export default function ReservasPage() {
     setCodigoAplicado(null);
   }, [selectedTeams, selectedDate, selectedTime, duracion]);
 
-  function handleChangeDuracion(next: Duracion) {
+  // Muestra una oferta recién llegada y ajusta la selección a ella.
+  function aplicarOferta(nueva: Oferta, motivo: Motivo, pref: Preferencia) {
+    ofertaRef.current = nueva;
+    setOferta(nueva);
+    setErrorCarga(false);
+    setSelectedDate(nueva.fecha);
+    setDuracion(nueva.duracion);
+
+    const libres = (hora: string) =>
+      nueva.horarios.find((h) => h.hora === hora)?.libres ?? [];
+    // El horario elegido se conserva si sigue en la grilla del día. Al abrir o
+    // cambiar de fecha, si está lleno se pasa al primero con lugar; al cambiar
+    // de duración se queda (sale "Sin lugares" si no entra), como siempre.
+    let hora = nueva.grilla.includes(pref.hora) ? pref.hora : nueva.grilla[0] ?? "";
+    if (motivo !== "duracion" && libres(hora).length === 0) {
+      hora = nueva.horarios.find((h) => h.disponibles > 0)?.hora ?? hora;
+    }
+    setSelectedTime(hora);
+    setSelectedTeams(pref.equipos.filter((t) => libres(hora).includes(t)));
+  }
+
+  // Pide la oferta al servidor. Si la oferta cambió con la página abierta —el
+  // servidor lo avisó con un 409, ya responde otra modalidad (el corte) o la
+  // fecha/duración elegidas dejaron de existir— recarga el catálogo vigente y
+  // conserva lo que siga siendo válido. Los datos personales no se tocan.
+  async function cargarOferta(
+    pedido: { fecha: string | null; duracion: number | null },
+    motivo: Motivo,
+    pref: Preferencia
+  ) {
+    const id = ++solicitudRef.current;
+    setIsLoadingReservations(true);
+
+    try {
+      const vista = ofertaRef.current?.modalidad ?? null;
+      const primera: Respuesta<Oferta> | null =
+        motivo === "catalogo_actualizado"
+          ? null
+          : await pedirOferta(pedido.fecha, pedido.duracion);
+      let respuesta: Respuesta<Oferta>;
+      let aviso: "catalogo" | "fecha" | null = null;
+
+      if (
+        primera === null ||
+        (vista !== null && primera.ok && primera.data.modalidad !== vista) ||
+        (vista !== null && !primera.ok && primera.status === 400)
+      ) {
+        const catalogo = await pedirCatalogo();
+        if (!catalogo) {
+          respuesta = { ok: false, status: 0, error: null };
+        } else {
+          const cambioModalidad = vista !== null && catalogo.modalidad !== vista;
+          const fecha =
+            pedido.fecha && catalogo.ventana.includes(pedido.fecha)
+              ? pedido.fecha
+              : catalogo.ventana[0];
+          // Con otra modalidad la duración elegida era de la oferta anterior:
+          // se vuelve a la inicial y la persona elige de nuevo.
+          const nuevaDuracion =
+            !cambioModalidad &&
+            pedido.duracion !== null &&
+            catalogo.duraciones.includes(pedido.duracion)
+              ? pedido.duracion
+              : catalogo.duracion_inicial;
+          respuesta = await pedirOferta(fecha, nuevaDuracion);
+          aviso =
+            motivo === "catalogo_actualizado" || cambioModalidad
+              ? "catalogo"
+              : fecha !== pedido.fecha
+              ? "fecha"
+              : null;
+        }
+      } else {
+        respuesta = primera;
+      }
+
+      if (id !== solicitudRef.current) return;
+
+      if (!respuesta.ok) {
+        if (!ofertaRef.current) {
+          setErrorCarga(true);
+          return;
+        }
+        // Se vuelve a mostrar lo último válido.
+        setSelectedDate(ofertaRef.current.fecha);
+        setDuracion(ofertaRef.current.duracion);
+        openFeedbackModal(
+          "error",
+          "No se pudieron cargar las reservas",
+          respuesta.error || "Ocurrió un problema al consultar la disponibilidad."
+        );
+        return;
+      }
+
+      aplicarOferta(respuesta.data, motivo, pref);
+
+      if (aviso === "catalogo") {
+        openFeedbackModal(
+          "error",
+          "Turnos y precios actualizados",
+          CATALOGO_ACTUALIZADO.mensaje
+        );
+      } else if (aviso === "fecha") {
+        openFeedbackModal(
+          "error",
+          "Fecha no válida",
+          "Las reservas solo pueden hacerse desde mañana en adelante."
+        );
+      }
+    } catch (error) {
+      if (id !== solicitudRef.current) return;
+      console.error("Error cargando reservas:", error);
+      if (!ofertaRef.current) {
+        setErrorCarga(true);
+        return;
+      }
+      setSelectedDate(ofertaRef.current.fecha);
+      setDuracion(ofertaRef.current.duracion);
+      openFeedbackModal(
+        "error",
+        "Error al cargar reservas",
+        "Ocurrió un error al consultar la disponibilidad."
+      );
+    } finally {
+      if (id === solicitudRef.current) setIsLoadingReservations(false);
+    }
+  }
+
+  // Primera carga: sin fecha ni duración, el servidor devuelve el primer día
+  // reservable con la duración inicial, catálogo y disponibilidad resueltos en
+  // el MISMO request.
+  useEffect(() => {
+    void cargarOferta({ fecha: null, duracion: null }, "inicio", { hora: "", equipos: [] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleChangeDuracion(next: number) {
     if (isSubmitting || isLoadingReservations) return;
-    setDuracion(next);
     setSelectedTeams([]);
+    if (next === duracion) return;
+    setDuracion(next);
+    void cargarOferta({ fecha: selectedDate, duracion: next }, "duracion", {
+      hora: selectedTime,
+      equipos: [],
+    });
   }
 
   function openFeedbackModal(
@@ -332,17 +474,6 @@ export default function ReservasPage() {
     }));
   }
 
-  function getFreeCount(date: string, time: string) {
-    const slots = getOccupiedSlots(date, time, duracion);
-    if (duracion === 30 && slots.length < 2) return 0;
-    const occupied = new Set<string>();
-    for (const slot of slots) {
-      const reserved = reservations[createReservationKey(date, slot)] ?? [];
-      for (const r of reserved) occupied.add(r);
-    }
-    return teams.length - occupied.size;
-  }
-
   function toggleTeam(teamKey: TeamKey) {
     if (reservedForCurrentSelection.includes(teamKey)) return;
     if (isSubmitting || isLoadingReservations) return;
@@ -355,7 +486,7 @@ export default function ReservasPage() {
         gaEvent("select_item", {
           item_list_name: "Simuladores",
           duration_minutes: duracion,
-          items: [{ item_id: teamKey, item_name: "Turno simulador", item_category: "reserva" }],
+          items: [{ item_id: teamKey, item_name: "Turno simulador", item_category: "reserva", price: pricePerSim }],
         });
       }
       return next;
@@ -363,11 +494,17 @@ export default function ReservasPage() {
   }
 
   function handleChangeDate(nextDate: string) {
-    if (isSubmitting || isLoadingReservations) return;
+    if (isSubmitting || isLoadingReservations || !oferta) return;
+    // Fuera de la ventana (o vacío): el input vuelve a la fecha elegida.
+    if (!oferta.ventana.includes(nextDate)) return;
     setSelectedDate(nextDate);
     setSelectedTeams([]);
     // Funnel: alcanzó la etapa "eligió fecha" (sin enviar la fecha concreta).
-    if (nextDate) trackSelectDate("reserva");
+    trackSelectDate("reserva");
+    void cargarOferta({ fecha: nextDate, duracion }, "fecha", {
+      hora: selectedTime,
+      equipos: [],
+    });
   }
 
   function handleChangeTime(nextTime: string) {
@@ -479,160 +616,8 @@ export default function ReservasPage() {
     setCodigoInput("");
   }
 
-  async function loadReservations(date: string) {
-    try {
-      setIsLoadingReservations(true);
-
-      const response = await fetch(`/api/reservas?fecha=${date}`, {
-        cache: "no-store",
-      });
-
-      const result = await response.json().catch(() => null);
-
-      if (!response.ok) {
-        openFeedbackModal(
-          "error",
-          "No se pudieron cargar las reservas",
-          result?.error || "Ocurrió un problema al consultar la disponibilidad."
-        );
-        return;
-      }
-
-      const reservasApi: ReservaApi[] = Array.isArray(result?.reservas)
-        ? result.reservas
-        : Array.isArray(result)
-        ? result
-        : [];
-
-      const nextReservations: ReservationMap = {};
-
-      reservasApi
-        .filter((reserva) => !reserva.estado || reserva.estado === "activa")
-        .forEach((reserva) => {
-          const simuladores = normalizeSimuladores(reserva.simuladores);
-          const dur = Number(reserva.duracion_minutos) || 15;
-          // Una reserva de 30 min ocupa su slot y el siguiente.
-          const slots = getOccupiedSlots(reserva.fecha, reserva.hora, dur);
-
-          slots.forEach((slot) => {
-            const key = createReservationKey(reserva.fecha, slot);
-            if (!nextReservations[key]) {
-              nextReservations[key] = [];
-            }
-            simuladores.forEach((simulador) => {
-              if (!nextReservations[key].includes(simulador)) {
-                nextReservations[key].push(simulador);
-              }
-            });
-          });
-        });
-
-      // Bloqueos del admin: se fusionan como turnos ocupados para que el
-      // calendario los oculte igual que una reserva. Si falla la carga, se
-      // muestra la disponibilidad normal (el server igual los rechaza).
-      try {
-        const rb = await fetch(`/api/bloqueos?fecha=${date}`, {
-          cache: "no-store",
-        });
-        if (rb.ok) {
-          const db = await rb.json().catch(() => null);
-          const bloqueos: Array<{
-            todo_el_dia: boolean;
-            hora_inicio: string | null;
-            hora_fin: string | null;
-            simulador: string | null;
-          }> = Array.isArray(db?.bloqueos) ? db.bloqueos : [];
-          const allTeams: TeamKey[] = [
-            "Ferrari",
-            "McLaren",
-            "Red Bull",
-            "Alpine",
-          ];
-          const allSlots = getTimeSlotsForDate(date);
-          bloqueos.forEach((b) => {
-            const teamsAfectados: TeamKey[] = b.simulador
-              ? allTeams.filter((t) => t === b.simulador)
-              : allTeams;
-            const slotsAfectados = b.todo_el_dia
-              ? allSlots
-              : allSlots.filter((s) => {
-                  const ini = b.hora_inicio || "00:00";
-                  const fin = b.hora_fin || "23:59";
-                  return s >= ini && s <= fin;
-                });
-            slotsAfectados.forEach((slot) => {
-              const key = createReservationKey(date, slot);
-              if (!nextReservations[key]) nextReservations[key] = [];
-              teamsAfectados.forEach((t) => {
-                if (!nextReservations[key].includes(t)) {
-                  nextReservations[key].push(t);
-                }
-              });
-            });
-          });
-        }
-      } catch {
-        /* disponibilidad normal si falla la carga de bloqueos */
-      }
-
-      setReservations(nextReservations);
-
-      const currentTimeIsValid =
-        getTimeSlotsForDate(date).includes(selectedTime);
-
-      if (!currentTimeIsValid) {
-        const firstValidTime = getTimeSlotsForDate(date)[0];
-        if (firstValidTime) {
-          setSelectedTime(firstValidTime);
-        }
-        return;
-      }
-
-      const currentFree =
-        teams.length -
-        (nextReservations[createReservationKey(date, selectedTime)]?.length ??
-          0);
-
-      if (currentFree === 0) {
-        const firstAvailableTime = getTimeSlotsForDate(date).find((time) => {
-          const reserved =
-            nextReservations[createReservationKey(date, time)] ?? [];
-          return reserved.length < teams.length;
-        });
-
-        if (firstAvailableTime) {
-          setSelectedTime(firstAvailableTime);
-        }
-      }
-    } catch (error) {
-      console.error("Error cargando reservas:", error);
-      openFeedbackModal(
-        "error",
-        "Error al cargar reservas",
-        "Ocurrió un error al consultar la disponibilidad."
-      );
-    } finally {
-      setIsLoadingReservations(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!selectedDate) return;
-    loadReservations(selectedDate);
-  }, [selectedDate]);
-
-  useEffect(() => {
-    if (!selectedDate) return;
-    if (availableTimeSlots.length === 0) return;
-
-    if (!availableTimeSlots.includes(selectedTime)) {
-      setSelectedTime(availableTimeSlots[0]);
-      setSelectedTeams([]);
-    }
-  }, [selectedDate, availableTimeSlots, selectedTime]);
-
   async function handleReserve() {
-    if (!name.trim() || !phone.trim() || selectedTeams.length === 0 || isSubmitting) {
+    if (!name.trim() || !phone.trim() || selectedTeams.length === 0 || isSubmitting || !oferta) {
       return;
     }
 
@@ -654,14 +639,9 @@ export default function ReservasPage() {
       return;
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const [year, month, day] = selectedDate.split("-").map(Number);
-    const selectedDateObj = new Date(year, month - 1, day);
-    selectedDateObj.setHours(0, 0, 0, 0);
-
-    if (selectedDateObj <= today) {
+    // (B3) La fecha, el horario y el precio los valida el servidor. Acá solo se
+    // evita mandar algo que la oferta que se está mostrando ya descarta.
+    if (!oferta.ventana.includes(selectedDate)) {
       openFeedbackModal(
         "error",
         "Fecha no válida",
@@ -670,20 +650,16 @@ export default function ReservasPage() {
       return;
     }
 
-    if (!getTimeSlotsForDate(selectedDate).includes(selectedTime)) {
+    const libres = libresPorHora.get(selectedTime) ?? [];
+    if (
+      oferta.fecha !== selectedDate ||
+      oferta.duracion !== duracion ||
+      !selectedTeams.every((team) => libres.includes(team))
+    ) {
       openFeedbackModal(
         "error",
         "Horario no disponible",
         "Ese horario no está disponible para la fecha elegida."
-      );
-      return;
-    }
-
-    if (duracion === 30 && !getNextSlot(selectedDate, selectedTime)) {
-      openFeedbackModal(
-        "error",
-        "Sin turno consecutivo",
-        "Para reservar 30 minutos necesitás dos turnos seguidos. Elegí un horario más temprano."
       );
       return;
     }
@@ -701,7 +677,15 @@ export default function ReservasPage() {
       codigo_descuento: codigoAplicado?.codigo || null,
       acepto_condiciones: acceptedConditions,
       duracion_minutos: duracion,
+      // Lo que la persona VIO. Si el servidor ya ofrece otra modalidad u otro
+      // precio, responde 409 sin crear nada ni cobrar.
+      modalidad_vista: oferta.modalidad,
+      precio_visto: pricePerSim,
     };
+
+    // Lo elegido, para conservarlo si hay que recargar la oferta.
+    const pedidoActual = { fecha: selectedDate, duracion };
+    const preferencia: Preferencia = { hora: selectedTime, equipos: selectedTeams };
 
     // Funnel: configuración válida + decisión de iniciar la compra (vale para ambas
     // ramas: pago con Mercado Pago y reserva 100% bonificada).
@@ -709,7 +693,7 @@ export default function ReservasPage() {
       currency: "ARS",
       value: totalFinal,
       duration_minutes: duracion,
-      items: [{ item_name: "Turno simulador", item_category: "reserva", quantity: selectedTeams.length }],
+      items: [{ item_name: "Turno simulador", item_category: "reserva", quantity: selectedTeams.length, price: pricePerSim }],
     });
 
     if (totalFinal <= 0) {
@@ -728,11 +712,16 @@ export default function ReservasPage() {
         const result = await response.json().catch(() => null);
 
         if (!response.ok) {
+          if (esCatalogoActualizado(response, result)) {
+            await cargarOferta(pedidoActual, "catalogo_actualizado", preferencia);
+            return;
+          }
           openFeedbackModal(
             "error",
             "No se pudo confirmar la reserva",
             result?.error || "Ocurrió un problema al guardar la reserva bonificada."
           );
+          if (response.status === 409) void cargarOferta(pedidoActual, "refresco", preferencia);
           return;
         }
 
@@ -755,7 +744,7 @@ export default function ReservasPage() {
         setCodigoInput("");
         setCodigoAplicado(null);
 
-        await loadReservations(selectedDate);
+        await cargarOferta(pedidoActual, "refresco", { hora: selectedTime, equipos: [] });
         return;
       } catch (error) {
         console.error("Error al guardar reserva bonificada:", error);
@@ -782,6 +771,12 @@ export default function ReservasPage() {
       const result = await response.json().catch(() => null);
 
       if (!response.ok) {
+        // La oferta cambió (corte de modalidad o precio nuevo): no es un error
+        // técnico. No se creó reserva ni preferencia; se muestra la vigente.
+        if (esCatalogoActualizado(response, result)) {
+          await cargarOferta(pedidoActual, "catalogo_actualizado", preferencia);
+          return;
+        }
         // Error técnico del checkout (no se pudo crear la preferencia).
         trackCheckoutError("reserva");
         openFeedbackModal(
@@ -789,6 +784,7 @@ export default function ReservasPage() {
           "No se pudo iniciar el pago",
           result?.error || "Ocurrió un problema al generar el pago."
         );
+        if (response.status === 409) void cargarOferta(pedidoActual, "refresco", preferencia);
         return;
       }
 
@@ -827,8 +823,32 @@ export default function ReservasPage() {
     }
   }
 
-  if (!isMounted || availableDates.length === 0 || !selectedDate || !selectedTime) {
-    return <main className="min-h-screen bg-black text-white" />;
+  if (!oferta || !horarioDelDia || !selectedDate || !selectedTime) {
+    return (
+      <main className="min-h-screen bg-black text-white">
+        {errorCarga && (
+          <section className="mx-auto flex max-w-xl flex-col items-center px-4 py-24 text-center">
+            <CircleAlert className="h-8 w-8 text-red-400" />
+            <p className="mt-4 text-lg font-bold">
+              No pudimos cargar los turnos disponibles.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setErrorCarga(false);
+                void cargarOferta({ fecha: null, duracion: null }, "inicio", {
+                  hora: "",
+                  equipos: [],
+                });
+              }}
+              className="mt-6 rounded-2xl bg-red-600 px-6 py-3 text-sm font-black text-white transition hover:bg-red-500"
+            >
+              Reintentar
+            </button>
+          </section>
+        )}
+      </main>
+    );
   }
 
   return (
@@ -846,17 +866,17 @@ export default function ReservasPage() {
               </h1>
 
               <p className="mt-5 max-w-2xl text-base leading-8 text-zinc-300 md:text-xl">
-                Elegí una fecha, una duración (15 o 30 minutos) y un horario, seleccioná
-                una o varias escuderías disponibles y armá tu reserva. Las largadas salen
-                cada 20 minutos.
+                Elegí una fecha, una duración ({listaDuraciones(oferta.duraciones)} minutos) y un
+                horario, seleccioná una o varias escuderías disponibles y armá tu reserva. Las
+                largadas salen cada {oferta.paso_min} minutos.
               </p>
 
               <div className="mt-7 flex flex-wrap gap-3">
                 <div className="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm text-zinc-200">
-                  Lun a vie: 10:00 a 21:40
+                  Lun a vie: {oferta.horario.semana.desde} a {oferta.horario.semana.hasta}
                 </div>
                 <div className="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm text-zinc-200">
-                  Sáb y dom: 10:00 a 14:00
+                  Sáb y dom: {oferta.horario.fin_de_semana.desde} a {oferta.horario.fin_de_semana.hasta}
                 </div>
                 <div className="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm text-zinc-200">
                   Reservas desde mañana
@@ -865,7 +885,7 @@ export default function ReservasPage() {
                   Hasta 15 días de anticipación
                 </div>
                 <div className="rounded-full border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm font-medium text-red-300">
-                  Desde {formatPrice(PRICE)} por simulador
+                  Desde {formatPrice(oferta.desde_precio)} por simulador
                 </div>
               </div>
             </div>
@@ -887,7 +907,7 @@ export default function ReservasPage() {
                   <ShieldCheck className="h-4 w-4" />
                   <span className="text-sm">Largadas</span>
                 </div>
-                <div className="text-4xl font-black">20 min</div>
+                <div className="text-4xl font-black">{oferta.paso_min} min</div>
                 <p className="mt-2 text-zinc-400">entre cada salida</p>
               </div>
             </div>
@@ -986,10 +1006,16 @@ export default function ReservasPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    {([15, 30] as Duracion[]).map((d) => {
+                  <div
+                    className={
+                      oferta.duraciones.length >= 3
+                        ? "grid grid-cols-3 gap-3"
+                        : "grid grid-cols-2 gap-3"
+                    }
+                  >
+                    {oferta.duraciones.map((d) => {
                       const isSel = duracion === d;
-                      const precio = precioPorSimulador(selectedDate, d);
+                      const precio = oferta.precios[String(d)] ?? 0;
                       return (
                         <button
                           key={d}
@@ -1038,13 +1064,13 @@ export default function ReservasPage() {
 
                   <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300">
                     {isWeekendDate(selectedDate)
-                      ? "Horario de sábado/domingo: 10:00 a 14:00"
-                      : "Horario de lunes a viernes: 10:00 a 21:40"}
+                      ? `Horario de sábado/domingo: ${horarioDelDia.desde} a ${horarioDelDia.hasta}`
+                      : `Horario de lunes a viernes: ${horarioDelDia.desde} a ${horarioDelDia.hasta}`}
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                    {availableTimeSlots.map((time) => {
-                      const freeCount = getFreeCount(selectedDate, time);
+                    {oferta.grilla.map((time) => {
+                      const freeCount = (libresPorHora.get(time) ?? []).length;
                       const isSelected = selectedTime === time;
                       const isFull = freeCount === 0;
 
@@ -1089,7 +1115,7 @@ export default function ReservasPage() {
                   </div>
 
                   <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300">
-                    Turno de {duracion} min · salida cada 20 min
+                    Turno de {duracion} min · salida cada {oferta.paso_min} min
                   </div>
                 </div>
               </div>

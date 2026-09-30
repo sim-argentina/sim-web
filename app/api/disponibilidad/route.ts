@@ -3,6 +3,7 @@ import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { failResponse } from "@/lib/apiError";
 import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 import { disponibilidadDelDia } from "@/lib/disponibilidad";
+import { disponibilidadReservas } from "@/lib/reservasComercial";
 import { DURACIONES_POR_PRODUCTO, fechasPublicas, type Producto } from "@/lib/agenda";
 
 // Disponibilidad pública (Bloque M6). Es el ÚNICO contrato de disponibilidad:
@@ -12,6 +13,10 @@ import { DURACIONES_POR_PRODUCTO, fechasPublicas, type Producto } from "@/lib/ag
 // Devuelve solo lo imprescindible: qué horarios están habilitados y cuántos
 // simuladores quedan libres durante TODA la duración. Nunca reservas, nombres,
 // teléfonos ni identificadores internos.
+//
+// (B3) Reservas sale del motor por intervalos con la modalidad VIGENTE (antes
+// del corte legacy, idéntico a lo de siempre; desde el corte, v2_10) y agrega
+// `modalidad`. Mensualidades sigue con su motor hasta su bloque.
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +27,7 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const fecha = url.searchParams.get("fecha") ?? "";
-  const duracionCruda = url.searchParams.get("duracion") ?? "15";
+  const duracionParam = url.searchParams.get("duracion");
   const productoCrudo = url.searchParams.get("producto") ?? "reserva";
 
   // Solo productos conocidos. Un valor raro no cae en el default: se rechaza.
@@ -37,21 +42,36 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "No encontrado" }, { status: 404, headers: sinCache });
   }
 
-  if (!/^\d+$/.test(duracionCruda)) {
+  if (duracionParam !== null && !/^\d+$/.test(duracionParam)) {
     return NextResponse.json({ error: "Duración inválida" }, { status: 400, headers: sinCache });
   }
-  const duracion = Number(duracionCruda);
 
   try {
+    if (producto === "reserva") {
+      const r = await disponibilidadReservas({ fecha, duracion: duracionParam ?? undefined });
+      if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status, headers: sinCache });
+      return NextResponse.json({
+        fecha: r.data.fecha,
+        duracion: r.data.duracion,
+        modalidad: r.data.modalidad,
+        // Las duraciones que este producto puede pedir, para que el front no las repita.
+        duraciones: r.data.duraciones,
+        // La ventana pública, misma fuente que usa el servidor para validar.
+        fechas: r.data.ventana,
+        horarios: r.data.horarios
+          .filter((h) => h.disponibles > 0)
+          .map((h) => ({ hora: h.hora, simuladores: h.disponibles })),
+      }, { headers: sinCache });
+    }
+
+    const duracion = Number(duracionParam ?? "15");
     const r = await disponibilidadDelDia({ fecha, duracion, producto });
     if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status, headers: sinCache });
 
     return NextResponse.json({
       fecha: r.fecha,
       duracion: r.duracion,
-      // Las duraciones que este producto puede pedir, para que el front no las repita.
       duraciones: DURACIONES_POR_PRODUCTO[producto],
-      // La ventana pública, misma fuente que usa el servidor para validar.
       fechas: fechasPublicas(),
       horarios: r.horarios,
     }, { headers: sinCache });

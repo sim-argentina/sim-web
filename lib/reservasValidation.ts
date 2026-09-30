@@ -4,6 +4,8 @@ import {
   fechaDentroDeVentana, fechaValida, hoyEnSim, horariosDe,
   type Producto,
 } from "@/lib/agenda";
+import { duracionPermitida, type Modalidad } from "@/lib/catalogoComercial";
+import { turnoPara } from "@/lib/agendaIntervalos";
 
 // Validación server-side centralizada de inputs de reserva.
 // Nunca se confía en el cliente: precio y disponibilidad se recalculan aparte.
@@ -48,6 +50,12 @@ export type OpcionesValidacion = {
   producto?: Producto;
   /** "Hoy" en Córdoba; se inyecta en los tests para fijar la ventana. */
   hoy?: string;
+  /**
+   * (B3) Modalidad del turno que se crea, resuelta por el servidor. Sin valor
+   * o 'legacy': exactamente la validación de siempre. 'v2_10': duración del
+   * catálogo v2 (obligatoria) e inicio en la grilla v2.
+   */
+  modalidad?: Modalidad;
 };
 
 export function validarReservaInput(
@@ -73,21 +81,37 @@ export function validarReservaInput(
     return fail("La fecha está fuera del rango permitido");
   }
 
-  // ── Duración: solo las que admite ESTE producto ──
-  // Si no viene el campo se mantiene el default histórico de 15; si viene un
-  // valor, tiene que ser válido (antes 45 o 60 se convertían en 15 en silencio).
   const duracionCruda = b.duracion_minutos;
-  const duracion = duracionCruda === undefined || duracionCruda === null
-    ? 15
-    : Number(duracionCruda);
-  if (!duracionValidaPara(producto, duracion)) return fail("Duración inválida");
-
-  // ── Hora: tiene que existir en el calendario del día y entrar completa ──
   const hora = String(b.hora ?? "");
-  if (!horariosDe(fecha).includes(hora)) return fail("Horario inválido");
-  const bloques = bloquesDeAgenda(fecha, hora, duracion);
-  if (!bloques) {
-    return fail("No hay tiempo consecutivo disponible para esa duración");
+  let duracion: number;
+  let bloques: string[];
+
+  if (opciones.modalidad === "v2_10") {
+    // ── (B3) v2: duración del catálogo v2, sin default; inicio en la grilla v2
+    // (paso 10; L-V el tiempo comercial termina ≤ 22:00; finde último inicio 14:00).
+    if (!duracionPermitida("v2_10", producto, duracionCruda)) return fail("Duración inválida");
+    duracion = Number(duracionCruda);
+    if (!turnoPara({ modalidad: "v2_10", producto, fecha, hora, duracion })) {
+      return fail("Horario inválido");
+    }
+    // Una reserva v2 ocupa UNA fila por simulador, en su hora de inicio.
+    bloques = [hora];
+  } else {
+    // ── Duración: solo las que admite ESTE producto ──
+    // Si no viene el campo se mantiene el default histórico de 15; si viene un
+    // valor, tiene que ser válido (antes 45 o 60 se convertían en 15 en silencio).
+    duracion = duracionCruda === undefined || duracionCruda === null
+      ? 15
+      : Number(duracionCruda);
+    if (!duracionValidaPara(producto, duracion)) return fail("Duración inválida");
+
+    // ── Hora: tiene que existir en el calendario del día y entrar completa ──
+    if (!horariosDe(fecha).includes(hora)) return fail("Horario inválido");
+    const legacy = bloquesDeAgenda(fecha, hora, duracion);
+    if (!legacy) {
+      return fail("No hay tiempo consecutivo disponible para esa duración");
+    }
+    bloques = legacy;
   }
 
   // ── Simuladores (set permitido, 1..4, sin duplicados) ──

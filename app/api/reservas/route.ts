@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getOccupiedSlots } from "@/lib/reservasSlots";
-import { hayDisponibilidadPara } from "@/lib/disponibilidad";
-import { getPrecioReserva } from "@/lib/reservasPricing";
+import { filasSlotsReserva } from "@/lib/reservasSlots";
+import {
+  evaluarPedido, filaReservaWeb, precioDelPedido, prepararReservaWeb, type Fallo,
+} from "@/lib/reservasComercial";
 import {
   validarCodigoDescuento,
   consumirCodigoDescuento,
 } from "@/lib/codigosDescuento";
-import { reservaEstaBloqueada } from "@/lib/bloqueos";
 import { getCurrentAdminRole } from "@/lib/adminGuards";
-import { validarReservaInput } from "@/lib/reservasValidation";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
@@ -33,9 +32,11 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Fecha inválida" }, { status: 400 });
     }
 
+    // (B3) `modalidad` no es PII: le permite a quien todavía calcula por bloques
+    // (la página de Empresas) ver la ocupación real de una reserva v2.
     const cols = role
       ? "*"
-      : "fecha, hora, simuladores, estado, duracion_minutos, cantidad_turnos";
+      : "fecha, hora, simuladores, estado, duracion_minutos, cantidad_turnos, modalidad";
 
     let query = supabaseAdmin
       .from("reservas")
@@ -77,6 +78,12 @@ export async function GET(req: Request) {
   }
 }
 
+const falloJson = (f: Fallo) =>
+  NextResponse.json(
+    { error: f.error, ...(f.codigo ? { codigo: f.codigo } : {}), ...(f.duraciones ? { duraciones: f.duraciones } : {}) },
+    { status: f.status },
+  );
+
 // POST: SOLO crea reservas 100% bonificadas (gratis). Con saldo > 0 se exige
 // pago online. Precio recalculado server-side; turno reservado con garantía DB.
 export async function POST(req: Request) {
@@ -89,36 +96,30 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
-    const v = validarReservaInput(body);
-    if (!v.ok) {
-      return NextResponse.json({ error: v.error }, { status: 400 });
-    }
-    const { nombre, telefono, fecha, hora, simuladores, duracion, codigo_descuento } =
-      v.value;
+    // (B3) La modalidad se resuelve UNA vez en este request y queda guardada en
+    // la reserva. Un catálogo visto distinto del vigente → 409, sin crear nada.
+    const preparado = await prepararReservaWeb(body);
+    if (!preparado.ok) return falloJson(preparado);
+    const pedido = preparado.pedido;
+    const { codigo_descuento, fecha, duracion } = pedido;
 
-    // Bloqueos admin: turno bloqueado → no se crea la reserva (ni se consume código).
-    const slotsTurno = getOccupiedSlots(fecha, hora, duracion);
-    if (await reservaEstaBloqueada(fecha, slotsTurno, simuladores)) {
+    // Bloqueos y disponibilidad por el motor de intervalos, con las reglas de
+    // SU modalidad: bloqueado → 400 como siempre; ocupado → 409. La garantía
+    // definitiva contra carreras sigue siendo la base (índice único + trigger).
+    const veredicto = await evaluarPedido(pedido);
+    if (veredicto.bloqueado) {
       return NextResponse.json(
         { error: "Ese horario no está disponible." },
         { status: 400 }
       );
     }
+    if (veredicto.ocupado) return falloJson(veredicto.ocupado);
 
-    // (M6) Disponibilidad real por la fuente única, antes de tocar nada. La
-    // garantía definitiva contra carreras sigue siendo el índice único de
-    // reserva_slots; esto evita crear la reserva para borrarla enseguida.
-    const disp = await hayDisponibilidadPara({
-      fecha, hora, duracion, simuladores, producto: "reserva",
-    });
-    if (!disp.ok) {
-      return NextResponse.json({ error: disp.error }, { status: disp.status });
-    }
-
-    // ── Precio recalculado server-side (precio especial de la fecha si existe;
-    // nunca se confía en el cliente) ──
-    const precioUnitario = await getPrecioReserva(fecha, duracion);
-    const totalOriginal = precioUnitario * simuladores.length;
+    // ── Precio recalculado server-side por SU modalidad (precio especial de la
+    // fecha si existe; nunca se confía en el cliente) ──
+    const precio = await precioDelPedido(pedido, body);
+    if (!precio.ok) return falloJson(precio);
+    const totalOriginal = precio.totalOriginal;
 
     let descuento = 0;
     let codigoValido: string | null = null;
@@ -139,25 +140,17 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Crear la reserva activa.
+    // 1) Crear la reserva activa, con SU modalidad explícita.
     const { data, error } = await supabaseAdmin
       .from("reservas")
       .insert([
-        {
-          nombre,
-          telefono,
-          fecha,
-          hora,
-          simuladores,
-          cantidad_turnos: simuladores.length,
+        filaReservaWeb(pedido, {
+          estado: "activa",
           total: 0,
           total_original: totalOriginal,
           descuento_aplicado: descuento,
-          estado: "activa",
-          acepto_condiciones: true,
           codigo_descuento: codigoValido,
-          duracion_minutos: duracion,
-        },
+        }),
       ])
       .select()
       .single();
@@ -170,16 +163,10 @@ export async function POST(req: Request) {
     }
     reservaCreadaId = data.id;
 
-    // 2) Reservar los slots (garantía DB anti doble-reserva).
-    const slotRows = getOccupiedSlots(fecha, hora, duracion).flatMap((slot) =>
-      simuladores.map((sim) => ({
-        reserva_id: data.id,
-        fecha,
-        hora: slot,
-        simulador: sim,
-        estado: "activa",
-      }))
-    );
+    // 2) Reservar los slots (garantía DB anti doble-reserva) según la modalidad
+    // guardada: legacy, bloques de 20 como siempre; v2, una fila por simulador
+    // con la ocupación completa (duración + buffer).
+    const slotRows = filasSlotsReserva(data);
     const { error: slotErr } = await supabaseAdmin
       .from("reserva_slots")
       .insert(slotRows);

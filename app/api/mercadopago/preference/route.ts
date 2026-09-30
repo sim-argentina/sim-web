@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Preference } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { getOccupiedSlots } from "@/lib/reservasSlots";
-import { hayDisponibilidadPara } from "@/lib/disponibilidad";
-import { getPrecioReserva } from "@/lib/reservasPricing";
+import {
+  evaluarPedido, filaReservaWeb, precioDelPedido, prepararReservaWeb, type Fallo,
+} from "@/lib/reservasComercial";
 import { validarCodigoDescuento } from "@/lib/codigosDescuento";
-import { reservaEstaBloqueada } from "@/lib/bloqueos";
-import { validarReservaInput } from "@/lib/reservasValidation";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
+
+const falloJson = (f: Fallo) =>
+  NextResponse.json(
+    { error: f.error, ...(f.codigo ? { codigo: f.codigo } : {}), ...(f.duraciones ? { duraciones: f.duraciones } : {}) },
+    { status: f.status },
+  );
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
@@ -40,26 +44,32 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json().catch(() => null);
-    const v = validarReservaInput(body);
-    if (!v.ok) {
-      return NextResponse.json({ error: v.error }, { status: 400 });
-    }
-    const { nombre, telefono, fecha, hora, simuladores, duracion, codigo_descuento } =
-      v.value;
 
-    // Bloqueos admin: si el turno cae en un bloqueo activo, no se crea la reserva
-    // ni la preferencia (server-side, no se puede saltear desde el cliente).
-    const slotsTurno = getOccupiedSlots(fecha, hora, duracion);
-    if (await reservaEstaBloqueada(fecha, slotsTurno, simuladores)) {
+    // (B3) La modalidad se resuelve UNA vez en este request y queda guardada en
+    // la reserva pendiente: el webhook la usa aunque el pago llegue después del
+    // corte. Catálogo visto distinto del vigente → 409: ni reserva, ni
+    // preferencia, ni cobro.
+    const preparado = await prepararReservaWeb(body);
+    if (!preparado.ok) return falloJson(preparado);
+    const pedido = preparado.pedido;
+    const { fecha, duracion, codigo_descuento } = pedido;
+
+    // Bloqueos y disponibilidad por el motor de intervalos con las reglas de SU
+    // modalidad. Bloqueado → 400 acá, como siempre; la ocupación se informa más
+    // abajo, en el mismo orden de antes.
+    const veredicto = await evaluarPedido(pedido);
+    if (veredicto.bloqueado) {
       return NextResponse.json(
         { error: "Ese horario no está disponible." },
         { status: 400 }
       );
     }
 
-    // Precio recalculado server-side (incluye precio especial de la fecha si existe);
-    // se ignora cualquier total enviado por el cliente.
-    const totalOriginal = (await getPrecioReserva(fecha, duracion)) * simuladores.length;
+    // Precio recalculado server-side por SU modalidad (incluye precio especial
+    // de la fecha si existe); se ignora cualquier total enviado por el cliente.
+    const precio = await precioDelPedido(pedido, body);
+    if (!precio.ok) return falloJson(precio);
+    const totalOriginal = precio.totalOriginal;
     if (!Number.isFinite(totalOriginal) || totalOriginal <= 0) {
       return NextResponse.json(
         { error: "No se pudo calcular el precio de la reserva" },
@@ -86,35 +96,21 @@ export async function POST(req: Request) {
       );
     }
 
-    // (M6) Disponibilidad real por la fuente única: reservas activas +
-    // pendientes recientes + bloqueos, con intersección de simuladores libres en
-    // TODOS los bloques que ocupa la duración. Reemplaza el chequeo de ocupación
-    // que este endpoint calculaba por su cuenta.
-    const disp = await hayDisponibilidadPara({
-      fecha, hora, duracion, simuladores, producto: "reserva",
-    });
-    if (!disp.ok) {
-      return NextResponse.json({ error: disp.error }, { status: disp.status });
-    }
+    // Disponibilidad real (motor por intervalos): reservas activas + pendientes
+    // recientes + bloqueos; cada simulador pedido libre durante TODO el turno,
+    // buffer incluido en v2.
+    if (veredicto.ocupado) return falloJson(veredicto.ocupado);
 
     const { data: reservaPendiente, error: insertError } = await supabaseAdmin
       .from("reservas")
       .insert([
-        {
-          nombre,
-          telefono,
-          fecha,
-          hora,
-          simuladores,
-          cantidad_turnos: simuladores.length,
+        filaReservaWeb(pedido, {
+          estado: "pendiente_pago",
           total: totalFinal,
           total_original: totalOriginal,
           descuento_aplicado: Math.round(descuentoAplicado),
           codigo_descuento: codigoAplicado,
-          estado: "pendiente_pago",
-          acepto_condiciones: true,
-          duracion_minutos: duracion,
-        },
+        }),
       ])
       .select("id")
       .single();

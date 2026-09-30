@@ -157,6 +157,8 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     "db/modalidad-comercial-b1.sql":
       "dato: vigente_desde de los precios nuevos de planes (mensualidad_plan_precios); lib/modalidadComercialB1.integration.ts lo cruza con la constante",
     "db/modalidad-comercial-b1.verificacion.sql": "verificación de ese mismo dato",
+    "lib/reservasComercial.test.ts":
+      "B3: ventana y fixtures alrededor del corte; el instante sale de CORTE_MODALIDAD_V2_MS",
     // Fixtures PREEXISTENTES en las que la fecha NO es el corte:
     "lib/empresas.test.ts": "fecha de ejemplo de una campaña",
     "lib/finanzasComisionesMes.integration.ts": "fin exclusivo del rango de septiembre",
@@ -224,6 +226,14 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     "lib/disponibilidadIntervalosTrigger.ts",
     "app/api/admin/modalidad-comercial/disponibilidad-diagnostico/route.ts",
     "lib/agendaIntervalos.test.ts", "lib/disponibilidadIntervalos.test.ts", "lib/disponibilidadIntervalos.integration.ts",
+    // (B3) Reservas web: SOLO este flujo se conecta. reservasComercial es la
+    // única puerta que resuelve la modalidad vigente; precio, validación y
+    // slots reciben la modalidad como parámetro (la del pedido o la guardada).
+    // La página /reservas importa únicamente el código/mensaje del 409.
+    // Gift Cards, Mensualidades y Empresas siguen sin importar el núcleo.
+    "lib/reservasComercial.ts", "lib/reservasPricing.ts", "lib/reservasValidation.ts", "lib/reservasSlots.ts",
+    "lib/reservasPresentacion.ts", "app/reservas/page.tsx",
+    "lib/reservasComercial.test.ts", "lib/reservasComercial.integration.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);

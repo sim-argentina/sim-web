@@ -9,20 +9,27 @@ import { diagnosticoModalidad } from "@/lib/modalidadComercialDiagnostico";
 // actualiza y no borra nada, así que se puede correr contra producción.
 // Ejecutar: npx tsx --env-file=.env.local lib/modalidadComercialB1.integration.ts
 //
-// Comprueba el estado que deja db/modalidad-comercial-b1.sql ANTES de que
-// ningún flujo escriba la modalidad (B3 en adelante): el override en NULL, las
-// columnas nuevas sin backfill y los precios de planes versionados. Lo más
+// Comprueba el estado que deja db/modalidad-comercial-b1.sql: el override en
+// NULL, las columnas nuevas sin backfill (lo anterior a B1; desde B3 Reservas
+// escribe la modalidad de lo nuevo) y los precios de planes versionados. Lo más
 // importante: que el instante de los precios nuevos en la base sea EXACTAMENTE
 // el corte del código (lib/modalidadComercial.ts), la única fuente.
 //
 // La conducta del trigger, los checks y la RPC del override (con escrituras) la
 // prueba db/modalidad-comercial-b1.verificacion.sql, que revierte todo.
 
-async function contar(tabla: string, columna: string): Promise<number> {
-  const { count, error } = await supabaseAdmin
+// Instante en que se aplicó db/modalidad-comercial-b1.sql (migración
+// 20260929022738). Lo anterior quedó sin backfill para siempre; desde B3 cada
+// reserva web NUEVA guarda su modalidad y cada slot v2 su ocupación.
+const B1_APLICADA = "2026-09-29T02:27:38Z";
+
+async function contar(tabla: string, columna: string, antesDe?: string): Promise<number> {
+  let q = supabaseAdmin
     .from(tabla)
     .select(columna, { count: "exact", head: true })
     .not(columna, "is", null);
+  if (antesDe) q = q.lt("created_at", antesDe);
+  const { count, error } = await q;
   if (error) throw new Error(`${tabla}.${columna}: ${error.message}`);
   return count ?? 0;
 }
@@ -38,9 +45,11 @@ async function main() {
   assert.equal(vigente.override, null);
   assert.equal(vigente.modalidad, modalidadProgramada(ahora), "sin override, la efectiva es la del calendario");
 
-  // ── Columnas nuevas: existen y NADIE las escribió (sin backfill) ─────────
-  assert.equal(await contar("reservas", "modalidad"), 0, "reservas.modalidad: sin backfill");
-  assert.equal(await contar("reserva_slots", "ocupacion_min"), 0, "reserva_slots.ocupacion_min: sin backfill");
+  // ── Columnas nuevas: existen y NADIE rellenó lo anterior (sin backfill) ──
+  // Reservas (B3) escribe la modalidad de lo nuevo: se mira solo lo previo a
+  // B1. El Turnero todavía no se conectó: ahí no la escribe nadie.
+  assert.equal(await contar("reservas", "modalidad", B1_APLICADA), 0, "reservas.modalidad: sin backfill");
+  assert.equal(await contar("reserva_slots", "ocupacion_min", B1_APLICADA), 0, "reserva_slots.ocupacion_min: sin backfill");
   assert.equal(await contar("turnos_stand", "modalidad"), 0, "turnos_stand.modalidad: sin backfill");
   assert.equal(await contar("reservas_precios_especiales", "precio_10"), 0, "precio_10: sin overrides cargados");
   assert.equal(await contar("reservas_precios_especiales", "precio_20"), 0, "precio_20: sin overrides cargados");

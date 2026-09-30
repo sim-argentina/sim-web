@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer";
+// Columna "Turnos" de las filas de reserva: legacy 15 min = 1 turno (la regla
+// de siempre); v2 bloques de 10. Solo visual: no altera datos ni métricas.
+import { turnosDeReserva } from "@/lib/reservasPresentacion";
 
 type PagoDetalle = {
   metodo_pago: string;
@@ -55,6 +58,8 @@ type ReservaOp = {
   hora_subida?: string | null;
   hora_bajada?: string | null;
   listo?: boolean;
+  /** (B3) NULL = legacy. */
+  modalidad?: string | null;
 };
 
 // Fila del Turnero: turno del stand (turnos_stand) o reserva web (reservas).
@@ -85,13 +90,6 @@ function horaActual() {
   return `${String(date.getHours()).padStart(2, "0")}:${String(
     date.getMinutes(),
   ).padStart(2, "0")}`;
-}
-
-// Equivalencia conceptual de SIM: cada 15 minutos = 1 turno.
-// 15→1, 30→2, 45→3, 60→4. Solo se usa para DERIVAR el valor mostrado en la
-// columna "Turnos" de las filas de reserva; no altera datos ni métricas.
-function turnosPorDuracion(minutos?: number | null): number {
-  return Math.max(1, Math.round((Number(minutos) || 15) / 15));
 }
 
 function sumarMinutosAHora(hora: string, minutos: number) {
@@ -1529,9 +1527,11 @@ function FilaReserva({
       </span>
 
       <span>{simus.length || 1}</span>
+      {/* Duración COMERCIAL (en v2 el buffer no es tiempo vendido). */}
       <span>{minutos}</span>
-      {/* Turnos derivados de la duración (15 min = 1 turno). Solo visual. */}
-      <span>{turnosPorDuracion(minutos)}</span>
+      {/* Turnos derivados de la duración, por SU modalidad (legacy 15 min = 1
+          turno; v2 bloques de 10). Solo visual. */}
+      <span>{turnosDeReserva(reserva)}</span>
       <span className="truncate text-white/70">{pago}</span>
       <span className="text-white/40">—</span>
 

@@ -5,6 +5,8 @@ import { failResponse } from "@/lib/apiError";
 import { SIMULADORES_VALIDOS } from "@/lib/reservasValidation";
 import { getOccupiedSlots } from "@/lib/reservasSlots";
 import { turnoBloqueado, type BloqueoReserva } from "@/lib/bloqueos";
+import { turnoOcupacion } from "@/lib/agendaIntervalos";
+import { bloqueoTocaTurno, modalidadDeReserva } from "@/lib/disponibilidadIntervalos";
 
 const HORA_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
   try {
     const { data: reservas } = await supabaseAdmin
       .from("reservas")
-      .select("hora, simuladores, duracion_minutos")
+      .select("hora, simuladores, duracion_minutos, modalidad")
       .eq("fecha", fecha)
       .eq("estado", "activa");
 
@@ -114,6 +116,15 @@ export async function POST(req: Request) {
 
     for (const r of reservas || []) {
       const sims = Array.isArray(r.simuladores) ? r.simuladores.map(String) : [];
+      // (B3) Una reserva v2 se mide por su intervalo de ocupación (buffer
+      // incluido), con la misma regla que el motor y el trigger. Legacy, igual
+      // que siempre: los bloques de 20.
+      if (modalidadDeReserva(r.modalidad) === "v2_10") {
+        const turno = turnoOcupacion("v2_10", String(r.hora), r.duracion_minutos);
+        const bloqueo = { ...bloqueoArr[0], activo: true };
+        if (turno && sims.some((sim) => bloqueoTocaTurno(bloqueo, turno, sim))) reservasAfectadas++;
+        continue;
+      }
       const slots = getOccupiedSlots(
         fecha,
         String(r.hora),

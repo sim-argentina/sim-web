@@ -13,10 +13,12 @@ import {
   WEEKDAY_SLOTS as SLOTS_SEMANA,
   WEEKEND_SLOTS as SLOTS_FINDE,
   DURACIONES_POR_PRODUCTO,
+  PASO_AGENDA_MIN,
   bloquesDeAgenda,
   esFinDeSemana,
   horariosDe,
 } from "@/lib/agenda";
+import { ocupacionMinutos } from "@/lib/catalogoComercial";
 
 export const WEEKDAY_SLOTS: readonly string[] = SLOTS_SEMANA;
 export const WEEKEND_SLOTS: readonly string[] = SLOTS_FINDE;
@@ -75,7 +77,32 @@ type ReservaOcupacion = {
   hora: string;
   duracion_minutos?: number | null;
   simuladores: unknown;
+  /** (B3) NULL o 'legacy': bloques de 20 como siempre. 'v2_10': duración + buffer. */
+  modalidad?: string | null;
 };
+
+const HHMM = /^([01][0-9]|2[0-3]):([0-5][0-9])$/;
+function aMinutos(hora: string): number | null {
+  const m = HHMM.exec(hora);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+/**
+ * (B3) Bloques de la grilla legacy del día que toca una reserva v2: su
+ * ocupación [hora, hora + duración + buffer) no cae alineada a los bloques de
+ * 20, así que ocupa TODO bloque con el que comparte algún minuto. Así lo que
+ * todavía calcula por bloques (Mensualidades, Empresas) ve a las reservas v2.
+ */
+function bloquesTocadosPorV2(dateKey: string, hora: string, duracion: unknown): string[] {
+  const inicio = aMinutos(hora);
+  const ocupacion = ocupacionMinutos("v2_10", duracion);
+  if (inicio === null || ocupacion === null) return [];
+  const fin = inicio + ocupacion;
+  return getSlotsForDate(dateKey).filter((slot) => {
+    const m = aMinutos(slot);
+    return m !== null && m < fin && inicio < m + PASO_AGENDA_MIN;
+  });
+}
 
 // Mapa slot -> set de simuladores ocupados, expandiendo cada reserva a todos
 // los bloques que ocupa.
@@ -87,8 +114,9 @@ export function construirOcupacion(
 
   for (const r of reservas) {
     const sims = Array.isArray(r.simuladores) ? r.simuladores : [];
-    const duracion = Number(r.duracion_minutos) || 15;
-    const slots = getOccupiedSlots(dateKey, r.hora, duracion);
+    const slots = r.modalidad === "v2_10"
+      ? bloquesTocadosPorV2(dateKey, r.hora, r.duracion_minutos)
+      : getOccupiedSlots(dateKey, r.hora, Number(r.duracion_minutos) || 15);
 
     for (const slot of slots) {
       if (!mapa[slot]) mapa[slot] = new Set<string>();
@@ -97,4 +125,44 @@ export function construirOcupacion(
   }
 
   return mapa;
+}
+
+export type FilaSlotNueva = {
+  reserva_id: number;
+  fecha: string;
+  hora: string;
+  simulador: string;
+  estado: "activa";
+  ocupacion_min?: number;
+};
+
+/**
+ * (B3) Las filas de reserva_slots de una reserva según SU modalidad guardada,
+ * nunca la vigente:
+ *   · legacy (NULL o 'legacy'): exactamente lo de siempre, un bloque de 20 por
+ *     fila y por simulador, sin ocupacion_min;
+ *   · v2_10: UNA fila por simulador en la hora de inicio, con ocupacion_min =
+ *     duración + buffer. El buffer vive dentro de esa fila.
+ */
+export function filasSlotsReserva(r: {
+  id: number | string;
+  fecha: string;
+  hora: string;
+  duracion_minutos: unknown;
+  simuladores: unknown;
+  modalidad?: string | null;
+}): FilaSlotNueva[] {
+  const reserva_id = Number(r.id);
+  const sims = Array.isArray(r.simuladores) ? r.simuladores.map((s) => String(s)) : [];
+  if (r.modalidad === "v2_10") {
+    const ocupacion = ocupacionMinutos("v2_10", r.duracion_minutos);
+    if (ocupacion === null) throw new Error("Reserva v2 con una duración que no se puede ocupar");
+    return sims.map((simulador) => ({
+      reserva_id, fecha: r.fecha, hora: r.hora, simulador, estado: "activa", ocupacion_min: ocupacion,
+    }));
+  }
+  const duracion = Number(r.duracion_minutos) || 15;
+  return getOccupiedSlots(r.fecha, r.hora, duracion).flatMap((hora) =>
+    sims.map((simulador) => ({ reserva_id, fecha: r.fecha, hora, simulador, estado: "activa" as const })),
+  );
 }

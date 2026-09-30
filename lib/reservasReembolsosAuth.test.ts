@@ -38,7 +38,10 @@ const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 {
   const src = read("app/api/reservas/[id]/route.ts");
   assert.ok(/requireAdmin\(\)/.test(src), "reservas PATCH: admin-only");
-  assert.ok(/reembolsada/.test(src), "reservas PATCH: bloquea estado reembolsada");
+  // (B3) La transición vive en lib/reservasEstado.ts (reactivación atómica);
+  // lib/reservasComercial.test.ts prueba la conducta.
+  assert.ok(/cambiarEstadoReserva\(/.test(src), "reservas PATCH: delega en cambiarEstadoReserva");
+  assert.ok(/reserva\.estado === "reembolsada"/.test(read("lib/reservasEstado.ts")), "reservas PATCH: bloquea estado reembolsada");
 }
 
 console.log("OK — reservasReembolsos (auth wiring): POST reembolso admin-only + anti mass-assignment; detalle solo admin; PATCH no reactiva reembolsada.");

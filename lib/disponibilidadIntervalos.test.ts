@@ -485,7 +485,7 @@ async function main() {
     console.log(`motor vs trigger: ${total} casos en ${ARCHIVO_SQL_SINTETICO} (se corre con execute_sql y debe dar B2_MOTOR_VS_TRIGGER_OK)`);
   }
 
-  // ── Guardas: B2 no conecta ningún flujo comercial ─────────────────────────
+  // ── Guardas: el motor lo usan SOLO Reservas web (B3) y el admin ───────────
   {
     const ROOT = process.cwd();
     const archivos: string[] = [];
@@ -504,16 +504,26 @@ async function main() {
       "lib/disponibilidadIntervalosTrigger.ts",
       "app/api/admin/modalidad-comercial/disponibilidad-diagnostico/route.ts",
       "lib/agendaIntervalos.test.ts", "lib/disponibilidadIntervalos.test.ts", "lib/disponibilidadIntervalos.integration.ts",
+      // (B3) Reservas web: catálogo/disponibilidad/validación del pedido, la
+      // reactivación y el conteo de reservas que pisa un bloqueo. Nada más.
+      "lib/reservasComercial.ts", "lib/reservasValidation.ts", "lib/reservasEstado.ts",
+      "app/api/admin/bloqueos/route.ts",
+      "lib/reservasComercial.test.ts", "lib/reservasComercial.integration.ts",
     ]);
     const ajenos = archivos.filter((f) => MODULOS.test(leer(f)) && !PERMITIDOS.has(f));
-    assert.deepEqual(ajenos, [], `B2 no se conecta a flujos comerciales; lo importan: ${ajenos.join(", ")}`);
+    assert.deepEqual(ajenos, [], `el motor solo lo usan Reservas web y el admin; lo importan: ${ajenos.join(", ")}`);
     for (const f of archivos) {
       if (/^\s*["']use client["']/m.test(leer(f))) assert.ok(!MODULOS.test(leer(f)), `${f} es "use client": el navegador no calcula disponibilidad`);
     }
-    // /reservas y los flujos que venden siguen con el motor actual.
-    for (const f of ["app/api/disponibilidad/route.ts", "app/api/reservas/route.ts", "app/api/mercadopago/preference/route.ts",
+    // Mensualidades (B6) —y su rama de /api/disponibilidad— siguen con el motor actual.
+    for (const f of ["app/api/disponibilidad/route.ts",
       "app/api/mensualidades/disponibilidad/route.ts", "lib/mensualidadesReserva.ts", "lib/mensualidadesGestionReserva.ts"]) {
       assert.ok(leer(f).includes("@/lib/disponibilidad\""), `${f} sigue usando lib/disponibilidad.ts`);
+    }
+    // (B3) Lo que VENDE Reservas web ya no usa el motor actual: pasa por reservasComercial.
+    for (const f of ["app/api/reservas/route.ts", "app/api/mercadopago/preference/route.ts"]) {
+      assert.ok(leer(f).includes("@/lib/reservasComercial\""), `${f} usa lib/reservasComercial.ts`);
+      assert.ok(!leer(f).includes("@/lib/disponibilidad\""), `${f} ya no usa lib/disponibilidad.ts`);
     }
 
     // El diagnóstico: solo GET, solo admin, sin caché, sin escrituras, sin PII,

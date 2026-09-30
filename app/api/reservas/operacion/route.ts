@@ -24,7 +24,7 @@ export async function GET(req: Request) {
     const { data: reservas, error } = await supabaseAdmin
       .from("reservas")
       .select(
-        "id, nombre, telefono, fecha, hora, simuladores, cantidad_turnos, duracion_minutos, total, estado, mercado_pago_payment_id"
+        "id, nombre, telefono, fecha, hora, simuladores, cantidad_turnos, duracion_minutos, total, estado, mercado_pago_payment_id, modalidad"
       )
       .eq("fecha", fecha)
       .eq("estado", "activa")

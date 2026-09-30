@@ -11,7 +11,7 @@ import { getSlotsForDate, construirOcupacion, getOccupiedSlots, getNextSlot } fr
 
 const SIMULADORES = ["Ferrari", "McLaren", "Red Bull", "Alpine"] as const;
 
-type ReservaApi = { hora: string; simuladores: unknown; duracion_minutos?: number | null; estado?: string };
+type ReservaApi = { hora: string; simuladores: unknown; duracion_minutos?: number | null; estado?: string; modalidad?: string | null };
 
 export default function ReservaEmpresaPage() {
   const [paso, setPaso] = useState<"codigo" | "turno" | "datos" | "ok">("codigo");
@@ -33,7 +33,8 @@ export default function ReservaEmpresaPage() {
 
   // Disponibilidad derivada de las reservas reales (misma fuente que Reservas).
   const ocupacion = useMemo(
-    () => construirOcupacion(fecha, reservas.filter((r) => r.estado !== "cancelada").map((r) => ({ hora: r.hora, duracion_minutos: r.duracion_minutos, simuladores: r.simuladores }))),
+    // (B3) Con la modalidad de cada reserva: una v2 ocupa todo bloque de 20 que toca.
+    () => construirOcupacion(fecha, reservas.filter((r) => r.estado !== "cancelada").map((r) => ({ hora: r.hora, duracion_minutos: r.duracion_minutos, simuladores: r.simuladores, modalidad: r.modalidad }))),
     [fecha, reservas],
   );
   const disponible = (h: string, s: string) => {

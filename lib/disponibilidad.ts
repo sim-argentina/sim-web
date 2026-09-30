@@ -63,10 +63,12 @@ async function libresPorHorario(args: {
   }
 
   // 1) Ocupación: reservas confirmadas + pendientes de pago recientes.
+  // (B3) Con su modalidad: una reserva v2 ocupa todo bloque de 20 que toca su
+  // intervalo (construirOcupacion). Mensualidades la ve sin cambiar su oferta.
   const ttlIso = new Date(Date.now() - PENDIENTE_TTL_MIN * 60_000).toISOString();
   const { data: reservas, error } = await supabaseAdmin
     .from("reservas")
-    .select("hora, duracion_minutos, simuladores, estado, created_at")
+    .select("hora, duracion_minutos, simuladores, estado, created_at, modalidad")
     .eq("fecha", fecha)
     .in("estado", ["activa", "pendiente_pago"]);
   if (error) return fail(500, "No se pudo calcular la disponibilidad");
