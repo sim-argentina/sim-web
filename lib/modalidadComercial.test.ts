@@ -259,6 +259,12 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     // (B7.1) Bordes de "hoy" en Argentina alrededor de esa medianoche: los
     // instantes se derivan de CORTE_MODALIDAD_V2_MS en vez de escribirse.
     "lib/empresasFechaArgentina.test.ts",
+    // (B8) Turnero: turneroComercial es la única que resuelve la modalidad
+    // vigente, y SOLO para un ALTA (se guarda en turnos_stand.modalidad); la
+    // edición usa la de la fila. Las rutas y la página no importan el núcleo.
+    // minutosComerciales solo LEE: cuenta turnos por la modalidad guardada en
+    // cada fila (Stand, Reservas, Equipo, IA, Finanzas) y nunca mira el reloj.
+    "lib/turneroComercial.ts", "lib/minutosComerciales.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { failResponse, logSecurityEvent } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin, requireAdmin } from "@/lib/adminGuards";
+import { prepararEdicionTurnero } from "@/lib/turneroComercial";
+import { modalidadDeFila } from "@/lib/minutosComerciales";
 
 function limpiarPagosDetalle(pagos: any[]) {
   if (!Array.isArray(pagos)) return [];
@@ -24,6 +26,17 @@ export async function PATCH(
   try {
     const { id } = await context.params;
     const body = await req.json();
+
+    // (B8) La modalidad es la de la FILA y no cambia al editar: una v2 vuelve a
+    // validar y recalcula sus turnos; una legacy se guarda como siempre.
+    const { data: actual, error: errorLectura } = await supabaseAdmin
+      .from("turnos_stand").select("modalidad").eq("id", id).maybeSingle();
+    if (errorLectura) {
+      return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-stand/[id]", error: errorLectura });
+    }
+    if (!actual) return NextResponse.json({ error: "Turno no encontrado" }, { status: 404 });
+    const edicion = prepararEdicionTurnero(body ?? {}, modalidadDeFila(actual.modalidad));
+    if (!edicion.ok) return NextResponse.json({ error: edicion.error, codigo: edicion.codigo }, { status: edicion.status });
 
     const pagosDetalle = limpiarPagosDetalle(body.pagos_detalle || []);
     const totalPagos = pagosDetalle.reduce((acc, pago) => acc + pago.monto, 0);
@@ -51,9 +64,9 @@ export async function PATCH(
         hora_bajada: body.hora_bajada || null,
         simuladores: body.simuladores || [],
         cantidad_simuladores: body.simuladores?.length || 0,
-        cantidad_personas: Number(body.cantidad_personas) || 1,
-        cantidad_minutos: Number(body.cantidad_minutos) || 15,
-        cantidad_turnos: Number(body.cantidad_turnos) || 1,
+        cantidad_personas: edicion.campos.cantidad_personas,
+        cantidad_minutos: edicion.campos.cantidad_minutos,
+        cantidad_turnos: edicion.campos.cantidad_turnos,
         metodo_pago: metodoPago,
         turno_listo: Boolean(body.turno_listo),
         posnet_pago: posnets || body.posnet_pago || null,

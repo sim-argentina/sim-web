@@ -85,7 +85,7 @@ export function construirComponentes(datos: DatosMetricas, meta: MetaInforme): {
   const metodologia = [
     "Atribución por MES DE SERVICIO (no por mes de cobro; no altera Finanzas). Se atribuye al integrante presente según el cronograma confirmado; ante simultaneidad, la actividad se reparte entre los integrantes presentes.",
     "Se separan dos orígenes: Turnero Stand y Reservas web (se cuentan una sola vez cada uno; reconcilian con el total).",
-    "Unidades: horas de cronograma (h; en minutos internamente), turnos (personas x minutos / 15), personas/simuladores, operaciones, minutos de actividad, y pesos argentinos (ARS) para facturación.",
+    "Unidades: horas de cronograma (h; en minutos internamente), turnos (legacy: personas x minutos / 15; v2: personas x minutos / 10), personas/simuladores, operaciones, minutos de actividad vendidos (sin buffer de agenda), y pesos argentinos (ARS) para facturación.",
     "Facturación: bruta, comisiones y neta (neta = bruta - comisiones). Finanzas no modela comisión de Reservas web (queda en 0; no se inventa).",
     `Cronograma del mes: estado ${cro?.estado ?? "confirmado"}${cro?.dias != null ? ` (${cro.dias} días, ${cro.cerrados ?? 0} cerrados)` : ""}. Se excluyen reservas reembolsadas según las reglas vigentes.`,
     `Reconciliación de datos: OK. Registros considerados: Stand ${meta.registros?.stand ?? 0}, Reservas ${meta.registros?.reservas ?? 0}.`,

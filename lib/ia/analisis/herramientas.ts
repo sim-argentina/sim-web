@@ -98,7 +98,7 @@ export const comparar_periodos: ToolDef = {
     const { referenciaCompleta, ...resultadoSinReferencia } = r;
     const contenidoPayload = {
       ...resultadoSinReferencia,
-      _unidades: { ars: "Pesos argentinos (ARS), enteros.", horas: "Horas (ya convertidas; NUNCA confundir con minutos de actividad de clientes).", minutos: "Minutos de actividad comercial de clientes (turnos × 15), NO horas trabajadas del cronograma." },
+      _unidades: { ars: "Pesos argentinos (ARS), enteros.", horas: "Horas (ya convertidas; NUNCA confundir con minutos de actividad de clientes).", minutos: "Minutos VENDIDOS de actividad comercial de clientes (legacy: turnos × 15; v2 10/20/30: duración × personas; nunca el buffer de agenda), NO horas trabajadas del cronograma." },
       _regla: reglaBase + (referenciaCompleta ? " Existe una referencia del mes completo de " + referenciaCompleta.etiqueta + ": NO la menciones, no repitas sus cifras ni armes una sección para ella — el sistema la agrega automáticamente aparte, después de tu respuesta." : ""),
     };
     const resumenPayload = { ...r, _unidades: contenidoPayload._unidades, _regla: reglaBase };

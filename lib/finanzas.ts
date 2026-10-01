@@ -18,6 +18,8 @@ import {
   type ComisionConfig,
 } from "@/lib/finanzasComisiones";
 import { diasEnMes as diasEnMesPuro, rangoMes as rangoMesPuro, rangoMesAr } from "@/lib/finanzasMes";
+import { minutosComercialesStand } from "@/lib/metricasStand";
+import type { OcupacionStandV2 } from "@/lib/finanzasOcupacion";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -270,19 +272,22 @@ export async function getDuracionPromedioTurno(mes: string): Promise<number> {
   return Math.max(DURACION_BASE_MIN, Math.round(DURACION_BASE_MIN + avg));
 }
 
-// Capacidad teórica del mes (por día, respetando excepciones).
+// Capacidad teórica del mes (por día, respetando excepciones). (B8) Devuelve
+// también los minutos-simulador disponibles, la base de la ocupación de las
+// filas v2 (lib/finanzasOcupacion.ts).
 export function capacidadYDiasOperativos(
   mes: string,
   config: FinConfiguracion,
   excepciones: FinExcepcion[],
   duracionTurnoMin: number
-): { capacidad: number; diasOperativos: number; diasDelMes: number; diasCerrados: number } {
+): { capacidad: number; diasOperativos: number; diasDelMes: number; diasCerrados: number; minutosDisponibles: number } {
   const total = diasEnMesPuro(mes);
   const excPorFecha: Record<string, FinExcepcion> = {};
   for (const e of excepciones) excPorFecha[e.fecha] = e;
 
   const dur = duracionTurnoMin > 0 ? duracionTurnoMin : DURACION_BASE_MIN;
   let capacidad = 0;
+  let minutosDisponibles = 0;
   let diasCerrados = 0;
 
   for (let d = 1; d <= total; d++) {
@@ -296,9 +301,32 @@ export function capacidadYDiasOperativos(
     const sims = exc?.simuladores ?? config.cantidad_simuladores;
     const slots = Math.floor((horas * 60) / dur);
     capacidad += sims * slots;
+    minutosDisponibles += sims * horas * 60;
   }
 
-  return { capacidad, diasOperativos: total - diasCerrados, diasDelMes: total, diasCerrados };
+  return { capacidad, diasOperativos: total - diasCerrados, diasDelMes: total, diasCerrados, minutosDisponibles };
+}
+
+// (B8) Filas v2 del Turnero del mes, con el MISMO filtro que fin_ingresos_por_mes
+// (fecha del mes y estado nulo o distinto de 'cancelado'): sus turnos (ya sumados
+// en turnosDelMes) y sus minutos vendidos. Solo lectura.
+export async function getStandV2DelMes(mes: string): Promise<OcupacionStandV2> {
+  const { desde, hastaExclusivo } = rangoMesPuro(mes);
+  const { data, error } = await supabaseAdmin
+    .from("turnos_stand")
+    .select("cantidad_turnos, cantidad_personas, cantidad_simuladores, cantidad_minutos, modalidad, estado")
+    .eq("modalidad", "v2_10")
+    .gte("fecha", desde)
+    .lt("fecha", hastaExclusivo);
+  if (error) throw error;
+  let turnos = 0;
+  let minutos = 0;
+  for (const t of (data || []) as Array<Record<string, unknown>>) {
+    if (t.estado === "cancelado") continue;
+    turnos += Number(t.cantidad_turnos ?? 1) || 0;
+    minutos += minutosComercialesStand(t as never);
+  }
+  return { turnos, minutos };
 }
 
 // ── Ingresos automáticos (read-only sobre tablas operativas) ────────────────

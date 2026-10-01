@@ -5,14 +5,16 @@
 //    stand por fecha de SERVICIO + Reservas online, Gift cards y Campeonatos por fecha de PAGO.
 //    La paridad con Finanzas está cubierta por prueba (mismo total mensual, al peso).
 //  · turnos/personas/operaciones/minutos → Stand + Reservas por fecha de servicio, con los
-//    mismos helpers canónicos de Métricas Stand (turnosDeFila/personasDeFila/calcularTurnos).
+//    mismos helpers canónicos de Métricas Stand (turnosDeFila/personasDeFila) y, desde B8,
+//    los minutos y turnos comerciales por la modalidad de cada fila (lib/minutosComerciales:
+//    legacy igual que siempre; v2 duración × personas, sin buffer).
 //
 // El modelo nunca llega hasta acá con texto libre: llega un PlanAnalitico ya validado.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { FUENTES_LABEL } from "@/lib/finanzas";
-import { turnosDeFila, personasDeFila, totalDeFila, type FilaStand } from "@/lib/metricasStand";
-import { calcularTurnos } from "@/lib/metricasEquipo";
+import { minutosComercialesStand, turnosDeFila, personasDeFila, totalDeFila, type FilaStand } from "@/lib/metricasStand";
+import { minutosComercialesReserva, turnosComercialesReserva } from "@/lib/minutosComerciales";
 import { METRICAS, type PlanAnalitico } from "@/lib/ia/analisis/planAnalitico";
 
 const TZ = "America/Argentina/Cordoba";
@@ -163,7 +165,7 @@ async function filasActividad(p: PlanAnalitico, advertencias: string[]): Promise
   if (quiere("stand")) {
     const { data, error } = await supabaseAdmin
       .from("turnos_stand")
-      .select("fecha, estado, total, metodo_pago, cantidad_personas, cantidad_simuladores, cantidad_turnos, cantidad_minutos")
+      .select("fecha, estado, total, metodo_pago, cantidad_personas, cantidad_simuladores, cantidad_turnos, cantidad_minutos, modalidad")
       .gte("fecha", desde).lte("fecha", hasta);
     if (error) throw error;
     for (const t of (data ?? []) as Array<Record<string, unknown>>) {
@@ -172,7 +174,7 @@ async function filasActividad(p: PlanAnalitico, advertencias: string[]): Promise
       const turnos = turnosDeFila(t as unknown as FilaStand);
       filas.push({
         dia: String(t.fecha).slice(0, 10), fuente: "stand", metodo: "", valor: totalDeFila(t as unknown as FilaStand),
-        turnos, personas: personasDeFila(t as unknown as FilaStand), operaciones: 1, minutos: turnos * 15,
+        turnos, personas: personasDeFila(t as unknown as FilaStand), operaciones: 1, minutos: minutosComercialesStand(t as unknown as FilaStand),
       });
     }
   }
@@ -180,7 +182,7 @@ async function filasActividad(p: PlanAnalitico, advertencias: string[]): Promise
   if (quiere("reservas")) {
     const { data, error } = await supabaseAdmin
       .from("reservas")
-      .select("fecha, estado, total, cantidad_turnos, duracion_minutos, simuladores, origen")
+      .select("fecha, estado, total, cantidad_turnos, duracion_minutos, simuladores, origen, modalidad")
       .gte("fecha", desde).lte("fecha", hasta);
     if (error) throw error;
     for (const r of (data ?? []) as Array<Record<string, unknown>>) {
@@ -189,11 +191,10 @@ async function filasActividad(p: PlanAnalitico, advertencias: string[]): Promise
       if (origen === "empresa" || origen === "mensualidad") continue;
       const sims = Array.isArray(r.simuladores) ? (r.simuladores as unknown[]).length : 0;
       const personas = Math.max(1, sims);
-      const durMin = Number(r.duracion_minutos) || 15;
-      const turnos = Number(r.cantidad_turnos) || calcularTurnos(personas, durMin);
+      const turnos = turnosComercialesReserva(r, "calcular");
       filas.push({
         dia: String(r.fecha).slice(0, 10), fuente: "reservas", metodo: "", valor: Number(r.total) || 0,
-        turnos, personas, operaciones: 1, minutos: turnos * 15,
+        turnos, personas, operaciones: 1, minutos: minutosComercialesReserva(r, "calcular"),
       });
     }
   }

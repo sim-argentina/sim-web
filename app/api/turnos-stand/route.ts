@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
+import { prepararAltaTurnero } from "@/lib/turneroComercial";
 
 function limpiarPagosDetalle(pagos: any[]) {
   if (!Array.isArray(pagos)) return [];
@@ -79,6 +80,16 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
+    // (B8) Modalidad, minutos y turnos los decide el servidor: legacy como siempre;
+    // v2 recalcula los turnos; pestaña vieja → 409 sin escribir.
+    const alta = await prepararAltaTurnero(body ?? {});
+    if (!alta.ok) {
+      return NextResponse.json(
+        { error: alta.error, codigo: alta.codigo, ...(alta.catalogo ? { catalogo: alta.catalogo } : {}) },
+        { status: alta.status, headers: { "Cache-Control": "no-store, max-age=0" } },
+      );
+    }
+
     const pagosDetalle = limpiarPagosDetalle(body.pagos_detalle || []);
     const totalPagos = pagosDetalle.reduce((acc, pago) => acc + pago.monto, 0);
     const posnets = pagosDetalle
@@ -106,9 +117,10 @@ export async function POST(req: Request) {
           hora_bajada: body.hora_bajada || null,
           simuladores: body.simuladores || [],
           cantidad_simuladores: body.simuladores?.length || 0,
-          cantidad_personas: Number(body.cantidad_personas) || 1,
-          cantidad_minutos: Number(body.cantidad_minutos) || 15,
-          cantidad_turnos: Number(body.cantidad_turnos) || 1,
+          cantidad_personas: alta.campos.cantidad_personas,
+          cantidad_minutos: alta.campos.cantidad_minutos,
+          cantidad_turnos: alta.campos.cantidad_turnos,
+          modalidad: alta.campos.modalidad,
           metodo_pago: metodoPago,
           posnet_pago: posnets || body.posnet_pago || null,
           pagos_detalle: pagosDetalle,

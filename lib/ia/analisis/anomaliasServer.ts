@@ -59,6 +59,7 @@ export async function ejecutarDeteccionAnomalias(p: ParamsAnomalias): Promise<Re
 // mínima necesaria en vez de importar internals de serieDiaria.ts (mantiene ese módulo simple).
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { turnosDeFila, personasDeFila, totalDeFila } from "@/lib/metricasStand";
+import { turnosComercialesReserva } from "@/lib/minutosComerciales";
 import { idsReembolsadas } from "@/lib/reservasReembolsos";
 
 async function construirSerieFuente(desde: string, hasta: string, fuente: "stand" | "reservas"): Promise<PuntoDiario[]> {
@@ -73,13 +74,14 @@ async function construirSerieFuente(desde: string, hasta: string, fuente: "stand
       e.turnos += turnosDeFila(t as never); e.personas += personasDeFila(t as never); e.facturacion += totalDeFila(t as never); e.operaciones += 1;
     }
   } else {
-    const { data } = await supabaseAdmin.from("reservas").select("id, fecha, estado, total, cantidad_turnos, simuladores").gte("fecha", desde).lte("fecha", hasta);
+    const { data } = await supabaseAdmin.from("reservas").select("id, fecha, estado, total, cantidad_turnos, simuladores, duracion_minutos, modalidad").gte("fecha", desde).lte("fecha", hasta);
     const rows = (data ?? []) as Array<Record<string, unknown>>;
     const reemb = await idsReembolsadas(rows.map((r) => Number(r.id)));
     for (const r of rows) {
       if (String(r.estado) !== "activa" || reemb.has(Number(r.id))) continue;
       const e = acc(String(r.fecha));
-      e.turnos += Number(r.cantidad_turnos) || 0;
+      // (B8) Por la modalidad de la reserva: legacy lo de siempre; v2 bloques de 10.
+      e.turnos += turnosComercialesReserva(r, "cero");
       e.personas += Array.isArray(r.simuladores) ? (r.simuladores as unknown[]).length : 0;
       e.facturacion += Number(r.total) || 0;
       e.operaciones += 1;

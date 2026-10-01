@@ -6,6 +6,7 @@ import { consultarMetricasEquipo } from "@/lib/metricasEquipoServer";
 import { getMesVista, getHorasMensuales } from "@/lib/cronogramaServer";
 import { calcularMes, getCierreMes } from "@/lib/finanzas";
 import { agregarStand } from "@/lib/metricasStand";
+import { minutosComercialesReserva, turnosComercialesReserva } from "@/lib/minutosComerciales";
 import { idsReembolsadas } from "@/lib/reservasReembolsos";
 import { HERRAMIENTAS_CONOCIMIENTO } from "@/lib/ia/docs/conocimientoTools";
 import { preparar_informe } from "@/lib/ia/informes/informeTool";
@@ -105,8 +106,8 @@ const consultar_metricas_equipo: ToolDef = {
       _unidades: {
         horas_trabajadas_minutos: "MINUTOS del cronograma. Para expresarlas en horas, dividir por 60 O usar directamente 'horas_trabajadas_formateadas'. 11460 minutos = 191 horas.",
         horas_trabajadas_formateadas: "Texto ya listo para mostrar las horas de cronograma (ej: '191 h').",
-        minutos_actividad: "MINUTOS-persona de uso comercial (turnos × 15). NO son horas trabajadas del cronograma; son otra métrica.",
-        turnos_cantidad: "Cantidad de turnos (1 turno = 15 min de uso por 1 persona/simulador).",
+        minutos_actividad: "MINUTOS-persona VENDIDOS (legacy: turnos × 15; v2 10/20/30: duración × personas). Nunca incluyen el buffer de agenda. NO son horas trabajadas del cronograma; son otra métrica.",
+        turnos_cantidad: "Cantidad de turnos (legacy: 1 turno = 15 min por persona/simulador; v2: 1 turno = 10 min por persona/simulador). Para comparar períodos con distinta modalidad, usar minutos_actividad.",
         personas_cantidad: "Cantidad de personas/simuladores.",
         operaciones_cantidad: "Cantidad de operaciones (registros/sesiones fuente).",
         facturacion_bruta_pesos: "Pesos argentinos (ARS), enteros.",
@@ -115,7 +116,7 @@ const consultar_metricas_equipo: ToolDef = {
       },
       _definiciones: {
         horas_trabajadas: "Horas de trabajo del cronograma confirmado (jornadas + cobertura de Ramiro). NO son 'facturables' ni 'mínimas'.",
-        turnos: "Actividad comercial atribuida; turnos = personas × minutos / 15.",
+        turnos: "Actividad comercial atribuida; legacy: personas × minutos / 15; v2: personas × minutos / 10.",
         nota_mes_en_curso: mesEnCurso ? "El mes está en curso: las cifras son 'hasta la fecha y hora de corte'." : "Mes completo.",
         nota_comision_reservas: "Finanzas no modela comisión de Reservas web → comisiones_pesos de esa fuente es 0 (no se inventa).",
       },
@@ -193,23 +194,24 @@ const consultar_metricas_stand_reservas: ToolDef = {
     const { anio, mes } = pedirAnioMes(input);
     const desde = `${mesStr(anio, mes)}-01`, hasta = finDeMes(anio, mes);
     // Stand
-    const { data: standRows } = await supabaseAdmin.from("turnos_stand").select("fecha, estado, total, cantidad_personas, cantidad_simuladores, cantidad_turnos").gte("fecha", desde).lte("fecha", hasta);
+    const { data: standRows } = await supabaseAdmin.from("turnos_stand").select("fecha, estado, total, cantidad_personas, cantidad_simuladores, cantidad_turnos, cantidad_minutos, modalidad").gte("fecha", desde).lte("fecha", hasta);
     const standValidos = (standRows ?? []).filter((t) => { const e = String(t.estado ?? "").toLowerCase(); return e !== "anulado" && e !== "cancelado"; });
     const standAgg = agregarStand(standValidos as never);
     const standPorDia: Record<string, number> = {};
     for (const t of standValidos) standPorDia[String(t.fecha)] = (standPorDia[String(t.fecha)] || 0) + (Number(t.total) || 0);
     // Reservas (una sola vez; excluye canceladas y reembolsadas)
-    const { data: resRows } = await supabaseAdmin.from("reservas").select("id, fecha, estado, total, cantidad_turnos, simuladores").gte("fecha", desde).lte("fecha", hasta);
+    const { data: resRows } = await supabaseAdmin.from("reservas").select("id, fecha, estado, total, cantidad_turnos, simuladores, duracion_minutos, modalidad").gte("fecha", desde).lte("fecha", hasta);
     const rows = (resRows ?? []) as Array<Record<string, unknown>>;
     const reemb = await idsReembolsadas(rows.map((r) => Number(r.id)));
     const resValidas = rows.filter((r) => String(r.estado) === "activa" && !reemb.has(Number(r.id)));
-    let rTurnos = 0, rPersonas = 0, rFact = 0;
-    for (const r of resValidas) { rTurnos += Number(r.cantidad_turnos) || 0; rPersonas += Array.isArray(r.simuladores) ? (r.simuladores as unknown[]).length : 0; rFact += Number(r.total) || 0; }
+    // (B8) Turnos y minutos por la modalidad de cada reserva (legacy: lo de siempre).
+    let rTurnos = 0, rMinutos = 0, rPersonas = 0, rFact = 0;
+    for (const r of resValidas) { rTurnos += turnosComercialesReserva(r, "cero"); rMinutos += minutosComercialesReserva(r, "cero"); rPersonas += Array.isArray(r.simuladores) ? (r.simuladores as unknown[]).length : 0; rFact += Number(r.total) || 0; }
     const topDias = Object.entries(standPorDia).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([fecha, fact]) => ({ fecha, facturacion_stand: fact }));
     const payload = {
       periodo: mesStr(anio, mes),
       stand: { operaciones: standAgg.ventas, turnos: standAgg.turnos, personas: standAgg.personas, minutos: standAgg.minutos, facturacion: standAgg.facturacion },
-      reservas: { operaciones: resValidas.length, turnos: rTurnos, personas: rPersonas, minutos: rTurnos * 15, facturacion: rFact },
+      reservas: { operaciones: resValidas.length, turnos: rTurnos, personas: rPersonas, minutos: rMinutos, facturacion: rFact },
       dias_top_actividad: topDias,
       nota: "Stand y Reservas son fuentes separadas; cada operación se cuenta una sola vez.",
     };

@@ -38,6 +38,19 @@ type TurnoStand = {
   pagos_detalle?: PagoDetalle[] | string;
   estado?: string;
   observaciones?: string;
+  /** (B8) NULL = legacy. Se fija al crear y no cambia al editar. */
+  modalidad?: string | null;
+};
+
+// (B8) Oferta del Turnero según la modalidad VIGENTE: la resuelve el servidor en
+// cada carga (/api/turnos-stand/catalogo), nunca el bundle ni el reloj del navegador.
+type CatalogoTurnero = {
+  modalidad: "legacy" | "v2_10";
+  duraciones: number[];
+  minutos_por_turno: number;
+  minutos_por_turno_por_modalidad: { legacy: number; v2_10: number };
+  precios: Array<{ duracion: number; precio: number }>;
+  legacy: { duraciones: number[]; minutos_por_turno: number } | null;
 };
 
 // Reserva web CONFIRMADA proyectada como fila operativa del Turnero. Sus datos
@@ -236,6 +249,11 @@ export default function TurneroAdminPage() {
 
   const [turnoEditando, setTurnoEditando] = useState<TurnoStand | null>(null);
 
+  // (B8) Catálogo vigente y carga EXPLÍCITA de un producto anterior (Gift Card o
+  // código de 15/30) cuando ya rige v2. Nunca se infiere por la duración.
+  const [catalogo, setCatalogo] = useState<CatalogoTurnero | null>(null);
+  const [registroLegacy, setRegistroLegacy] = useState(false);
+
   // Eliminación física de turnos: SOLO admin. `role` se resuelve server-side.
   const [role, setRole] = useState<string | null>(null);
   const esAdmin = role === "admin";
@@ -245,6 +263,46 @@ export default function TurneroAdminPage() {
   useEffect(() => {
     fetch("/api/admin/me").then((r) => r.json()).then((d) => setRole(d.role)).catch(() => {});
   }, []);
+
+  async function cargarCatalogo() {
+    try {
+      const res = await fetch("/api/turnos-stand/catalogo", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as CatalogoTurnero;
+      setCatalogo(data);
+      // Con v2, el formulario nuevo arranca en una duración de la oferta.
+      if (data.modalidad === "v2_10") setCantidadMinutos((m) => (m % 10 === 0 ? m : data.duraciones[0]));
+    } catch (error) {
+      console.error("Error cargando la oferta del Turnero:", error);
+    }
+  }
+
+  useEffect(() => {
+    cargarCatalogo();
+  }, []);
+
+  // (B8) Cómo se cargan minutos y turnos:
+  //   · "legacy": como siempre (minutos libres y turnos a mano);
+  //   · "v2": oferta 10/20/30 por persona; los turnos (bloques de 10) los calcula el servidor;
+  //   · "legacyExplicito": producto anterior (15/30) registrado a propósito con v2 vigente.
+  // Al editar manda la modalidad de la FILA, nunca la vigente.
+  const modoCarga: "legacy" | "v2" | "legacyExplicito" = turnoEditando
+    ? turnoEditando.modalidad === "v2_10" ? "v2" : "legacy"
+    : catalogo?.modalidad === "v2_10"
+      ? registroLegacy ? "legacyExplicito" : "v2"
+      : "legacy";
+  const minutosPorTurnoModo = modoCarga === "v2"
+    ? catalogo?.minutos_por_turno_por_modalidad.v2_10 ?? 10
+    : catalogo?.minutos_por_turno_por_modalidad.legacy ?? 15;
+  const turnosCalculados = Math.round(((cantidadPersonas * cantidadMinutos) / minutosPorTurnoModo) * 100) / 100;
+  const precioReferencia = modoCarga === "v2" ? catalogo?.precios.find((p) => p.duracion === cantidadMinutos)?.precio ?? null : null;
+  const duracionesRapidas = modoCarga === "v2" ? catalogo?.duraciones ?? [] : modoCarga === "legacyExplicito" ? catalogo?.legacy?.duraciones ?? [] : [];
+
+  function cambiarRegistroLegacy(activo: boolean) {
+    setRegistroLegacy(activo);
+    if (activo) setCantidadMinutos((m) => (catalogo?.legacy?.duraciones.includes(m) ? m : catalogo?.legacy?.duraciones[0] ?? 15));
+    else setCantidadMinutos((m) => (m % 10 === 0 ? m : catalogo?.duraciones[0] ?? 10));
+  }
 
   // Reservas web confirmadas del día (solo lectura del dominio Reservas). Se
   // muestran como filas operativas del Turnero, pero NO son turnos_stand: no
@@ -571,14 +629,21 @@ export default function TurneroAdminPage() {
     setMostrarSugerenciasClientes(false);
     setSimuladores([]);
     setCantidadPersonas(1);
-    setCantidadMinutos(15);
+    setCantidadMinutos(catalogo?.modalidad === "v2_10" ? catalogo.duraciones[0] : 15);
     setCantidadTurnos(1);
+    setRegistroLegacy(false);
     setPagosDetalle([{ metodo_pago: "qr", monto: "", posnet_pago: "" }]);
     setObservaciones("");
     setTurnoGratis(false);
   }
 
   function armarPayload() {
+    // (B8) El alta informa con qué oferta se armó el formulario (para el 409 de
+    // pestaña vieja) y si es un producto anterior. Los turnos v2 los recalcula el servidor.
+    const modalidadPayload = turnoEditando
+      ? {}
+      : { modalidad_vista: catalogo?.modalidad ?? "legacy", ...(modoCarga === "legacyExplicito" ? { registro_legacy: true } : {}) };
+    const turnosPayload = modoCarga === "legacy" ? cantidadTurnos : turnosCalculados;
     if (turnoGratis) {
       return {
         nombre,
@@ -591,12 +656,13 @@ export default function TurneroAdminPage() {
         simuladores,
         cantidad_personas: cantidadPersonas,
         cantidad_minutos: cantidadMinutos,
-        cantidad_turnos: cantidadTurnos,
+        cantidad_turnos: turnosPayload,
         metodo_pago: "gratis",
         posnet_pago: null,
         pagos_detalle: [],
         total: 0,
         observaciones,
+        ...modalidadPayload,
       };
     }
     const pagosLimpios = limpiarPagosParaGuardar(pagosDetalle);
@@ -618,13 +684,14 @@ export default function TurneroAdminPage() {
       simuladores,
       cantidad_personas: cantidadPersonas,
       cantidad_minutos: cantidadMinutos,
-      cantidad_turnos: cantidadTurnos,
+      cantidad_turnos: turnosPayload,
       metodo_pago:
         pagosLimpios.length > 1 ? "mixto" : primerPago?.metodo_pago || "qr",
       posnet_pago: posnets || null,
       pagos_detalle: pagosLimpios,
       total: totalFinal,
       observaciones,
+      ...modalidadPayload,
     };
   }
 
@@ -653,6 +720,14 @@ export default function TurneroAdminPage() {
       const data = await res.json();
 
       if (!res.ok) {
+        // (B8) Pestaña vieja: cambió la modalidad. No se guardó nada; se recarga la
+        // oferta conservando los datos cargados.
+        if (res.status === 409 && data.catalogo) {
+          const nuevo = data.catalogo as CatalogoTurnero;
+          setCatalogo(nuevo);
+          setRegistroLegacy(false);
+          if (nuevo.modalidad === "v2_10") setCantidadMinutos((m) => (m % 10 === 0 ? m : nuevo.duraciones[0]));
+        }
         alert(data.error || "Error creando turno.");
         return;
       }
@@ -684,6 +759,7 @@ export default function TurneroAdminPage() {
     setPagosDetalle(normalizarPagos(turno));
     setObservaciones(turno.observaciones || "");
     setTurnoGratis(turno.metodo_pago === "gratis");
+    setRegistroLegacy(false);
   }
 
   async function guardarEdicion(e: React.FormEvent) {
@@ -920,11 +996,12 @@ export default function TurneroAdminPage() {
               />
             </Campo>
 
-            <Campo label="Minutos">
+            <Campo label={modoCarga === "legacy" ? "Minutos" : "Minutos por persona"}>
               <input
                 data-turnero-cell
                 type="number"
-                min={1}
+                min={modoCarga === "v2" ? 10 : 1}
+                step={modoCarga === "v2" ? 10 : modoCarga === "legacyExplicito" ? 15 : undefined}
                 value={cantidadMinutos}
                 onChange={(e) => setCantidadMinutos(Number(e.target.value))}
                 className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
@@ -932,14 +1009,26 @@ export default function TurneroAdminPage() {
             </Campo>
 
             <Campo label="Turnos">
-              <input
-                data-turnero-cell
-                type="number"
-                min={1}
-                value={cantidadTurnos}
-                onChange={(e) => setCantidadTurnos(Number(e.target.value))}
-                className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
-              />
+              {modoCarga === "legacy" ? (
+                <input
+                  data-turnero-cell
+                  type="number"
+                  min={1}
+                  value={cantidadTurnos}
+                  onChange={(e) => setCantidadTurnos(Number(e.target.value))}
+                  className="w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold outline-none focus:border-red-500"
+                />
+              ) : (
+                // (B8) personas × minutos / minutos del turno; lo vuelve a calcular el servidor.
+                <input
+                  data-turnero-cell
+                  type="number"
+                  value={turnosCalculados}
+                  readOnly
+                  title={`Bloques de ${minutosPorTurnoModo} minutos por persona`}
+                  className="w-full rounded-xl border border-white/10 bg-black px-3 py-2 text-sm font-bold text-white/60 outline-none"
+                />
+              )}
             </Campo>
 
             <div className="xl:col-span-4">
@@ -971,6 +1060,46 @@ export default function TurneroAdminPage() {
               </button>
             </div>
           </div>
+
+          {/* (B8) Oferta rápida de la modalidad vigente y carga explícita de productos anteriores. */}
+          {(duracionesRapidas.length > 0 || (catalogo?.modalidad === "v2_10" && !turnoEditando)) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {duracionesRapidas.map((d) => {
+                const precio = modoCarga === "v2" ? catalogo?.precios.find((p) => p.duracion === d)?.precio : undefined;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setCantidadMinutos(d)}
+                    className={`rounded-full border px-4 py-2 text-xs font-black uppercase transition ${
+                      cantidadMinutos === d
+                        ? "border-red-500 bg-red-600 text-white"
+                        : "border-white/15 bg-black text-white/60 hover:border-red-500 hover:text-white"
+                    }`}
+                  >
+                    {d} min{precio ? ` · ${formatoDinero(precio)}` : ""}
+                  </button>
+                );
+              })}
+              {precioReferencia !== null && (
+                <span className="text-xs font-bold text-white/50">
+                  Referencia: {formatoDinero(precioReferencia)} por persona · total sugerido{" "}
+                  {formatoDinero(precioReferencia * cantidadPersonas)}
+                </span>
+              )}
+              {catalogo?.modalidad === "v2_10" && !turnoEditando && (
+                <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs font-bold text-white/60">
+                  <input
+                    type="checkbox"
+                    checked={registroLegacy}
+                    onChange={(e) => cambiarRegistroLegacy(e.target.checked)}
+                    className="h-4 w-4 accent-red-500"
+                  />
+                  Producto anterior (Gift Card o código de 15/30 min)
+                </label>
+              )}
+            </div>
+          )}
 
           {/* Turno gratis */}
           <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-2xl border border-white/10 bg-black/60 p-3">

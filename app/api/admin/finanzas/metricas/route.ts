@@ -11,11 +11,13 @@ import {
   getDuracionPromedioTurno,
   getExcepcionesMes,
   getSerieIngresos,
+  getStandV2DelMes,
   mesActual,
   mesValido,
   restarMeses,
   type FinMovimiento,
 } from "@/lib/finanzas";
+import { ocupacionTeorica } from "@/lib/finanzasOcupacion";
 
 const MESES_SERIE = 6;
 
@@ -46,10 +48,11 @@ export async function GET(req: NextRequest) {
     }
     const desde = meses[0];
 
-    const [{ resumen }, excepciones, duracionTurno, serieIngresos, movsSerieRes, invAcumRes] = await Promise.all([
+    const [{ resumen }, excepciones, duracionTurno, standV2, serieIngresos, movsSerieRes, invAcumRes] = await Promise.all([
       calcularMes(mes),
       getExcepcionesMes(mes),
       getDuracionPromedioTurno(mes),
+      getStandV2DelMes(mes),
       getSerieIngresos(desde, mes),
       supabaseAdmin
         .from("fin_movimientos")
@@ -68,7 +71,7 @@ export async function GET(req: NextRequest) {
     if (invAcumRes.error) throw invAcumRes.error;
 
     // ── Capacidad / ocupación (por día, con excepciones) ──
-    const { capacidad: capacidadTeorica, diasOperativos, diasDelMes, diasCerrados } = capacidadYDiasOperativos(
+    const { capacidad: capacidadTeorica, diasOperativos, diasDelMes, diasCerrados, minutosDisponibles } = capacidadYDiasOperativos(
       mes,
       config,
       excepciones,
@@ -157,7 +160,9 @@ export async function GET(req: NextRequest) {
       cost_per_turn: ratio(costos, turnos),
       profit_per_turn: ratio(resultadoOperativo, turnos),
       average_ticket: ratio(resumen.ingresosAutomaticos, turnos),
-      occupancy_rate: ratio(turnos, capacidadTeorica),
+      // (B8) Por la modalidad de cada fila del Turnero: sin filas v2 es exactamente
+      // turnos / capacidad, como siempre (lib/finanzasOcupacion.ts).
+      occupancy_rate: ocupacionTeorica({ turnosDelMes: turnos, capacidad: capacidadTeorica, minutosDisponibles, standV2 }),
       revenue_per_simulator: ratio(ingresos, config.cantidad_simuladores),
       revenue_per_simulator_hour: ratio(ingresos, horasSimuladorMes),
       roi: ratio(resultadoOperativo, inversionAcumulada),
@@ -194,6 +199,8 @@ export async function GET(req: NextRequest) {
         dias_operativos: diasOperativos,
         dias_cerrados: diasCerrados,
         duracion_turno_min: duracionTurno,
+        minutos_disponibles: minutosDisponibles,
+        stand_v2: standV2,
         simuladores: config.cantidad_simuladores,
         horas_dia: config.horas_operativas_dia,
         inversion_acumulada: inversionAcumulada,

@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { agregarStand, personasDeFila } from "@/lib/metricasStand";
+import { agregarStand, comparativoStandPorDuracion, personasDeFila } from "@/lib/metricasStand";
+// (B8) Duración por la modalidad de cada fila: legacy conserva 15/30 como siempre;
+// v2 muestra 10/20/30 reales (nunca convierte 10 o 20 en 15).
+import { comparativoReservasPorDuracion } from "@/lib/minutosComerciales";
 import WebTab from "./WebTab";
 import EquipoTab from "./EquipoTab";
 
@@ -22,6 +25,8 @@ type Reserva = {
   total: number;
   estado: string;
   duracion_minutos?: number | null;
+  /** (B8) NULL = legacy. */
+  modalidad?: string | null;
 };
 
 type TurnoStand = {
@@ -52,6 +57,8 @@ type TurnoStand = {
   archivo_key?: string;
   hash_unico?: string;
   origen?: string;
+  /** (B8) NULL = legacy. */
+  modalidad?: string | null;
 };
 
 type ChartItem = {
@@ -1201,9 +1208,11 @@ export default function AdminMetricasPage() {
     const porCantidadTurnos = countBy(activas, (r) => `${r.cantidad_turnos} turno/s`);
     const porDia = countBy(reservasFiltradas, (r) => r.fecha);
 
-    // Duración: si una reserva vieja no tiene duración, se asume 15 min.
-    const reservas30 = reservasFiltradas.filter((r) => Number(r.duracion_minutos) === 30).length;
-    const reservas15 = reservasFiltradas.length - reservas30;
+    // Duración por la modalidad de cada reserva: legacy como siempre (sin duración
+    // o distinta de 30 → 15); v2 su duración real (10/20/30).
+    const reservasPorDuracion = comparativoReservasPorDuracion(reservasFiltradas);
+    const reservas30 = reservasPorDuracion.find((i) => i.label === "30 min")?.value ?? 0;
+    const reservas15 = reservasPorDuracion.find((i) => i.label === "15 min")?.value ?? 0;
 
     const porSimulador: Record<string, number> = {};
     const ingresosPorDia: Record<string, number> = {};
@@ -1250,10 +1259,7 @@ export default function AdminMetricasPage() {
       ingresosPorSimulador: toChart(ingresosPorSimulador),
       reservas15,
       reservas30,
-      reservasPorDuracion: [
-        { label: "15 min", value: reservas15 },
-        { label: "30 min", value: reservas30 },
-      ] as ChartItem[],
+      reservasPorDuracion: reservasPorDuracion as ChartItem[],
     };
   }, [reservasFiltradas]);
 
@@ -1292,9 +1298,6 @@ export default function AdminMetricasPage() {
         hora_estimada_calculada: string;
       }
     > = [];
-
-    let standTurnos15 = 0;
-    let standTurnos30 = 0;
 
     standFiltrado.forEach((t) => {
       const monto = numberValue(t.total ?? t.monto);
@@ -1341,11 +1344,6 @@ export default function AdminMetricasPage() {
       if (personasTurno >= 1 && personasTurno <= 4)
         addToRecord(porPersonas, `${personasTurno} persona/s`, 1);
 
-      // Comparativo 15 vs 30 min (si no hay dato, se asume 15 min).
-      const durNorm = (duracion || numberValue(t.cantidad_minutos)) === 30 ? 30 : 15;
-      if (durNorm === 30) standTurnos30 += cantTurnos;
-      else standTurnos15 += cantTurnos;
-
       // Simulador: en vivo viene en el array `simuladores`; en Excel, en el texto
       // escuderia/simulador. Si no se registró, la fila no aporta al desglose.
       const simsEnVivo = Array.isArray(t.simuladores)
@@ -1372,6 +1370,10 @@ export default function AdminMetricasPage() {
       .sort((a, b) => b.demora_minutos - a.demora_minutos)
       .slice(0, cantidadRankingDemora);
     const turnoMayorDemora = rankingMayoresDemoras[0];
+    // Turnos por duración, con la etiqueta de la modalidad de cada fila (lib/metricasStand).
+    const porDuracionComparativo = comparativoStandPorDuracion(standFiltrado);
+    const standTurnos15 = porDuracionComparativo.find((i) => i.label === "15 min")?.value ?? 0;
+    const standTurnos30 = porDuracionComparativo.find((i) => i.label === "30 min")?.value ?? 0;
 
     return {
       ventasRegistradas,
@@ -1409,10 +1411,7 @@ export default function AdminMetricasPage() {
       ingresosPorMetodo: toChart(ingresosPorMetodo),
       turnos15min: standTurnos15,
       turnos30min: standTurnos30,
-      porDuracionComparativo: [
-        { label: "15 min", value: standTurnos15 },
-        { label: "30 min", value: standTurnos30 },
-      ] as ChartItem[],
+      porDuracionComparativo: porDuracionComparativo as ChartItem[],
     };
   }, [standFiltrado, agrupacionIngresos, filtroIngresos, limiteRankingDemora]);
 
@@ -1789,7 +1788,7 @@ export default function AdminMetricasPage() {
               <BarChart title="Reservas por cantidad de turnos" data={metricasReservas.reservasPorCantidadTurnos} />
               <BarChart title="Ingresos por simulador" data={metricasReservas.ingresosPorSimulador} valueFormatter={formatMoney} />
               <BarChart title="Reservas por día" data={metricasReservas.reservasPorDia} />
-              <BarChart title="Reservas: 15 vs 30 min" data={metricasReservas.reservasPorDuracion} />
+              <BarChart title="Reservas por duración" data={metricasReservas.reservasPorDuracion} />
             </div>
           </>
         ) : vista === "stand" ? (
@@ -1970,7 +1969,7 @@ export default function AdminMetricasPage() {
               <PieChart title="Turnos por método de pago" data={metricasStand.porMetodoPago} />
               <BarChart title="Ingresos por método de pago" data={metricasStand.ingresosPorMetodo} valueFormatter={formatMoney} />
               <BarChart title="Turnos por duración" data={metricasStand.porDuracion} />
-              <BarChart title="Stand: 15 vs 30 min" data={metricasStand.porDuracionComparativo} />
+              <BarChart title="Stand: turnos por duración" data={metricasStand.porDuracionComparativo} />
               <BarChart title="Turnos por cantidad de personas" data={metricasStand.porPersonas} />
               <BarChart title="Turnos por hora" data={metricasStand.porHora} />
               <BarChart title="Turnos por día de semana" data={metricasStand.porDia} />

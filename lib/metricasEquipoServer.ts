@@ -1,12 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getMesVista, getFallback, type MesVista } from "@/lib/cronogramaServer";
 import { calcularHorasMensuales, horaAMinutos, type DiaResol } from "@/lib/cronograma";
-import { personasDeFila, turnosDeFila, totalDeFila } from "@/lib/metricasStand";
+import { minutosComercialesStand, personasDeFila, turnosDeFila, totalDeFila } from "@/lib/metricasStand";
+import { minutosComercialesReserva, turnosComercialesReserva } from "@/lib/minutosComerciales";
 import { calcularComisionesPagos, claveComision, type ComisionConfig } from "@/lib/finanzasComisiones";
 import { getComisionesConfig } from "@/lib/finanzas";
 import { idsReembolsadas } from "@/lib/reservasReembolsos";
 import {
-  CERO, sumarMetricas, calcularTurnos, resolverAtribucion, nuevoAcum, imputar, reconciliar,
+  CERO, sumarMetricas, resolverAtribucion, nuevoAcum, imputar, reconciliar,
   type Metricas, type MotivoNoAtribuir, type Reconciliacion,
 } from "@/lib/metricasEquipo";
 
@@ -65,10 +66,10 @@ export type ReporteEquipo = {
 };
 
 const DEFINICIONES: Record<string, string> = {
-  turno: "1 turno = 15 minutos de uso por 1 persona/simulador (personas × minutos / 15).",
+  turno: "Operaciones legacy: 1 turno = 15 minutos de uso por 1 persona/simulador (personas × minutos / 15; en Reservas, la cantidad de simuladores registrada). Operaciones v2 (10/20/30): 1 turno = bloque de 10 minutos por persona/simulador.",
   operacion: "1 registro comercial/sesión fuente válido (turno del Stand o reserva web efectiva). Se reparte entre integrantes simultáneos.",
   personas: "Cantidad de personas/simuladores de la operación (Stand: cantidad_personas; Reserva: cantidad de simuladores).",
-  minutos: "turnos × 15 (minutos-persona vendidos).",
+  minutos: "Minutos-persona VENDIDOS. Legacy: turnos × 15 (fórmula histórica, sin recalcular). v2: duración × personas/simuladores. Nunca incluye el buffer de agenda.",
   horas: "Minutos del cronograma CONFIRMADO por integrante; jornadas completas (no se reparten); huecos del horario operativo → Ramiro. Día cerrado / fuera de horario = 0.",
   bruto: "Facturación bruta de la operación (Stand: total; Reserva: total cobrado).",
   comision: "Comisión de cobro canónica (Stand: por pago con la config de Finanzas). Reservas web: Finanzas NO modela comisión → 0 (limitación declarada, no se inventa).",
@@ -165,7 +166,7 @@ export async function consultarMetricasEquipo(params: ConsultaParams): Promise<R
 
     const { data: standRows } = await supabaseAdmin
       .from("turnos_stand")
-      .select("id, created_at, fecha, hora, hora_subida, estado, total, metodo_pago, posnet_pago, pagos_detalle, cantidad_personas, cantidad_simuladores, cantidad_turnos, cantidad_minutos")
+      .select("id, created_at, fecha, hora, hora_subida, estado, total, metodo_pago, posnet_pago, pagos_detalle, cantidad_personas, cantidad_simuladores, cantidad_turnos, cantidad_minutos, modalidad")
       .gte("fecha", desde).lte("fecha", hasta)
       .order("fecha", { ascending: true });
 
@@ -185,7 +186,7 @@ export async function consultarMetricasEquipo(params: ConsultaParams): Promise<R
       const rawPagos = t.pagos_detalle;
       const pagos = Array.isArray(rawPagos) && rawPagos.length > 0 ? rawPagos : [{ metodo_pago: t.metodo_pago, monto: t.total, posnet_pago: t.posnet_pago }];
       const com = calcularComisionesPagos(pagos as never, configByKey);
-      const m: Metricas = { turnos, personas, operaciones: 1, minutos: turnos * 15, bruto, comision: com.comision, neto: bruto - com.comision };
+      const m: Metricas = { turnos, personas, operaciones: 1, minutos: minutosComercialesStand(t as never), bruto, comision: com.comision, neto: bruto - com.comision };
 
       if (!inicio) { sinHora++; imputar(acum, "stand", m, { atribuido: false, motivo: "fecha_hora_invalida" }); continue; }
       // Stand es walk-in (siempre pasado); igual respetamos el corte.
@@ -203,7 +204,7 @@ export async function consultarMetricasEquipo(params: ConsultaParams): Promise<R
   if (fuentes === "todas" || fuentes === "reservas") {
     const { data: resRows } = await supabaseAdmin
       .from("reservas")
-      .select("id, created_at, fecha, hora, estado, total, cantidad_turnos, duracion_minutos, simuladores, origen, no_show")
+      .select("id, created_at, fecha, hora, estado, total, cantidad_turnos, duracion_minutos, simuladores, origen, no_show, modalidad")
       .gte("fecha", desde).lte("fecha", hasta)
       .order("fecha", { ascending: true });
 
@@ -227,11 +228,11 @@ export async function consultarMetricasEquipo(params: ConsultaParams): Promise<R
       const hora = normHora(r.hora);
       const sims = Array.isArray(r.simuladores) ? (r.simuladores as unknown[]).length : 0;
       const personas = Math.max(1, sims);
-      const durMin = Number(r.duracion_minutos) || 15;
-      const turnos = Number(r.cantidad_turnos) || calcularTurnos(personas, durMin);
+      // (B8) Turnos y minutos según la modalidad de la reserva (legacy: lo de siempre).
+      const turnos = turnosComercialesReserva(r, "calcular");
       const bruto = Number(r.total) || 0;
       // Reservas: Finanzas no modela comisión → 0 (no se inventa).
-      const m: Metricas = { turnos, personas, operaciones: 1, minutos: turnos * 15, bruto, comision: 0, neto: bruto };
+      const m: Metricas = { turnos, personas, operaciones: 1, minutos: minutosComercialesReserva(r, "calcular"), bruto, comision: 0, neto: bruto };
 
       if (!hora) { imputar(acum, "reservas", m, { atribuido: false, motivo: "fecha_hora_invalida" }); continue; }
       // Reserva FUTURA (servicio aún no ocurrió) → actividad pendiente, no efectiva.
