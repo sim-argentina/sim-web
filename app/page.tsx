@@ -3,9 +3,13 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import HeroHome from "@/components/HeroHome";
 import ReviewsCarousel from "@/components/ReviewsCarousel";
+import SesionesVigentes from "@/components/SesionesVigentes";
 import { getGoogleReviews, getGooglePlaceUrl } from "@/lib/googleReviews";
 
 // ISR: la Home se revalida cada 6h para refrescar las reseñas de Google.
+// (Bloque final) Lo que depende de la modalidad comercial NO viaja en este HTML:
+// las duraciones de las sesiones las trae <SesionesVigentes /> del catálogo
+// vigente en cada visita, así quitar el override se ve sin esperar 6 h.
 export const revalidate = 21600;
 
 // ─── 01 · QUÉ ES SIM ────────────────────────────────────────────
@@ -43,7 +47,7 @@ function QueEsSim() {
               { label: "UBICACIÓN",   val: "Nuevo Centro · Córdoba" },
               { label: "SIMULADORES", val: "Fórmula 1 y GT"         },
               { label: "HARDWARE",    val: "Moza y Logitech"         },
-              { label: "SESIONES",    val: "15 y 30 minutos"         },
+              { label: "SESIONES",    val: <SesionesVigentes />        },
             ].map((d) => (
               <div key={d.label} className="py-4">
                 <p className="text-[9px] font-black uppercase tracking-[0.45em] text-white/25">

@@ -11,6 +11,8 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { mensualidadesHabilitadas } from "@/lib/featureFlags";
+import { ofertaPublicaVigente } from "@/lib/ofertaPublica";
+import { duracionesCompactas, formatoPrecio } from "@/lib/ofertaPublicaTexto";
 
 // Pantalla selectora pública "Viví SIM". Antes vivía en /reservas-gift-cards
 // (esa ruta ahora redirige acá con 308 desde next.config.ts). La card de
@@ -19,6 +21,11 @@ import { mensualidadesHabilitadas } from "@/lib/featureFlags";
 //
 // La flag se evalúa por request (no en build) gracias a force-dynamic, así que
 // activarla en Vercel no necesita un redeploy.
+//
+// (Bloque final) Por lo mismo, la duración de Reservas y los "Desde" de
+// Mensualidades y Gift Cards salen de los catálogos VIGENTES en cada request
+// (lib/ofertaPublica): quitar el override cambia estos valores en el request
+// siguiente, sin redeploy ni caché que los retenga.
 export const dynamic = "force-dynamic";
 
 export const metadata = pageMetadata({
@@ -45,6 +52,13 @@ function StatRow({ stats, compacto }: { stats: Stat[]; compacto: boolean }) {
   const valor = compacto
     ? "text-lg md:text-2xl lg:text-base xl:text-lg"
     : "text-lg md:text-2xl";
+  // (Bloque final) Los valores salen del catálogo vigente y en v2 la duración es
+  // "10/20/30" (8 caracteres): desbordaba la columna de ~79px en lg. Un valor de
+  // más de 7 caracteres baja un escalón SOLO donde la columna es angosta; los de
+  // siempre ("15 / 30", "$30.000", "30 días") quedan exactamente como estaban.
+  const valorLargo = compacto
+    ? "text-lg max-[359px]:text-sm md:text-2xl lg:text-sm xl:text-lg"
+    : "text-lg max-[359px]:text-sm md:text-lg";
 
   return (
     <div className="grid grid-cols-3 divide-x divide-white/10">
@@ -56,7 +70,7 @@ function StatRow({ stats, compacto }: { stats: Stat[]; compacto: boolean }) {
               {s.label}
             </span>
           </div>
-          <div className={`font-black leading-none text-white ${valor}`}>
+          <div className={`font-black leading-none text-white ${s.value.length > 7 ? valorLargo : valor}`}>
             {s.value}
           </div>
         </div>
@@ -193,9 +207,13 @@ function ExperienceCard({
   );
 }
 
-export default function ViviSimPage() {
+export default async function ViviSimPage() {
   const iconCls = "h-3.5 w-3.5";
   const conMensualidades = mensualidadesHabilitadas();
+  const oferta = await ofertaPublicaVigente({ conMensualidades });
+  const duracionReservas = duracionesCompactas(oferta.reservas.duraciones) || "—";
+  const desdeGiftCards = oferta.giftCards.desde !== null ? formatoPrecio(oferta.giftCards.desde) : "—";
+  const desdeMensualidades = oferta.mensualidades?.desde != null ? formatoPrecio(oferta.mensualidades.desde) : "—";
 
   // Con las tres opciones visibles la grilla pasa a 3 columnas en lg (nunca deja
   // una card huérfana en una fila) y el título baja de escala en los anchos donde
@@ -249,7 +267,7 @@ export default function ViviSimPage() {
             subtitle="Viví la pista en primera persona"
             priority
             stats={[
-              { icon: <Clock3 className={iconCls} />, label: "Duración", value: "15 / 30" },
+              { icon: <Clock3 className={iconCls} />, label: "Duración", value: duracionReservas },
               { icon: <Users className={iconCls} />, label: "Pilotos", value: "1-4" },
               { icon: <Zap className={iconCls} />, label: "Ranking", value: "En vivo" },
             ]}
@@ -273,7 +291,7 @@ export default function ViviSimPage() {
               compacto={conMensualidades}
               subtitle="Comprá horas, reservá cuando quieras y disfrutá SIM durante 30 días."
               stats={[
-                { icon: <Clock3 className={iconCls} />, label: "Desde", value: "$30.000" },
+                { icon: <Clock3 className={iconCls} />, label: "Desde", value: desdeMensualidades },
                 { icon: <CalendarCheck className={iconCls} />, label: "Validez", value: "30 días" },
                 { icon: <Users className={iconCls} />, label: "Simuladores", value: "1–4" },
               ]}
@@ -294,7 +312,7 @@ export default function ViviSimPage() {
             stats={[
               { icon: <CalendarCheck className={iconCls} />, label: "Validez", value: "30 días" },
               { icon: <Download className={iconCls} />, label: "Entrega", value: "Digital" },
-              { icon: <Gift className={iconCls} />, label: "Desde", value: "$12.000" },
+              { icon: <Gift className={iconCls} />, label: "Desde", value: desdeGiftCards },
             ]}
             cta="Comprar Gift Card"
             ctaVariant={variante("secondary")}

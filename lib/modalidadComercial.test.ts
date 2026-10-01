@@ -271,6 +271,11 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     // validación al usarlo compara la duración REAL contra la lista guardada.
     // El test deriva los bordes de fecha de CORTE_MODALIDAD_V2_MS.
     "lib/codigosComercial.ts", "lib/codigosPromocionesB9.test.ts",
+    // (Bloque final) Viví SIM: ofertaPublica resuelve la modalidad UNA vez por
+    // request para mostrar duración y "Desde" de los catálogos vigentes (solo
+    // lectura, no vende). La Home lee /api/reservas/catalogo desde el navegador.
+    // El test deriva las fechas de precio de CORTE_MODALIDAD_V2_MS.
+    "lib/ofertaPublica.ts", "lib/ofertaPublicaFinal.test.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);

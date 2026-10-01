@@ -216,7 +216,9 @@ function seleccion(extra: Record<string, unknown>) {
   assert.match(card, /badge="Plan prepago"/);
   assert.match(card, /title="Mensualidades"/);
   assert.match(card, /Comprá horas, reservá cuando quieras y disfrutá SIM durante 30 días\./);
-  assert.match(card, /value: "\$30\.000"/);
+  // (Bloque final) El "Desde" ya no es un literal: sale del catálogo VIGENTE de
+  // Mensualidades (legacy $30.000, v2 $38.000). Ver lib/ofertaPublicaFinal.test.ts.
+  assert.match(card, /label: "Desde", value: desdeMensualidades/, "el Desde sale del catálogo vigente");
   assert.match(card, /label: "Validez", value: "30 días"/);
   assert.match(card, /label: "Simuladores", value: "1–4"/, "el stat dice Simuladores 1–4");
   assert.ok(!/label: "Pilotos"/.test(card), "esta card ya no dice Pilotos");
@@ -225,7 +227,8 @@ function seleccion(extra: Record<string, unknown>) {
   // Y la card de Reservas conserva EXACTAMENTE sus stats.
   const iRes = vivi.indexOf('href="/reservas"');
   const cardRes = vivi.slice(iRes, vivi.indexOf("/>", vivi.indexOf('cta="Reservar ahora"')));
-  assert.match(cardRes, /label: "Duración", value: "15 \/ 30"/);
+  // (Bloque final) La duración sale del catálogo VIGENTE de Reservas (legacy "15 / 30").
+  assert.match(cardRes, /label: "Duración", value: duracionReservas/, "la duración sale del catálogo vigente");
   assert.match(cardRes, /label: "Pilotos", value: "1-4"/, "Reservas no cambió");
   assert.match(cardRes, /label: "Ranking", value: "En vivo"/);
   assert.ok(!/imagePos=/.test(cardRes), "Reservas sigue con el recorte por defecto");
