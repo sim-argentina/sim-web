@@ -250,6 +250,12 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     "lib/mensualidadesComercial.ts", "lib/mensualidadesAgenda.ts", "lib/mensualidadesReserva.ts",
     "lib/mensualidadesCondiciones.ts",
     "lib/mensualidadesB6.test.ts",
+    // (B7) Empresas: empresasComercial es la única que resuelve la modalidad
+    // vigente, y SOLO para CREAR una campaña (se guarda en modalidad_comercial).
+    // Canje, disponibilidad y reprogramación usan la guardada (campaña o
+    // reserva); lib/empresasServer.ts y las rutas no importan el núcleo.
+    "lib/empresasComercial.ts",
+    "lib/empresasB7.test.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);

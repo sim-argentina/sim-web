@@ -1,27 +1,30 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
-import { getSlotsForDate, construirOcupacion, getOccupiedSlots, getNextSlot } from "@/lib/reservasSlots";
 
-// Flujo público de reserva con CÓDIGO EMPRESARIAL. Reutiliza la MISMA disponibilidad
-// que Reservas (GET /api/reservas?fecha) y crea la reserva con el endpoint atómico
-// (/api/empresas/canje). El beneficiario NO paga y NO pasa por Mercado Pago. Separado
-// del cupón de descuento para no generar ambigüedad.
+// Flujo público de reserva con CÓDIGO EMPRESARIAL. Crea la reserva con el
+// endpoint atómico (/api/empresas/canje). El beneficiario NO paga y NO pasa por
+// Mercado Pago. Separado del cupón de descuento para no generar ambigüedad.
+//
+// (B7) La página ya no calcula disponibilidad: los horarios y simuladores libres
+// los decide el servidor (/api/empresas/disponibilidad, motor B2) con la
+// modalidad y la duración de la campaña del código. Acá solo se muestran.
 
-const SIMULADORES = ["Ferrari", "McLaren", "Red Bull", "Alpine"] as const;
-
-type ReservaApi = { hora: string; simuladores: unknown; duracion_minutos?: number | null; estado?: string; modalidad?: string | null };
+type HorarioApi = { hora: string; simuladores: string[] };
 
 export default function ReservaEmpresaPage() {
   const [paso, setPaso] = useState<"codigo" | "turno" | "datos" | "ok">("codigo");
   const [codigo, setCodigo] = useState("");
   const [duracion, setDuracion] = useState(15);
+  const [hoy, setHoy] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
   const [fecha, setFecha] = useState("");
-  const [reservas, setReservas] = useState<ReservaApi[]>([]);
+  const [horarios, setHorarios] = useState<HorarioApi[]>([]);
+  const [cargandoHorarios, setCargandoHorarios] = useState(false);
+  const fechaPedida = useRef("");
   const [hora, setHora] = useState("");
   const [sim, setSim] = useState("");
 
@@ -31,20 +34,8 @@ export default function ReservaEmpresaPage() {
 
   const inp = "w-full rounded-xl bg-zinc-900 border border-zinc-700 px-4 py-3 text-sm text-white focus:outline-none focus:border-red-500";
 
-  // Disponibilidad derivada de las reservas reales (misma fuente que Reservas).
-  const ocupacion = useMemo(
-    // (B3) Con la modalidad de cada reserva: una v2 ocupa todo bloque de 20 que toca.
-    () => construirOcupacion(fecha, reservas.filter((r) => r.estado !== "cancelada").map((r) => ({ hora: r.hora, duracion_minutos: r.duracion_minutos, simuladores: r.simuladores, modalidad: r.modalidad }))),
-    [fecha, reservas],
-  );
-  const disponible = (h: string, s: string) => {
-    if (duracion >= 30 && !getNextSlot(fecha, h)) return false;
-    return getOccupiedSlots(fecha, h, duracion).every((slot) => !ocupacion[slot]?.has(s));
-  };
-  const horasDisponibles = useMemo(
-    () => getSlotsForDate(fecha).filter((h) => SIMULADORES.some((s) => disponible(h, s))),
-    [fecha, ocupacion, duracion], // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  const horasDisponibles = horarios.map((h) => h.hora);
+  const simuladoresLibres = horarios.find((h) => h.hora === hora)?.simuladores ?? [];
 
   async function validar() {
     setBusy(true); setMsg("");
@@ -53,17 +44,32 @@ export default function ReservaEmpresaPage() {
       const d = await res.json();
       if (!res.ok) { setMsg(d.error || "Código inválido o no disponible."); return; }
       setDuracion(Number(d.beneficio?.duracion_minutos) || 15);
+      setHoy(typeof d.hoy === "string" ? d.hoy : "");
       setPaso("turno");
     } catch { setMsg("Error de conexión."); }
     finally { setBusy(false); }
   }
 
   async function cargarFecha(f: string) {
-    setFecha(f); setHora(""); setSim(""); setReservas([]);
+    setFecha(f); setHora(""); setSim(""); setHorarios([]); setMsg("");
+    fechaPedida.current = f;
     if (!f) return;
-    const res = await fetch(`/api/reservas?fecha=${f}`, { cache: "no-store" });
-    const d = await res.json();
-    setReservas(Array.isArray(d) ? d : []);
+    setCargandoHorarios(true);
+    try {
+      const res = await fetch("/api/empresas/disponibilidad", {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ codigo, fecha: f }),
+      });
+      const d = await res.json();
+      // Si mientras tanto se eligió otra fecha, esta respuesta ya no importa.
+      if (fechaPedida.current !== f) return;
+      if (!res.ok) { setMsg(d.error || "No se pudo cargar la disponibilidad."); return; }
+      setHorarios(Array.isArray(d.horarios) ? d.horarios : []);
+    } catch {
+      if (fechaPedida.current === f) setMsg("Error de conexión.");
+    } finally {
+      if (fechaPedida.current === f) setCargandoHorarios(false);
+    }
   }
 
   async function confirmar() {
@@ -77,7 +83,19 @@ export default function ReservaEmpresaPage() {
         body: JSON.stringify({ codigo, nombre: form.nombre, apellido: form.apellido, telefono: form.telefono, email: form.email, fecha, hora, simuladores: [sim], idempotency_key: idemKey }),
       });
       const d = await res.json();
-      if (!res.ok) { setMsg(d.error || "No se pudo confirmar la reserva."); return; }
+      if (!res.ok) {
+        if (res.status === 409 && fecha) {
+          // El turno se ocupó (o ya pasó) mientras completabas los datos: se
+          // vuelven a pedir los horarios de ese día, conservando tus datos.
+          const error = d.error || "Ese horario ya no está disponible.";
+          setPaso("turno");
+          await cargarFecha(fecha);
+          setMsg(error);
+          return;
+        }
+        setMsg(d.error || "No se pudo confirmar la reserva.");
+        return;
+      }
       setConfirmacion({ fecha, hora, sim, duracion });
       setPaso("ok");
     } catch { setMsg("Error de conexión."); }
@@ -110,22 +128,22 @@ export default function ReservaEmpresaPage() {
               Código válido — experiencia de <b>{duracion} minutos</b>.
             </div>
             <label className="block text-sm text-zinc-300">Fecha
-              <input type="date" min={new Date().toISOString().slice(0, 10)} className={`${inp} mt-1`} value={fecha} onChange={(e) => cargarFecha(e.target.value)} />
+              <input type="date" min={hoy || undefined} className={`${inp} mt-1`} value={fecha} onChange={(e) => cargarFecha(e.target.value)} />
             </label>
             {fecha && (
               <>
                 <label className="block text-sm text-zinc-300">Horario
-                  <select className={`${inp} mt-1`} value={hora} onChange={(e) => { setHora(e.target.value); setSim(""); }}>
-                    <option value="">Elegí un horario</option>
+                  <select className={`${inp} mt-1`} value={hora} disabled={cargandoHorarios} onChange={(e) => { setHora(e.target.value); setSim(""); }}>
+                    <option value="">{cargandoHorarios ? "Buscando horarios…" : "Elegí un horario"}</option>
                     {horasDisponibles.map((h) => <option key={h} value={h}>{h}</option>)}
                   </select>
                 </label>
-                {horasDisponibles.length === 0 && <p className="text-sm text-zinc-500">No hay turnos disponibles ese día.</p>}
+                {!cargandoHorarios && !msg && horasDisponibles.length === 0 && <p className="text-sm text-zinc-500">No hay turnos disponibles ese día.</p>}
                 {hora && (
                   <label className="block text-sm text-zinc-300">Simulador
                     <select className={`${inp} mt-1`} value={sim} onChange={(e) => setSim(e.target.value)}>
                       <option value="">Elegí un simulador</option>
-                      {SIMULADORES.filter((s) => disponible(hora, s)).map((s) => <option key={s} value={s}>{s}</option>)}
+                      {simuladoresLibres.map((s) => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </label>
                 )}

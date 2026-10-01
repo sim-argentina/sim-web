@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
 import { logSecurityEvent } from "@/lib/apiError";
+import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { getCampania, actualizarCampania, softDeleteCampania } from "@/lib/empresasServer";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -16,7 +17,10 @@ export async function GET(_req: Request, { params }: RouteContext) {
   return NextResponse.json(res.data);
 }
 
+// (B7) Editar nunca cambia la modalidad comercial guardada; una duración nueva
+// se valida contra ESA modalidad (lib/empresasServer.ts).
 export async function PATCH(req: Request, { params }: RouteContext) {
+  if (!isAllowedOrigin(req)) return forbiddenOrigin();
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
   const { id } = await params;

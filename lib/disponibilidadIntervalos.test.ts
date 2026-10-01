@@ -512,9 +512,14 @@ async function main() {
       // (B6) Mensualidades: SOLO a través de lib/mensualidadesAgenda.ts, con la
       // modalidad del plan (reservar) o de la reserva (reprogramar).
       "lib/mensualidadesAgenda.ts",
+      // (B7) Empresas: SOLO a través de lib/empresasComercial.ts, con la
+      // modalidad de la campaña (disponibilidad y canje) o de la reserva
+      // (reprogramar). La página pública ya no calcula nada; su test nombra
+      // estos módulos para comprobar que la página NO los importa.
+      "lib/empresasComercial.ts", "lib/empresasB7.test.ts",
     ]);
     const ajenos = archivos.filter((f) => MODULOS.test(leer(f)) && !PERMITIDOS.has(f));
-    assert.deepEqual(ajenos, [], `el motor solo lo usan Reservas web, Mensualidades y el admin; lo importan: ${ajenos.join(", ")}`);
+    assert.deepEqual(ajenos, [], `el motor solo lo usan Reservas web, Mensualidades, Empresas y el admin; lo importan: ${ajenos.join(", ")}`);
     for (const f of archivos) {
       if (/^\s*["']use client["']/m.test(leer(f))) assert.ok(!MODULOS.test(leer(f)), `${f} es "use client": el navegador no calcula disponibilidad`);
     }

@@ -11,7 +11,11 @@ type Campania = {
   estado: string; estado_efectivo?: string; observaciones: string | null; codigos_generados: boolean;
   contacto_nombre?: string | null; contacto_telefono?: string | null; contacto_email?: string | null; cuit?: string | null;
   generados?: number; utilizados?: number;
+  // (B7) Modalidad comercial guardada al crearla (NULL = anterior) y las duraciones de ESA modalidad.
+  modalidad_comercial?: string | null; duraciones_permitidas?: number[];
 };
+// (B7) Catálogo VIGENTE para una campaña nueva: lo resuelve el servidor.
+type CatalogoEmpresas = { modalidad: string; duraciones: number[] };
 type Codigo = { id: string; codigo: string; estado: string; estado_efectivo?: string; usos_actuales: number; usos_maximos: number; created_at: string };
 type ReservaLite = { id?: number; fecha?: string; hora?: string; duracion_minutos?: number; simuladores?: string[]; estado?: string; no_show?: boolean };
 type Uso = { id: string; codigo_id: string; beneficiario_nombre: string | null; beneficiario_apellido: string | null; beneficiario_telefono: string | null; beneficiario_email: string | null; reserva_id: number | null; estado: string; created_at: string; reserva?: ReservaLite | null };
@@ -41,8 +45,8 @@ function badge(estado: string) {
 
 // Modal de alta/edición a NIVEL MÓDULO (identidad estable → los inputs no pierden
 // el foco al tipear, a diferencia de un componente anidado en el render).
-function CampaniaFormModal({ form, set, editId, msg, busy, onGuardar, onClose }: {
-  form: typeof BLANK; set: (k: string, v: string) => void; editId: string | null;
+function CampaniaFormModal({ form, set, editId, duraciones, msg, busy, onGuardar, onClose }: {
+  form: typeof BLANK; set: (k: string, v: string) => void; editId: string | null; duraciones: number[];
   msg: string; busy: boolean; onGuardar: () => void; onClose: () => void;
 }) {
   const dias = form.modalidad === "mensual" ? 30 : 60;
@@ -78,7 +82,13 @@ function CampaniaFormModal({ form, set, editId, msg, busy, onGuardar, onClose }:
             </select>
           </label>
           <label className="text-sm text-zinc-300">Cantidad contratada<input type="number" className={inp} value={form.cantidad_contratada} onChange={(e) => set("cantidad_contratada", e.target.value)} /></label>
-          <label className="text-sm text-zinc-300">Duración por experiencia (min)<input type="number" className={inp} value={form.duracion_minutos} onChange={(e) => set("duracion_minutos", e.target.value)} /></label>
+          {/* (B7) Solo las duraciones que manda el servidor: las vigentes para una campaña nueva, las de su modalidad al editar. */}
+          <label className="text-sm text-zinc-300">Duración por experiencia
+            <select className={inp} value={form.duracion_minutos} onChange={(e) => set("duracion_minutos", e.target.value)}>
+              <option value="">Elegí la duración</option>
+              {duraciones.map((d) => <option key={d} value={String(d)}>{d} minutos</option>)}
+            </select>
+          </label>
         </div>
 
         <div className={secc}>Económico</div>
@@ -131,6 +141,8 @@ export default function EmpresasTab() {
   const [busy, setBusy] = useState(false);
   const [pago, setPago] = useState<{ fecha_pago: string; medio_pago: string } | null>(null);
   const [editWarn, setEditWarn] = useState(false);
+  const [catalogo, setCatalogo] = useState<CatalogoEmpresas | null>(null);
+  const [duracionesEdicion, setDuracionesEdicion] = useState<number[]>([]);
 
   const cargar = useCallback(async () => {
     setLoading(true); setMsg("");
@@ -139,7 +151,7 @@ export default function EmpresasTab() {
       const res = await fetch(url, { cache: "no-store" });
       const d = await res.json();
       if (!res.ok) { setMsg(d.error || "Error"); setCampanias([]); }
-      else setCampanias(d.campanias || []);
+      else { setCampanias(d.campanias || []); setCatalogo(d.catalogo ?? null); }
     } catch { setMsg("Error de conexión"); }
     finally { setLoading(false); }
   }, [q, filtroEstado]);
@@ -155,7 +167,9 @@ export default function EmpresasTab() {
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
-  const abrirNueva = () => { setEditId(null); setForm(BLANK); setEditWarn(false); setShowForm(true); };
+  // (B7) La duración por defecto (15) solo si el catálogo vigente la vende; si no, hay que elegirla.
+  const duracionInicial = (cat: CatalogoEmpresas | null) => (cat?.duraciones.includes(Number(BLANK.duracion_minutos)) ? BLANK.duracion_minutos : "");
+  const abrirNueva = () => { setEditId(null); setForm({ ...BLANK, duracion_minutos: duracionInicial(catalogo) }); setEditWarn(false); setShowForm(true); };
   const abrirEditar = (c: Campania) => {
     setEditId(c.id);
     setForm({
@@ -167,6 +181,9 @@ export default function EmpresasTab() {
       estado_pago: c.estado_pago || "pendiente", fecha_pago: c.fecha_pago || "", medio_pago: (c as { medio_pago?: string }).medio_pago || "transferencia",
     });
     setEditWarn(Boolean(c.codigos_generados));
+    // Las de SU modalidad guardada, y siempre la que ya tiene (aunque hoy no se venda).
+    const propias = c.duraciones_permitidas ?? [];
+    setDuracionesEdicion(propias.includes(Number(c.duracion_minutos)) ? propias : [...propias, Number(c.duracion_minutos)].sort((a, b) => a - b));
     setShowForm(true);
   };
 
@@ -197,10 +214,22 @@ export default function EmpresasTab() {
           cantidad_contratada: Number(form.cantidad_contratada), duracion_minutos: Number(form.duracion_minutos),
           usos_por_codigo: Number(form.usos_por_codigo), precio_neto: Number(form.precio_neto), iva_porcentaje: Number(form.iva_porcentaje),
           fecha_inicio: form.fecha_inicio || null, fecha_pago: form.fecha_pago || null,
+          // (B7) Con qué catálogo se armó el formulario de una campaña nueva.
+          ...(editId ? {} : { modalidad_vista: catalogo?.modalidad }),
         }),
       });
       const d = await res.json();
-      if (!res.ok) { setMsg(d.error || "Error"); return; }
+      if (!res.ok) {
+        // (B7) 409: cambió la modalidad comercial. Nada se guardó: se muestran las
+        // duraciones vigentes y, si la elegida ya no existe, hay que volver a elegir.
+        if (res.status === 409 && d.catalogo) {
+          const nuevo = d.catalogo as CatalogoEmpresas;
+          setCatalogo(nuevo);
+          if (!nuevo.duraciones.includes(Number(form.duracion_minutos))) set("duracion_minutos", "");
+        }
+        setMsg(d.error || "Error");
+        return;
+      }
       setShowForm(false); await cargar();
     } finally { setBusy(false); }
   };
@@ -237,7 +266,7 @@ export default function EmpresasTab() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-lg font-black text-white">{c.empresa}{c.nombre_campania ? ` — ${c.nombre_campania}` : ""}</h3>
-            <p className="text-xs text-zinc-500">{c.modalidad === "mensual" ? "Pack mensual" : "Compra única"} · {c.fecha_inicio || "—"} → {c.fecha_vencimiento || "—"} · {badge(String(m.estado))}</p>
+            <p className="text-xs text-zinc-500">{c.modalidad === "mensual" ? "Pack mensual" : "Compra única"} · {c.duracion_minutos} min · Agenda {c.modalidad_comercial === "v2_10" ? "10/20/30" : "15/30"} · {c.fecha_inicio || "—"} → {c.fecha_vencimiento || "—"} · {badge(String(m.estado))}</p>
           </div>
           <button onClick={() => abrirEditar(c)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">Editar</button>
         </div>
@@ -371,7 +400,7 @@ export default function EmpresasTab() {
             </div>
           )}
         </div>
-        {showForm && <CampaniaFormModal form={form} set={set} editId={editId} msg={msg} busy={busy} onGuardar={guardar} onClose={() => setShowForm(false)} />}
+        {showForm && <CampaniaFormModal form={form} set={set} editId={editId} duraciones={editId ? duracionesEdicion : catalogo?.duraciones ?? []} msg={msg} busy={busy} onGuardar={guardar} onClose={() => setShowForm(false)} />}
 
         {/* Modal Marcar pagada: registra fecha + medio + confirma (impacta Finanzas). */}
         {pago && (
@@ -441,7 +470,7 @@ export default function EmpresasTab() {
           </table>
         </div>
       )}
-      {showForm && <CampaniaFormModal form={form} set={set} editId={editId} msg={msg} busy={busy} onGuardar={guardar} onClose={() => setShowForm(false)} />}
+      {showForm && <CampaniaFormModal form={form} set={set} editId={editId} duraciones={editId ? duracionesEdicion : catalogo?.duraciones ?? []} msg={msg} busy={busy} onGuardar={guardar} onClose={() => setShowForm(false)} />}
     </div>
   );
 }

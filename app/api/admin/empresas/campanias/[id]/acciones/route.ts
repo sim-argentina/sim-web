@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
 import { logSecurityEvent } from "@/lib/apiError";
+import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import {
   marcarPagada, setEstadoCampania, setEstadoCodigo,
   cancelarReservaEmpresa, reprogramarReservaEmpresa, setNoShowEmpresa,
@@ -12,7 +13,9 @@ type RouteContext = { params: Promise<{ id: string }> };
 // Acciones admin sobre una campaña. SOLO admin (server-side). Estados no manuales:
 // derivan de pago/fechas; acá solo hay transiciones explícitas (pagada/finalizar/
 // cancelar) y operaciones sobre códigos/reservas.
+// (B7) Reprogramar usa la modalidad guardada de la RESERVA (legacy o v2).
 export async function POST(req: Request, { params }: RouteContext) {
+  if (!isAllowedOrigin(req)) return forbiddenOrigin();
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
   const { id } = await params;

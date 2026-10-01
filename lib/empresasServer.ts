@@ -1,16 +1,27 @@
 // Orquestación servidor del módulo Empresas: combina la lógica pura (lib/empresas)
 // con la persistencia (supabaseAdmin) y el canje ATÓMICO (RPC consumir_empresa_codigo).
 // Solo se importa desde route handlers (server) / tests. No toca reservas ni finanzas.
+//
+// (B7) La agenda del canje depende de la modalidad comercial GUARDADA
+// (lib/empresasComercial.ts): la campaña la fija al crearse y no cambia; la
+// reserva, al crearse. Disponibilidad, canje y reprogramación pasan por el
+// motor B2 y por la RPC de esa modalidad (crear/reprogramar_reserva_empresa
+// legacy o _v2).
 import { randomBytes } from "crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   calcularVencimiento, formatearCodigo, estadoEfectivo, estadoCodigoEfectivo,
   metricasCampania, ivaDesglose, inicioValido, type Modalidad,
 } from "@/lib/empresas";
-import { getOccupiedSlots } from "@/lib/reservasSlots";
-import { reservaEstaBloqueada } from "@/lib/bloqueos";
+import { fechaValida, hoyEnSim } from "@/lib/agenda";
+import {
+  duracionEmpresaValida, duracionesEmpresa, evaluarTurnoEmpresa, horariosEmpresa,
+  mensajeDuracionEmpresa, modalidadGuardada, modalidadParaNuevaCampania, type CatalogoEmpresas,
+} from "@/lib/empresasComercial";
 
-export type Resultado<T> = { ok: true; data: T } | { ok: false; status: number; error: string };
+export type Resultado<T> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; error: string; codigo?: string; catalogo?: CatalogoEmpresas };
 const fail = (status: number, error: string): Resultado<never> => ({ ok: false, status, error });
 const ok = <T>(data: T): Resultado<T> => ({ ok: true, data });
 const hoyIso = () => new Date().toISOString().slice(0, 10);
@@ -70,7 +81,11 @@ export async function listarCampanias(opts: { q?: string | null; estado?: string
     .map((c) => {
       const est = estadoEfectivo(c, hoy);
       const cnt = conteos.get(c.id) ?? { generados: 0, utilizados: 0 };
-      return { ...c, estado_efectivo: est, ...ivaDesglose(Number(c.precio_neto), Number(c.iva_porcentaje)), generados: cnt.generados, utilizados: cnt.utilizados };
+      return {
+        ...c, estado_efectivo: est, ...ivaDesglose(Number(c.precio_neto), Number(c.iva_porcentaje)), generados: cnt.generados, utilizados: cnt.utilizados,
+        // (B7) Las de SU modalidad guardada: editar nunca la cambia.
+        duraciones_permitidas: duracionesEmpresa(modalidadGuardada(c.modalidad_comercial)),
+      };
     })
     .filter((c) => !opts.estado || c.estado_efectivo === opts.estado);
   return ok(rows);
@@ -85,15 +100,23 @@ function validarCampania(row: Record<string, unknown>): string | null {
   return null;
 }
 
-export async function crearCampania(body: Record<string, unknown>, createdBy: string): Promise<Resultado<unknown>> {
+export async function crearCampania(body: Record<string, unknown>, createdBy: string, ahora: Date = new Date()): Promise<Resultado<unknown>> {
+  // (B7) La modalidad comercial se resuelve UNA vez, acá, y se guarda en la
+  // campaña. Si el formulario se armó con otra (pestaña abierta antes del
+  // corte), 409 con el catálogo vigente y sin escribir nada.
+  const cat = await modalidadParaNuevaCampania(body, { ahora });
+  if (!cat.ok) return { ok: false, status: cat.status, error: cat.error, codigo: cat.codigo, catalogo: cat.catalogo };
+  const modalidadComercial = cat.catalogo.modalidad;
+
   const row = limpiarCampania(body);
   const err = validarCampania(row);
   if (err) return fail(400, err);
+  if (!duracionEmpresaValida(modalidadComercial, row.duracion_minutos)) return fail(400, mensajeDuracionEmpresa(modalidadComercial));
   const modalidad = (row.modalidad as Modalidad) ?? "unica";
   const conVen = conVencimiento(row, modalidad, (row.fecha_inicio as string) ?? null);
   // Siempre nace en borrador; se confirma (activa) al marcarla pagada.
   const { data, error } = await supabaseAdmin
-    .from("empresa_campanias").insert({ ...conVen, estado: "borrador", estado_pago: "pendiente", created_by: createdBy }).select("*").single();
+    .from("empresa_campanias").insert({ ...conVen, modalidad_comercial: modalidadComercial, estado: "borrador", estado_pago: "pendiente", created_by: createdBy }).select("*").single();
   if (error) return fail(500, "No se pudo crear la campaña.");
   return ok(data);
 }
@@ -105,6 +128,13 @@ export async function actualizarCampania(id: string, body: Record<string, unknow
   const merged = { ...actual, ...row };
   const err = validarCampania(merged);
   if (err) return fail(400, err);
+  // (B7) modalidad_comercial no es editable (no está en CAMPOS_EDITABLES). Una
+  // duración NUEVA se valida contra la modalidad GUARDADA de la campaña; la que
+  // ya tenía se conserva siempre, aunque hoy no se venda.
+  if ("duracion_minutos" in row && Number(row.duracion_minutos) !== Number(actual.duracion_minutos)) {
+    const propia = modalidadGuardada(actual.modalidad_comercial);
+    if (!duracionEmpresaValida(propia, row.duracion_minutos)) return fail(400, mensajeDuracionEmpresa(propia));
+  }
   const conVen = conVencimiento(row, (merged.modalidad as string) ?? "unica", (merged.fecha_inicio as string) ?? null);
   const patch: Record<string, unknown> = { ...conVen, updated_at: new Date().toISOString() };
   // Si al editar queda pagada y todavía era borrador, se confirma (activa).
@@ -153,7 +183,10 @@ export async function getCampania(id: string): Promise<Resultado<unknown>> {
   }
 
   return ok({
-    campania: { ...campania, ...ivaDesglose(Number(campania.precio_neto), Number(campania.iva_porcentaje)) },
+    campania: {
+      ...campania, ...ivaDesglose(Number(campania.precio_neto), Number(campania.iva_porcentaje)),
+      duraciones_permitidas: duracionesEmpresa(modalidadGuardada(campania.modalidad_comercial)),
+    },
     metricas,
     codigos: (codigos ?? []).map((c) => ({ ...c, estado_efectivo: estadoCodigoEfectivo(c, metricas.estado) })),
     usos: usosDto,
@@ -225,10 +258,12 @@ export async function datosInforme(id: string, tipo: "parcial" | "definitivo"): 
 
 // ── Canje público ─────────────────────────────────────────────────────────────
 
-// Validación READ-ONLY (para la web). Respuesta genérica: no revela por qué falla
-// (evita enumeración). Devuelve el beneficio si el código es canjeable ahora.
-export async function validarCodigo(codigo: string): Promise<Resultado<unknown>> {
-  const cod = String(codigo ?? "").trim().toUpperCase();
+type CampaniaCanje = { duracion: number; modalidad: ReturnType<typeof modalidadGuardada>; vence: unknown };
+
+// El código y su campaña, si se pueden canjear ahora. Read-only. Mismo criterio
+// de siempre (estado efectivo, estado del código y usos); la RPC lo vuelve a
+// comprobar con el código tomado FOR UPDATE.
+async function campaniaCanjeable(cod: string): Promise<Resultado<CampaniaCanje>> {
   if (!cod) return fail(400, "Código inválido o no disponible.");
   const { data: c } = await supabaseAdmin.from("empresa_codigos").select("*").eq("codigo", cod).maybeSingle();
   if (!c) return fail(404, "Código inválido o no disponible.");
@@ -237,16 +272,50 @@ export async function validarCodigo(codigo: string): Promise<Resultado<unknown>>
   const canjeable = camp && estadoEfectivo(camp, hoy) === "activa" && c.estado === "disponible" && c.usos_actuales < c.usos_maximos;
   if (!canjeable) return fail(409, "Código inválido o no disponible.");
   return ok({
-    valido: true,
-    beneficio: { duracion_minutos: Number(camp!.duracion_minutos) || 15, experiencia: 1 },
+    duracion: Number(camp!.duracion_minutos) || 15,
+    // (B7) La de la CAMPAÑA, fijada al crearla. Nunca la vigente.
+    modalidad: modalidadGuardada(camp!.modalidad_comercial),
     vence: camp!.fecha_vencimiento,
   });
 }
 
-// Reserva + canje ATÓMICO (Fase 2). Valida el código (read-only), computa los slots
-// con la MISMA lógica de Reservas, chequea bloqueos y ejecuta la transacción
-// crear_reserva_empresa (reserva + slots + consumo + uso vinculado, todo o nada).
-// La duración la manda el servidor (la del código), no el cliente.
+// Validación READ-ONLY (para la web). Respuesta genérica: no revela por qué falla
+// (evita enumeración). Devuelve el beneficio si el código es canjeable ahora.
+export async function validarCodigo(codigo: string, ahora: Date = new Date()): Promise<Resultado<unknown>> {
+  const val = await campaniaCanjeable(String(codigo ?? "").trim().toUpperCase());
+  if (!val.ok) return val;
+  return ok({
+    valido: true,
+    beneficio: { duracion_minutos: val.data.duracion, experiencia: 1 },
+    vence: val.data.vence,
+    // (B7) El "hoy" de SIM, para que el calendario no dependa del reloj del navegador.
+    hoy: hoyEnSim(ahora),
+  });
+}
+
+// (B7) Horarios libres para canjear ESE código en ESA fecha. La calcula el
+// servidor con el motor B2, la modalidad de la campaña y su duración: el
+// navegador solo muestra lo que recibe. Sin datos personales.
+export async function disponibilidadConCodigo(codigo: string, fecha: string, ahora: Date = new Date()): Promise<Resultado<unknown>> {
+  const val = await campaniaCanjeable(String(codigo ?? "").trim().toUpperCase());
+  if (!val.ok) return fail(val.status, "Código inválido o no disponible.");
+  if (!fechaValida(fecha)) return fail(400, "Fecha inválida.");
+  if (fecha < hoyEnSim(ahora)) return fail(422, "Elegí una fecha a partir de hoy.");
+  const { duracion, modalidad } = val.data;
+  try {
+    const horarios = await horariosEmpresa({ modalidad, fecha, duracion, ahora, soloFuturos: true });
+    return ok({ fecha, duracion_minutos: duracion, horarios });
+  } catch {
+    return fail(500, "No se pudo cargar la disponibilidad.");
+  }
+}
+
+// Reserva + canje ATÓMICO (Fase 2). Valida el código (read-only), evalúa el turno
+// con el motor B2 en la modalidad de la CAMPAÑA (grilla, cierre, ocupación con
+// buffer, bloqueos, pendientes) y ejecuta la transacción de esa modalidad:
+// crear_reserva_empresa (legacy, bloques de 20) o crear_reserva_empresa_v2 (una
+// fila por simulador con ocupacion_min). Reserva + slots + consumo + uso
+// vinculado, todo o nada. La duración la manda el servidor (la de la campaña).
 export async function reservarConCodigo(
   codigo: string,
   beneficiario: { nombre?: string; apellido?: string; telefono?: string; email?: string },
@@ -254,48 +323,63 @@ export async function reservarConCodigo(
   hora: string,
   simuladores: string[],
   idempotencyKey?: string | null,
+  ahora: Date = new Date(),
 ): Promise<Resultado<unknown>> {
   const cod = String(codigo ?? "").trim().toUpperCase();
 
-  // Idempotencia primero: si esta key ya creó una reserva, devolverla (retry/refresh),
-  // sin re-validar el código (que ya estaría 'utilizado').
-  if (idempotencyKey) {
+  // Si esta key ya creó una reserva, devolverla (retry/refresh) sin re-validar el
+  // código (que ya estaría 'utilizado').
+  const yaCreada = async (): Promise<Resultado<unknown> | null> => {
+    if (!idempotencyKey) return null;
     const { data: uso } = await supabaseAdmin.from("empresa_codigo_usos").select("reserva_id").eq("idempotency_key", idempotencyKey).maybeSingle();
-    if (uso?.reserva_id) return ok({ reserva_id: uso.reserva_id, idempotente: true });
-  }
+    return uso?.reserva_id ? ok({ reserva_id: uso.reserva_id, idempotente: true }) : null;
+  };
+  // (B7) Un 409 puede ser el reintento SIMULTÁNEO de un canje que ya se
+  // concretó (el código ya figura usado o su turno ya figura ocupado): con la
+  // misma key, se devuelve esa reserva en vez del error.
+  const rechazo = async (status: number, error: string): Promise<Resultado<unknown>> =>
+    (status === 409 ? await yaCreada() : null) ?? fail(status, error);
 
-  const val = await validarCodigo(cod);
-  if (!val.ok) return fail(val.status, "Código inválido o no disponible.");
-  const duracion = (val.data as { beneficio: { duracion_minutos: number } }).beneficio.duracion_minutos;
+  // Idempotencia primero.
+  const previa = await yaCreada();
+  if (previa) return previa;
+
+  const val = await campaniaCanjeable(cod);
+  if (!val.ok) return rechazo(val.status, "Código inválido o no disponible.");
+  const { duracion, modalidad } = val.data;
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) return fail(400, "Fecha u hora inválida.");
   const sims = (Array.isArray(simuladores) ? simuladores : []).map((s) => String(s).trim()).filter(Boolean);
   if (sims.length < 1) return fail(400, "Elegí un simulador.");
 
-  const slots = getOccupiedSlots(fecha, hora, duracion);
-  if (await reservaEstaBloqueada(fecha, slots, sims)) return fail(409, "Ese horario no está disponible.");
+  let ev: Awaited<ReturnType<typeof evaluarTurnoEmpresa>>;
+  try {
+    ev = await evaluarTurnoEmpresa({ modalidad, fecha, hora, duracion, simuladores: sims, ahora, soloFuturos: true });
+  } catch {
+    return fail(500, "No se pudo crear la reserva.");
+  }
+  if (!ev.ok) return rechazo(ev.status, ev.error);
 
-  const { data, error } = await supabaseAdmin.rpc("crear_reserva_empresa", {
+  const comunes = {
     p_codigo: cod,
     p_nombre: beneficiario.nombre ?? null,
     p_apellido: beneficiario.apellido ?? null,
     p_telefono: beneficiario.telefono ?? null,
     p_email: beneficiario.email ?? null,
     p_fecha: fecha, p_hora: hora, p_duracion: duracion,
-    p_simuladores: sims, p_slots: slots,
+    p_simuladores: sims,
     p_idempotency_key: idempotencyKey ?? null,
-  });
+  };
+  const { data, error } = modalidad === "v2_10"
+    ? await supabaseAdmin.rpc("crear_reserva_empresa_v2", comunes)
+    : await supabaseAdmin.rpc("crear_reserva_empresa", { ...comunes, p_slots: ev.bloques });
   if (error) return fail(500, "No se pudo crear la reserva.");
   const filas = (data ?? []) as Array<{ reserva_id: number }>;
   if (filas.length) return ok({ reserva_id: filas[0].reserva_id, duracion, fecha, hora, simuladores: sims });
 
   // Sin filas: puede ser conflicto de slot o carrera de idempotencia. Si la key ya
   // creó una reserva, devolverla (idempotente); si no, es que el turno se ocupó.
-  if (idempotencyKey) {
-    const { data: uso } = await supabaseAdmin.from("empresa_codigo_usos").select("reserva_id").eq("idempotency_key", idempotencyKey).maybeSingle();
-    if (uso?.reserva_id) return ok({ reserva_id: uso.reserva_id, idempotente: true });
-  }
-  return fail(409, "Ese horario ya no está disponible.");
+  return rechazo(409, "Ese horario ya no está disponible.");
 }
 
 // ── Acciones admin (Fase 2) ───────────────────────────────────────────────────
@@ -347,15 +431,29 @@ export async function cancelarReservaEmpresa(reservaId: number, liberarCodigo: b
 }
 
 // Reprogramar una reserva empresarial (admin). NO consume otro uso. Atómico vía RPC.
-export async function reprogramarReservaEmpresa(reservaId: number, fecha: string, hora: string, simuladores: string[]): Promise<Resultado<unknown>> {
-  const { data: res } = await supabaseAdmin.from("reservas").select("duracion_minutos, origen").eq("id", reservaId).maybeSingle();
+// (B7) Con la modalidad de la RESERVA (NULL = legacy), nunca la vigente: una
+// legacy sigue en grilla de 20 después del corte y una v2 en grilla de 10. Su
+// propio lugar actual no la bloquea.
+export async function reprogramarReservaEmpresa(reservaId: number, fecha: string, hora: string, simuladores: string[], ahora: Date = new Date()): Promise<Resultado<unknown>> {
+  const { data: res } = await supabaseAdmin.from("reservas").select("duracion_minutos, origen, modalidad").eq("id", reservaId).maybeSingle();
   if (!res || res.origen !== "empresa") return fail(404, "Reserva empresarial no encontrada.");
   const sims = (Array.isArray(simuladores) ? simuladores : []).map((s) => String(s).trim()).filter(Boolean);
   if (sims.length < 1) return fail(400, "Elegí un simulador.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) return fail(400, "Fecha u hora inválida.");
-  const slots = getOccupiedSlots(fecha, hora, Number(res.duracion_minutos) || 15);
-  if (await reservaEstaBloqueada(fecha, slots, sims)) return fail(409, "Ese horario no está disponible.");
-  const { data, error } = await supabaseAdmin.rpc("reprogramar_reserva_empresa", { p_reserva_id: reservaId, p_fecha: fecha, p_hora: hora, p_simuladores: sims, p_slots: slots });
+  const modalidad = modalidadGuardada(res.modalidad);
+  let ev: Awaited<ReturnType<typeof evaluarTurnoEmpresa>>;
+  try {
+    ev = await evaluarTurnoEmpresa({
+      modalidad, fecha, hora, duracion: Number(res.duracion_minutos) || 15, simuladores: sims, ahora,
+      soloFuturos: false, excluirReservaId: reservaId,
+    });
+  } catch {
+    return fail(500, "No se pudo reprogramar.");
+  }
+  if (!ev.ok) return fail(ev.status, ev.error);
+  const { data, error } = modalidad === "v2_10"
+    ? await supabaseAdmin.rpc("reprogramar_reserva_empresa_v2", { p_reserva_id: reservaId, p_fecha: fecha, p_hora: hora, p_simuladores: sims })
+    : await supabaseAdmin.rpc("reprogramar_reserva_empresa", { p_reserva_id: reservaId, p_fecha: fecha, p_hora: hora, p_simuladores: sims, p_slots: ev.bloques });
   if (error) return fail(500, "No se pudo reprogramar.");
   if (!data) return fail(409, "No se pudo reprogramar (¿turno ocupado?).");
   return ok({ ok: true });
