@@ -67,12 +67,12 @@ export async function actividadCentralDelDia(businessDate: string): Promise<{
     supabaseAdmin
       .from("turnos_stand")
       .select(
-        "id, estado, fecha, hora, cantidad_simuladores, cantidad_minutos, cantidad_turnos, cantidad_personas, hora_subida, hora_bajada, turno_listo"
+        "id, estado, fecha, hora, cantidad_simuladores, cantidad_minutos, cantidad_turnos, cantidad_personas, modalidad, hora_subida, hora_bajada, turno_listo"
       )
       .eq("fecha", businessDate),
     supabaseAdmin
       .from("reservas")
-      .select("id, estado, no_show, fecha, hora, duracion_minutos, simuladores, cantidad_turnos")
+      .select("id, estado, no_show, fecha, hora, duracion_minutos, simuladores, cantidad_turnos, modalidad")
       .eq("fecha", businessDate)
       .eq("estado", "activa"),
   ]);

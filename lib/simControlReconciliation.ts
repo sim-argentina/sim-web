@@ -34,7 +34,18 @@
 //
 // Módulo PURO: sin Supabase, sin red, sin fecha del sistema. Todo entra por parámetro para poder
 // testear los casos de borde exactos.
+//
+// ── (B10) Modalidad 10/20/30 ────────────────────────────────────────────────────
+// Los minutos son siempre COMERCIALES (lo vendido), nunca la ocupación de agenda: el buffer de +10
+// es de la agenda online y SIM Control no lo ejecuta ni lo reporta. Las fórmulas principales
+// (simuladores × minutos) ya eran por minutos reales. Lo que cambia es el respaldo `turnos × 15`:
+// vale solo para filas legacy (NULL o 'legacy'). En una fila v2 `cantidad_turnos` son bloques de
+// 10 (Turnero) o la cantidad de simuladores (Reservas), así que se usan los minutos vendidos.
+// La rama legacy no cambia: el histórico concilia exactamente igual.
 
+import { modalidadDeFila } from "@/lib/minutosComerciales";
+
+/** Bloque del respaldo LEGACY `turnos × 15`. No aplica a filas v2. */
 export const MINUTOS_POR_BLOQUE = 15;
 
 /** Estado de la conciliación de una fecha comercial completa. */
@@ -59,6 +70,8 @@ export type FilaStandConciliable = {
   cantidad_minutos?: number | string | null;
   cantidad_turnos?: number | string | null;
   cantidad_personas?: number | string | null;
+  /** (B10) NULL o 'legacy' = legacy; 'v2_10' = bloques de 10. */
+  modalidad?: string | null;
   // Evidencia operativa de uso, cargada desde el Turnero.
   hora_subida?: string | null;
   hora_bajada?: string | null;
@@ -75,6 +88,8 @@ export type FilaReservaConciliable = {
   duracion_minutos?: number | string | null;
   simuladores?: string[] | string | null;
   cantidad_turnos?: number | string | null;
+  /** (B10) NULL o 'legacy' = legacy; 'v2_10' = duración real 10/20/30. */
+  modalidad?: string | null;
   // Evidencia operativa de uso (vive en reserva_operacion).
   hora_subida?: string | null;
   hora_bajada?: string | null;
@@ -233,8 +248,8 @@ function simuladoresDe(valor: string[] | string | null | undefined): string[] {
  *
  * Fórmula principal: `cantidad_simuladores × cantidad_minutos`.
  *
- * Si `cantidad_simuladores` no está cargado (la selección de cabinas es opcional en el Turnero), se
- * usa `cantidad_turnos × 15`, que da EXACTAMENTE lo mismo cuando los datos están completos: el
+ * Si `cantidad_simuladores` no está cargado (la selección de cabinas es opcional en el Turnero), en
+ * una fila LEGACY se usa `cantidad_turnos × 15`, que da EXACTAMENTE lo mismo cuando los datos están completos: el
  * Turnero calcula `cantidad_turnos = cantidad_personas × (cantidad_minutos / 15)` y en el stand hay
  * una persona por cabina. Una fila sin cabinas cargadas concilia igual: no vale bloquear una jornada
  * por un dato visual.
@@ -253,6 +268,17 @@ export function simuladorMinutosStand(fila: FilaStandConciliable, corte?: CorteL
   const minutos = num(fila.cantidad_minutos);
   if (sims > 0 && minutos > 0) {
     return { fuente: "stand", id, simuladorMinutos: sims * minutos, formula: "simuladores_x_minutos" };
+  }
+
+  // (B10) Fila v2: `cantidad_turnos` son bloques de 10, así que `turnos × 15` daría de más
+  // (2 personas · 20 min = 4 bloques → 60 en vez de 40). Se usa lo vendido: personas × minutos por
+  // persona, una persona por cabina. Sin buffer. (La etiqueta respeta el CHECK de la base.)
+  if (modalidadDeFila(fila.modalidad) === "v2_10") {
+    const personasV2 = num(fila.cantidad_personas);
+    if (personasV2 > 0 && minutos > 0) {
+      return { fuente: "stand", id, simuladorMinutos: personasV2 * minutos, formula: "simuladores_x_minutos" };
+    }
+    return { fuente: "stand", id, simuladorMinutos: 0, formula: "excluida", excluidaPor: "sin_datos" };
   }
 
   const turnos = num(fila.cantidad_turnos);
@@ -297,6 +323,16 @@ export function simuladorMinutosReserva(fila: FilaReservaConciliable, corte?: Co
   const minutos = num(fila.duracion_minutos);
   if (sims > 0 && minutos > 0) {
     return { fuente: "reserva", id, simuladorMinutos: sims * minutos, formula: "simuladores_x_minutos" };
+  }
+
+  // (B10) Reserva v2: `cantidad_turnos` guarda la cantidad de simuladores (igual que legacy), pero
+  // la duración es la real (10/20/30), nunca un bloque de 15. Sin buffer.
+  if (modalidadDeFila(fila.modalidad) === "v2_10") {
+    const simsV2 = num(fila.cantidad_turnos);
+    if (simsV2 > 0 && minutos > 0) {
+      return { fuente: "reserva", id, simuladorMinutos: simsV2 * minutos, formula: "simuladores_x_minutos" };
+    }
+    return { fuente: "reserva", id, simuladorMinutos: 0, formula: "excluida", excluidaPor: "sin_datos" };
   }
 
   const turnos = num(fila.cantidad_turnos);
