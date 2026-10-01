@@ -7,6 +7,11 @@
 // reserva, al crearse. Disponibilidad, canje y reprogramación pasan por el
 // motor B2 y por la RPC de esa modalidad (crear/reprogramar_reserva_empresa
 // legacy o _v2).
+//
+// (B7.1) "Hoy" (vigencia de campañas, canje, disponibilidad) es la fecha
+// CALENDARIO de Argentina, con hoyEnSim (la misma de Reservas y Mensualidades),
+// nunca la fecha UTC: de 21:00 a 23:59 la UTC ya es mañana y adelantaba un día
+// el inicio y el vencimiento. Las RPC de canje miden igual (db/empresas-b7-1-fecha.sql).
 import { randomBytes } from "crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
@@ -24,7 +29,6 @@ export type Resultado<T> =
   | { ok: false; status: number; error: string; codigo?: string; catalogo?: CatalogoEmpresas };
 const fail = (status: number, error: string): Resultado<never> => ({ ok: false, status, error });
 const ok = <T>(data: T): Resultado<T> => ({ ok: true, data });
-const hoyIso = () => new Date().toISOString().slice(0, 10);
 
 // El admin/owner puede corregir TODOS los datos de la campaña, incluso pagada/activa
 // (sin inmutabilidad). El estado de lifecycle (borrador/finalizada/cancelada) sí es
@@ -58,13 +62,13 @@ function conVencimiento(row: Record<string, unknown>, modalidad: string, fechaIn
 
 // ── Campañas ──────────────────────────────────────────────────────────────────
 
-export async function listarCampanias(opts: { q?: string | null; estado?: string | null; incluirArchivadas?: boolean }): Promise<Resultado<unknown>> {
+export async function listarCampanias(opts: { q?: string | null; estado?: string | null; incluirArchivadas?: boolean }, ahora: Date = new Date()): Promise<Resultado<unknown>> {
   let query = supabaseAdmin.from("empresa_campanias").select("*").order("created_at", { ascending: false });
   if (!opts.incluirArchivadas) query = query.is("deleted_at", null);
   if (opts.q) query = query.or(`empresa.ilike.%${opts.q}%,nombre_campania.ilike.%${opts.q}%`);
   const { data, error } = await query;
   if (error) return fail(500, "No se pudieron cargar las campañas.");
-  const hoy = hoyIso();
+  const hoy = hoyEnSim(ahora);
   // Conteo de códigos por campaña (barato) para el listado.
   const ids = (data ?? []).map((c) => c.id);
   const conteos = new Map<string, { generados: number; utilizados: number }>();
@@ -155,14 +159,14 @@ export async function softDeleteCampania(id: string, by: string): Promise<Result
 }
 
 // Estado completo de una campaña (para el detalle admin): datos + métricas reales.
-export async function getCampania(id: string): Promise<Resultado<unknown>> {
+export async function getCampania(id: string, ahora: Date = new Date()): Promise<Resultado<unknown>> {
   const { data: campania } = await supabaseAdmin.from("empresa_campanias").select("*").eq("id", id).maybeSingle();
   if (!campania) return fail(404, "Campaña no encontrada.");
   const [{ data: codigos }, { data: usos }] = await Promise.all([
     supabaseAdmin.from("empresa_codigos").select("*").eq("campania_id", id).order("created_at"),
     supabaseAdmin.from("empresa_codigo_usos").select("*").eq("campania_id", id).order("created_at"),
   ]);
-  const hoy = hoyIso();
+  const hoy = hoyEnSim(ahora);
   const metricas = metricasCampania({ campania, codigos: codigos ?? [], usos: usos ?? [], hoy });
 
   // Enriquecer cada uso con su reserva real (simuladores/fecha/hora/estado/no-show).
@@ -263,12 +267,12 @@ type CampaniaCanje = { duracion: number; modalidad: ReturnType<typeof modalidadG
 // El código y su campaña, si se pueden canjear ahora. Read-only. Mismo criterio
 // de siempre (estado efectivo, estado del código y usos); la RPC lo vuelve a
 // comprobar con el código tomado FOR UPDATE.
-async function campaniaCanjeable(cod: string): Promise<Resultado<CampaniaCanje>> {
+async function campaniaCanjeable(cod: string, ahora: Date): Promise<Resultado<CampaniaCanje>> {
   if (!cod) return fail(400, "Código inválido o no disponible.");
   const { data: c } = await supabaseAdmin.from("empresa_codigos").select("*").eq("codigo", cod).maybeSingle();
   if (!c) return fail(404, "Código inválido o no disponible.");
   const { data: camp } = await supabaseAdmin.from("empresa_campanias").select("*").eq("id", c.campania_id).maybeSingle();
-  const hoy = hoyIso();
+  const hoy = hoyEnSim(ahora);
   const canjeable = camp && estadoEfectivo(camp, hoy) === "activa" && c.estado === "disponible" && c.usos_actuales < c.usos_maximos;
   if (!canjeable) return fail(409, "Código inválido o no disponible.");
   return ok({
@@ -282,7 +286,7 @@ async function campaniaCanjeable(cod: string): Promise<Resultado<CampaniaCanje>>
 // Validación READ-ONLY (para la web). Respuesta genérica: no revela por qué falla
 // (evita enumeración). Devuelve el beneficio si el código es canjeable ahora.
 export async function validarCodigo(codigo: string, ahora: Date = new Date()): Promise<Resultado<unknown>> {
-  const val = await campaniaCanjeable(String(codigo ?? "").trim().toUpperCase());
+  const val = await campaniaCanjeable(String(codigo ?? "").trim().toUpperCase(), ahora);
   if (!val.ok) return val;
   return ok({
     valido: true,
@@ -297,7 +301,7 @@ export async function validarCodigo(codigo: string, ahora: Date = new Date()): P
 // servidor con el motor B2, la modalidad de la campaña y su duración: el
 // navegador solo muestra lo que recibe. Sin datos personales.
 export async function disponibilidadConCodigo(codigo: string, fecha: string, ahora: Date = new Date()): Promise<Resultado<unknown>> {
-  const val = await campaniaCanjeable(String(codigo ?? "").trim().toUpperCase());
+  const val = await campaniaCanjeable(String(codigo ?? "").trim().toUpperCase(), ahora);
   if (!val.ok) return fail(val.status, "Código inválido o no disponible.");
   if (!fechaValida(fecha)) return fail(400, "Fecha inválida.");
   if (fecha < hoyEnSim(ahora)) return fail(422, "Elegí una fecha a partir de hoy.");
@@ -344,7 +348,7 @@ export async function reservarConCodigo(
   const previa = await yaCreada();
   if (previa) return previa;
 
-  const val = await campaniaCanjeable(cod);
+  const val = await campaniaCanjeable(cod, ahora);
   if (!val.ok) return rechazo(val.status, "Código inválido o no disponible.");
   const { duracion, modalidad } = val.data;
 

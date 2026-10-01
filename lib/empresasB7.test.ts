@@ -118,7 +118,9 @@ const campania = (id: string, modalidad_comercial: string | null, duracion: numb
   id, empresa: "Empresa Test B7", nombre_campania: null, modalidad: "unica", modalidad_comercial,
   cantidad_contratada: 5, duracion_minutos: duracion, usos_por_codigo: 1, precio_neto: 0, iva_porcentaje: 21,
   estado: "activa", estado_pago: "pagado", fecha_pago: sumarDias(HOY_REAL, -2),
-  fecha_inicio: sumarDias(HOY_REAL, -1), fecha_vencimiento: sumarDias(HOY_REAL, 60),
+  // (B7.1) La vigencia sigue al reloj INYECTADO: cubre desde antes del corte
+  // (ANTES/DESPUES) hasta después del reloj real (rutas y fechas futuras).
+  fecha_inicio: sumarDias([hoyEnSim(ANTES), HOY_REAL].sort()[0], -1), fecha_vencimiento: sumarDias(HOY_REAL, 60),
   deleted_at: null, codigos_generados: true, created_at: new Date(CORTE_MODALIDAD_V2_MS - 86_400_000).toISOString(),
 });
 const codigo = (campania_id: string, cod: string): Fila => ({

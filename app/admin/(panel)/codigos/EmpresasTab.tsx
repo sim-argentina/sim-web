@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { generarInformePDF, generarInformeExcel, exportarCodigosExcel, type InformeData } from "./empresasInforme";
+import { hoyEnSim } from "@/lib/agenda";
 
 type Campania = {
   id: string; empresa: string; nombre_campania: string | null; modalidad: string;
@@ -290,7 +291,7 @@ export default function EmpresasTab() {
         {/* Acciones */}
         <div className="flex flex-wrap gap-2">
           {c.estado_pago !== "pagado" && (
-            <button onClick={() => setPago({ fecha_pago: new Date().toISOString().slice(0, 10), medio_pago: "transferencia" })} disabled={busy}
+            <button onClick={() => setPago({ fecha_pago: hoyEnSim(), medio_pago: "transferencia" })} disabled={busy}
               className="rounded-xl bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-500 disabled:opacity-50">Marcar como pagada</button>
           )}
           {!c.codigos_generados && c.estado_pago === "pagado" && (

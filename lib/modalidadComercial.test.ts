@@ -256,6 +256,9 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     // reserva); lib/empresasServer.ts y las rutas no importan el núcleo.
     "lib/empresasComercial.ts",
     "lib/empresasB7.test.ts",
+    // (B7.1) Bordes de "hoy" en Argentina alrededor de esa medianoche: los
+    // instantes se derivan de CORTE_MODALIDAD_V2_MS en vez de escribirse.
+    "lib/empresasFechaArgentina.test.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);

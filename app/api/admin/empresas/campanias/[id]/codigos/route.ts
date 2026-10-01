@@ -5,6 +5,7 @@ import { logSecurityEvent } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { generarCodigos } from "@/lib/empresasServer";
 import { estadoEfectivo, estadoCodigoEfectivo } from "@/lib/empresas";
+import { hoyEnSim } from "@/lib/agenda";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -17,7 +18,8 @@ export async function GET(_req: Request, { params }: RouteContext) {
   const { data: campania } = await supabaseAdmin.from("empresa_campanias").select("*").eq("id", id).maybeSingle();
   if (!campania) return NextResponse.json({ error: "Campaña no encontrada" }, { status: 404 });
   const { data: codigos } = await supabaseAdmin.from("empresa_codigos").select("*").eq("campania_id", id).order("created_at");
-  const est = estadoEfectivo(campania, new Date().toISOString().slice(0, 10));
+  // (B7.1) Fecha calendario de Argentina, no UTC.
+  const est = estadoEfectivo(campania, hoyEnSim());
   return NextResponse.json({
     codigos: (codigos ?? []).map((c) => ({ ...c, estado_efectivo: estadoCodigoEfectivo(c, est) })),
   });
