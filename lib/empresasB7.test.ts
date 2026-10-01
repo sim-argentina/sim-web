@@ -689,6 +689,150 @@ async function main() {
     assert.ok(sql.includes("IF coalesce(v_res.modalidad, 'legacy') <> 'legacy' THEN RETURN false; END IF;"), "la reprogramación legacy rechaza reservas v2");
   }
 
+  // ── 13. Equivalencia: página vieja (cálculo en el navegador) vs servidor B2 ──
+  // Para una campaña LEGACY, el servidor tiene que ofrecer EXACTAMENTE lo que
+  // ofrecía la página vieja si a esa página se le daban los datos que la base
+  // de verdad hace valer: los slots activos (no la fila de la reserva), solo
+  // las pendientes dentro del TTL y los bloqueos. Las diferencias contra la
+  // página vieja TAL CUAL se cuentan por causa y son todas intencionales:
+  //   · pendiente vencida u otro estado sin slots (conflicto_pago,
+  //     reembolsada): la vieja los bloqueaba para siempre; la base no;
+  //   · bloqueo: la vieja no los miraba; la base sí;
+  //   · D1: Mensualidad legacy de fin de semana que pasa las 14:00; la vieja
+  //     veía solo su primer bloque; la base tiene todos.
+  // Nunca puede haber oferta que la página corregida no tenga (sobreoferta).
+  {
+    const { construirOcupacion, getOccupiedSlots, getNextSlot, getSlotsForDate } = await import("@/lib/reservasSlots");
+    const { iniciosDelDia, bloquesLegacy, minutosDeHora, turnoPara } = await import("@/lib/agendaIntervalos");
+    const { RECURSOS_AGENDA, bloqueoTocaTurno } = await import("@/lib/disponibilidadIntervalos");
+    type FilaBloqueoB2 = Parameters<typeof bloqueoTocaTurno>[0];
+    const SIMS = [...RECURSOS_AGENDA];
+    const azar = (semilla: number) => () => {
+      semilla = (semilla + 0x6D2B79F5) | 0;
+      let t = Math.imul(semilla ^ (semilla >>> 15), 1 | semilla);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    type Tipo = { origen: string; modalidad: "legacy" | "v2_10"; producto: "reserva" | "mensualidad" | "empresa"; duraciones: number[] };
+    const TIPOS: Tipo[] = [
+      { origen: "web", modalidad: "legacy", producto: "reserva", duraciones: [15, 30] },
+      { origen: "web", modalidad: "v2_10", producto: "reserva", duraciones: [10, 20, 30] },
+      { origen: "mensualidad", modalidad: "legacy", producto: "mensualidad", duraciones: [15, 30, 45, 60] },
+      { origen: "mensualidad", modalidad: "v2_10", producto: "mensualidad", duraciones: [10, 20, 30] },
+      { origen: "empresa", modalidad: "legacy", producto: "empresa", duraciones: [15, 30] },
+      { origen: "empresa", modalidad: "v2_10", producto: "empresa", duraciones: [10, 20, 30] },
+    ];
+    const totales = { escenarios: 0, comparaciones: 0, iguales: 0, pendienteVencida: 0, otroEstado: 0, bloqueo: 0, d1: 0, sobreoferta: 0, inexplicadas: 0 };
+    const filaVieja = (x: Fila) => ({
+      hora: String(x.hora), duracion_minutos: Number(x.duracion_minutos), simuladores: x.simuladores, modalidad: x.modalidad as string | null,
+    });
+
+    for (let semilla = 1; semilla <= 120; semilla++) {
+      const r = azar(semilla * 7919);
+      const elegir = <T,>(l: readonly T[]): T => l[Math.floor(r() * l.length)];
+      for (const fecha of [MIERCOLES, SABADO]) {
+        const ahora = EN(sumarDias(fecha, -1), "18:00");
+        const reservas: Fila[] = []; const slots: Fila[] = []; const bloqueos: Fila[] = [];
+        const ocupado: Record<string, Array<[number, number]>> = Object.fromEntries(SIMS.map((s) => [s, []]));
+        let id = 1000;
+        // Activas, sin solaparse (la base no lo permitiría), con sus slots reales.
+        for (let k = 0; k < 9; k++) {
+          const tipo = elegir(TIPOS);
+          const duracion = elegir(tipo.duraciones);
+          const inicios = iniciosDelDia({ modalidad: tipo.modalidad, producto: tipo.producto, fecha, duracion });
+          if (!inicios.length) continue;
+          const turno = elegir(inicios);
+          const sims = r() < 0.7 ? [elegir(SIMS)] : [...new Set([elegir(SIMS), elegir(SIMS)])];
+          const tramos: Array<[number, number]> = tipo.modalidad === "legacy"
+            ? bloquesLegacy(turno).map((b) => [minutosDeHora(b)!, minutosDeHora(b)! + 20])
+            : [[turno.inicio, turno.finOcupacion]];
+          if (sims.some((s) => ocupado[s].some(([a, b]) => tramos.some(([c, d]) => a < d && c < b)))) continue;
+          id++;
+          reservas.push(reserva(id, fecha, turno.hora, duracion, sims, {
+            origen: tipo.origen, modalidad: tipo.modalidad === "v2_10" ? "v2_10" : elegir([null, "legacy"]),
+          }));
+          for (const s of sims) {
+            ocupado[s].push(...tramos);
+            if (tipo.modalidad === "legacy") for (const b of bloquesLegacy(turno)) slots.push(slot(id, fecha, b, s));
+            else slots.push(slot(id, fecha, turno.hora, s, turno.ocupacion));
+          }
+        }
+        // Pendientes web (vigentes y vencidas), otros estados sin slots y canceladas.
+        for (let k = 0; k < 3; k++) {
+          const tipo = elegir(TIPOS.slice(0, 2));
+          const duracion = elegir(tipo.duraciones);
+          const inicios = iniciosDelDia({ modalidad: tipo.modalidad, producto: "reserva", fecha, duracion });
+          const turno = elegir(inicios);
+          const estado = elegir(["pendiente_pago", "pendiente_pago", "conflicto_pago", "reembolsada", "cancelada"]);
+          const minutosAtras = elegir([3, 10, 16, 45]);
+          id++;
+          reservas.push(reserva(id, fecha, turno.hora, duracion, [elegir(SIMS)], {
+            estado, modalidad: tipo.modalidad === "v2_10" ? "v2_10" : null,
+            created_at: new Date(ahora.getTime() - minutosAtras * 60_000).toISOString(),
+          }));
+          if (estado === "cancelada") slots.push({ ...slot(id, fecha, turno.hora, String((reservas.at(-1)!.simuladores as string[])[0])), estado: "cancelada" });
+        }
+        // Bloqueos parciales (por simulador o de todos).
+        const nBloqueos = elegir([0, 0, 1, 2]);
+        for (let k = 0; k < nBloqueos; k++) {
+          const desde = elegir(getSlotsForDate(fecha));
+          const hasta = String(Math.min(minutosDeHora(desde)! + elegir([10, 20, 40]), 23 * 60 + 59));
+          const fin = `${String(Math.floor(Number(hasta) / 60)).padStart(2, "0")}:${String(Number(hasta) % 60).padStart(2, "0")}`;
+          bloqueos.push({ id: 90 + k, fecha, todo_el_dia: false, hora_inicio: desde, hora_fin: fin, simulador: r() < 0.6 ? elegir(SIMS) : null, activo: true });
+        }
+
+        reiniciar({ reservas, reserva_slots: slots, bloqueos_reservas: bloqueos });
+        totales.escenarios++;
+        for (const [cod, duracion] of [[COD.legacy, 15], [COD.legacy30, 30]] as const) {
+          // Servidor B2.
+          const nuevo = new Set((await horas(cod, fecha, ahora)).flatMap((h) => h.simuladores.map((s) => `${h.hora}|${s}`)));
+          // Página vieja TAL CUAL: todas las filas no canceladas, por sus datos.
+          const disponibleCon = (ocupacion: Record<string, Set<string>>, h: string, s: string) =>
+            !(duracion >= 30 && !getNextSlot(fecha, h)) && getOccupiedSlots(fecha, h, duracion).every((b) => !ocupacion[b]?.has(s));
+          const ocVieja = construirOcupacion(fecha, reservas.filter((x) => x.estado !== "cancelada").map(filaVieja));
+          // Página vieja CORREGIDA: slots activos reales + pendientes vigentes + bloqueos.
+          const vigente = (x: Fila) => x.estado === "pendiente_pago" && Date.parse(String(x.created_at)) > ahora.getTime() - 15 * 60_000;
+          const ocSlots = construirOcupacion(fecha, slots.filter((s) => s.estado === "activa").map((s) => s.ocupacion_min == null
+            ? { hora: String(s.hora), duracion_minutos: 15, simuladores: [s.simulador], modalidad: null }
+            : { hora: String(s.hora), duracion_minutos: Number(s.ocupacion_min) - 10, simuladores: [s.simulador], modalidad: "v2_10" }));
+          const ocVigentes = construirOcupacion(fecha, reservas.filter(vigente).map(filaVieja));
+          for (const h of getSlotsForDate(fecha)) {
+            const turno = turnoPara({ modalidad: "legacy", producto: "empresa", fecha, hora: h, duracion });
+            for (const s of SIMS) {
+              totales.comparaciones++;
+              const k = `${h}|${s}`;
+              const viejo = disponibleCon(ocVieja, h, s);
+              const bloqueado = !!turno && bloqueos.some((b) => bloqueoTocaTurno(b as unknown as FilaBloqueoB2, turno, s));
+              const corregido = disponibleCon(ocSlots, h, s) && disponibleCon(ocVigentes, h, s) && !bloqueado;
+              assert.equal(nuevo.has(k), corregido, `semilla ${semilla} ${fecha} ${duracion}' ${k}: servidor=${nuevo.has(k)} vieja corregida=${corregido}`);
+              if (nuevo.has(k) === viejo) { totales.iguales++; continue; }
+              if (nuevo.has(k)) {
+                // El servidor ofrece lo que la vieja no: TODO lo que la tapaba tiene
+                // que ser una fila que la base no cuenta (pendiente vencida u otro estado).
+                const tapan = reservas.filter((x) => x.estado !== "cancelada" && !disponibleCon(construirOcupacion(fecha, [filaVieja(x)]), h, s));
+                const ajenas = tapan.filter((x) => x.estado !== "activa" && !vigente(x));
+                if (ajenas.length === 0 || ajenas.length < tapan.length) { totales.sobreoferta++; continue; }
+                if (ajenas.some((x) => x.estado === "pendiente_pago")) totales.pendienteVencida++; else totales.otroEstado++;
+              } else if (bloqueado) {
+                totales.bloqueo++;
+              } else if (!disponibleCon(ocSlots, h, s)) {
+                // D1: lo tapa un slot real que la fila de la reserva no mostraba.
+                totales.d1++;
+              } else {
+                totales.inexplicadas++;
+              }
+            }
+          }
+        }
+      }
+    }
+    assert.equal(totales.sobreoferta, 0, "el servidor nunca ofrece lo que la página corregida no ofrecería");
+    assert.equal(totales.inexplicadas, 0, "toda diferencia tiene una causa intencional");
+    assert.ok(totales.pendienteVencida > 0 && totales.bloqueo > 0 && totales.otroEstado > 0 && totales.d1 > 0,
+      `las cuatro causas aparecen: ${JSON.stringify(totales)}`);
+    console.log(`equivalencia Empresas legacy (página vieja vs servidor B2): ${JSON.stringify(totales)}`);
+  }
+
   console.log("OK — Empresas B7: modalidad guardada en la campaña, 15/30 legacy y 10/20/30 v2, grilla y cierre por modalidad, agenda unificada (bloqueos, web, Mensualidades, pendientes), canje y reprogramación por modalidad, 409 del panel sin escrituras y rutas reales.");
 }
 
