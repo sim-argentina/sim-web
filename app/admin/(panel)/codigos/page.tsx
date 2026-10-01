@@ -22,6 +22,13 @@ type CodigoDescuento = {
   created_at: string;
 };
 
+// (B9) Duraciones elegibles para un código NUEVO según la modalidad VIGENTE: las
+// resuelve el servidor (GET /api/codigos-descuento), nunca el bundle ni el reloj.
+type CatalogoCodigos = {
+  modalidad: "legacy" | "v2_10";
+  duraciones: number[];
+};
+
 function formatoTipo(tipo: string) {
   if (tipo === "porcentaje") return "Porcentaje";
   if (tipo === "monto_fijo") return "Monto fijo";
@@ -48,7 +55,9 @@ const DIAS_SEMANA = [
 ];
 
 // Etiqueta corta de las restricciones de un código (para la tabla). null = sin restricción.
-function restriccionCodigo(c: CodigoDescuento): string | null {
+// (B9) Duraciones tal como están guardadas (10/15/20/30…); las que ya no están en
+// la oferta vigente se conservan y se marcan como legacy.
+function restriccionCodigo(c: CodigoDescuento, duracionesVigentes: number[] | null): string | null {
   const parts: string[] = [];
   const dias = Array.isArray(c.dias_permitidos) ? c.dias_permitidos : [];
   if (dias.length > 0) {
@@ -66,9 +75,12 @@ function restriccionCodigo(c: CodigoDescuento): string | null {
   }
   const durs = Array.isArray(c.duraciones_permitidas) ? c.duraciones_permitidas : [];
   if (durs.length > 0) {
-    const h15 = durs.includes(15);
-    const h30 = durs.includes(30);
-    parts.push(h15 && h30 ? "15/30 min" : h15 ? "15 min" : "30 min");
+    const ordenadas = [...durs].map(Number).sort((a, b) => a - b);
+    const legacy = duracionesVigentes ? ordenadas.filter((d) => !duracionesVigentes.includes(d)) : [];
+    parts.push(
+      `${ordenadas.join("/")} min` +
+        (legacy.length ? ` (duración legacy conservada: ${legacy.join("/")})` : "")
+    );
   }
   return parts.length ? parts.join(" · ") : null;
 }
@@ -90,6 +102,7 @@ export default function AdminCodigosPage() {
   const [fechasBloqueadas, setFechasBloqueadas] = useState<string[]>([]);
   const [fechaBloqueadaInput, setFechaBloqueadaInput] = useState("");
   const [duracionesPermitidas, setDuracionesPermitidas] = useState<number[]>([]);
+  const [catalogo, setCatalogo] = useState<CatalogoCodigos | null>(null);
   // Vista Promocionales | Empresas. Empresas es admin-only (UI + backend).
   const [role, setRole] = useState<string | null>(null);
   const [vista, setVista] = useState<"promocionales" | "empresas">("promocionales");
@@ -110,6 +123,7 @@ export default function AdminCodigosPage() {
       }
 
       setCodigos(data.codigos || []);
+      if (data.catalogo) setCatalogo(data.catalogo as CatalogoCodigos);
     } catch (error) {
       console.error(error);
       alert("Error cargando códigos");
@@ -158,12 +172,21 @@ export default function AdminCodigosPage() {
           duraciones_permitidas: duracionesPermitidas.length
             ? duracionesPermitidas
             : null,
+          // (B9) Con qué oferta se armó el formulario: si cambió, 409 sin crear.
+          modalidad_vista: catalogo?.modalidad ?? "legacy",
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
+        // (B9) Cambió la modalidad: se recarga la oferta conservando el resto del
+        // formulario y se quitan las duraciones que ya no existen.
+        if (res.status === 409 && data.catalogo) {
+          const nuevo = data.catalogo as CatalogoCodigos;
+          setCatalogo(nuevo);
+          setDuracionesPermitidas((prev) => prev.filter((d) => nuevo.duraciones.includes(d)));
+        }
         alert(data.error || "Error creando código");
         return;
       }
@@ -462,7 +485,7 @@ export default function AdminCodigosPage() {
                 <span className="text-white/25">(vacío = todas)</span>
               </p>
               <div className="flex flex-wrap gap-2">
-                {[15, 30].map((d) => {
+                {(catalogo?.duraciones ?? []).map((d) => {
                   const active = duracionesPermitidas.includes(d);
                   return (
                     <button
@@ -530,9 +553,9 @@ export default function AdminCodigosPage() {
                       <p className="truncate text-xs text-white/40">
                         {codigo.descripcion || "Sin descripción"}
                       </p>
-                      {restriccionCodigo(codigo) && (
+                      {restriccionCodigo(codigo, catalogo?.duraciones ?? null) && (
                         <span className="mt-1 inline-block rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-400">
-                          {restriccionCodigo(codigo)}
+                          {restriccionCodigo(codigo, catalogo?.duraciones ?? null)}
                         </span>
                       )}
                     </div>

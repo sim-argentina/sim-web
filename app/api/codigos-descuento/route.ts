@@ -3,6 +3,8 @@ import { randomInt } from "crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
+import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
+import { catalogoCodigosVigente, prepararDuracionesAlta } from "@/lib/codigosComercial";
 
 function generarCodigo() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -31,16 +33,32 @@ export async function GET() {
     });
   }
 
-  return NextResponse.json({ codigos: data || [] });
+  // (B9) Con la lista va el catálogo VIGENTE: el formulario ofrece sus duraciones
+  // (legacy 15/30, v2 10/20/30) y nunca una lista fija del bundle.
+  return NextResponse.json(
+    { codigos: data || [], catalogo: await catalogoCodigosVigente() },
+    { headers: { "Cache-Control": "no-store, max-age=0" } }
+  );
 }
 
 export async function POST(req: Request) {
+  if (!isAllowedOrigin(req)) return forbiddenOrigin();
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
     return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
+  }
+
+  // (B9) Duraciones del catálogo vigente; formulario de otra modalidad → 409
+  // sin escribir. Ya no se descartan en silencio las que no son 15/30.
+  const duraciones = await prepararDuracionesAlta(body);
+  if (!duraciones.ok) {
+    return NextResponse.json(
+      { error: duraciones.error, codigo: duraciones.codigo, ...(duraciones.catalogo ? { catalogo: duraciones.catalogo } : {}) },
+      { status: duraciones.status, headers: { "Cache-Control": "no-store, max-age=0" } }
+    );
   }
 
   const {
@@ -55,7 +73,6 @@ export async function POST(req: Request) {
     solo_dias_habiles,
     dias_permitidos,
     fechas_bloqueadas,
-    duraciones_permitidas,
   } = body;
 
   const codigoFinal = codigo?.trim().toUpperCase() || generarCodigo();
@@ -92,13 +109,7 @@ export async function POST(req: Request) {
                 .map((f: unknown) => String(f).slice(0, 10))
                 .filter((f: string) => /^\d{4}-\d{2}-\d{2}$/.test(f))
             : null,
-        duraciones_permitidas:
-          Array.isArray(duraciones_permitidas) &&
-          duraciones_permitidas.length > 0
-            ? duraciones_permitidas
-                .map(Number)
-                .filter((n: number) => n === 15 || n === 30)
-            : null,
+        duraciones_permitidas: duraciones.duraciones,
         activo: true,
       },
     ])

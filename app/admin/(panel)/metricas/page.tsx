@@ -1773,8 +1773,10 @@ export default function AdminMetricasPage() {
               <KpiCard title="Ingreso/turno" value={formatMoney(metricasReservas.ingresoPorTurno)} />
               <KpiCard title="Ingreso/simulador" value={formatMoney(metricasReservas.ingresoPorSimulador)} />
               <KpiCard title="Hora pico" value={metricasReservas.horaPico} />
-              <KpiCard title="Reservas 15 min" value={String(metricasReservas.reservas15)} />
-              <KpiCard title="Reservas 30 min" value={String(metricasReservas.reservas30)} />
+              {/* (B9) Una tarjeta por duración real (legacy: 15 y 30 como siempre; v2: 10/20/30). */}
+              {metricasReservas.reservasPorDuracion.map((item) => (
+                <KpiCard key={item.label} title={`Reservas ${item.label}`} value={String(item.value)} />
+              ))}
             </div>
 
             <div className="mb-8">

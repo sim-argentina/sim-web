@@ -529,9 +529,13 @@ async function main() {
       assert.ok(leer(f).includes("@/lib/mensualidadesAgenda\""), `${f} usa lib/mensualidadesAgenda.ts`);
       assert.ok(!leer(f).includes("@/lib/disponibilidad\""), `${f} ya no usa lib/disponibilidad.ts`);
     }
-    // La rama genérica de /api/disponibilidad (cantidades, sin sesión) no es de B6: sigue igual.
-    assert.ok(leer("app/api/disponibilidad/route.ts").includes("@/lib/disponibilidad\""),
-      "app/api/disponibilidad/route.ts sigue usando lib/disponibilidad.ts");
+    // (B9) La rama genérica de Mensualidades de /api/disponibilidad se retiró (410):
+    // sin sesión ni plan no podía saber la modalidad del plan. El endpoint ya no
+    // usa el motor viejo; solo responde Reservas (motor B2 vía reservasComercial).
+    assert.ok(!leer("app/api/disponibilidad/route.ts").includes("@/lib/disponibilidad\""),
+      "app/api/disponibilidad/route.ts ya no usa lib/disponibilidad.ts");
+    assert.ok(leer("app/api/disponibilidad/route.ts").includes("producto_retirado"),
+      "la rama de Mensualidades de /api/disponibilidad responde 410");
     // (B3) Lo que VENDE Reservas web ya no usa el motor actual: pasa por reservasComercial.
     for (const f of ["app/api/reservas/route.ts", "app/api/mercadopago/preference/route.ts"]) {
       assert.ok(leer(f).includes("@/lib/reservasComercial\""), `${f} usa lib/reservasComercial.ts`);

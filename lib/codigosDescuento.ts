@@ -1,8 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { hoyEnSim } from "@/lib/agenda";
 
 // Lógica compartida de códigos de descuento (la misma que usan las reservas),
 // para reutilizarla desde el flujo de Gift Cards sin duplicar reglas.
 
+// "turno_gratis" es un descuento MONETARIO: descuenta el valor guardado en el
+// código (p. ej. $12.000), con tope en el total. No se convierte en "un producto
+// gratis" de la oferta vigente: sobre un turno v2 de 20 min ($17.000) un
+// turno_gratis de $12.000 deja $5.000 a pagar.
 function calcularDescuento(tipo: string, valor: number, totalOriginal: number) {
   if (tipo === "porcentaje") return totalOriginal * (valor / 100);
   if (tipo === "monto_fijo") return valor;
@@ -43,7 +48,8 @@ export async function validarCodigoDescuento(
   codigoIngresado: string,
   totalOriginal: number,
   fechaTurno?: string | null,
-  duracionTurno?: number | null
+  duracionTurno?: number | null,
+  ahora: Date = new Date()
 ): Promise<ValidacionCodigo> {
   const codigoBuscado = String(codigoIngresado || "").trim().toUpperCase();
 
@@ -59,14 +65,18 @@ export async function validarCodigoDescuento(
 
   if (error) throw new Error(error.message);
 
-  if (!codigo) {
+  // (B9) Un código eliminado desde el panel (soft delete) ya no se puede usar,
+  // aunque haya quedado activo y vigente: eliminado = como si no existiera.
+  if (!codigo || codigo.deleted_at) {
     return { valido: false, codigo: null, descuento: 0, error: "El código no existe" };
   }
   if (!codigo.activo) {
     return { valido: false, codigo: null, descuento: 0, error: "El código no está activo" };
   }
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  // (B9) Vigencia por la fecha comercial de Argentina (antes: fecha UTC, que
+  // desde las 21:00 ya era "mañana").
+  const hoy = hoyEnSim(ahora);
   if (codigo.fecha_inicio && hoy < codigo.fecha_inicio) {
     return { valido: false, codigo: null, descuento: 0, error: "El código todavía no está vigente" };
   }
@@ -112,8 +122,11 @@ export async function validarCodigoDescuento(
     }
   }
 
-  // Restricción opcional por duración del turno (15/30). Solo aplica cuando hay
+  // Restricción opcional por duración del turno. Solo aplica cuando hay
   // duracionTurno (reservas); Gift Cards no la pasa, así que no cambia.
+  // (B9) Se compara la duración REAL de la operación contra la lista guardada,
+  // sin reinterpretarla: [15] solo vale para 15 (nunca para 10 o 20) y [30] vale
+  // para cualquier operación de 30 minutos, legacy o v2.
   if (duracionTurno) {
     const duraciones =
       Array.isArray(codigo.duraciones_permitidas) &&

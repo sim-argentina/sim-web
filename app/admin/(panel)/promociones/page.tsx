@@ -5,10 +5,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 type ClientePromo = {
   nombre: string;
   telefono: string;
+  /** (B9) Minutos comerciales del período: la unidad comparable entre legacy y v2. */
+  minutos: number;
+  /** minutos / 15: el "turno" histórico de la promo. */
+  turnos_equivalentes: number;
   cantidad_turnos: number;
   total_gastado: number;
   ultimo_turno: string;
 };
+
+// (B9) Contrato histórico del umbral: 1 turno = 15 minutos de actividad. El
+// umbral se compara en minutos, así una sesión v2 de 30 pesa como una legacy de 30.
+const MINUTOS_POR_TURNO_PROMO = 15;
+
+function formatoTurnos(valor: number) {
+  return valor.toLocaleString("es-AR", { maximumFractionDigits: 1 });
+}
 
 function formatoDinero(valor: number) {
   return `$${valor.toLocaleString("es-AR")}`;
@@ -65,15 +77,18 @@ export default function AdminPromocionesPage() {
     return () => clearTimeout(t);
   }, [cargarClientes]);
 
+  const minutosObjetivo = turnosObjetivo * MINUTOS_POR_TURNO_PROMO;
+
   const resumen = useMemo(() => {
+    const objetivo = turnosObjetivo * MINUTOS_POR_TURNO_PROMO;
     const clientesConPromo = clientes.filter(
-      (cliente) => cliente.cantidad_turnos >= turnosObjetivo
+      (cliente) => cliente.minutos >= objetivo
     ).length;
 
     const clientesCerca = clientes.filter(
       (cliente) =>
-        cliente.cantidad_turnos < turnosObjetivo &&
-        cliente.cantidad_turnos >= turnosObjetivo - 1
+        cliente.minutos < objetivo &&
+        cliente.minutos >= objetivo - MINUTOS_POR_TURNO_PROMO
     ).length;
 
     return {
@@ -120,7 +135,7 @@ export default function AdminPromocionesPage() {
               />
             </Campo>
 
-            <Campo label="Turnos necesarios">
+            <Campo label="Turnos necesarios (1 turno = 15 min)">
               <input
                 type="number"
                 min={1}
@@ -168,7 +183,7 @@ export default function AdminPromocionesPage() {
         <div className="mb-6 grid gap-3 md:grid-cols-3">
           <ResumenCard titulo="Clientes encontrados" valor={resumen.totalClientes} />
           <ResumenCard titulo="Ya acceden a promo" valor={resumen.clientesConPromo} />
-          <ResumenCard titulo="A 1 turno de llegar" valor={resumen.clientesCerca} />
+          <ResumenCard titulo="A 1 turno (15 min) de llegar" valor={resumen.clientesCerca} />
         </div>
 
         <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
@@ -180,7 +195,7 @@ export default function AdminPromocionesPage() {
               <p className="text-sm text-white/50">
                 {hayBusqueda
                   ? "Resultados de búsqueda"
-                  : "Top 10 clientes con más turnos"}
+                  : "Top 10 clientes con más actividad (minutos)"}
                 {" · "}
                 {historico ? "historial completo" : `últimos ${dias} días`}
               </p>
@@ -210,14 +225,14 @@ export default function AdminPromocionesPage() {
                 </div>
 
                 {clientes.map((cliente) => {
-                  const cumple = cliente.cantidad_turnos >= turnosObjetivo;
-                  const faltan = Math.max(
-                    turnosObjetivo - cliente.cantidad_turnos,
+                  const cumple = cliente.minutos >= minutosObjetivo;
+                  const faltanMinutos = Math.max(
+                    minutosObjetivo - cliente.minutos,
                     0
                   );
 
                   const porcentaje = Math.min(
-                    (cliente.cantidad_turnos / turnosObjetivo) * 100,
+                    (cliente.minutos / minutosObjetivo) * 100,
                     100
                   );
 
@@ -244,7 +259,10 @@ export default function AdminPromocionesPage() {
                       </span>
 
                       <span className="font-black">
-                        {cliente.cantidad_turnos} / {turnosObjetivo}
+                        {formatoTurnos(cliente.turnos_equivalentes)} / {turnosObjetivo}
+                        <span className="block text-xs font-bold text-white/40">
+                          {cliente.minutos} min
+                        </span>
                       </span>
 
                       <div>
@@ -270,7 +288,7 @@ export default function AdminPromocionesPage() {
                             : "bg-white/10 text-white/60"
                         }`}
                       >
-                        {cumple ? "Promo disponible" : `Faltan ${faltan}`}
+                        {cumple ? "Promo disponible" : `Faltan ${faltanMinutos} min`}
                       </span>
                     </div>
                   );

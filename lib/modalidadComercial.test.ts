@@ -265,6 +265,12 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     // minutosComerciales solo LEE: cuenta turnos por la modalidad guardada en
     // cada fila (Stand, Reservas, Equipo, IA, Finanzas) y nunca mira el reloj.
     "lib/turneroComercial.ts", "lib/minutosComerciales.ts",
+    // (B9) Códigos de descuento: codigosComercial es la única que resuelve la
+    // modalidad vigente, y SOLO para las duraciones de un código NUEVO (y para
+    // validar una edición contra oferta vigente ∪ lo que el código ya tenía). La
+    // validación al usarlo compara la duración REAL contra la lista guardada.
+    // El test deriva los bordes de fecha de CORTE_MODALIDAD_V2_MS.
+    "lib/codigosComercial.ts", "lib/codigosPromocionesB9.test.ts",
   ]);
   const importadores = archivos.filter((f) => /\.(ts|tsx)$/.test(f)).filter((f) => {
     const src = leer(f);

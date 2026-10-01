@@ -305,9 +305,15 @@ async function main() {
   assert.equal(oculto.status, 404, "M6-35 mensualidad oculta con la flag apagada");
   assert.equal((await oculto.json()).error, "No encontrado");
   process.env.MENSUALIDADES_ENABLED = "true";
-  const visible = await pedir(`fecha=${mananaHabil}&duracion=45&producto=mensualidad`);
-  assert.equal(visible.status, 200, "con la flag encendida sí responde");
-  assert.deepEqual((await visible.json()).duraciones, [15, 30, 45, 60]);
+  // (B9) Con la flag encendida la rama de Mensualidades del endpoint genérico
+  // está RETIRADA (410): sin sesión ni plan no puede saber la modalidad del plan.
+  // La disponibilidad de Mensualidades vive en /api/mensualidades/disponibilidad.
+  const retirada = await pedir(`fecha=${mananaHabil}&duracion=45&producto=mensualidad`);
+  assert.equal(retirada.status, 410, "con la flag encendida, la rama genérica de Mensualidades está retirada");
+  assert.equal((await retirada.json()).codigo, "producto_retirado");
+  // El motor viejo sigue respondiendo a nivel lib (otros tests lo usan).
+  const visible = await disponibilidadDelDia({ fecha: mananaHabil, duracion: 45, producto: "mensualidad" });
+  assert.equal(visible.ok, true, "el motor viejo de Mensualidades sigue respondiendo");
   // (M8C.1) El fin de semana existe para los DOS productos. Lo que los
   // distingue es el cierre: Mensualidades corta a las 14:00 y no ofrece el
   // último inicio de la grilla, que terminaría después.
@@ -320,9 +326,9 @@ async function main() {
     .find(esFinDeSemana)!;
   assert.equal((await pedir(`fecha=${finde}&duracion=15&producto=reserva`)).status, 200,
     "M6-35 el fin de semana sigue siendo reservable en el flujo normal");
-  const findeMens = await pedir(`fecha=${finde}&duracion=15&producto=mensualidad`);
-  assert.equal(findeMens.status, 200, "M6-35 y Mensualidades también opera ese día");
-  const horasFinde = (await findeMens.json()).horarios.map((h: { hora: string }) => h.hora);
+  const findeMens = await disponibilidadDelDia({ fecha: finde, duracion: 15, producto: "mensualidad" });
+  assert.equal(findeMens.ok, true, "M6-35 y Mensualidades también opera ese día");
+  const horasFinde = findeMens.ok ? findeMens.horarios.map((h: { hora: string }) => h.hora) : [];
   assert.equal(horasFinde[0], "10:00", "M6-35 abre a las 10:00");
   assert.equal(horasFinde[horasFinde.length - 1], "14:00",
     "M6-35 y el último inicio del fin de semana es 14:00, inclusive");
