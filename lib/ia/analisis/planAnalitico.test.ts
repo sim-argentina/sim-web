@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { validarPlan, LIMITE_DEFAULT, LIMITE_MAX, RANGO_MAX_DIAS } from "@/lib/ia/analisis/planAnalitico";
+import { FUENTES_FACTURACION } from "@/lib/facturacionFuentes";
 
 // Ejecutar: npx tsx lib/ia/analisis/planAnalitico.test.ts — puro.
 //
@@ -73,6 +74,10 @@ function main() {
   // ── SEGURIDAD · fuentes según la familia de la métrica ───────────────────────────────────
   {
     ok(validarPlan({ metrica: "facturacion_bruta", periodo: { mes: "2026-08" }, filtros: { fuente: ["turnero", "gift_cards"] } }));
+    // 5A.1 — la facturación no son cuatro fuentes: mensualidades e ingresos manuales también.
+    ok(validarPlan({ metrica: "facturacion_bruta", periodo: { mes: "2026-10" }, filtros: { fuente: ["mensualidades"] } }));
+    ok(validarPlan({ metrica: "facturacion_bruta", periodo: { mes: "2026-08" }, filtros: { fuente: ["manuales"] } }));
+    ok(validarPlan({ metrica: "facturacion_bruta", periodo: { mes: "2026-08" }, filtros: { fuente: [...FUENTES_FACTURACION] } }));
     ok(validarPlan({ metrica: "turnos", periodo: { mes: "2026-08" }, filtros: { fuente: ["stand"] } }));
     falla(validarPlan({ metrica: "turnos", periodo: { mes: "2026-08" }, filtros: { fuente: ["gift_cards"] } }), "filtros.fuente");
     falla(validarPlan({ metrica: "turnos", periodo: { mes: "2026-08" }, filtros: { metodo_pago: ["efectivo"] } }), "filtros.metodo_pago");

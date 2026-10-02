@@ -123,6 +123,8 @@ export const FUENTES_LABEL: Record<string, string> = {
   reservas_online: "Reservas online",
   gift_cards: "Gift cards",
   campeonatos: "Campeonatos",
+  mensualidades: "Mensualidades",
+  manuales: "Ingresos manuales",
 };
 
 // ── Utilidades de mes/fecha ──────────────────────────────────────────────────

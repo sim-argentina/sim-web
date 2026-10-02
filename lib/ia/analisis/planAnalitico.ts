@@ -7,10 +7,12 @@
 
 import { resolverMesRelativo, ventanaHoy, ventanaAyer, ventanaEstaSemana, ventanaSemanaPasada, ventanaEsteAnio, ventanaAnioPasado } from "@/lib/ia/analisis/periodoRelativo";
 import { ventanaMes } from "@/lib/ia/analisis/periodos";
+import { FUENTES_FACTURACION } from "@/lib/facturacionFuentes";
 
 // ── Métricas ────────────────────────────────────────────────────────────────────
 // Dos familias, cada una con su base de imputación YA vigente en el sistema:
-//  · contable  → definición de Finanzas (fin_ingresos_por_mes): 4 fuentes, lo web por fecha de PAGO.
+//  · contable  → facturación TOTAL OPERATIVA BRUTA de Finanzas: todas las fuentes de la
+//    composición canónica (fin_eventos_facturacion), cada una con su fecha contable vigente.
 //  · actividad → Stand + Reservas por fecha de SERVICIO (misma base que métricas de equipo/4E).
 // No se inventa una tercera definición de "facturación".
 export const METRICAS = {
@@ -32,9 +34,13 @@ export const METRICAS_DERIVADAS_A_OTRA_HERRAMIENTA: Record<string, string> = {
   horas_cronograma: "Las horas de cronograma se atribuyen por jornada/empleado, no por fecha de cobro: usá consultar_metricas_equipo o consultar_cronograma.",
 };
 
-export const FUENTES_CONTABLES = ["turnero", "reservas_online", "gift_cards", "campeonatos"] as const;
+// Las fuentes de FACTURACIÓN no se enumeran acá: se reusa el catálogo de la fuente canónica
+// (lib/facturacionEventos), que una prueba contractual mantiene igual a lo que emite el SQL.
+// Sirve solo para rechazar un valor inventado por el modelo; lo que se SUMA no depende de esta
+// lista, así que una fuente nueva entra en los totales aunque nadie toque este archivo.
+// Las de ACTIVIDAD son una lista cerrada propia: son los dos motores de métricas de SIM, no una
+// composición contable que pueda crecer.
 export const FUENTES_ACTIVIDAD = ["stand", "reservas"] as const;
-export type FuenteContable = (typeof FUENTES_CONTABLES)[number];
 export type FuenteActividad = (typeof FUENTES_ACTIVIDAD)[number];
 
 export const AGRUPACIONES = ["ninguno", "dia", "semana", "mes", "dia_semana", "fuente", "metodo_pago"] as const;
@@ -146,7 +152,7 @@ function normalizarDiasSemana(raw: unknown): number[] | null | PlanInvalido {
   return [...new Set(out)].sort((a, b) => a - b);
 }
 
-function normalizarLista(raw: unknown, permitidos: readonly string[] | null, campo: string): string[] | null | PlanInvalido {
+function normalizarLista(raw: unknown, permitidos: readonly string[] | null, campo: string, forma: RegExp = RE_METODO): string[] | null | PlanInvalido {
   if (raw == null) return null;
   const arr = (Array.isArray(raw) ? raw : [raw]).map((v) => String(v).trim()).filter(Boolean);
   if (arr.length === 0) return null;
@@ -154,7 +160,7 @@ function normalizarLista(raw: unknown, permitidos: readonly string[] | null, cam
     if (permitidos && !permitidos.includes(v)) {
       return { ok: false, error: `Valor no permitido en ${campo}: "${v}". Permitidos: ${permitidos.join(", ")}.`, campo };
     }
-    if (!permitidos && !RE_METODO.test(v)) {
+    if (!permitidos && !forma.test(v)) {
       return { ok: false, error: `Valor inválido en ${campo}: "${v}".`, campo };
     }
   }
@@ -181,8 +187,11 @@ export function validarPlan(input: Record<string, unknown>, ahora: Date = new Da
   const diasSemana = normalizarDiasSemana(filtrosRaw.dias_semana);
   if (esInvalido(diasSemana)) return diasSemana;
 
-  const fuentesPermitidas = METRICAS[metrica].familia === "contable" ? FUENTES_CONTABLES : FUENTES_ACTIVIDAD;
-  const fuentes = normalizarLista(filtrosRaw.fuente, fuentesPermitidas, "filtros.fuente");
+  // Facturación: forma válida y nada más (la lista real la tiene la fuente canónica).
+  // Actividad: lista cerrada de los dos motores de métricas.
+  const fuentes = METRICAS[metrica].familia === "contable"
+    ? normalizarLista(filtrosRaw.fuente, FUENTES_FACTURACION, "filtros.fuente")
+    : normalizarLista(filtrosRaw.fuente, FUENTES_ACTIVIDAD, "filtros.fuente");
   if (esInvalido(fuentes)) return fuentes;
 
   const metodosPago = normalizarLista(filtrosRaw.metodo_pago, null, "filtros.metodo_pago");

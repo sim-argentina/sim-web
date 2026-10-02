@@ -17,19 +17,20 @@ const AGOSTO: Extract<ResultadoAnalitico, { ok: true }> = {
   filtros: { diasSemana: [1, 2, 3, 4, 5], fuentes: null, metodosPago: null },
   agruparPor: "semana",
   filas: [
-    { clave: "2026-08-03", etiqueta: "3–7 de agosto", detalle: "lunes a viernes", fechas: [], dias: 5, valor: 1_248_000 },
-    { clave: "2026-08-10", etiqueta: "10–14 de agosto", detalle: "lunes a viernes", fechas: [], dias: 5, valor: 954_000 },
-    { clave: "2026-08-17", etiqueta: "17–21 de agosto", detalle: "lunes a viernes", fechas: [], dias: 5, valor: 1_354_000 },
-    { clave: "2026-08-24", etiqueta: "24–28 de agosto", detalle: "lunes a viernes", fechas: [], dias: 5, valor: 1_042_000 },
+    { clave: "2026-08-03", etiqueta: "3–7 de agosto", detalle: "lunes a viernes", fechas: [], dias: 5, valor: 1_348_000 },
+    { clave: "2026-08-10", etiqueta: "10–14 de agosto", detalle: "lunes a viernes", fechas: [], dias: 5, valor: 1_004_000 },
+    { clave: "2026-08-17", etiqueta: "17–21 de agosto", detalle: "lunes a viernes", fechas: [], dias: 5, valor: 2_954_000 },
+    { clave: "2026-08-24", etiqueta: "24–28 de agosto", detalle: "lunes a viernes", fechas: [], dias: 5, valor: 2_242_000 },
     { clave: "2026-08-31", etiqueta: "31 de agosto", detalle: "lunes", fechas: [], dias: 1, valor: 132_000 },
   ],
-  total: 4_730_000,
+  total: 7_680_000,
   totalDias: 21,
   porFuente: [
     { fuente: "turnero", etiqueta: "Turnero", valor: 4_000_000 },
     { fuente: "reservas_online", etiqueta: "Reservas online", valor: 730_000 },
+    { fuente: "manuales", etiqueta: "Ingresos manuales", valor: 2_950_000 },
   ],
-  fuentesInternas: ["Turnero", "Reservas online"],
+  fuentesInternas: ["Turnero", "Reservas online", "Ingresos manuales"],
   advertencias: [],
   truncado: false,
 };
@@ -40,21 +41,31 @@ function main() {
     const md = renderResultadoAnalitico(AGOSTO);
     assert.ok(md.startsWith(MARCADOR_TABLA_ANALITICA), "la tabla lleva su marcador para no duplicarse");
     assert.ok(md.includes("Facturación bruta de lunes a viernes — agosto de 2026"), "el título describe métrica, filtro y período");
-    assert.ok(md.includes("| $1.248.000 |") && md.includes("| $954.000 |") && md.includes("| $1.354.000 |") && md.includes("| $1.042.000 |"), "las cuatro semanas completas");
+    assert.ok(md.includes("| $1.348.000 |") && md.includes("| $1.004.000 |") && md.includes("| $2.954.000 |") && md.includes("| $2.242.000 |"), "las cuatro semanas completas");
     assert.ok(md.includes("| $132.000 |"), "la semana parcial del lunes 31 NO se pierde");
-    assert.ok(md.includes("**$4.730.000**"), "el total del período está presente y resaltado");
+    assert.ok(md.includes("**$7.680.000**"), "el total del período está presente y resaltado");
     assert.ok(md.includes("**21 días**"), "el total informa cuántos días hábiles entraron");
     assert.ok(/\|\s*Semana\s*\|\s*Días incluidos\s*\|/.test(md), "el encabezado nombra la agrupación");
     assert.equal((md.match(/^\|/gm) ?? []).length, 8, "5 semanas + encabezado + separador + total");
   }
-  console.log("OK — tabla semanal de agosto 2026: 5 semanas (incluida la del 31), total $4.730.000 sobre 21 días.");
+  console.log("OK — tabla semanal de agosto 2026: 5 semanas (incluida la del 31), total $7.680.000 sobre 21 días.");
 
   // ── El criterio contable se explicita: nadie tiene que adivinar qué se sumó ───────────────
   {
     const md = renderResultadoAnalitico(AGOSTO);
     assert.ok(md.includes("fecha de servicio") && md.includes("fecha de pago"), "declara la base de imputación de cada fuente");
     assert.ok(md.includes("Finanzas"), "aclara que es la misma composición que Finanzas");
+    assert.ok(md.includes("total operativa bruta"), "dice que es la facturación TOTAL, no solo las fuentes automáticas");
+    assert.ok(md.includes("Mensualidades"), "nombra Mensualidades entre las fuentes de la composición");
+    assert.ok(md.includes("ingresos manuales"), "y los ingresos manuales con su fecha contable");
+    for (const fuera of ["transferencias", "préstamos", "ajustes de saldo", "Colectivo"]) {
+      assert.ok(md.includes(fuera), `declara explícitamente que no incluye ${fuera}`);
+    }
     assert.ok(md.includes("- Turnero: $4.000.000") && md.includes("- Reservas online: $730.000"), "desagrega el total por fuente interna");
+    assert.ok(md.includes("- Ingresos manuales: $2.950.000"), "los ingresos manuales aparecen desagregados, no escondidos en el total");
+    // El panel de Finanzas separa automáticos de manuales: la tabla tiene que permitir cuadrar.
+    assert.ok(md.includes("$4.730.000 son ingresos automáticos"), "informa cuánto del total son ingresos automáticos");
+    assert.ok(md.includes("$2.950.000 son ingresos manuales operativos"), "y cuánto son manuales");
   }
   console.log("OK — la tabla declara el criterio contable y desagrega por fuente interna.");
 
@@ -84,7 +95,7 @@ function main() {
     const porMetodo = renderResultadoAnalitico({
       ...AGOSTO,
       agruparPor: "metodo_pago",
-      filas: [{ clave: "efectivo", etiqueta: "Efectivo", detalle: "", fechas: [], dias: 21, valor: 4_730_000 }],
+      filas: [{ clave: "efectivo", etiqueta: "Efectivo", detalle: "", fechas: [], dias: 21, valor: 7_680_000 }],
     });
     assert.ok(porMetodo.includes("| Método de pago | Facturación bruta |"), "las agrupaciones no temporales usan dos columnas");
     assert.ok(!porMetodo.includes("Días incluidos"));
@@ -100,7 +111,7 @@ function main() {
 
   // ── Formato de valores ──────────────────────────────────────────────────────────────────
   {
-    assert.equal(formatearValor(4_730_000, "ars"), "$4.730.000");
+    assert.equal(formatearValor(7_680_000, "ars"), "$7.680.000");
     assert.equal(formatearValor(-12_500, "ars"), "-$12.500", "el signo va ANTES del símbolo de moneda");
     assert.equal(formatearValor(1234.5, "ars"), "$1.234,50");
     assert.equal(formatearValor(90, "minutos"), "90 min");

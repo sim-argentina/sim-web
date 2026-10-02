@@ -5,7 +5,7 @@
 // él mismo: la respuesta correcta no depende de que el modelo la redacte bien.
 
 import type { ToolDef, ToolResultado } from "@/lib/ia/tools";
-import { validarPlan, METRICAS_VALIDAS, AGRUPACIONES, ORDENES, FUENTES_CONTABLES, FUENTES_ACTIVIDAD, LIMITE_MAX } from "@/lib/ia/analisis/planAnalitico";
+import { validarPlan, METRICAS_VALIDAS, AGRUPACIONES, ORDENES, FUENTES_ACTIVIDAD, LIMITE_MAX } from "@/lib/ia/analisis/planAnalitico";
 import { ejecutarPlanAnalitico } from "@/lib/ia/analisis/ejecutorAnalitico";
 import { renderResultadoAnalitico } from "@/lib/ia/analisis/renderAnalitico";
 
@@ -33,13 +33,13 @@ export const consulta_analitica_interna: ToolDef = {
   schema: {
     type: "object",
     properties: {
-      metrica: { type: "string", enum: [...METRICAS_VALIDAS], description: "facturacion_bruta usa la composición contable de Finanzas (Turnero por fecha de servicio; Reservas, Gift cards y Campeonatos por fecha de pago)." },
+      metrica: { type: "string", enum: [...METRICAS_VALIDAS], description: "facturacion_bruta es la facturación TOTAL OPERATIVA BRUTA de Finanzas: todas sus fuentes de ingreso operativo (turnero, reservas web, gift cards, campeonatos, mensualidades e ingresos manuales), cada una por su fecha contable. No incluye transferencias, préstamos, ajustes de saldo ni el Colectivo." },
       periodo: schemaPeriodo,
       filtros: {
         type: "object",
         properties: {
           dias_semana: { type: "array", items: { type: "integer" }, description: "Días ISO a incluir: 1=lunes … 7=domingo. Para 'lunes a viernes' usá [1,2,3,4,5]." },
-          fuente: { type: "array", items: { type: "string" }, description: `Para facturación: ${FUENTES_CONTABLES.join(", ")}. Para actividad: ${FUENTES_ACTIVIDAD.join(", ")}.` },
+          fuente: { type: "array", items: { type: "string" }, description: `Para facturación, las fuentes de Finanzas (turnero, reservas_online, gift_cards, campeonatos, mensualidades, manuales); si pasás una que no existe o no tiene movimientos, el servidor te devuelve las que sí los tienen. Para actividad: ${FUENTES_ACTIVIDAD.join(", ")}.` },
           metodo_pago: { type: "array", items: { type: "string" }, description: "Solo para facturación (ej. efectivo, mercadopago, posnet)." },
         },
         additionalProperties: false,

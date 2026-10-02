@@ -8,18 +8,25 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 //
 // Bloque 5A — lee la base REAL, SOLO LECTURA. Verifica (a) paridad al peso con Finanzas y
 // (b) el resultado real de agosto 2026 de lunes a viernes por semana, calculado aparte en SQL.
+//
+// 5A.1 — la facturación es la TOTAL OPERATIVA BRUTA (todas las fuentes de la composición
+// canónica, incluidos mensualidades e ingresos manuales), así que estas cifras son más altas
+// que las de 5A: antes faltaban los $2.950.000 de ingresos manuales de agosto.
 
 const MES = "2026-08";
-// Verificado con SQL independiente sobre la misma composición de fin_ingresos_por_mes.
+// Verificado con SQL independiente sobre fin_eventos_facturacion (semanas ISO, lunes a viernes).
 const SEMANAS_AGOSTO_LUN_VIE = [
-  { clave: "2026-08-03", dias: 5, valor: 1_248_000 },
-  { clave: "2026-08-10", dias: 5, valor: 954_000 },
-  { clave: "2026-08-17", dias: 5, valor: 1_354_000 },
-  { clave: "2026-08-24", dias: 5, valor: 1_042_000 },
+  { clave: "2026-08-03", dias: 5, valor: 1_348_000 },
+  { clave: "2026-08-10", dias: 5, valor: 1_004_000 },
+  { clave: "2026-08-17", dias: 5, valor: 2_954_000 },
+  { clave: "2026-08-24", dias: 5, valor: 2_242_000 },
   { clave: "2026-08-31", dias: 1, valor: 132_000 },
 ];
-const TOTAL_AGOSTO_LUN_VIE = 4_730_000;
+const TOTAL_AGOSTO_LUN_VIE = 7_680_000;
 const DIAS_HABILES_AGOSTO = 21;
+// Mes completo: automáticos (los que publica Finanzas) + manuales operativos.
+const TOTAL_AGOSTO_INTEGRAL = 13_454_000;
+const MANUALES_AGOSTO = 2_950_000;
 
 function plan(input: Record<string, unknown>): PlanAnalitico {
   const v = validarPlan(input);
@@ -73,29 +80,59 @@ async function main() {
   }
   console.log(`OK — agosto 2026, lunes a viernes por semana: 5 semanas, ${DIAS_HABILES_AGOSTO} días hábiles, total $${TOTAL_AGOSTO_LUN_VIE.toLocaleString("es-AR")} (coincide con el SQL de control).`);
 
-  // ── PARIDAD CON FINANZAS: mismo mes, misma plata, al peso ────────────────────────────────
+  // ── PARIDAD CON FINANZAS: cada fuente automática, al peso, + los manuales ────────────────
   {
     const fin = await getIngresosAutomaticos(MES);
     const r = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, agrupar_por: "fuente" });
-    assert.equal(r.total, fin.total, `el total del ejecutor ($${r.total}) debe ser idéntico al de Finanzas ($${fin.total})`);
+
     for (const [fuente, monto] of Object.entries(fin.totalPorFuente)) {
       const mia = r.filas.find((f) => f.clave === fuente);
       assert.ok(mia, `la fuente "${fuente}" de Finanzas aparece en el resultado`);
       assert.equal(mia!.valor, monto, `la fuente "${fuente}" coincide al peso con Finanzas`);
     }
-    assert.equal(r.filas.length, Object.keys(fin.totalPorFuente).length, "no se agrega ni se pierde ninguna fuente");
+
+    // 5A.1 — lo que faltaba: los ingresos manuales operativos también son facturación.
+    const manuales = r.filas.find((f) => f.clave === "manuales");
+    assert.ok(manuales, "los ingresos manuales operativos tienen que estar en la facturación");
+    assert.equal(manuales!.valor, MANUALES_AGOSTO, "los manuales de agosto coinciden con los movimientos reales");
+
+    const automaticas = Object.values(fin.totalPorFuente).reduce((a, b) => a + b, 0);
+    assert.equal(r.total, automaticas + MANUALES_AGOSTO, "el total es automáticos + manuales, sin perder ni duplicar");
+    assert.equal(r.total, TOTAL_AGOSTO_INTEGRAL, "y es la facturación total operativa bruta de agosto");
+    assert.equal(
+      r.filas.length,
+      Object.keys(fin.totalPorFuente).length + 1,
+      "las fuentes son las de Finanzas más los manuales, ninguna de más",
+    );
   }
-  console.log("OK — PARIDAD: el total mensual y cada fuente coinciden al peso con Finanzas (fin_ingresos_por_mes).");
+  console.log(`OK — PARIDAD: cada fuente automática coincide al peso con Finanzas y los $${MANUALES_AGOSTO.toLocaleString("es-AR")} manuales están incluidos (total $${TOTAL_AGOSTO_INTEGRAL.toLocaleString("es-AR")}).`);
 
   // ── Los filtros particionan: hábiles + fin de semana = mes completo ──────────────────────
   {
-    const fin = await getIngresosAutomaticos(MES);
+    const completo = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES } });
     const habiles = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { dias_semana: [1, 2, 3, 4, 5] } });
     const finde = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { dias_semana: [6, 7] } });
-    assert.equal(habiles.total + finde.total, fin.total, "lunes-a-viernes + fin de semana reconstruye el mes completo");
+    assert.equal(habiles.total + finde.total, completo.total, "lunes-a-viernes + fin de semana reconstruye el mes completo");
+    assert.equal(completo.total, TOTAL_AGOSTO_INTEGRAL);
     assert.equal(habiles.total, TOTAL_AGOSTO_LUN_VIE);
   }
   console.log("OK — el filtro por día parte el mes sin perder ni duplicar un peso.");
+
+  // ── Una fuente sola: filtrar por manuales o por mensualidades funciona ───────────────────
+  {
+    const soloManuales = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { fuente: ["manuales"] } });
+    assert.equal(soloManuales.total, MANUALES_AGOSTO, "se puede pedir solo la facturación manual");
+    assert.deepEqual(soloManuales.porFuente.map((f) => f.fuente), ["manuales"]);
+
+    // Mensualidades: hoy sin movimientos en agosto. No puede explotar ni inventar: cero y aviso.
+    const soloMens = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { fuente: ["mensualidades"] } });
+    assert.equal(soloMens.total, 0);
+    assert.ok(
+      soloMens.advertencias.some((a) => a.includes("mensualidades") && a.includes("fuentes con movimientos")),
+      "si la fuente pedida no tiene movimientos, se dice cuáles sí los tienen",
+    );
+  }
+  console.log("OK — se puede filtrar por una sola fuente; si esa fuente no tuvo movimientos, el aviso dice cuáles sí.");
 
   // ── El calendario se DERIVA: el mismo plan funciona en cualquier mes ─────────────────────
   {

@@ -83,7 +83,17 @@ export function renderResultadoAnalitico(r: ResultadoAnalitico): string {
   }
 
   if (r.metrica === "facturacion_bruta") {
-    lineas.push("", "_Criterio contable vigente: el Turnero del stand se imputa por fecha de servicio; Reservas online, Gift cards y Campeonatos, por fecha de pago. Es la misma composición que usa Finanzas._");
+    lineas.push("", "_Facturación total operativa bruta, con la misma composición que Finanzas: el Turnero del stand se imputa por fecha de servicio; Reservas online, Gift cards, Campeonatos y Mensualidades por fecha de pago; los ingresos manuales por su fecha contable. No incluye transferencias entre cuentas, préstamos, ajustes de saldo ni el Colectivo._");
+    // El panel de Finanzas muestra por separado los "ingresos automáticos" y los manuales. Si
+    // el total de acá incluye manuales, se dice cuánto es cada parte: así el número cuadra
+    // contra el panel de un vistazo en vez de parecer un error.
+    const manual = r.porFuente.filter((f) => f.fuente === "manuales").reduce((a, f) => a + f.valor, 0);
+    if (manual > 0) {
+      lineas.push(
+        "",
+        `_De ese total, ${formatearValor(r.total - manual, r.unidad)} son ingresos automáticos (lo que Finanzas publica como tales) y ${formatearValor(manual, r.unidad)} son ingresos manuales operativos._`,
+      );
+    }
   }
   for (const a of r.advertencias) lineas.push("", `_${a}_`);
 

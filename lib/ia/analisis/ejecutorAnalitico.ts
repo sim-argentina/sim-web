@@ -1,9 +1,10 @@
 // IA SIM · Bloque 5A — EJECUTOR del plan analítico interno. Solo lectura, parametrizado.
 //
 // Reutiliza las definiciones YA vigentes, sin crear una segunda versión de nada:
-//  · facturacion_bruta → misma composición que Finanzas (fin_ingresos_por_mes): Turnero del
-//    stand por fecha de SERVICIO + Reservas online, Gift cards y Campeonatos por fecha de PAGO.
-//    La paridad con Finanzas está cubierta por prueba (mismo total mensual, al peso).
+//  · facturacion_bruta → facturación TOTAL OPERATIVA BRUTA, leída de la fuente canónica
+//    fin_eventos_facturacion (lib/facturacionEventos.ts). Este archivo no enumera fuentes:
+//    las que Finanzas reconozca hoy o incorpore mañana entran solas. La paridad con Finanzas
+//    está cubierta por una prueba contractual.
 //  · turnos/personas/operaciones/minutos → Stand + Reservas por fecha de servicio, con los
 //    mismos helpers canónicos de Métricas Stand (turnosDeFila/personasDeFila) y, desde B8,
 //    los minutos y turnos comerciales por la modalidad de cada fila (lib/minutosComerciales:
@@ -15,9 +16,9 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { FUENTES_LABEL } from "@/lib/finanzas";
 import { minutosComercialesStand, turnosDeFila, personasDeFila, totalDeFila, type FilaStand } from "@/lib/metricasStand";
 import { minutosComercialesReserva, turnosComercialesReserva } from "@/lib/minutosComerciales";
+import { leerEventosFacturacion, fuentesPresentes } from "@/lib/facturacionEventos";
 import { METRICAS, type PlanAnalitico } from "@/lib/ia/analisis/planAnalitico";
 
-const TZ = "America/Argentina/Cordoba";
 const MESES = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const DIAS_ISO = ["", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"];
 
@@ -49,12 +50,6 @@ export type ResultadoAnalitico =
     }
   | { ok: false; motivo: string };
 
-// ── Utilidades de fecha (día calendario de Córdoba, sin depender de un offset hardcodeado) ──
-function diaCordobaDeTimestamp(ts: string): string {
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-CA", { timeZone: TZ });
-}
 function isoDow(fecha: string): number {
   const [a, m, d] = fecha.split("-").map(Number);
   const dow = new Date(Date.UTC(a, m - 1, d)).getUTCDay();
@@ -67,93 +62,30 @@ function sumarDias(fecha: string, delta: number): string {
 function diaDelMes(fecha: string): number { return Number(fecha.slice(8, 10)); }
 function nombreMes(fecha: string): string { return MESES[Number(fecha.slice(5, 7))]; }
 
-// Ventana UTC ampliada un día por lado: se consulta de más y después se filtra por el día
-// calendario REAL de Córdoba, así no se pierde ni se cuela nada por el borde del huso.
-function ventanaUtcAmplia(desde: string, hasta: string): { desdeUtc: string; hastaUtc: string } {
-  return { desdeUtc: `${sumarDias(desde, -1)}T00:00:00.000Z`, hastaUtc: `${sumarDias(hasta, 2)}T00:00:00.000Z` };
-}
-
 type FilaDia = { dia: string; fuente: string; metodo: string; valor: number; turnos: number; personas: number; operaciones: number; minutos: number };
 
-// ── Recolección CONTABLE (paridad con fin_ingresos_por_mes) ─────────────────────────────────
+// ── Recolección CONTABLE: la composición NO se enumera acá ──────────────────────────────────
+// Se lee la fuente canónica (fin_eventos_facturacion). Cualquier fuente que Finanzas incorpore
+// a esa función —mensualidades, ingresos manuales operativos o una futura— entra sola, sin
+// tocar este archivo. Antes esto era una copia a mano de cuatro fuentes, y divergió.
 async function filasContables(p: PlanAnalitico, advertencias: string[]): Promise<FilaDia[]> {
-  const { desde, hasta } = p.ventana;
-  const { desdeUtc, hastaUtc } = ventanaUtcAmplia(desde, hasta);
-  const quiere = (f: string) => !p.filtros.fuentes || p.filtros.fuentes.includes(f);
-  const filas: FilaDia[] = [];
+  const eventos = await leerEventosFacturacion(p.ventana.desde, p.ventana.hasta);
   const base = { turnos: 0, personas: 0, operaciones: 0, minutos: 0 };
 
-  if (quiere("turnero")) {
-    const { data, error } = await supabaseAdmin
-      .from("turnos_stand")
-      .select("fecha, estado, total, metodo_pago, pagos_detalle")
-      .gte("fecha", desde).lte("fecha", hasta);
-    if (error) throw error;
-    for (const t of (data ?? []) as Array<Record<string, unknown>>) {
-      const estado = String(t.estado ?? "").toLowerCase();
-      if (estado === "cancelado") continue; // misma exclusión que Finanzas
-      const dia = String(t.fecha).slice(0, 10);
-      const pagos = t.pagos_detalle;
-      if (Array.isArray(pagos) && pagos.length > 0) {
-        for (const pago of pagos as Array<Record<string, unknown>>) {
-          const metodo = String(pago.metodo_pago ?? "").trim() || "desconocido";
-          filas.push({ ...base, dia, fuente: "turnero", metodo, valor: Number(pago.monto) || 0 });
-        }
-      } else {
-        const metodo = String(t.metodo_pago ?? "").trim() || "desconocido";
-        filas.push({ ...base, dia, fuente: "turnero", metodo, valor: Number(t.total) || 0 });
-      }
-    }
+  const pedidas = p.filtros.fuentes;
+  const elegidos = pedidas ? eventos.filter((e) => pedidas.includes(e.fuente)) : eventos;
+
+  if (eventos.length === 0) {
+    advertencias.push("No hay ingresos registrados en el período y los filtros pedidos.");
+  } else if (pedidas && elegidos.length === 0) {
+    // El modelo pidió filtrar por una fuente que en este período no tiene movimientos: se le
+    // dice cuáles sí los tienen, sin mantener ninguna lista fija de fuentes.
+    advertencias.push(
+      `No hay ingresos de ${pedidas.join(", ")} en el período. Las fuentes con movimientos son: ${fuentesPresentes(eventos).join(", ")}.`,
+    );
   }
 
-  if (quiere("reservas_online")) {
-    const { data, error } = await supabaseAdmin
-      .from("reservas")
-      .select("created_at, estado, total, origen")
-      .gte("created_at", desdeUtc).lt("created_at", hastaUtc);
-    if (error) throw error;
-    for (const r of (data ?? []) as Array<Record<string, unknown>>) {
-      const estado = String(r.estado ?? "");
-      if (estado !== "activa" && estado !== "reembolsada") continue;
-      const origen = r.origen == null ? null : String(r.origen);
-      if (origen === "empresa" || origen === "mensualidad") continue;
-      const dia = diaCordobaDeTimestamp(String(r.created_at));
-      if (dia < desde || dia > hasta) continue;
-      filas.push({ ...base, dia, fuente: "reservas_online", metodo: "mercadopago", valor: Number(r.total) || 0 });
-    }
-  }
-
-  if (quiere("gift_cards")) {
-    const { data, error } = await supabaseAdmin
-      .from("gift_cards")
-      .select("fecha_pago, estado_pago, monto")
-      .gte("fecha_pago", desdeUtc).lt("fecha_pago", hastaUtc);
-    if (error) throw error;
-    for (const g of (data ?? []) as Array<Record<string, unknown>>) {
-      if (String(g.estado_pago ?? "") !== "pagado" || !g.fecha_pago) continue;
-      const dia = diaCordobaDeTimestamp(String(g.fecha_pago));
-      if (dia < desde || dia > hasta) continue;
-      filas.push({ ...base, dia, fuente: "gift_cards", metodo: "mercadopago", valor: Number(g.monto) || 0 });
-    }
-  }
-
-  if (quiere("campeonatos")) {
-    const { data, error } = await supabaseAdmin
-      .from("campeonato_inscripciones")
-      .select("created_at, estado_pago, monto, metodo_pago, eliminada_at")
-      .gte("created_at", desdeUtc).lt("created_at", hastaUtc);
-    if (error) throw error;
-    for (const c of (data ?? []) as Array<Record<string, unknown>>) {
-      if (String(c.estado_pago ?? "") !== "pagado" || c.eliminada_at != null) continue;
-      const dia = diaCordobaDeTimestamp(String(c.created_at));
-      if (dia < desde || dia > hasta) continue;
-      const metodo = String(c.metodo_pago ?? "").trim() || "mercadopago";
-      filas.push({ ...base, dia, fuente: "campeonatos", metodo, valor: Number(c.monto) || 0 });
-    }
-  }
-
-  if (filas.length === 0) advertencias.push("No hay ingresos registrados en el período y los filtros pedidos.");
-  return filas;
+  return elegidos.map((e) => ({ ...base, dia: e.fechaContable, fuente: e.fuente, metodo: e.metodo, valor: e.monto }));
 }
 
 // ── Recolección de ACTIVIDAD (Stand + Reservas por fecha de servicio, base de 4E) ────────────
@@ -321,7 +253,7 @@ export async function ejecutarPlanAnalitico(p: PlanAnalitico): Promise<Resultado
     .sort((a, b) => b.valor - a.valor);
 
   const fuentesInternas = familia === "contable"
-    ? ["Finanzas SIM · ingresos por fuente (Turnero por fecha de servicio; Reservas, Gift cards y Campeonatos por fecha de pago)"]
+    ? ["Finanzas SIM · facturación total operativa bruta, composición canónica (Turnero por fecha de servicio; lo web, Gift cards, Campeonatos y Mensualidades por fecha de pago; ingresos manuales por su fecha contable)"]
     : ["Métricas Stand y Reservas web (por fecha de servicio)"];
 
   return {

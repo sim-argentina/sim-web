@@ -15,8 +15,8 @@ import { MARCADOR_TABLA_ANALITICA } from "@/lib/ia/analisis/renderAnalitico";
 const OWNER = "admin:zztest-5a";
 const PREGUNTA_PRODUCTIVA = "Me podrías decir la facturación del mes de agosto de 2026, entre los días lunes a viernes de cada semana?";
 const PLAN_AGOSTO = { metrica: "facturacion_bruta", periodo: { mes: "2026-08" }, filtros: { dias_semana: [1, 2, 3, 4, 5] }, agrupar_por: "semana" };
-const SEMANAS = ["$1.248.000", "$954.000", "$1.354.000", "$1.042.000", "$132.000"];
-const TOTAL = "$4.730.000";
+const SEMANAS = ["$1.348.000", "$1.004.000", "$2.954.000", "$2.242.000", "$132.000"];
+const TOTAL = "$7.680.000";
 
 type Herramienta = { nombre: string; ok: boolean; resumen?: Record<string, unknown> };
 
@@ -77,7 +77,7 @@ async function main() {
     assert.deepEqual(res.ventana, { desde: "2026-08-01", hasta: "2026-08-31" }, "agosto COMPLETO");
     assert.equal(res.agruparPor, "semana");
     assert.equal(res.filas.length, 5, "cinco semanas, incluida la del lunes 31");
-    assert.equal(res.total, 4_730_000);
+    assert.equal(res.total, 7_680_000);
     assert.equal(res.totalDias, 21, "solo los 21 días hábiles");
 
     // Respuesta publicada
