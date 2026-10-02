@@ -165,6 +165,7 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     "lib/finanzasRangoMes.test.ts": "fin exclusivo del rango de septiembre",
     "lib/mensualidadesM7_4.test.ts": "vencimiento de ejemplo",
     "lib/ia/consumoMes.test.ts": "fin exclusivo del rango de septiembre",
+    "lib/turneroCambio.test.ts": "Turnero, cambio de caja: 01/10 es el ejemplo de un cierre cualquiera, no el corte",
   };
   const conFecha = archivos.filter((f) => leer(f).includes(FECHA));
   const sinPermiso = conFecha.filter((f) => !(f in PERMITIDOS));

@@ -5,6 +5,9 @@ import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer"
 // Columna "Turnos" de las filas de reserva: legacy 15 min = 1 turno (la regla
 // de siempre); v2 bloques de 10. Solo visual: no altera datos ni métricas.
 import { turnosDeReserva } from "@/lib/reservasPresentacion";
+// Cambio que queda en la caja al cierre: nota operativa aparte, no entra en el
+// resumen del día ni en las métricas.
+import CambioEnCaja from "./CambioEnCaja";
 
 type PagoDetalle = {
   metodo_pago: string;
@@ -1511,6 +1514,8 @@ export default function TurneroAdminPage() {
             )}
           </div>
         </div>
+
+        <CambioEnCaja />
       </section>
 
       {/* Eliminar turno (definitivo): solo admin. Confirmación con los datos del turno. */}
