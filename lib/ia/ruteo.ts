@@ -55,6 +55,18 @@ const TEMA_INTERNO: Array<{ id: string; re: RegExp }> = [
   { id: "caja", re: /\bcaja\b|\bsaldo\b|\bcomision/ },
   { id: "neto_bruto", re: /\bneto\b|\bbruto\b/ },
   { id: "metricas", re: /\bmetrica|\brendimiento\b/ },
+  // Bloque 5B — vocabulario con el que se piden los análisis internos. Sin esto, "¿cuánto
+  // vendimos entre semana?" o "los cinco mejores días" no tenían tema interno, quedaban
+  // ambiguas y la decisión de web volvía a depender de 4D. Son señales ADITIVAS: si además
+  // aparece algo externo, la consulta sigue siendo mixta y la parte externa puede buscar.
+  { id: "ventas", re: /\bvent(a|as)\b|\bvend(e|en|i|io|ió|imos|ieron)/ },
+  { id: "promedio", re: /\bpromedio|\bmedia diaria\b/ },
+  { id: "extremos", re: /\bmejor(es)?\b|\bpeor(es)?\b|\bmaximo|\bminimo|\btop\s*\d/ },
+  { id: "desglose", re: /\bdesglos|\bdiscrimin|\bsepar(a|ame|ar|alo)\b|\bseparame\b/ },
+  { id: "participacion", re: /\bporcentaje|\bparticipacion|\bproporcion/ },
+  { id: "calendario", re: /\bfin(es)? de semana\b|\bfinde\b|\bhabiles\b|\bentre semana\b|\bdias? de la semana\b|\bsemanalmente\b/ },
+  { id: "comparacion", re: /\bcompar|\bversus\b|\bvs\b|\bdiferencia\b|\bvariacion|\bcambi(o|os|aron)\b|\bevolucion/ },
+  { id: "actividad", re: /\bactividad\b/ },
 ];
 
 // Temas EXTERNOS: información que SIM no tiene y que sí justifica internet.

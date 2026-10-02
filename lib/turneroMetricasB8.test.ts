@@ -363,11 +363,15 @@ async function main() {
     assert.equal(op.reservas.turnos, 4 * 3 + 1);
 
     const { ejecutarPlanAnalitico } = await import("@/lib/ia/analisis/ejecutorAnalitico");
-    const minutosIA = await ejecutarPlanAnalitico({ metrica: "minutos_actividad", ventana: { desde: F, hasta: F }, filtros: { diasSemana: null, fuentes: null, metodosPago: null }, agruparPor: "fuente", orden: "mayor_a_menor", limite: 50 });
+    const minutosIA = await ejecutarPlanAnalitico({
+      metricas: ["minutos_actividad"], universo: "actividad", ventana: { desde: F, hasta: F },
+      filtros: { diasSemana: null, fuentes: null, clases: null, metodosPago: null, modalidades: null, duraciones: null, simuladores: null },
+      dimensiones: ["fuente"], segmentacion: null, calculos: ["total"], orden: "mayor_a_menor", limite: 50, ranking: null,
+    });
     assert.ok(minutosIA.ok);
     if (minutosIA.ok) {
       // El ejecutor solo cuenta reservas web (como siempre): v2 40 + legacy 15; Stand 70.
-      assert.deepEqual(minutosIA.porFuente.map((f) => [f.fuente, f.valor]).sort(), [["reservas", 55], ["stand", 70]]);
+      assert.deepEqual(minutosIA.resumen.porFuente.map((f) => [f.fuente, f.valores[0].valor]).sort(), [["reservas", 55], ["stand", 70]]);
     }
     const { construirSerieDiaria } = await import("@/lib/ia/analisis/serieDiaria");
     const serie = await construirSerieDiaria(F, F);

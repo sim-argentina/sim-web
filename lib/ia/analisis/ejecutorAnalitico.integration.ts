@@ -6,27 +6,23 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 // Ejecutar: npx tsx --env-file=.env.local lib/ia/analisis/ejecutorAnalitico.integration.ts
 //
-// Bloque 5A — lee la base REAL, SOLO LECTURA. Verifica (a) paridad al peso con Finanzas y
-// (b) el resultado real de agosto 2026 de lunes a viernes por semana, calculado aparte en SQL.
-//
-// 5A.1 — la facturación es la TOTAL OPERATIVA BRUTA (todas las fuentes de la composición
-// canónica, incluidos mensualidades e ingresos manuales), así que estas cifras son más altas
-// que las de 5A: antes faltaban los $2.950.000 de ingresos manuales de agosto.
+// Bloque 5B — lee la base REAL, SOLO LECTURA. Agosto de 2026 es un mes cerrado, así que sus
+// cifras se afirman en absoluto (verificadas aparte en SQL sobre fin_eventos_facturacion); el
+// resto se verifica por IDENTIDADES (los grupos suman el total, promedio × días = total, las
+// participaciones suman 100), que no se rompen cuando entran datos nuevos.
 
 const MES = "2026-08";
-// Verificado con SQL independiente sobre fin_eventos_facturacion (semanas ISO, lunes a viernes).
-const SEMANAS_AGOSTO_LUN_VIE = [
-  { clave: "2026-08-03", dias: 5, valor: 1_348_000 },
-  { clave: "2026-08-10", dias: 5, valor: 1_004_000 },
-  { clave: "2026-08-17", dias: 5, valor: 2_954_000 },
-  { clave: "2026-08-24", dias: 5, valor: 2_242_000 },
-  { clave: "2026-08-31", dias: 1, valor: 132_000 },
-];
-const TOTAL_AGOSTO_LUN_VIE = 7_680_000;
-const DIAS_HABILES_AGOSTO = 21;
-// Mes completo: automáticos (los que publica Finanzas) + manuales operativos.
-const TOTAL_AGOSTO_INTEGRAL = 13_454_000;
-const MANUALES_AGOSTO = 2_950_000;
+
+// Verificado con SQL independiente sobre fin_eventos_facturacion.
+const AGOSTO = {
+  totalIntegral: 13_454_000,
+  diasCalendario: 31,
+  promedioDia: 434_000,
+  habiles: { dias: 21, total: 7_680_000, promedio: 365_714.29, mejorDia: "18 de agosto", mejorMonto: 1_720_000, porFuente: { turnero: 4_690_000, manuales: 2_950_000, campeonatos: 40_000 } },
+  finde: { dias: 10, total: 5_774_000, promedio: 577_400, mejorDia: "15 de agosto", mejorMonto: 878_000, porFuente: { turnero: 5_568_000, reservas_online: 126_000, campeonatos: 80_000 } },
+  semanasLunVie: [1_348_000, 1_004_000, 2_954_000, 2_242_000, 132_000],
+  manuales: 2_950_000,
+};
 
 function plan(input: Record<string, unknown>): PlanAnalitico {
   const v = validarPlan(input);
@@ -38,15 +34,13 @@ async function ejecutar(input: Record<string, unknown>) {
   assert.equal(r.ok, true, r.ok ? "" : `ejecución fallida: ${r.motivo}`);
   return r as Extract<typeof r, { ok: true }>;
 }
-const isoDow = (f: string) => {
-  const [a, m, d] = f.split("-").map(Number);
-  const dow = new Date(Date.UTC(a, m - 1, d)).getUTCDay();
-  return dow === 0 ? 7 : dow;
-};
+const valor = (vs: Array<{ metrica: string; valor: number }>, m: string) => vs.find((v) => v.metrica === m)?.valor ?? 0;
+const principal = (vs: Array<{ metrica: string; valor: number }>) => vs[0]?.valor ?? 0;
+const cerca = (a: number, b: number, tol = 0.02) => Math.abs(a - b) <= tol;
 
 async function main() {
-  // ── Censo previo: al terminar se verifica que NADA cambió ─────────────────────────────────
-  const tablas = ["turnos_stand", "reservas", "gift_cards", "campeonato_inscripciones"] as const;
+  // Censo previo: al terminar se verifica que NADA cambió.
+  const tablas = ["turnos_stand", "reservas", "gift_cards", "campeonato_inscripciones", "fin_movimientos"] as const;
   const censo = async () => {
     const out: Record<string, number> = {};
     for (const t of tablas) {
@@ -58,141 +52,241 @@ async function main() {
   };
   const antes = await censo();
 
-  // ── LA consulta productiva, calculada de punta a punta ───────────────────────────────────
+  // ── 1) Facturación total por día ────────────────────────────────────────────────────────
   {
-    const r = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { dias_semana: [1, 2, 3, 4, 5] }, agrupar_por: "semana" });
-    assert.equal(r.filas.length, SEMANAS_AGOSTO_LUN_VIE.length, "agosto 2026 tiene 5 semanas con días hábiles");
-    r.filas.forEach((f, i) => {
-      const esperada = SEMANAS_AGOSTO_LUN_VIE[i];
-      assert.equal(f.clave, esperada.clave, `la semana ${i + 1} arranca el lunes ${esperada.clave}`);
-      assert.equal(f.dias, esperada.dias, `la semana ${esperada.clave} tiene ${esperada.dias} día(s) hábil(es)`);
-      assert.equal(f.valor, esperada.valor, `la facturación de la semana ${esperada.clave} coincide con el SQL de control`);
-      for (const fecha of f.fechas) {
-        assert.ok(isoDow(fecha) >= 1 && isoDow(fecha) <= 5, `${fecha} es un día hábil`);
-        assert.ok(fecha >= "2026-08-01" && fecha <= "2026-08-31", `${fecha} cae dentro de agosto`);
-      }
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, dimensiones: ["dia"], calculos: ["promedio_dia_calendario", "participacion"] });
+    assert.equal(r.filas.length, 31, "los 31 días de agosto aparecen, incluidos los que no tuvieron movimientos");
+    assert.equal(principal(r.resumen.totales), AGOSTO.totalIntegral);
+    assert.equal(r.resumen.diasCalendario, AGOSTO.diasCalendario);
+    assert.equal(principal(r.resumen.promedioDiaCalendario), AGOSTO.promedioDia);
+    // Identidad: las filas suman el total.
+    assert.ok(cerca(r.filas.reduce((a, f) => a + principal(f.valores), 0), AGOSTO.totalIntegral), "los días suman exactamente el total");
+    // Identidad: las participaciones suman 100.
+    const sumaPart = r.filas.reduce((a, f) => a + (f.participacion?.[0] ?? 0), 0);
+    assert.ok(cerca(sumaPart, 100, 0.2), `las participaciones suman 100 (dieron ${sumaPart})`);
+    // Orden cronológico por defecto.
+    assert.deepEqual(r.filas.map((f) => f.claves[0]), [...r.filas.map((f) => f.claves[0])].sort());
+  }
+  console.log(`OK — 5B (1): facturación por día de agosto: 31 días (ceros incluidos), total $${AGOSTO.totalIntegral.toLocaleString("es-AR")}, promedio $${AGOSTO.promedioDia.toLocaleString("es-AR")}; las filas y las participaciones cierran.`);
+
+  // ── 2) Facturación por semana y fuente (dos dimensiones) ────────────────────────────────
+  {
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, dimensiones: ["semana", "fuente"] });
+    assert.equal(r.dimensiones.length, 2);
+    assert.ok(r.filas.length > 5, "hay más filas que semanas: cada semana se abre por fuente");
+    assert.ok(cerca(r.filas.reduce((a, f) => a + principal(f.valores), 0), AGOSTO.totalIntegral), "semana × fuente suma el total del mes");
+    for (const f of r.filas) assert.equal(f.etiquetas.length, 2, "cada fila trae las dos etiquetas");
+  }
+  console.log("OK — 5B (2): agrupación por semana Y fuente a la vez, y el cruce suma el total del mes.");
+
+  // ── 3) Automático frente a manual ───────────────────────────────────────────────────────
+  {
+    const r = await ejecutar({
+      metricas: ["facturacion_bruta"], periodo: { mes: MES },
+      segmentacion: { tipo: "clase", grupo_a: ["automatico"], grupo_b: ["manual"] },
+      calculos: ["diferencia", "variacion_pct"],
     });
-    assert.equal(r.total, TOTAL_AGOSTO_LUN_VIE, "el total del período coincide con el SQL de control");
-    assert.equal(r.totalDias, DIAS_HABILES_AGOSTO, "21 días hábiles con datos");
-    assert.ok(r.filas.some((f) => f.fechas.includes("2026-08-31")), "el lunes 31 NO se pierde: forma su propia semana parcial");
-    assert.equal(r.filas.reduce((a, f) => a + f.valor, 0), r.total, "las semanas suman exactamente el total");
-    assert.equal(r.truncado, false);
-  }
-  console.log(`OK — agosto 2026, lunes a viernes por semana: 5 semanas, ${DIAS_HABILES_AGOSTO} días hábiles, total $${TOTAL_AGOSTO_LUN_VIE.toLocaleString("es-AR")} (coincide con el SQL de control).`);
-
-  // ── PARIDAD CON FINANZAS: cada fuente automática, al peso, + los manuales ────────────────
-  {
+    const [auto, manual] = r.segmentos!;
     const fin = await getIngresosAutomaticos(MES);
-    const r = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, agrupar_por: "fuente" });
+    assert.equal(principal(auto.totales), fin.total, "la parte automática coincide al peso con Finanzas");
+    assert.equal(principal(manual.totales), AGOSTO.manuales);
+    assert.equal(principal(auto.totales) + principal(manual.totales), AGOSTO.totalIntegral, "automático + manual = facturación total");
+    assert.equal(principal(r.comparacion!.diferencia), AGOSTO.manuales - fin.total, "la diferencia es comparado − base");
+    assert.ok(r.comparacion!.variacionPct[0].valor != null);
+  }
+  console.log("OK — 5B (3): automático vs manual, con la parte automática idéntica a Finanzas y la diferencia bien orientada.");
 
-    for (const [fuente, monto] of Object.entries(fin.totalPorFuente)) {
-      const mia = r.filas.find((f) => f.clave === fuente);
-      assert.ok(mia, `la fuente "${fuente}" de Finanzas aparece en el resultado`);
-      assert.equal(mia!.valor, monto, `la fuente "${fuente}" coincide al peso con Finanzas`);
+  // ── 4) Método de pago ───────────────────────────────────────────────────────────────────
+  {
+    const r = await ejecutar({ metricas: ["cobros", "facturacion_bruta"], periodo: { mes: MES }, dimensiones: ["metodo_pago"], calculos: ["participacion"], orden: "mayor_a_menor" });
+    assert.ok(r.filas.length > 0);
+    assert.ok(cerca(r.filas.reduce((a, f) => a + valor(f.valores, "facturacion_bruta"), 0), AGOSTO.totalIntegral), "los métodos de pago suman el total facturado");
+    // Orden descendente por la métrica principal (cobros).
+    for (let i = 1; i < r.filas.length; i++) {
+      assert.ok(principal(r.filas[i - 1].valores) >= principal(r.filas[i].valores), "ordenado de mayor a menor");
+    }
+    assert.equal(r.metricas.length, 2, "dos métricas del mismo universo en la misma tabla");
+  }
+  console.log(`OK — 5B (4): cobros y facturación por método de pago; el más usado fue "${(await ejecutar({ metricas: ["cobros"], periodo: { mes: MES }, dimensiones: ["metodo_pago"], orden: "mayor_a_menor" })).filas[0].etiquetas[0]}".`);
+
+  // ── 5) Ranking de mejores días ──────────────────────────────────────────────────────────
+  {
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, dimensiones: ["dia"], ranking: { sentido: "mejores", n: 5 } });
+    assert.equal(r.filas.length, 5);
+    for (let i = 1; i < 5; i++) assert.ok(principal(r.filas[i - 1].valores) >= principal(r.filas[i].valores), "el ranking baja");
+    assert.equal(r.filas[0].etiquetas[0], "18 de agosto", "el mejor día de agosto es el 18");
+    assert.equal(principal(r.filas[0].valores), 1_720_000);
+
+    const peores = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, dimensiones: ["dia"], ranking: { sentido: "peores", n: 3 } });
+    assert.equal(peores.filas.length, 3);
+    for (let i = 1; i < 3; i++) assert.ok(principal(peores.filas[i - 1].valores) <= principal(peores.filas[i].valores), "el ranking de peores sube");
+
+    // Determinismo con empates: dos corridas dan el mismo orden exacto.
+    const otra = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, dimensiones: ["dia"], ranking: { sentido: "peores", n: 10 } });
+    const unaMas = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, dimensiones: ["dia"], ranking: { sentido: "peores", n: 10 } });
+    assert.deepEqual(otra.filas.map((f) => f.claves[0]), unaMas.filas.map((f) => f.claves[0]), "con empates el orden es estable entre corridas");
+    assert.ok(otra.filas.some((f) => f.empate) || new Set(otra.filas.map((f) => principal(f.valores))).size === otra.filas.length, "los empates se marcan cuando existen");
+  }
+  console.log("OK — 5B (5): ranking de mejores y peores días, descendente/ascendente y con empates resueltos de forma estable.");
+
+  // ── 6) Promedio diario contando los días sin movimientos ────────────────────────────────
+  {
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, calculos: ["promedio_dia_calendario"] });
+    assert.equal(r.resumen.diasCalendario, 31, "el denominador son los días calendario, no los días con datos");
+    assert.ok(cerca(principal(r.resumen.promedioDiaCalendario) * 31, AGOSTO.totalIntegral, 1), "promedio × días calendario = total");
+
+    // Un mes sin NADA: el promedio es cero y no divide por cero.
+    const vacio = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: "2020-01" }, calculos: ["promedio_dia_calendario"] });
+    assert.equal(principal(vacio.resumen.totales), 0);
+    assert.equal(principal(vacio.resumen.promedioDiaCalendario), 0);
+    assert.equal(vacio.resumen.diasCalendario, 31, "los 31 días de enero existen aunque no haya datos");
+  }
+  console.log("OK — 5B (6): el promedio divide por los días calendario (ceros incluidos) y no explota en un período vacío.");
+
+  // ── 7) Turnos, operaciones, personas y minutos con las reglas vigentes ──────────────────
+  {
+    const r = await ejecutar({ metricas: ["turnos", "personas", "minutos_actividad"], periodo: { mes: MES }, dimensiones: ["dia"] });
+    assert.equal(r.universo, "actividad");
+    assert.equal(r.metricas.length, 3);
+    assert.ok(principal(r.resumen.totales) > 0, "agosto tuvo actividad");
+    for (const f of r.filas) assert.equal(f.valores.length, 3, "cada día trae las tres métricas");
+
+    const porDuracion = await ejecutar({ metricas: ["operaciones"], periodo: { mes: MES }, dimensiones: ["duracion"] });
+    assert.ok(porDuracion.filas.length > 0, "las duraciones vendidas se agrupan");
+    assert.ok(porDuracion.filas.every((f) => /min$/.test(f.etiquetas[0])), "la etiqueta de duración sale de la modalidad de cada fila");
+
+    const porModalidad = await ejecutar({ metricas: ["turnos"], periodo: { mes: MES }, dimensiones: ["modalidad"] });
+    assert.ok(porModalidad.filas.every((f) => ["Legacy", "v2 (10/20/30)"].includes(f.etiquetas[0])), "la modalidad es la persistida");
+
+    const porSims = await ejecutar({ metricas: ["operaciones"], periodo: { mes: MES }, dimensiones: ["simuladores"] });
+    assert.ok(porSims.filas.every((f) => /simulador/.test(f.etiquetas[0])), "se agrupa por CANTIDAD de simuladores, no por identidad");
+    assert.ok(!JSON.stringify(porSims.filas).match(/simulador\s*[1-4]\s*:/i), "ningún simulador se identifica individualmente");
+  }
+  console.log("OK — 5B (7): turnos, personas y minutos con la modalidad persistida; duraciones reales y simuladores por cantidad.");
+
+  // ── 8) Comparación entre dos días de la semana ──────────────────────────────────────────
+  {
+    const r = await ejecutar({
+      metricas: ["facturacion_bruta"], periodo: { mes: MES },
+      segmentacion: { tipo: "dias_semana", grupo_a: ["lunes"], grupo_b: ["viernes"] },
+      calculos: ["promedio_dia_calendario", "diferencia", "variacion_pct"],
+    });
+    const [lun, vie] = r.segmentos!;
+    assert.equal(lun.etiqueta, "Lunes");
+    assert.equal(vie.etiqueta, "Viernes");
+    assert.equal(lun.diasCalendario, 5, "agosto 2026 tiene 5 lunes");
+    assert.equal(vie.diasCalendario, 4, "y 4 viernes");
+    assert.equal(principal(r.comparacion!.diferencia), principal(vie.totales) - principal(lun.totales));
+  }
+  console.log("OK — 5B (8): lunes contra viernes, con los días calendario de cada uno bien contados (5 y 4).");
+
+  // ── 9) Lunes a viernes contra fin de semana — LA CONSULTA DE ACEPTACIÓN ──────────────────
+  {
+    const r = await ejecutar({
+      metricas: ["facturacion_bruta"], periodo: { mes: MES },
+      segmentacion: { tipo: "dias_semana", grupo_a: ["habiles"], grupo_b: ["fin_de_semana"] },
+      calculos: ["promedio_dia_calendario", "maximo"],
+    });
+    const [hab, fin] = r.segmentos!;
+
+    assert.equal(hab.etiqueta, "Lunes a viernes");
+    assert.equal(hab.diasCalendario, AGOSTO.habiles.dias);
+    assert.equal(principal(hab.totales), AGOSTO.habiles.total);
+    assert.ok(cerca(principal(hab.promedioDiaCalendario), AGOSTO.habiles.promedio), "promedio de los hábiles");
+    assert.equal(hab.mejor!.etiqueta, AGOSTO.habiles.mejorDia);
+    assert.equal(principal(hab.mejor!.valores), AGOSTO.habiles.mejorMonto);
+    for (const [fuente, monto] of Object.entries(AGOSTO.habiles.porFuente)) {
+      assert.equal(principal(hab.porFuente.find((f) => f.fuente === fuente)!.valores), monto, `hábiles · ${fuente}`);
     }
 
-    // 5A.1 — lo que faltaba: los ingresos manuales operativos también son facturación.
-    const manuales = r.filas.find((f) => f.clave === "manuales");
-    assert.ok(manuales, "los ingresos manuales operativos tienen que estar en la facturación");
-    assert.equal(manuales!.valor, MANUALES_AGOSTO, "los manuales de agosto coinciden con los movimientos reales");
-
-    const automaticas = Object.values(fin.totalPorFuente).reduce((a, b) => a + b, 0);
-    assert.equal(r.total, automaticas + MANUALES_AGOSTO, "el total es automáticos + manuales, sin perder ni duplicar");
-    assert.equal(r.total, TOTAL_AGOSTO_INTEGRAL, "y es la facturación total operativa bruta de agosto");
-    assert.equal(
-      r.filas.length,
-      Object.keys(fin.totalPorFuente).length + 1,
-      "las fuentes son las de Finanzas más los manuales, ninguna de más",
-    );
-  }
-  console.log(`OK — PARIDAD: cada fuente automática coincide al peso con Finanzas y los $${MANUALES_AGOSTO.toLocaleString("es-AR")} manuales están incluidos (total $${TOTAL_AGOSTO_INTEGRAL.toLocaleString("es-AR")}).`);
-
-  // ── Los filtros particionan: hábiles + fin de semana = mes completo ──────────────────────
-  {
-    const completo = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES } });
-    const habiles = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { dias_semana: [1, 2, 3, 4, 5] } });
-    const finde = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { dias_semana: [6, 7] } });
-    assert.equal(habiles.total + finde.total, completo.total, "lunes-a-viernes + fin de semana reconstruye el mes completo");
-    assert.equal(completo.total, TOTAL_AGOSTO_INTEGRAL);
-    assert.equal(habiles.total, TOTAL_AGOSTO_LUN_VIE);
-  }
-  console.log("OK — el filtro por día parte el mes sin perder ni duplicar un peso.");
-
-  // ── Una fuente sola: filtrar por manuales o por mensualidades funciona ───────────────────
-  {
-    const soloManuales = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { fuente: ["manuales"] } });
-    assert.equal(soloManuales.total, MANUALES_AGOSTO, "se puede pedir solo la facturación manual");
-    assert.deepEqual(soloManuales.porFuente.map((f) => f.fuente), ["manuales"]);
-
-    // Mensualidades: hoy sin movimientos en agosto. No puede explotar ni inventar: cero y aviso.
-    const soloMens = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { fuente: ["mensualidades"] } });
-    assert.equal(soloMens.total, 0);
-    assert.ok(
-      soloMens.advertencias.some((a) => a.includes("mensualidades") && a.includes("fuentes con movimientos")),
-      "si la fuente pedida no tiene movimientos, se dice cuáles sí los tienen",
-    );
-  }
-  console.log("OK — se puede filtrar por una sola fuente; si esa fuente no tuvo movimientos, el aviso dice cuáles sí.");
-
-  // ── El calendario se DERIVA: el mismo plan funciona en cualquier mes ─────────────────────
-  {
-    for (const mes of ["2026-02", "2026-09", "2027-03"]) {
-      const r = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes }, filtros: { dias_semana: [1, 2, 3, 4, 5] }, agrupar_por: "semana" });
-      for (const f of r.filas) {
-        assert.equal(isoDow(f.clave), 1, `la clave de grupo ${f.clave} es un lunes`);
-        for (const fecha of f.fechas) {
-          assert.ok(fecha.startsWith(mes), `${fecha} pertenece a ${mes}: la semana se recorta al mes pedido`);
-          assert.ok(isoDow(fecha) <= 5, `${fecha} es hábil`);
-        }
-      }
-      const claves = r.filas.map((f) => f.clave);
-      assert.deepEqual(claves, [...claves].sort(), "las semanas salen en orden cronológico");
+    assert.equal(fin.etiqueta, "Sábados y domingos");
+    assert.equal(fin.diasCalendario, AGOSTO.finde.dias);
+    assert.equal(principal(fin.totales), AGOSTO.finde.total);
+    assert.ok(cerca(principal(fin.promedioDiaCalendario), AGOSTO.finde.promedio), "promedio del fin de semana");
+    assert.equal(fin.mejor!.etiqueta, AGOSTO.finde.mejorDia);
+    assert.equal(principal(fin.mejor!.valores), AGOSTO.finde.mejorMonto);
+    for (const [fuente, monto] of Object.entries(AGOSTO.finde.porFuente)) {
+      assert.equal(principal(fin.porFuente.find((f) => f.fuente === fuente)!.valores), monto, `finde · ${fuente}`);
     }
-  }
-  console.log("OK — las semanas se derivan del calendario (lunes reales, recortadas al mes) en febrero, septiembre y marzo del año siguiente.");
 
-  // ── Otras métricas y agrupaciones del contrato ───────────────────────────────────────────
+    // Y los dos grupos cierran contra el total canónico del mes.
+    assert.equal(principal(hab.totales) + principal(fin.totales), AGOSTO.totalIntegral, "hábiles + fin de semana = total del mes");
+    assert.equal(hab.diasCalendario + fin.diasCalendario, 31, "21 + 10 = 31 días");
+    assert.equal(principal(r.resumen.totales), AGOSTO.totalIntegral);
+  }
+  console.log(`OK — 5B (9): CONSULTA DE ACEPTACIÓN — hábiles $${AGOSTO.habiles.total.toLocaleString("es-AR")} en 21 días y finde $${AGOSTO.finde.total.toLocaleString("es-AR")} en 10, con mejor día y desglose por fuente de cada grupo; cierran en $${AGOSTO.totalIntegral.toLocaleString("es-AR")}.`);
+
+  // ── 10) Rango que atraviesa dos meses, con semanas parciales ────────────────────────────
   {
-    const porDiaSemana = await ejecutar({ metrica: "turnos", periodo: { mes: MES }, agrupar_por: "dia_semana" });
-    assert.ok(porDiaSemana.filas.every((f) => Number(f.clave) >= 1 && Number(f.clave) <= 7));
-    assert.equal(porDiaSemana.unidad, "turnos");
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { desde: "2026-08-26", hasta: "2026-09-08" }, dimensiones: ["semana"] });
+    assert.equal(r.resumen.diasCalendario, 14);
+    // La primera y la última semana están recortadas al rango: no se estiran al lunes ni al domingo.
+    const primera = r.filas[0], ultima = r.filas[r.filas.length - 1];
+    assert.ok(primera.fechas[0] >= "2026-08-26", "la primera semana arranca dentro del rango");
+    assert.ok(ultima.fechas[ultima.fechas.length - 1] <= "2026-09-08", "la última termina dentro del rango");
+    assert.ok(primera.dias < 7 || ultima.dias < 7, "al menos una semana es parcial y se conserva");
+    assert.ok(cerca(r.filas.reduce((a, f) => a + principal(f.valores), 0), principal(r.resumen.totales)), "las semanas parciales suman el total del rango");
 
-    const porMetodo = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, agrupar_por: "metodo_pago" });
-    assert.equal(Math.round(porMetodo.filas.reduce((a, f) => a + f.valor, 0)), Math.round(porMetodo.total), "los métodos de pago suman el total");
-
-    const soloTurnero = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES }, filtros: { fuente: ["turnero"] } });
-    assert.deepEqual(soloTurnero.porFuente.map((f) => f.fuente), ["turnero"], "el filtro por fuente excluye de verdad al resto");
-    const fin = await getIngresosAutomaticos(MES);
-    assert.equal(soloTurnero.total, fin.totalPorFuente.turnero ?? 0, "el turnero solo coincide con Finanzas");
+    const porMes = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { desde: "2026-08-26", hasta: "2026-09-08" }, dimensiones: ["mes"] });
+    assert.equal(porMes.filas.length, 2, "el rango toca dos meses");
   }
-  console.log("OK — métricas de actividad, agrupación por día de la semana y por método de pago, y filtro por fuente.");
+  console.log("OK — 5B (10): un rango entre dos meses conserva las semanas parciales y suma igual.");
 
-  // ── Un período sin datos no inventa nada ─────────────────────────────────────────────────
+  // ── 11) Período relativo ────────────────────────────────────────────────────────────────
   {
-    const r = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: "2020-01" } });
-    assert.equal(r.total, 0);
-    assert.equal(r.filas.length, 0);
-    assert.ok(r.advertencias.some((a) => a.toLowerCase().includes("no hay")), "avisa explícitamente que no hay datos");
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { relativo: "mes_pasado" }, calculos: ["promedio_dia_calendario"] });
+    assert.ok(r.ventana.desde.endsWith("-01"), "arranca el día 1 del mes pasado");
+    assert.ok(r.resumen.diasCalendario >= 28 && r.resumen.diasCalendario <= 31);
+    const hoy = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { relativo: "hoy" } });
+    assert.equal(hoy.ventana.desde, hoy.ventana.hasta, "hoy es un solo día");
+    assert.equal(hoy.resumen.diasCalendario, 1);
   }
-  console.log("OK — un período sin datos devuelve cero con aviso, no una cifra inventada.");
+  console.log("OK — 5B (11): los períodos relativos se resuelven con el reloj del servidor.");
 
-  // ── Las fuentes declaradas son internas ──────────────────────────────────────────────────
+  // ── 12) Filtro por fuente que no tuvo movimientos: cero con aviso, nunca un invento ─────
   {
-    const r = await ejecutar({ metrica: "facturacion_bruta", periodo: { mes: MES } });
-    assert.equal(r.fuentesInternas.length, 1);
-    assert.ok(r.fuentesInternas[0].includes("Finanzas"), "declara de dónde salió el número");
-    assert.ok(!JSON.stringify(r).includes("http"), "ninguna fuente externa ni enlace");
-  }
-  console.log("OK — el resultado declara su fuente interna y no contiene referencias externas.");
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, filtros: { fuente: ["mensualidades"] } });
+    assert.equal(principal(r.resumen.totales), 0);
+    assert.ok(r.advertencias.some((a) => a.includes("mensualidades") && a.includes("fuentes con movimientos")), "dice qué fuentes sí tuvieron movimientos");
 
-  // ── SOLO LECTURA: la base quedó igual ────────────────────────────────────────────────────
+    const soloManuales = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, filtros: { clase: ["manual"] } });
+    assert.equal(principal(soloManuales.resumen.totales), AGOSTO.manuales, "el filtro por clase manual da los ingresos manuales");
+  }
+  console.log("OK — 5B (12): una fuente sin movimientos devuelve cero con aviso; el filtro por clase funciona.");
+
+  // ── 13) Semanas de lunes a viernes: el resultado de 5A.1 no cambió ──────────────────────
+  {
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, filtros: { dias_semana: ["habiles"] }, dimensiones: ["semana"] });
+    assert.deepEqual(r.filas.map((f) => principal(f.valores)), AGOSTO.semanasLunVie, "las cinco semanas hábiles de agosto siguen dando lo mismo que en 5A.1");
+    assert.equal(principal(r.resumen.totales), AGOSTO.habiles.total);
+    assert.equal(r.resumen.diasCalendario, 21, "el denominador respeta el filtro de días");
+  }
+  console.log("OK — 5B (13): las semanas de lunes a viernes de agosto dan exactamente lo mismo que en 5A.1 (sin regresión).");
+
+  // ── 14) El criterio contable queda declarado y no hay PII ───────────────────────────────
+  {
+    const r = await ejecutar({ metricas: ["facturacion_bruta"], periodo: { mes: MES }, dimensiones: ["fuente"] });
+    assert.ok(r.criterio.includes("total operativa bruta") && r.criterio.includes("Colectivo"), "declara qué se sumó y qué no");
+    assert.ok(r.fuentesInternas.length === 1 && r.fuentesInternas[0].includes("Finanzas"));
+    const serializado = JSON.stringify(r);
+    // El resultado es AGREGADO: importes y fechas sí; datos de una persona, nunca. Se buscan
+    // las formas en que aparecería un dato personal, no cualquier número largo (los importes
+    // lo son por definición).
+    assert.ok(!/@/.test(serializado), "ningún email");
+    assert.ok(!/\+?54\s?9?\s?\d{2,4}[\s-]?\d{6,8}/.test(serializado), "ningún teléfono argentino");
+    assert.ok(!/\b(dni|documento|telefono|tel[eé]fono|email|mail|cuit|cuil|nombre_cliente|apellido)\b/i.test(serializado), "ningún campo de datos personales");
+    assert.ok(!/http/.test(serializado), "ninguna fuente externa");
+  }
+  console.log("OK — 5B (14): el criterio contable va declarado y el resultado agregado no lleva datos personales ni enlaces.");
+
+  // ── 15) SOLO LECTURA ────────────────────────────────────────────────────────────────────
   {
     const despues = await censo();
     assert.deepEqual(despues, antes, "el ejecutor no insertó, actualizó ni eliminó una sola fila");
   }
-  console.log("OK — SOLO LECTURA: el conteo de filas de las cuatro tablas involucradas quedó idéntico.");
+  console.log("OK — 5B (15): SOLO LECTURA — el conteo de filas de las cinco tablas involucradas quedó idéntico.");
 
-  console.log("\nOK — ejecutor analítico (datos reales): paridad al peso con Finanzas y resultado de agosto verificado contra SQL.");
+  console.log("\nOK — ejecutor 5B (datos reales): varias métricas, dos dimensiones, cálculos, ranking y segmentación, con agosto cerrando contra la composición canónica.");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

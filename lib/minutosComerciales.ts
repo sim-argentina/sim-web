@@ -25,6 +25,14 @@ import { turnosComerciales, type Modalidad } from "@/lib/catalogoComercial";
 /** La unidad histórica de un turno legacy (solo para filas legacy). */
 export const MINUTOS_TURNO_LEGACY = 15;
 
+/**
+ * Las modalidades que puede tener una fila PERSISTIDA. Se reexportan desde acá —la puerta de
+ * solo lectura de modalidad— para que quien únicamente interpreta lo guardado (métricas, IA)
+ * no tenga que importar el núcleo comercial. Sigue siendo una sola lista: la de catalogoComercial.
+ */
+export { MODALIDADES } from "@/lib/catalogoComercial";
+export type { Modalidad } from "@/lib/catalogoComercial";
+
 /** Modalidad PERSISTIDA de una fila: 'v2_10' → v2_10; NULL, 'legacy' o cualquier otra cosa → legacy. */
 export function modalidadDeFila(valor: unknown): Modalidad {
   return valor === "v2_10" ? "v2_10" : "legacy";

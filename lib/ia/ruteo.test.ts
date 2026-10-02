@@ -122,6 +122,34 @@ function main() {
   }
   console.log("OK — 'sin internet' y PII bloquean la web siempre.");
 
+  // ── Bloque 5B: el vocabulario con que se piden los análisis también es interno ───────────
+  {
+    for (const q of [
+      "¿Cuánto vendimos entre semana en agosto?",
+      "¿Cuáles fueron los cinco mejores días?",
+      "Compará lunes contra viernes.",
+      "¿Qué promedio diario tuvimos durante este mes?",
+      "Desglosame las ventas automáticas y manuales.",
+      "¿Qué pasó durante los fines de semana?",
+      "¿Qué porcentaje de la facturación provino de cada fuente?",
+      "¿Cómo cambió la actividad entre agosto y septiembre?",
+      "¿Qué días tuvieron actividad, pero una facturación relativamente baja?",
+      "Separame agosto entre semana y fin de semana.",
+    ]) {
+      const d = clasificarConsulta(q);
+      assert.equal(d.ruta, "interna", `"${q}" debe ser interna`);
+      assert.equal(d.webPermitida, false, `"${q}": Tavily bloqueado`);
+    }
+    // Y las señales nuevas NO roban consultas externas legítimas: si además hay algo de afuera,
+    // la consulta sigue siendo mixta y la parte externa puede buscar.
+    for (const q of ["Compará nuestras ventas con las de la competencia.", "¿Cuál es el mejor competidor de Córdoba?"]) {
+      const d = clasificarConsulta(q);
+      assert.equal(d.ruta, "mixta", `"${q}" mezcla interno y externo`);
+      assert.equal(d.webPermitida, true, `"${q}": la parte externa sí puede buscar`);
+    }
+  }
+  console.log("OK — 5B: ventas, promedios, mejores/peores, desglose, porcentaje, fin de semana y 'cómo cambió' son temas internos, sin robarle las consultas externas.");
+
   // ── "mercado" es externo; "mercado pago" es un método de pago interno ────────────────────
   {
     const foda = clasificarConsulta("Hacé un FODA de SIM comparándolo con el mercado actual de Córdoba.");

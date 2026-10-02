@@ -72,13 +72,13 @@ async function main() {
     // El plan se ejecutó y devolvió el resultado correcto
     const h = (r.herramientas as Herramienta[]).find((x) => x.nombre === NOMBRE_CONSULTA_ANALITICA);
     assert.ok(h?.ok, "la consulta analítica se ejecutó");
-    const res = h!.resumen as { ok: boolean; ventana: { desde: string; hasta: string }; filas: unknown[]; total: number; totalDias: number; agruparPor: string };
+    const res = h!.resumen as { ok: boolean; ventana: { desde: string; hasta: string }; filas: unknown[]; dimensiones: string[]; resumen: { diasCalendario: number; totales: Array<{ valor: number }> } };
     assert.equal(res.ok, true);
     assert.deepEqual(res.ventana, { desde: "2026-08-01", hasta: "2026-08-31" }, "agosto COMPLETO");
-    assert.equal(res.agruparPor, "semana");
+    assert.deepEqual(res.dimensiones, ["semana"], "la forma vieja del plan (agrupar_por) sigue siendo válida");
     assert.equal(res.filas.length, 5, "cinco semanas, incluida la del lunes 31");
-    assert.equal(res.total, 7_680_000);
-    assert.equal(res.totalDias, 21, "solo los 21 días hábiles");
+    assert.equal(res.resumen.totales[0].valor, 7_680_000);
+    assert.equal(res.resumen.diasCalendario, 21, "solo los 21 días hábiles");
 
     // Respuesta publicada
     assert.ok(r.texto.includes(MARCADOR_TABLA_ANALITICA), "la tabla la publica el servidor");
