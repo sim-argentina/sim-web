@@ -51,8 +51,9 @@ function tituloFiltroDias(dias: number[] | null): string {
   return dias.map((d) => DIAS_ISO[d]).join(", ");
 }
 
-// Marcador propio del ensamblador: permite no duplicar si el modelo ya publicó la tabla.
-export const MARCADOR_TABLA_ANALITICA = "<!-- ia-sim:tabla-analitica -->";
+// 5B.1 — Acá NO va ningún marcador interno. El ensamblador decide por ESTADO (hubo ejecución
+// analítica válida), no buscando una cadena dentro del texto, así que el comentario HTML que
+// antes se colaba a la vista del usuario dejó de existir.
 
 type ResOk = Extract<ResultadoAnalitico, { ok: true }>;
 
@@ -245,7 +246,7 @@ export function renderResultadoAnalitico(r: ResultadoAnalitico): string {
   const nombres = r.metricas.map((m) => m.etiqueta).join(" y ");
   const titulo = `${nombres}${filtroDias ? " " + filtroDias : ""} — ${tituloPeriodo(r.ventana.desde, r.ventana.hasta)}`;
 
-  const lineas: string[] = [MARCADOR_TABLA_ANALITICA, `### ${titulo}`, ""];
+  const lineas: string[] = [`### ${titulo}`, ""];
 
   const sinDatos = r.resumen.totales.every((t) => t.valor === 0) && r.filas.length === 0 && !r.segmentos;
   if (sinDatos) {

@@ -19,7 +19,6 @@ import { FakeProviderGuionado } from "@/lib/ia/providerFake";
 import { FakeWebSearchProvider } from "@/lib/ia/web/providerWebFake";
 import { clasificarConsulta } from "@/lib/ia/ruteo";
 import { NOMBRE_CONSULTA_ANALITICA } from "@/lib/ia/analisis/herramientaAnalitica";
-import { MARCADOR_TABLA_ANALITICA } from "@/lib/ia/analisis/renderAnalitico";
 import { validarPlan } from "@/lib/ia/analisis/planAnalitico";
 import { ejecutarPlanAnalitico } from "@/lib/ia/analisis/ejecutorAnalitico";
 
@@ -100,7 +99,7 @@ async function main() {
       assert.equal(res.segmentos[0].totales[0].valor + res.segmentos[1].totales[0].valor, 13_454_000, "los dos grupos cierran el total del mes");
 
       // La respuesta publicada tiene todo lo que se pidió.
-      assert.ok(r.texto.includes(MARCADOR_TABLA_ANALITICA), "la respuesta la publica el servidor");
+      assert.ok(r.texto.includes("### Facturación bruta"), "la respuesta la publica el servidor");
       assert.ok(r.texto.includes("Lunes a viernes") && r.texto.includes("Sábados y domingos"), "los dos grupos aparecen");
       assert.ok(r.texto.includes(ESPERADO.habiles.total) && r.texto.includes(ESPERADO.finde.total), "los dos totales");
       assert.ok(r.texto.includes(ESPERADO.habiles.promedio) && r.texto.includes(ESPERADO.finde.promedio), "los dos promedios por día calendario");
@@ -189,7 +188,7 @@ async function main() {
       assert.equal(resumen.ok, false, "el plan con filtro por empleado se RECHAZA");
       assert.ok(/cronograma/i.test(resumen.motivo ?? ""), "explica que estar en el cronograma no demuestra la venta");
       assert.ok(/consultar_metricas_equipo|consultar_cronograma/.test(resumen.motivo ?? ""), "ofrece qué SÍ se puede responder");
-      assert.ok(!r.texto.includes(MARCADOR_TABLA_ANALITICA), "no se publica ninguna tabla de ventas por persona");
+      assert.ok(!r.texto.includes("### Facturación bruta"), "no se publica ninguna tabla de ventas por persona");
       assert.equal(tavily.llamadas.length, 0, "y no se busca afuera para tapar el hueco");
     } finally { await fin(); }
   }
@@ -208,7 +207,7 @@ async function main() {
       assert.equal(resumen.ok, false);
       assert.equal(resumen.aclaracion, true, "se marca como ACLARACIÓN, no como error reparable");
       assert.ok(resumen.motivo!.includes("¿Qué querés medir?"), "la pregunta es una sola y concreta");
-      assert.ok(!r.texto.includes(MARCADOR_TABLA_ANALITICA), "no se publica un resultado aproximado");
+      assert.ok(!r.texto.includes("### Facturación bruta"), "no se publica un resultado aproximado");
       assert.equal(tavily.llamadas.length, 0);
     } finally { await fin(); }
   }
@@ -239,7 +238,7 @@ async function main() {
         assert.notEqual(primero.aclaracion, true, `${nombre}: es reparable por el modelo, no una pregunta al admin`);
         assert.ok(!/error|exception|sql|undefined/i.test(primero.motivo ?? ""), `${nombre}: el mensaje no es técnico`);
         assert.equal((hs[1].resumen as { ok?: boolean }).ok, true, `${nombre}: el plan corregido se ejecuta`);
-        assert.ok(r.texto.includes(MARCADOR_TABLA_ANALITICA), `${nombre}: se publica el resultado del intento válido`);
+        assert.ok(r.texto.includes("### Facturación bruta"), `${nombre}: se publica el resultado del intento válido`);
         assert.equal(tavily.llamadas.length, 0, `${nombre}: nunca se cae a internet`);
       } finally { await fin(); }
     }
@@ -261,7 +260,7 @@ async function main() {
         assert.ok(r.ok, `${nombre}: el turno no se pierde`); if (!r.ok) return;
         const h = (r.herramientas as Herramienta[]).find((x) => x.nombre === NOMBRE_CONSULTA_ANALITICA);
         assert.equal((h?.resumen as { ok?: boolean } | undefined)?.ok, true, `${nombre}: precondición — el motor interno calculó`);
-        assert.ok(r.texto.includes(MARCADOR_TABLA_ANALITICA), `${nombre}: la respuesta del servidor se publica igual`);
+        assert.ok(r.texto.includes("### Facturación bruta"), `${nombre}: la respuesta del servidor se publica igual`);
         assert.ok(r.texto.includes(ESPERADO.habiles.total) && r.texto.includes(ESPERADO.finde.total), `${nombre}: con los números completos`);
       } finally { await fin(); }
     }
@@ -277,7 +276,7 @@ async function main() {
     try {
       assert.ok(r.ok, "el turno no se pierde"); if (!r.ok) return;
       assert.notEqual(r.estado, "completa", "el estado dice honestamente que no se completó");
-      assert.ok(r.texto.includes(MARCADOR_TABLA_ANALITICA), "y la respuesta calculada se publica igual");
+      assert.ok(r.texto.includes("### Facturación bruta"), "y la respuesta calculada se publica igual");
       assert.ok(r.texto.includes(ESPERADO.totalMes));
     } finally { await fin(); }
   }

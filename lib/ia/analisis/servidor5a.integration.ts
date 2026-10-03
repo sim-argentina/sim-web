@@ -10,7 +10,6 @@ import { correrChat } from "@/lib/ia/server";
 import { FakeProviderGuionado } from "@/lib/ia/providerFake";
 import { FakeWebSearchProvider } from "@/lib/ia/web/providerWebFake";
 import { NOMBRE_CONSULTA_ANALITICA } from "@/lib/ia/analisis/herramientaAnalitica";
-import { MARCADOR_TABLA_ANALITICA } from "@/lib/ia/analisis/renderAnalitico";
 
 const OWNER = "admin:zztest-5a";
 const PREGUNTA_PRODUCTIVA = "Me podrías decir la facturación del mes de agosto de 2026, entre los días lunes a viernes de cada semana?";
@@ -81,7 +80,7 @@ async function main() {
     assert.equal(res.resumen.diasCalendario, 21, "solo los 21 días hábiles");
 
     // Respuesta publicada
-    assert.ok(r.texto.includes(MARCADOR_TABLA_ANALITICA), "la tabla la publica el servidor");
+    assert.ok(r.texto.includes("### Facturación bruta"), "la tabla la publica el servidor");
     for (const v of SEMANAS) assert.ok(r.texto.includes(v), `la respuesta muestra ${v}`);
     assert.ok(r.texto.includes(TOTAL), "la respuesta muestra el total del período");
     assert.ok(r.texto.includes("31 de agosto"), "la semana parcial del 31 aparece en la tabla");
@@ -175,7 +174,7 @@ async function main() {
     // interna falló (un hipo de la base), que el diagnóstico lo diga en vez de culpar a la tabla.
     const calculo = (r.herramientas as Herramienta[]).find((x) => x.nombre === NOMBRE_CONSULTA_ANALITICA);
     assert.equal((calculo?.resumen as { ok?: boolean } | undefined)?.ok, true, "precondición: el motor interno alcanzó a calcular el resultado");
-    assert.ok(r.texto.includes(MARCADOR_TABLA_ANALITICA), "la tabla calculada por el servidor se publica igual");
+    assert.ok(r.texto.includes("### Facturación bruta"), "la tabla calculada por el servidor se publica igual");
     assert.ok(r.texto.includes(TOTAL) && SEMANAS.every((v) => r.texto.includes(v)), "con todos los números, no un resumen degradado");
   } finally { await limpiar(conv5); }
   console.log("OK — 5A (5): si la narración se cae después de calcular, el resultado interno validado se publica igual.");
@@ -189,8 +188,8 @@ async function main() {
     ]);
     const r = await correrChat({ owner: OWNER, conversacionId: conv6, pregunta: PREGUNTA_PRODUCTIVA }, { provider: p, webProvider: tavilyNuevo() });
     assert.ok(r.ok); if (!r.ok) return;
-    assert.equal(r.texto.split(MARCADOR_TABLA_ANALITICA).length - 1, 1, "la tabla aparece exactamente UNA vez");
-    assert.ok(r.texto.trim().startsWith(MARCADOR_TABLA_ANALITICA), "sin narración, la respuesta ES la tabla");
+    assert.equal(r.texto.split("### ").length - 1, 1, "la tabla aparece exactamente UNA vez");
+    assert.ok(r.texto.trim().startsWith("### "), "sin narración, la respuesta ES la tabla");
   } finally { await limpiar(conv6); }
   console.log("OK — 5A (6): la tabla se publica exactamente una vez, narre o no narre el modelo.");
 

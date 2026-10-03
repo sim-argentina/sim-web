@@ -36,7 +36,6 @@ import { ejecutarSintesisFoda, type ResultadoSintesisFoda } from "@/lib/ia/anali
 import { NOMBRE_COMPARAR_PERIODOS, MARCADOR_REFERENCIA_COMPLETA, construirBloqueReferenciaCompleta } from "@/lib/ia/analisis/herramientas";
 import { clasificarConsulta } from "@/lib/ia/ruteo";
 import { NOMBRE_CONSULTA_ANALITICA, construirTablaAnalitica } from "@/lib/ia/analisis/herramientaAnalitica";
-import { MARCADOR_TABLA_ANALITICA } from "@/lib/ia/analisis/renderAnalitico";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -94,23 +93,32 @@ function conReferenciaCompletaAnexada(texto: string, herramientas: HerramientaEj
   return `${texto}\n\n${bloque}`;
 }
 
-// Bloque 5A — la tabla de una consulta analítica interna la publica SIEMPRE el servidor, con los
-// números ya calculados. Si el modelo narró algo, su texto queda arriba como contexto; si no
-// narró nada (o su salida no sirvió), la tabla sale igual: una consulta interna correcta nunca
-// se descarta por un problema de redacción.
-function conTablaAnaliticaAnexada(texto: string, herramientas: HerramientaEjecutada[]): string {
+// Bloque 5B.1 — Respuesta CANÓNICA de una consulta analítica interna.
+//
+// 5A anexaba la tabla del servidor DEBAJO de la narración del modelo, y lo único que evitaba el
+// duplicado era buscar un marcador dentro del texto. El modelo nunca escribe ese marcador, así
+// que en producción se publicaron las dos respuestas enteras, con redondeos distintos ($365.714
+// contra $365.714,29), los ceros representados de dos formas, cinco hallazgos en vez de dos y el
+// comentario HTML del marcador a la vista entre ambas.
+//
+// Ahora la decisión sale del ESTADO de la ejecución —hubo una consulta analítica OK y su resumen
+// es un resultado válido—, nunca de inspeccionar lo que escribió el modelo. Si hay resultado, esa
+// es la ÚNICA respuesta: títulos, totales, signos, decimales, ceros, porcentajes, criterio y
+// hallazgos salen del servidor. El texto libre del modelo se descarta por completo.
+function respuestaCanonicaAnalitica(herramientas: HerramientaEjecutada[]): string | null {
   const ejecucion = [...herramientas].reverse().find((h) => h.nombre === NOMBRE_CONSULTA_ANALITICA && h.ok);
-  if (!ejecucion) return texto;
-  const tabla = construirTablaAnalitica(ejecucion.resumen);
-  if (!tabla) return texto;
-  if (texto.includes(MARCADOR_TABLA_ANALITICA)) return texto;
-  const narracion = texto.trim();
-  return narracion ? `${narracion}\n\n${tabla}` : tabla;
+  if (!ejecucion) return null;
+  return construirTablaAnalitica(ejecucion.resumen);
 }
 
-// Ensamblado final del texto visible: lo determinístico del servidor se agrega siempre.
-function armarRespuestaFinal(texto: string, herramientas: HerramientaEjecutada[]): string {
-  return conTablaAnaliticaAnexada(conReferenciaCompletaAnexada(texto, herramientas), herramientas);
+// Ensamblado final del texto visible. Una sola representación, siempre: si el motor analítico
+// tiene un resultado válido, manda ese; si no, el texto del modelo con lo determinístico que
+// corresponda. `notas` son avisos del propio SERVIDOR (no del modelo) y sobreviven en los dos
+// caminos.
+function armarRespuestaFinal(texto: string, herramientas: HerramientaEjecutada[], notas = ""): string {
+  const canonica = respuestaCanonicaAnalitica(herramientas);
+  if (canonica) return canonica + notas;
+  return conReferenciaCompletaAnexada(texto, herramientas) + notas;
 }
 
 // 4D.5 — auditoría interna del paso de búsqueda web (Tavily), antes de decidir si se llama a Claude.
@@ -316,10 +324,12 @@ export async function correrChat(
     const contenido = borrador
       ? (huboTimeoutPosterior ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos." : res.texto)
       : res.estado === "completa" && !truncado
-        ? armarRespuestaFinal(res.texto + notaValidacion + notaWebNoDisp, res.herramientas)
-        // Bloque 5A — mismo criterio que la rama general: si el motor interno ya tiene el
-        // resultado validado, se publica aunque la narración del modelo se haya caído.
-        : conTablaAnaliticaAnexada(truncado ? MSG_TRUNCADO : esTimeout ? msgTimeout : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`, res.herramientas);
+        ? armarRespuestaFinal(res.texto, res.herramientas, notaValidacion + notaWebNoDisp)
+        // Bloque 5B.1 — si el motor analítico ya tiene el resultado validado, ESE es la respuesta
+        // completa y se publica sola: poner "no pude completar" encima de una respuesta entera
+        // sería falso. Que la narración falló queda en `estado` y en la auditoría.
+        : (respuestaCanonicaAnalitica(res.herramientas)
+          ?? (truncado ? MSG_TRUNCADO : esTimeout ? msgTimeout : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`));
 
     if (webActiva || res.estado !== "completa") {
       try {
@@ -696,9 +706,11 @@ export async function correrChat(
     ? (huboTimeoutPosterior ? "El borrador del informe fue preparado correctamente. Revisalo y editá lo que necesites antes de generar los archivos." : res.texto)
     : res.estado === "completa" && !truncado
       ? armarRespuestaFinal(res.texto, res.herramientas)
-      // Bloque 5A — la narración falló (truncada, timeout o error), pero si el motor interno YA
-      // calculó y validó el resultado, se publica igual: no se tira una respuesta correcta.
-      : conTablaAnaliticaAnexada(truncado ? MSG_TRUNCADO : esTimeout ? msgTimeout : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`, res.herramientas);
+      // Bloque 5B.1 — la narración falló (truncada, timeout o error), pero si el motor analítico
+      // YA calculó y validó el resultado, ese resultado ES la respuesta completa y se publica
+      // solo: no se tira una respuesta correcta ni se le pone un "no pude" encima.
+      : (respuestaCanonicaAnalitica(res.herramientas)
+        ?? (truncado ? MSG_TRUNCADO : esTimeout ? msgTimeout : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`));
 
   if (res.estado !== "completa") {
     try {

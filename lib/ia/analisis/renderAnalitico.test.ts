@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { renderResultadoAnalitico, formatearValor, MARCADOR_TABLA_ANALITICA } from "@/lib/ia/analisis/renderAnalitico";
+import { renderResultadoAnalitico, formatearValor } from "@/lib/ia/analisis/renderAnalitico";
 import type { ResultadoAnalitico, ResumenGrupo, ValorMetrica } from "@/lib/ia/analisis/ejecutorAnalitico";
 
 // Ejecutar: npx tsx lib/ia/analisis/renderAnalitico.test.ts — puro (el tipo del ejecutor se
@@ -73,8 +73,9 @@ function main() {
     };
     const md = renderResultadoAnalitico(r);
     const lineas = md.split("\n");
-    assert.ok(md.startsWith(MARCADOR_TABLA_ANALITICA), "arranca con el marcador del servidor");
-    assert.ok(lineas[1].startsWith("### Facturación bruta"), "título con la métrica y el período");
+    assert.ok(md.startsWith("### "), "arranca con el título, sin ningún marcador interno adelante");
+    assert.ok(!md.includes("<!--"), "5B.1: no queda ningún comentario HTML en la respuesta visible");
+    assert.ok(lineas[0].startsWith("### Facturación bruta"), "el título es la PRIMERA línea, con la métrica y el período");
     const iRespuesta = lineas.findIndex((l) => l.startsWith("**") && !l.startsWith("**Fuentes") && !l.startsWith("**Desglose"));
     const iTabla = lineas.findIndex((l) => l.startsWith("| Día de la semana"));
     const iCriterio = lineas.findIndex((l) => l.includes("total operativa bruta"));
