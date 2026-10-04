@@ -12,6 +12,7 @@ import { HERRAMIENTAS_CONOCIMIENTO } from "@/lib/ia/docs/conocimientoTools";
 import { preparar_informe } from "@/lib/ia/informes/informeTool";
 import { HERRAMIENTAS_ANALISIS } from "@/lib/ia/analisis/herramientas";
 import { consulta_analitica_interna } from "@/lib/ia/analisis/herramientaAnalitica";
+import { analizar_multiherramienta, emitir_sintesis_analitica } from "@/lib/ia/plan/herramientasPlan";
 import { estadoPeriodoCalendario, fraseEstado } from "@/lib/ia/periodo";
 
 // IA SIM · Bloque 4A — REGISTRO CERRADO de herramientas de SOLO LECTURA.
@@ -142,7 +143,20 @@ const consultar_cronograma: ToolDef = {
     const payload = { anio, mes, estado: vista.estado, oficial: vista.estado === "confirmado", apertura_default: vista.apertura_default, cierre_default: vista.cierre_default, dias_total: dias.length, dias_cerrados: dias.filter((d) => d.cerrado).length, horas: horas ? { label: horas.label, integrantes: horas.integrantes.map((h) => ({ nombre: h.nombre, horas_min: h.minutos, archivado: h.archivado })) } : null, dias };
     return {
       contenido: JSON.stringify(payload),
-      resumen: { estado: vista.estado, dias: dias.length },
+      // (5C) Resumen estructurado mínimo para el planificador: las horas programadas ya
+      // estaban en el payload del modelo; acá quedan como EVIDENCIA, sin tocar ese payload.
+      resumen: {
+        estado: vista.estado,
+        dias: dias.length,
+        evidencia: {
+          periodo: mesStr(anio, mes),
+          metricas: [
+            { metrica: "horas_programadas", valor: Math.round(((horas?.integrantes ?? []).reduce((a, h) => a + (Number(h.minutos) || 0), 0) / 60) * 100) / 100, unidad: "horas", etiqueta: "Horas programadas" },
+            { metrica: "dias_abiertos", valor: dias.filter((d) => !d.cerrado).length, unidad: "cantidad", etiqueta: "Días abiertos" },
+          ],
+          cronogramaOficial: vista.estado === "confirmado",
+        },
+      },
       fuente: { modulo: "Cronograma", periodo: mesStr(anio, mes), registros: dias.length, estadoMes: vista.estado, actualizado: ahoraISO() },
     };
   },
@@ -179,7 +193,21 @@ const consultar_finanzas: ToolDef = {
     };
     return {
       contenido: JSON.stringify(payload),
-      resumen: { ganancia_sim: gananciaSIM, estadoCierre },
+      // (5C) Evidencia estructurada del cierre, para el planificador.
+      resumen: {
+        ganancia_sim: gananciaSIM,
+        estadoCierre,
+        evidencia: {
+          periodo: mesC,
+          metricas: [
+            { metrica: "ingresos_brutos", valor: resumen.ingresosBruto, unidad: "ars", etiqueta: "Ingresos brutos" },
+            { metrica: "ingresos_netos", valor: resumen.ingresos, unidad: "ars", etiqueta: "Ingresos netos" },
+            { metrica: "comisiones", valor: resumen.comisionesTotales, unidad: "ars", etiqueta: "Comisiones" },
+            { metrica: "ganancia_sim", valor: gananciaSIM, unidad: "ars", etiqueta: "Ganancia SIM" },
+          ],
+          estadoCierre,
+        },
+      },
       fuente: { modulo: "Finanzas SIM", periodo: mesC, estadoMes: estadoCierre, actualizado: ahoraISO() },
     };
   },
@@ -217,7 +245,21 @@ const consultar_metricas_stand_reservas: ToolDef = {
     };
     return {
       contenido: JSON.stringify(payload),
-      resumen: { stand_oper: standAgg.ventas, reservas_oper: resValidas.length },
+      // (5C) Evidencia estructurada de actividad, para el planificador. Suma Stand + Reservas,
+      // que es la misma base que usa el universo de actividad.
+      resumen: {
+        stand_oper: standAgg.ventas,
+        reservas_oper: resValidas.length,
+        evidencia: {
+          periodo: mesStr(anio, mes),
+          metricas: [
+            { metrica: "turnos", valor: standAgg.turnos + rTurnos, unidad: "turnos", etiqueta: "Turnos comerciales" },
+            { metrica: "personas", valor: standAgg.personas + rPersonas, unidad: "personas", etiqueta: "Personas" },
+            { metrica: "minutos_actividad", valor: standAgg.minutos + rMinutos, unidad: "minutos", etiqueta: "Minutos de actividad" },
+            { metrica: "operaciones", valor: standAgg.ventas + resValidas.length, unidad: "cantidad", etiqueta: "Operaciones" },
+          ],
+        },
+      },
       fuente: { modulo: "Turnero Stand + Reservas web", periodo: mesStr(anio, mes), registros: standValidos.length + resValidas.length, actualizado: ahoraISO() },
     };
   },
@@ -283,6 +325,9 @@ export const HERRAMIENTAS: Record<string, ToolDef> = {
   ...HERRAMIENTAS_ANALISIS,
   // Bloque 5A — consulta analítica interna flexible (métrica + período + filtros + agrupación).
   [consulta_analitica_interna.nombre]: consulta_analitica_interna,
+  // Bloque 5C — planificador multiherramienta y su síntesis validada contra la evidencia.
+  [analizar_multiherramienta.nombre]: analizar_multiherramienta,
+  [emitir_sintesis_analitica.nombre]: emitir_sintesis_analitica,
 };
 
 // Definiciones para el proveedor. Con `soloNombres` se ofrece SOLO ese subconjunto (por

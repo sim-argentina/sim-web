@@ -68,6 +68,10 @@ export type EjecutarChatParams = {
   maxTokensSalida?: number;
   // Bloque 4D.4 — presupuesto de tiempo del proveedor para consultas con web (< máx de la ruta).
   webTimeoutMs?: number;
+  // Bloque 5C — clase de modelo decidida AFUERA por la complejidad del pedido (un plan
+  // multiherramienta necesita el modelo más capaz). Solo puede ESCALAR: nunca baja de nivel una
+  // consulta que elegirModelo ya mandó al potente. Si no viene, decide elegirModelo como siempre.
+  claseForzada?: { clase: ModeloClase; motivo: string };
   // Bloque 4D.4.1 — presupuesto TOTAL del orquestador para esta consulta (para web se extiende
   // por encima del tope general de 60s; sin él, usa limites.tiempoEjecucionMsMax). Levanta el
   // AbortController "oculto" de 60s para las búsquedas web modernas.
@@ -91,7 +95,17 @@ function contextoFechaCordoba(ahora: Date): string {
 
 export async function ejecutarChat(p: EjecutarChatParams): Promise<EjecucionResultado> {
   const inicio = Date.now();
-  const decision = elegirModelo(p.pregunta);
+  // Bloque 5C — la complejidad del pedido puede SUMAR una razón para escalar, nunca quitar la
+  // que el router ya tenía: un análisis competitivo que 4D manda al nivel potente sigue yendo
+  // ahí aunque la complejidad analítica no lo pida. Si cualquiera de los dos pide potente, es
+  // potente; si ninguno, queda el económico con el motivo de la complejidad.
+  const base = elegirModelo(p.pregunta);
+  const porComplejidad = p.claseForzada;
+  const decision =
+    porComplejidad == null ? base
+      : porComplejidad.clase === "potente" ? porComplejidad
+        : base.clase === "potente" ? base
+          : porComplejidad;
   let clase: ModeloClase = decision.clase;
   let modelo = p.modelos[clase];
   let escalado = false;

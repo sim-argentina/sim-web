@@ -50,17 +50,24 @@ export const DIMENSIONES_VALIDAS = Object.keys(DIMENSIONES) as Dimension[];
 export const MAX_DIMENSIONES = 2;
 
 // ── Filtros ─────────────────────────────────────────────────────────────────────
+// `campo` es el nombre del mismo filtro dentro del plan resuelto (FiltrosPlan). Se declara acá,
+// junto al nombre público, para que nadie tenga que mantener una segunda tabla de traducción:
+// lo que el resumen devuelve se puede volver a nombrar con el identificador que el contrato acepta.
 export const FILTROS = {
-  dias_semana: { etiqueta: "Días de la semana", descripcion: "Días ISO a incluir (1=lunes … 7=domingo)." },
-  fuente: { etiqueta: "Fuente", descripcion: "Limita a una o varias fuentes del universo." },
-  clase: { etiqueta: "Automático / manual", descripcion: "Limita a ingresos automáticos o manuales." },
-  metodo_pago: { etiqueta: "Método de pago", descripcion: "Limita a uno o varios medios de cobro." },
-  modalidad: { etiqueta: "Modalidad comercial", descripcion: "Limita a filas legacy o v2." },
-  duracion: { etiqueta: "Duración", descripcion: "Limita a una o varias duraciones vendidas (en minutos)." },
-  simuladores: { etiqueta: "Simuladores", descripcion: "Limita por cantidad de simuladores." },
+  dias_semana: { etiqueta: "Días de la semana", descripcion: "Días ISO a incluir (1=lunes … 7=domingo).", campo: "diasSemana" },
+  fuente: { etiqueta: "Fuente", descripcion: "Limita a una o varias fuentes del universo.", campo: "fuentes" },
+  clase: { etiqueta: "Automático / manual", descripcion: "Limita a ingresos automáticos o manuales.", campo: "clases" },
+  metodo_pago: { etiqueta: "Método de pago", descripcion: "Limita a uno o varios medios de cobro.", campo: "metodosPago" },
+  modalidad: { etiqueta: "Modalidad comercial", descripcion: "Limita a filas legacy o v2.", campo: "modalidades" },
+  duracion: { etiqueta: "Duración", descripcion: "Limita a una o varias duraciones vendidas (en minutos).", campo: "duraciones" },
+  simuladores: { etiqueta: "Simuladores", descripcion: "Limita por cantidad de simuladores.", campo: "simuladores" },
 } as const;
 export type FiltroId = keyof typeof FILTROS;
 export const FILTROS_VALIDOS = Object.keys(FILTROS) as FiltroId[];
+/** Del nombre interno del filtro al identificador PÚBLICO que acepta el contrato. */
+export const FILTRO_POR_CAMPO: Record<string, FiltroId> = Object.fromEntries(
+  FILTROS_VALIDOS.map((id) => [FILTROS[id].campo, id]),
+) as Record<string, FiltroId>;
 
 // ── Métricas ────────────────────────────────────────────────────────────────────
 // `claseFacturacion` no es un filtro que el modelo pueda cambiar: es parte de la DEFINICIÓN de
@@ -75,6 +82,12 @@ export type MetricaDef = {
   reglaTemporal: string;
   dimensiones: readonly Dimension[];
   filtros: readonly FiltroId[];
+  /**
+   * Cómo nombra un administrador a esta métrica cuando habla. Se usa para VERIFICAR el texto que
+   * escribe el modelo (que la dirección declarada sobre "la facturación" corresponda a
+   * facturacion_bruta), nunca para elegir la métrica: eso sale del identificador.
+   */
+  alias: readonly string[];
   /** Cómo se tratan los días sin movimientos al promediar. */
   ceros: "cuentan_como_cero";
   /** Restricción de clase que forma parte de la definición (no la elige el modelo). */
@@ -97,6 +110,7 @@ export const METRICAS_SEMANTICAS: Record<string, MetricaDef> = {
     reglaTemporal: "Cada fuente con su fecha contable canónica: turnero por fecha de servicio; lo web, gift cards, campeonatos y mensualidades por fecha de pago; los manuales por su fecha contable.",
     dimensiones: DIMS_FACTURACION,
     filtros: FILTROS_FACTURACION,
+    alias: ["facturacion", "facturacion bruta", "facturacion total", "ingresos", "ingresos brutos", "lo facturado"],
     ceros: "cuentan_como_cero",
   },
   facturacion_automatica: {
@@ -109,6 +123,7 @@ export const METRICAS_SEMANTICAS: Record<string, MetricaDef> = {
     reglaTemporal: "La misma fecha contable canónica de cada fuente.",
     dimensiones: DIMS_FACTURACION,
     filtros: FILTROS_FACTURACION,
+    alias: ["facturacion automatica", "ingresos automaticos", "lo automatico"],
     ceros: "cuentan_como_cero",
     claseFacturacion: "automatico",
   },
@@ -122,6 +137,7 @@ export const METRICAS_SEMANTICAS: Record<string, MetricaDef> = {
     reglaTemporal: "Fecha contable del movimiento, dentro de su mes contable.",
     dimensiones: DIMS_FACTURACION,
     filtros: FILTROS_FACTURACION,
+    alias: ["ingresos manuales", "facturacion manual", "los manuales", "carga manual"],
     ceros: "cuentan_como_cero",
     claseFacturacion: "manual",
   },
@@ -135,6 +151,7 @@ export const METRICAS_SEMANTICAS: Record<string, MetricaDef> = {
     reglaTemporal: "La misma fecha contable canónica de cada fuente.",
     dimensiones: DIMS_FACTURACION,
     filtros: FILTROS_FACTURACION,
+    alias: ["cobros", "pagos registrados", "medios de cobro"],
     ceros: "cuentan_como_cero",
   },
   turnos: {
@@ -147,6 +164,7 @@ export const METRICAS_SEMANTICAS: Record<string, MetricaDef> = {
     reglaTemporal: "Fecha de servicio.",
     dimensiones: DIMS_ACTIVIDAD,
     filtros: FILTROS_ACTIVIDAD,
+    alias: ["turnos", "turnos comerciales", "la actividad", "turnos vendidos"],
     ceros: "cuentan_como_cero",
   },
   personas: {
@@ -158,6 +176,7 @@ export const METRICAS_SEMANTICAS: Record<string, MetricaDef> = {
     reglaTemporal: "Fecha de servicio.",
     dimensiones: DIMS_ACTIVIDAD,
     filtros: FILTROS_ACTIVIDAD,
+    alias: ["personas", "gente", "asistentes", "publico"],
     ceros: "cuentan_como_cero",
   },
   operaciones: {
@@ -169,6 +188,7 @@ export const METRICAS_SEMANTICAS: Record<string, MetricaDef> = {
     reglaTemporal: "Fecha de servicio.",
     dimensiones: DIMS_ACTIVIDAD,
     filtros: FILTROS_ACTIVIDAD,
+    alias: ["operaciones", "ventas", "tickets"],
     ceros: "cuentan_como_cero",
   },
   minutos_actividad: {
@@ -181,6 +201,7 @@ export const METRICAS_SEMANTICAS: Record<string, MetricaDef> = {
     reglaTemporal: "Fecha de servicio.",
     dimensiones: DIMS_ACTIVIDAD,
     filtros: FILTROS_ACTIVIDAD,
+    alias: ["minutos", "minutos de actividad", "tiempo de uso", "uso de simuladores"],
     ceros: "cuentan_como_cero",
   },
 };

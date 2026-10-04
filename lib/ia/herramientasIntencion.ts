@@ -18,12 +18,18 @@ const RE_COLECTIVO = /\bcolectiv/i;
 const RE_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)\b/i;
 const RE_ANALISIS = /\b(compar|versus|\bvs\b|diferencia|variaci[oó]n|anomal[ií]a|anomal[ií]as|at[ií]pic|inusual|proyec|estima|pronostic|tendencia|escenario|cierre del mes|conservador|optimista)\b/i;
 
-export type IntencionOpts = { conocimientoRelevante?: boolean; disponibles?: string[] };
+// Bloque 5C — el planificador multiherramienta y su síntesis se ofrecen SOLO cuando el pedido
+// cruza dominios o pide descomponer una variación: para una sola métrica alcanza 5B y ofrecer
+// estos dos schemas sería contexto facturable al vacío.
+const PLANIFICADOR = ["analizar_multiherramienta", "emitir_sintesis_analitica"];
+
+export type IntencionOpts = { conocimientoRelevante?: boolean; disponibles?: string[]; multiherramienta?: boolean };
 
 // Devuelve los NOMBRES de herramientas a ofrecer para esta consulta.
 export function seleccionarHerramientas(pregunta: string, opts?: IntencionOpts): string[] {
   const t = pregunta || "";
   const set = new Set<string>(NUCLEO_INTERNO);
+  if (opts?.multiherramienta) PLANIFICADOR.forEach((n) => set.add(n));
   if (RE_COLECTIVO.test(t)) COLECTIVO.forEach((n) => set.add(n));
   if (RE_INFORME.test(t)) INFORME.forEach((n) => set.add(n));
   if (RE_ANALISIS.test(t)) ANALISIS.forEach((n) => set.add(n));

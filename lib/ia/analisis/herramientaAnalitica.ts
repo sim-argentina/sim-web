@@ -140,6 +140,14 @@ export const consulta_analitica_interna: ToolDef = {
     const payload = {
       ...r,
       tabla_markdown: tabla,
+      // (5C) Evidencia estructurada con la misma forma que el resto de las capacidades del
+      // planificador: los totales del período y, si hay, el desglose por fuente.
+      evidencia: {
+        periodo: `${r.ventana.desde}..${r.ventana.hasta}`,
+        metricas: r.resumen.totales.map((t) => ({ metrica: t.metrica, valor: t.valor, unidad: t.unidad, etiqueta: t.etiqueta })),
+        porFuente: r.resumen.porFuente.map((f) => ({ fuente: f.fuente, etiqueta: f.etiqueta, valor: f.valores[0]?.valor ?? 0 })),
+        diasCalendario: r.resumen.diasCalendario,
+      },
       _regla:
         "La respuesta ya está armada y publicada por el servidor (campo 'tabla_markdown'): NO la repitas, NO rehagas los números, NO cambies signos ni formatos y NO recalcules totales. " +
         "Podés agregar una observación breve apoyada en estas mismas cifras, sin afirmar causas que los datos no demuestren. Todos los datos son internos: no cites ni busques fuentes externas.",

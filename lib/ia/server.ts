@@ -36,6 +36,9 @@ import { ejecutarSintesisFoda, type ResultadoSintesisFoda } from "@/lib/ia/anali
 import { NOMBRE_COMPARAR_PERIODOS, MARCADOR_REFERENCIA_COMPLETA, construirBloqueReferenciaCompleta } from "@/lib/ia/analisis/herramientas";
 import { clasificarConsulta } from "@/lib/ia/ruteo";
 import { NOMBRE_CONSULTA_ANALITICA, construirTablaAnalitica } from "@/lib/ia/analisis/herramientaAnalitica";
+import { NOMBRE_ANALISIS_MULTI, NOMBRE_SINTESIS, respuestaCanonicaMulti } from "@/lib/ia/plan/herramientasPlan";
+import { clasificarComplejidad, claseEfectiva } from "@/lib/ia/plan/complejidad";
+import { contextoDesdeAnalisis, pistaDeContexto } from "@/lib/ia/plan/contexto";
 
 // Palabras que indican intención EXPLÍCITA de consultar conocimiento/documentos.
 const INTENCION_CONOCIMIENTO = /\b(document|archivo|manual|pol[ií]tica|conocimiento|reglament|versi[oó]n|categor[ií]a|seg[uú]n el|lo que guard[eé]|la imagen que sub[ií]|adjunt|pdf|excel|planilla)/i;
@@ -111,12 +114,42 @@ function respuestaCanonicaAnalitica(herramientas: HerramientaEjecutada[]): strin
   return construirTablaAnalitica(ejecucion.resumen);
 }
 
-// Ensamblado final del texto visible. Una sola representación, siempre: si el motor analítico
+// Bloque 5C — Respuesta canónica de un análisis MULTIHERRAMIENTA. Misma regla que 5B.1 (decide
+// el estado de la ejecución, no el texto del modelo) con un paso más: si el modelo propuso una
+// síntesis, se publica SOLO si cada número que escribió sale de la evidencia que calculó el
+// servidor. Si no valida, se publica la respuesta determinística sin su conclusión.
+type CanonicaMulti = { texto: string; sintesisAceptada: boolean; motivoRechazo: string | null };
+
+function respuestaCanonicaMultiherramienta(herramientas: HerramientaEjecutada[]): CanonicaMulti | null {
+  const analisis = [...herramientas].reverse().find((h) => h.nombre === NOMBRE_ANALISIS_MULTI && h.ok);
+  if (!analisis) return null;
+  const sintesis = [...herramientas].reverse().find((h) => h.nombre === NOMBRE_SINTESIS && h.ok);
+  return respuestaCanonicaMulti(analisis.resumen as Record<string, unknown> | null, sintesis?.resumen as Record<string, unknown> | null);
+}
+
+/**
+ * Auditoría del destino de la síntesis del modelo: si se publicó o por qué se descartó. Son
+ * códigos cortos sobre el resultado, no la cadena de razonamiento (que nunca se guarda).
+ */
+function auditoriaSintesis(herramientas: HerramientaEjecutada[]): Record<string, unknown> {
+  const c = respuestaCanonicaMultiherramienta(herramientas);
+  if (!c) return {}; // no hubo plan: nada que auditar acá
+  const propuso = herramientas.some((h) => h.nombre === NOMBRE_SINTESIS && h.ok);
+  if (!propuso) return { sintesis_propuesta: false };
+  return { sintesis_propuesta: true, sintesis_aceptada: c.sintesisAceptada, sintesis_rechazo: c.motivoRechazo };
+}
+
+/** La única respuesta canónica posible, con el planificador por delante de la consulta simple. */
+function canonicaDe(herramientas: HerramientaEjecutada[]): string | null {
+  return respuestaCanonicaMultiherramienta(herramientas)?.texto ?? respuestaCanonicaAnalitica(herramientas);
+}
+
+// Ensamblado final del texto visible. Una sola representación, siempre: si un motor analítico
 // tiene un resultado válido, manda ese; si no, el texto del modelo con lo determinístico que
 // corresponda. `notas` son avisos del propio SERVIDOR (no del modelo) y sobreviven en los dos
 // caminos.
 function armarRespuestaFinal(texto: string, herramientas: HerramientaEjecutada[], notas = ""): string {
-  const canonica = respuestaCanonicaAnalitica(herramientas);
+  const canonica = canonicaDe(herramientas);
   if (canonica) return canonica + notas;
   return conReferenciaCompletaAnexada(texto, herramientas) + notas;
 }
@@ -136,6 +169,26 @@ type WebAudit = {
   consultaSaneada: string;
   resultados: ResultadoWebNormalizado[];
 };
+
+// Bloque 5C — El último resumen analítico de ESTA conversación, para que un seguimiento corto
+// no tenga que repetir el período ni la métrica. Se lee de la conversación (que ya está acotada
+// al owner), así que el contexto queda aislado por conversación y por administrador. Una
+// conversación nueva no tiene mensajes previos y arranca sin contexto.
+async function ultimoResumenAnaliticoDe(conversacionId: string): Promise<Record<string, unknown> | null> {
+  const { data } = await supabaseAdmin
+    .from("ia_mensajes")
+    .select("herramientas")
+    .eq("conversacion_id", conversacionId)
+    .eq("rol", "assistant")
+    .order("created_at", { ascending: false })
+    .limit(4);
+  for (const fila of (data ?? []) as Array<{ herramientas: unknown }>) {
+    const hs = Array.isArray(fila.herramientas) ? (fila.herramientas as Array<Record<string, unknown>>) : [];
+    const analitica = [...hs].reverse().find((h) => (h.nombre === NOMBRE_ANALISIS_MULTI || h.nombre === NOMBRE_CONSULTA_ANALITICA) && h.ok === true);
+    if (analitica && analitica.resumen && typeof analitica.resumen === "object") return analitica.resumen as Record<string, unknown>;
+  }
+  return null;
+}
 
 export async function correrChat(
   params: { owner: string; conversacionId: string; pregunta: string; idempotencyKey?: string | null; webAccion?: "normal" | "forzar" | "ampliar" },
@@ -223,6 +276,17 @@ export async function correrChat(
   const rutaDecision = clasificarConsulta(pregunta);
   const rutaBloqueaWeb = !rutaDecision.webPermitida;
 
+  // ── Bloque 5C — complejidad del pedido y contexto analítico de ESTA conversación ──────────
+  // La complejidad decide dos cosas: si se ofrecen las herramientas del planificador y qué nivel
+  // de modelo se usa. Una consulta de una sola métrica NO escala: la resuelve 5B.
+  const complejidad = clasificarComplejidad(pregunta);
+  const { clase: claseComplejidad, degradado: modeloDegradado } = claseEfectiva(complejidad.clase, getModelos());
+
+  // Contexto de seguimiento: SOLO la forma estructurada del último análisis de esta
+  // conversación (períodos, métricas, filtros, agrupaciones). Nunca razonamiento ni resultados.
+  const contextoAnalitico = contextoDesdeAnalisis(await ultimoResumenAnaliticoDe(conversacionId));
+  const pistaContexto = pistaDeContexto(contextoAnalitico);
+
   const busquedaPrevia = {
     consulta_normalizada: normalizar(pregunta).slice(0, 300),
     coincidencias: relevantes.length,
@@ -234,6 +298,15 @@ export async function correrChat(
     ruta_motivo: rutaDecision.motivo,
     ruta_senales: rutaDecision.senales,
     web_permitida: rutaDecision.webPermitida,
+    // Auditoría de 5C: categoría y señales cortas, qué nivel pidió la complejidad y si hubo
+    // degradación por falta de configuración. El nivel REALMENTE usado es la columna
+    // clase_modelo: la complejidad solo puede escalar, así que puede diferir de lo que pidió.
+    complejidad: complejidad.complejidad,
+    complejidad_senales: complejidad.senales,
+    clase_pedida: complejidad.clase,
+    clase_por_complejidad: claseComplejidad,
+    modelo_degradado: modeloDegradado,
+    contexto_heredado: contextoAnalitico ? { periodos: contextoAnalitico.periodos, metricas: contextoAnalitico.metricas } : null,
   };
 
   const modelos = getModelos();
@@ -242,7 +315,10 @@ export async function correrChat(
   const webProveedorCfg = getWebProveedor();
   const webGlobalOn = webHabilitadaGlobal();
   const webActivaIntent = decWeb.habilitar && webGlobalOn && webProveedorCfg !== "off";
-  const herramientasPermitidas = seleccionarHerramientas(pregunta, { conocimientoRelevante: relevantes.length > 0 });
+  const herramientasPermitidas = seleccionarHerramientas(pregunta, {
+    conocimientoRelevante: relevantes.length > 0,
+    multiherramienta: complejidad.complejidad === "multiherramienta",
+  });
 
   // ════════════════════════════════════════════════════════════════════════════════════════
   // RAMA LEGADO: proveedor "anthropic" (web_search nativo de Anthropic, dentro del loop de
@@ -254,7 +330,7 @@ export async function correrChat(
     const webActiva = decWeb.habilitar && webGlobalOn;
     const webParam = { habilitar: webActiva, explicita: decWeb.explicita, motivo: decWeb.motivo, maxUsos: getMaxBusquedasWeb(), version: getWebToolVersion() };
     const maxTokensSalida = webActiva ? 2500 : limites.tokensSalidaMax;
-    const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario: contextoConocimiento, web: webParam, herramientasPermitidas, maxTokensSalida, webTimeoutMs: limites.webTimeoutMs, tiempoTotalMs: webActiva ? limites.webTimeoutMs : undefined });
+    const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario: contextoConocimiento, web: webParam, herramientasPermitidas, claseForzada: { clase: claseComplejidad, motivo: complejidad.motivo }, maxTokensSalida, webTimeoutMs: limites.webTimeoutMs, tiempoTotalMs: webActiva ? limites.webTimeoutMs : undefined });
 
     const costoTokens = estimarCostoUSD(res.modelo, res.uso.tokensIn, res.uso.tokensOut) ?? 0;
     const costoWeb = costoBusquedasUSD(res.web.busquedasFacturables);
@@ -273,7 +349,7 @@ export async function correrChat(
       conversacion_id: conversacionId, mensaje_id: userMsg.id, modelo: res.modelo, proveedor: getProveedor(),
       clase_modelo: res.claseModelo, motivo_router: res.motivoRouter, escalado: res.escalado,
       tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, rondas: res.rondas, duracion_ms: res.duracion_ms, estado: res.estado, error: res.error ?? null,
-      busqueda_previa: busquedaPrevia,
+      busqueda_previa: { ...busquedaPrevia, ...auditoriaSintesis(res.herramientas) },
       costo_estimado: costoTotal, precios_version: PRECIOS_VERSION,
       busquedas_web: res.web.busquedasFacturables, costo_busquedas_usd: costoWeb, precios_web_version: PRECIOS_WEB_VERSION,
       uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.faseFallo ?? null,
@@ -328,7 +404,7 @@ export async function correrChat(
         // Bloque 5B.1 — si el motor analítico ya tiene el resultado validado, ESE es la respuesta
         // completa y se publica sola: poner "no pude completar" encima de una respuesta entera
         // sería falso. Que la narración falló queda en `estado` y en la auditoría.
-        : (respuestaCanonicaAnalitica(res.herramientas)
+        : (canonicaDe(res.herramientas)
           ?? (truncado ? MSG_TRUNCADO : esTimeout ? msgTimeout : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`));
 
     if (webActiva || res.estado !== "completa") {
@@ -646,9 +722,10 @@ export async function correrChat(
 
   // ── Consulta INTERNA (sin contexto web): flujo general sin cambios (Markdown libre, loop de
   // herramientas internas, informes) ─────────────────────────────────────────────────────────
-  const contextoUsuario = contextoConocimiento;
+  // Bloque 5C — la pista de contexto viaja como DATO de nivel usuario, igual que el conocimiento.
+  const contextoUsuario = [contextoConocimiento, pistaContexto].filter(Boolean).join("\n\n") || undefined;
   const webParamDeshabilitado = { habilitar: false, explicita: false, motivo: "proveedor_tavily", maxUsos: 0, version: getWebToolVersion() };
-  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParamDeshabilitado, herramientasPermitidas, maxTokensSalida: limites.tokensSalidaMax });
+  const res = await ejecutarChat({ provider, modelos, limites, historialPrevio: hist, pregunta, contextoUsuario, web: webParamDeshabilitado, herramientasPermitidas, claseForzada: { clase: claseComplejidad, motivo: complejidad.motivo }, maxTokensSalida: limites.tokensSalidaMax });
 
   const costoTotal = estimarCostoUSD(res.modelo, res.uso.tokensIn, res.uso.tokensOut) ?? 0;
 
@@ -660,7 +737,7 @@ export async function correrChat(
     conversacion_id: conversacionId, mensaje_id: userMsg.id, modelo: res.modelo, proveedor: getProveedor(),
     clase_modelo: res.claseModelo, motivo_router: res.motivoRouter, escalado: res.escalado,
     tokens_in: res.uso.tokensIn, tokens_out: res.uso.tokensOut, rondas: res.rondas, duracion_ms: res.duracion_ms, estado: res.estado, error: res.error ?? null,
-    busqueda_previa: busquedaPrevia,
+    busqueda_previa: { ...busquedaPrevia, ...auditoriaSintesis(res.herramientas) },
     costo_estimado: costoTotal, precios_version: PRECIOS_VERSION,
     busquedas_web: 0, costo_busquedas_usd: 0, precios_web_version: webAudit ? TAVILY_CREDITOS_VERSION : null,
     uso_desconocido: res.usoDesconocido ?? false, fase_fallo: res.faseFallo ?? null,
@@ -709,7 +786,7 @@ export async function correrChat(
       // Bloque 5B.1 — la narración falló (truncada, timeout o error), pero si el motor analítico
       // YA calculó y validó el resultado, ese resultado ES la respuesta completa y se publica
       // solo: no se tira una respuesta correcta ni se le pone un "no pude" encima.
-      : (respuestaCanonicaAnalitica(res.herramientas)
+      : (canonicaDe(res.herramientas)
         ?? (truncado ? MSG_TRUNCADO : esTimeout ? msgTimeout : `No pude completar la respuesta: ${res.error ?? "error desconocido"}.`));
 
   if (res.estado !== "completa") {

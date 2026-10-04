@@ -54,7 +54,7 @@ const TEMA_INTERNO: Array<{ id: string; re: RegExp }> = [
   { id: "colectivo", re: /\bcolectiv/ },
   { id: "caja", re: /\bcaja\b|\bsaldo\b|\bcomision/ },
   { id: "neto_bruto", re: /\bneto\b|\bbruto\b/ },
-  { id: "metricas", re: /\bmetrica|\brendimiento\b/ },
+  { id: "metricas", re: /\bmetrica|\brendimiento\b|\brendimos\b/ },
   // Bloque 5B — vocabulario con el que se piden los análisis internos. Sin esto, "¿cuánto
   // vendimos entre semana?" o "los cinco mejores días" no tenían tema interno, quedaban
   // ambiguas y la decisión de web volvía a depender de 4D. Son señales ADITIVAS: si además
@@ -67,6 +67,20 @@ const TEMA_INTERNO: Array<{ id: string; re: RegExp }> = [
   { id: "calendario", re: /\bfin(es)? de semana\b|\bfinde\b|\bhabiles\b|\bentre semana\b|\bdias? de la semana\b|\bsemanalmente\b/ },
   { id: "comparacion", re: /\bcompar|\bversus\b|\bvs\b|\bdiferencia\b|\bvariacion|\bcambi(o|os|aron)\b|\bevolucion/ },
   { id: "actividad", re: /\bactividad\b/ },
+  // Bloque 5C — pedir una explicación SOBRE LOS DATOS DE SIM es interno, aunque la frase no
+  // nombre ninguna métrica: "según nuestros datos", "con lo que tenemos cargado", "en SIM". Sin
+  // esto, "¿por qué septiembre rindió distinto de agosto según nuestros datos?" quedaba ambigua y
+  // la web volvía a depender de 4D, que ve un año y la trata como información cambiante.
+  { id: "datos_propios", re: /\bnuestr[oa]s? (dato|numero|registro|cifra|venta|facturacion|resultado|mes|periodo)|\bdatos internos\b|\bsegun (nuestr|el sistema|los datos|los registros|lo registrado|lo que tenemos)|\ben sim\b|\bdel sistema\b|\bque tenemos cargado\b/ },
+];
+
+// Señales internas CONDICIONADAS: por sí solas NO alcanzan. "¿cómo rindió?" puede ser el mercado,
+// una acción, un proveedor o la competencia; el verbo no dice de quién se habla. Recién cuando
+// aparece junto a otra señal interna —una métrica, un módulo de SIM, "nuestros datos"— la consulta
+// es sobre SIM. Sin ese respaldo la consulta NO se vuelve interna y la web sigue decidiéndose
+// como siempre, que es lo correcto para "¿cómo rindió YPF?".
+const TEMA_INTERNO_CONDICIONADO: Array<{ id: string; re: RegExp }> = [
+  { id: "rendir", re: /\brindi(o|eron)\b|\brinde\b|\brendir\b/ },
 ];
 
 // Temas EXTERNOS: información que SIM no tiene y que sí justifica internet.
@@ -99,6 +113,9 @@ export function clasificarConsulta(pregunta: string): DecisionRuta {
 
   const internos = TEMA_INTERNO.filter((x) => x.re.test(t)).map((x) => x.id);
   const externos = TEMA_EXTERNO.filter((x) => x.re.test(t)).map((x) => x.id);
+  // Un condicionado cuenta como interno SOLO si otra señal interna lo respalda.
+  const condicionados = TEMA_INTERNO_CONDICIONADO.filter((x) => x.re.test(t)).map((x) => x.id);
+  const respaldados = internos.length > 0;
   const esConocimiento = TEMA_CONOCIMIENTO.test(t);
   const pidioSinInternet = SIN_INTERNET.test(t);
   const pii = contienePII(pregunta);
@@ -106,6 +123,10 @@ export function clasificarConsulta(pregunta: string): DecisionRuta {
   // La inflación cuenta como externa SOLO si no es el ajuste interno por índice IPC ya cargado.
   if (INFLACION.test(t) && !AJUSTE_INTERNO_INFLACION.test(t)) externos.push("inflacion_externa");
 
+  // Si hay respaldo, el condicionado pasa a interno (y se audita como tal más abajo). Si no,
+  // queda registrado que apareció y que NO se lo tomó como señal interna.
+  if (respaldados) internos.push(...condicionados);
+  else for (const c of condicionados) senales.push(`condicionado_sin_respaldo:${c}`);
   for (const i of internos) senales.push(`interno:${i}`);
   for (const e of externos) senales.push(`externo:${e}`);
   if (esConocimiento) senales.push("conocimiento");

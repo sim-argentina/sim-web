@@ -150,6 +150,59 @@ function main() {
   }
   console.log("OK — 5B: ventas, promedios, mejores/peores, desglose, porcentaje, fin de semana y 'cómo cambió' son temas internos, sin robarle las consultas externas.");
 
+  // ── 5C — "rendir" es una señal CONDICIONADA: sola no vuelve interna una consulta ─────────
+  {
+    // NEGATIVAS: el verbo no dice de quién se habla. Sin otra señal interna, la consulta NO se
+    // vuelve interna y la web se sigue decidiendo como siempre.
+    for (const q of [
+      "¿Cómo rindió YPF?",
+      "¿Cómo rinde una inversión en plazo fijo?",
+      "¿Cómo rindieron los bonos argentinos?",
+      "¿Cómo va a rendir el sector del entretenimiento?",
+    ]) {
+      const d = clasificarConsulta(q);
+      assert.notEqual(d.ruta, "interna", `"${q}" no puede volverse interna por el verbo`);
+      assert.equal(d.webPermitida, true, `"${q}": la web no se bloquea sin señal interna`);
+      assert.ok(d.senales.includes("condicionado_sin_respaldo:rendir"), `"${q}": queda auditado que el verbo apareció sin respaldo`);
+      assert.ok(!d.senales.includes("interno:rendir"), `"${q}": el verbo no cuenta como señal interna`);
+    }
+    // Y si además hay algo externo, la ruta externa se respeta entera.
+    for (const q of ["¿Cómo rindió el mercado argentino?", "¿Cómo rindió la competencia?", "¿Cómo rindió el dólar este año?"]) {
+      const d = clasificarConsulta(q);
+      assert.equal(d.ruta, "externa", `"${q}" es externa`);
+      assert.equal(d.webPermitida, true);
+    }
+
+    // POSITIVAS: con una señal interna que lo respalde, el verbo sí habla de SIM.
+    for (const [q, respaldo] of [
+      ["¿Por qué septiembre rindió distinto de agosto según nuestros datos?", "interno:datos_propios"],
+      ["¿Cómo rindió el Turnero en septiembre?", "interno:stand"],
+      ["¿Cómo rindió la facturación de agosto?", "interno:facturacion"],
+      ["¿Cómo rindieron los fines de semana?", "interno:calendario"],
+    ] as const) {
+      const d = clasificarConsulta(q);
+      assert.equal(d.ruta, "interna", `"${q}" debe ser interna`);
+      assert.equal(d.webPermitida, false, `"${q}": Tavily bloqueado`);
+      assert.ok(d.senales.includes(respaldo), `"${q}": la respalda ${respaldo}`);
+      assert.ok(d.senales.includes("interno:rendir"), `"${q}": con respaldo, el verbo cuenta`);
+    }
+
+    // "rendimos" habla de SIM por la persona gramatical: no necesita respaldo.
+    const propio = clasificarConsulta("¿Cuánto rendimos este mes?");
+    assert.equal(propio.ruta, "interna");
+    assert.equal(propio.webPermitida, false);
+    assert.ok(propio.senales.includes("interno:metricas"));
+
+    // Y la consulta de aceptación de 5C no depende del verbo para ser interna.
+    const aceptacion = clasificarConsulta(
+      "Compará agosto y septiembre de 2026. Decime cómo cambiaron la facturación bruta total, los turnos comerciales y las horas programadas. Después identificá qué fuentes explican la variación de facturación y decime si la diferencia parece relacionarse más con menor demanda o con menor disponibilidad.",
+    );
+    assert.equal(aceptacion.ruta, "interna");
+    assert.equal(aceptacion.webPermitida, false);
+    assert.ok(!aceptacion.senales.includes("interno:rendir"), "no hace falta el verbo: ya hay métricas internas");
+  }
+  console.log("OK — 5C: 'rindió' solo no vuelve interna una consulta (YPF, el mercado, la competencia siguen externas) y con respaldo interno sí.");
+
   // ── "mercado" es externo; "mercado pago" es un método de pago interno ────────────────────
   {
     const foda = clasificarConsulta("Hacé un FODA de SIM comparándolo con el mercado actual de Córdoba.");

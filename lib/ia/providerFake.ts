@@ -27,6 +27,9 @@ export class FakeProviderGuionado implements IAProvider {
   ultimoMaxTokensSalida?: number;
   ultimoToolChoice?: GenerarParams["toolChoice"];
   ultimoHerramientasOfrecidas?: string[];
+  // Último turno de usuario tal como lo recibe el proveedor (contexto + pregunta): sirve para
+  // verificar QUÉ contexto se envía y, sobre todo, que no se envíe lo que no corresponde.
+  ultimoTurnoUsuario?: string;
   llamadasGenerar = 0; // cuántas veces se llamó a generar() (verificar "una sola síntesis")
   async generar(params: GenerarParams): Promise<TurnoProveedor> {
     this.llamadasGenerar++;
@@ -35,6 +38,8 @@ export class FakeProviderGuionado implements IAProvider {
     this.ultimoMaxTokensSalida = params.maxTokensSalida;
     this.ultimoToolChoice = params.toolChoice;
     this.ultimoHerramientasOfrecidas = params.herramientas.map((h) => h.nombre);
+    const ultimoUser = [...params.historial].reverse().find((t) => t.rol === "user");
+    this.ultimoTurnoUsuario = ultimoUser && ultimoUser.rol === "user" ? ultimoUser.texto : undefined;
     const paso = this.guion[this.i] ?? { tipo: "texto", texto: "(fin del guión)" };
     this.i++;
     if (paso.tipo === "error") throw new IAProviderError(paso.mensaje, paso.status ?? 502);
