@@ -11,6 +11,9 @@
 //
 // No alcanza con comprobar que la respuesta "contiene" la tabla: se CUENTAN las ocurrencias.
 
+// GUARDIÁN: esta suite escribe en la base. Si el destino no es una base de pruebas aislada,
+// el proceso aborta acá, antes de la primera escritura. Ver lib/guardiaPruebas.ts.
+import "@/lib/guardiaPruebas.activar";
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { correrChat } from "@/lib/ia/server";

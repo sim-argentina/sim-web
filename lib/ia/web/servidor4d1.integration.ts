@@ -2,6 +2,9 @@
 // no default desde 4D.5). Se fija antes de importar server.ts.
 process.env.IA_WEB_PROVEEDOR = "anthropic";
 
+// GUARDIÁN: esta suite escribe en la base. Si el destino no es una base de pruebas aislada,
+// el proceso aborta acá, antes de la primera escritura. Ver lib/guardiaPruebas.ts.
+import "@/lib/guardiaPruebas.activar";
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { correrChat } from "@/lib/ia/server";
