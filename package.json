@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "pruebas:iniciar": "node scripts/pruebas/iniciar.mjs",
+    "pruebas:esquema": "node scripts/pruebas/aplicar-esquema.mjs",
+    "pruebas:reset": "node scripts/pruebas/aplicar-esquema.mjs --reset",
+    "pruebas:mutantes": "node scripts/pruebas/correr-mutantes.mjs",
+    "pruebas:seguras": "node scripts/pruebas/correr-seguras.mjs",
+    "pruebas:detener": "node scripts/pruebas/detener.mjs"
   },
   "dependencies": {
     "@fullcalendar/daygrid": "^6.1.20",

@@ -49,3 +49,4 @@ next-env.d.ts
 _build*.txt
 _buildout.txt
 _opt.js
+!.env.test.example

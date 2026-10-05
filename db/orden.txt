@@ -1,0 +1,103 @@
+# Orden de aplicación del esquema sobre una base VACÍA.
+#
+# Los archivos de db/ son incrementales y en su mayoría idempotentes, pero NO son
+# independientes. Dependencias reales que fijan este orden:
+#   · modalidad-comercial-b1.sql crea reserva_hhmm_a_minutos y necesita `mensualidades`,
+#     así que va DESPUÉS de mensualidades-m2.
+#   · empresas-b7-*.sql usan reserva_hhmm_a_minutos → después de modalidad-comercial-b1.
+#   · gift-cards-alta-administrativa.sql y facturacion-eventos-canonica.sql leen
+#     mensualidad_compras → después de mensualidades-m3.
+#   · ia-sim-bloque4c.sql inserta en storage.buckets → el stack local necesita Storage.
+#
+# NO se aplican (son diagnósticos, no migraciones): los *.previo.sql, los
+# *.verificacion.sql, modalidad-comercial-b1.matriz-legacy.sql y b2-motor-vs-trigger.sql
+# (una matriz de 577 casos que termina SIEMPRE con RAISE EXCEPTION para revertirse).
+#
+# Una línea por archivo, en orden. Las líneas que empiezan con # se ignoran.
+# Lo usa scripts/pruebas/aplicar-esquema.mjs.
+
+# ── 0. Estructura base extraída de Producción por introspección (sin datos) ──
+esquema-base.sql
+
+# ── 1. Índices y reembolsos de reservas ─────────────────────────────────────
+indices-escalabilidad-p0.sql
+ia-reservas-reembolsos-bloque3a.sql
+
+# ── 2. Códigos de descuento ─────────────────────────────────────────────────
+codigos-b9-fecha-argentina.sql
+
+# ── 3. Gift cards (medios de pago) ──────────────────────────────────────────
+gift-cards-medios-pago.sql
+
+# ── 4. Campeonatos ──────────────────────────────────────────────────────────
+campeonatos-checkout-pago-previo.sql
+campeonatos-bracket-reiniciar.sql
+
+# ── 5. Turnero ──────────────────────────────────────────────────────────────
+turnero-cambio-diario.sql
+
+# ── 6. Equipo y cronograma ──────────────────────────────────────────────────
+ia-empleados-bloque1.sql
+ia-cronograma-bloque2.sql
+ia-cronograma-import-bloque2b.sql
+ia-cronograma-transiciones-bloque2b.sql
+ia-cronograma-plantillas-bloque2d.sql
+
+# ── 7. Mensualidades ────────────────────────────────────────────────────────
+mensualidades-m2.sql
+mensualidades-m2-1-telefono.sql
+mensualidades-m2-2-telefono-estricto.sql
+mensualidades-m3-compra-publica.sql
+mensualidades-m4-sesiones.sql
+mensualidades-m5a-reservas.sql
+mensualidades-m5b-mixtas.sql
+mensualidades-m5b1-solo-saldo.sql
+mensualidades-m5c-cancelar-reprogramar.sql
+mensualidades-m5c1-restricciones.sql
+mensualidades-m5c2-actor-cancelacion.sql
+# modalidad-comercial-b1 va acá: necesita `mensualidades` (m2) y crea
+# reserva_hhmm_a_minutos, que usan mensualidades-b6 y empresas-b7.
+modalidad-comercial-b1.sql
+mensualidades-b6-modalidad.sql
+mensualidades-m7-admin.sql
+mensualidades-m7-4-alta-administrativa.sql
+mensualidades-m8a-ventas-publicas.sql
+mensualidades-m8c-simuladores-1-4.sql
+mensualidades-m8c1-fin-de-semana.sql
+
+# ── 8. Empresas (usan reserva_hhmm_a_minutos) ───────────────────────────────
+empresas-b7-modalidad.sql
+empresas-b7-1-fecha.sql
+
+# ── 9. Gift cards administrativas (leen mensualidad_compras) ───────────────
+gift-cards-alta-administrativa.sql
+
+# ── 10. Finanzas (la composición canónica lee mensualidad_compras) ──────────
+finanzas-checkout-pro.sql
+facturacion-eventos-canonica.sql
+
+# ── 11. IA SIM ──────────────────────────────────────────────────────────────
+ia-sim-bloque4a.sql
+ia-sim-bloque4b.sql
+ia-sim-bloque4b1.sql
+ia-sim-bloque4b2.sql
+ia-sim-bloque4b5.sql
+ia-sim-bloque4b51.sql
+ia-sim-bloque4c.sql
+ia-sim-bloque4c1.sql
+ia-sim-bloque4c2.sql
+ia-sim-bloque4d.sql
+ia-sim-bloque4d2.sql
+ia-sim-bloque4d4.sql
+ia-sim-bloque4d5.sql
+ia-sim-bloque4e.sql
+
+# ── 12. SIM Control ─────────────────────────────────────────────────────────
+sim-control-m7.sql
+
+# ── 13. Cierre: lo que depende de dos módulos a la vez ──────────────────────
+esquema-base-cierre.sql
+esquema-base-permisos.sql
+
+# ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
+fixtures-pruebas.sql
