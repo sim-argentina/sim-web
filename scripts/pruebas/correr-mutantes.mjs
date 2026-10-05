@@ -11,7 +11,7 @@
 // En serie a propósito: dos suites en paralelo se pisan los fixtures. Cada suite trae su propio
 // identificador de corrida, así que no dependen del orden entre archivos.
 
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { join, sep, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { entornoDePruebas, abortar } from "./entorno.mjs";
@@ -44,6 +44,31 @@ if (nTablas < 100) {
   process.exit(78);
 }
 console.log(`Stack local verificado: ${nTablas} tablas en public.`);
+
+// ── 2b. El escenario histórico de IA SIM ───────────────────────────────────
+// Cinco suites verifican cifras de agosto y septiembre de 2026 (ver
+// docs/pruebas-entorno-aislado.md). El escenario es idempotente, trae su propia guardia
+// contra bases reales y se midió corriendo las 53 suites con él cargado: el resultado fue
+// idéntico al de antes salvo esas cinco, que pasan. No altera Mensualidades, Campeonatos,
+// Cronograma ni ningún otro módulo. Con --sin-historico se omite.
+const FIXTURE_HIST = "db/fixtures-ia-historico.sql";
+if (process.argv.includes("--sin-historico")) {
+  console.log("Escenario histórico de IA SIM: OMITIDO (--sin-historico).");
+} else if (!existsSync(resolve(RAIZ, FIXTURE_HIST))) {
+  console.log(`Escenario histórico de IA SIM: falta ${FIXTURE_HIST} (generalo con npm run pruebas:ia-historico-generar).`);
+} else {
+  try {
+    execFileSync("docker", ["exec", "-i", CONTENEDOR_DB, "psql", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-q", "-f", "-"],
+      { input: readFileSync(resolve(RAIZ, FIXTURE_HIST), "utf8"), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+    console.log("Escenario histórico de IA SIM: cargado.");
+  } catch (err) {
+    console.error(`
+No se pudo cargar ${FIXTURE_HIST}:
+${String(err.stderr ?? err.message)}
+`);
+    process.exit(1);
+  }
+}
 
 // ── 3. Qué suites correr ───────────────────────────────────────────────────
 const ESCRITURA = /\.(insert|upsert|update|delete)\s*\(/;

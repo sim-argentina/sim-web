@@ -1,10 +1,11 @@
-// Las 12 pruebas de AISLAMIENTO del entorno de pruebas.
+// Las 13 pruebas de AISLAMIENTO del entorno de pruebas.
 //
 //   node scripts/pruebas/probar-aislamiento.mjs
 //
 // Corre una suite mutante REAL con entornos deliberadamente mal configurados y verifica que
 // aborte antes de escribir; después comprueba que con el Supabase local sí corre, que una
-// interrupción solo puede dejar residuos locales, y que el reset los borra.
+// interrupción solo puede dejar residuos locales, que el reset los borra, y que el escenario
+// histórico de IA SIM no puede ejecutarse contra una base con datos reales.
 //
 // NO escribe en Producción: las variantes que apuntan ahí abortan por diseño, y eso es
 // justamente lo que se verifica. Producción solo se LEE, para comparar conteos.
@@ -168,5 +169,54 @@ let residuosLocales = 0;
   else mal(12, "faltó clasificar como mutante", casos.filter((c) => !clasifica(c.src)).map((c) => c.n).join(", "));
 }
 
-console.log(`\n${fallas === 0 ? "OK" : "HAY FALLAS"} — pruebas de aislamiento: ${12 - fallas}/12`);
+// ── 13) El escenario histórico no puede correr contra una base con datos reales ──
+// db/fixtures-ia-historico.sql arranca borrando su familia, y entre esos `delete` hay dos
+// por año y mes (el cronograma de agosto y septiembre). Contra una base real serían
+// destructivos, así que el archivo lleva su propia guardia y va todo en una transacción.
+// Acá se simula una base con historia —un turno de julio— y se aplica el fixture SIN
+// ON_ERROR_STOP, que es el caso peor: psql seguiría ejecutando lo que viene después.
+{
+  const FIXTURE = "db/fixtures-ia-historico.sql";
+  const CENTINELA = "CENTINELA aislamiento 13";
+  if (!existsSync(FIXTURE)) {
+    console.log(`INFO — aislamiento (13): falta ${FIXTURE}; se omite (generalo con npm run pruebas:ia-historico-generar).`);
+  } else {
+    const sql = readFileSync(FIXTURE, "utf8");
+    // spawnSync, no execFileSync: sin ON_ERROR_STOP psql informa el error y sale con código
+    // 0, así que el veredicto se lee en la SALIDA, no en el código de salida.
+    const aplicar = (conStop) => {
+      const args = ["exec", "-i", CONTENEDOR, "psql", "-U", "postgres", "-d", "postgres"];
+      if (conStop) args.push("-v", "ON_ERROR_STOP=1");
+      args.push("-q", "-f", "-");
+      const r = spawnSync("docker", args, { input: sql, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+      const salida = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+      return { ok: r.status === 0 && !/ERROR:/.test(salida), salida };
+    };
+    try {
+      // Punto de partida: el escenario cargado y, además, historia de otro mes.
+      const primera = aplicar(true);
+      psqlLocal(
+        "insert into turnos_stand (nombre, fecha, hora, cantidad_turnos, cantidad_personas, total, estado)" +
+          ` values ('${CENTINELA}', '2026-07-01', '15:00', 3, 3, 45000, 'activo')`,
+      );
+      const turnosAntes = Number(psqlLocal("select count(*) from turnos_stand"));
+      const mesesAntes = Number(psqlLocal("select count(*) from cronograma_meses"));
+
+      const segunda = aplicar(false);
+      const turnosDespues = Number(psqlLocal("select count(*) from turnos_stand"));
+      const mesesDespues = Number(psqlLocal("select count(*) from cronograma_meses"));
+
+      const aborto = !segunda.ok && /FIXTURE_IA_HIST/.test(segunda.salida);
+      const nadaBorrado = turnosDespues === turnosAntes && mesesDespues === mesesAntes;
+      if (!primera.ok) mal(13, "el escenario no se pudo cargar en una base local limpia", primera.salida.slice(0, 300));
+      else if (!aborto) mal(13, "el escenario NO abortó contra una base con historia de otro mes");
+      else if (!nadaBorrado) mal(13, `la transacción no protegió los delete (turnos ${turnosAntes}→${turnosDespues}, meses ${mesesAntes}→${mesesDespues})`);
+      else ok(13, "con historia de otro mes el escenario aborta y no borra nada, ni siquiera sin ON_ERROR_STOP.");
+    } finally {
+      psqlLocal(`delete from turnos_stand where nombre = '${CENTINELA}'`);
+    }
+  }
+}
+
+console.log(`\n${fallas === 0 ? "OK" : "HAY FALLAS"} — pruebas de aislamiento: ${13 - fallas}/13`);
 process.exit(fallas ? 1 : 0);

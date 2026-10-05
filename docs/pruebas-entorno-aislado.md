@@ -44,6 +44,7 @@ npm run pruebas:esquema     # aplica el esquema completo, en el orden de db/orde
 npm run pruebas:reset       # vacía la base y reaplica el esquema desde cero
 npm run pruebas:mutantes    # corre las 53 suites que escriben, en serie, contra la base local
 npm run pruebas:seguras     # corre la regresión segura (sin base + solo lectura)
+npm run pruebas:ia-historico  # las cinco suites de IA que dependen del historial (ver abajo)
 npm run pruebas:detener     # detiene el stack (agregá -- --borrar para tirar los datos)
 ```
 
@@ -108,6 +109,116 @@ archivos. Los datos de prueba son sintéticos y reconocibles; los correos usan e
 
 El `finally` de cada suite se mantiene por higiene, pero **no es una barrera de seguridad**: la
 barrera es que el proceso no pueda llegar a producción.
+
+## El escenario histórico de IA SIM
+
+Cinco suites verifican cifras concretas de **agosto y septiembre de 2026**: las tres de la capa
+analítica (`servidor5a`, `servidor5b`, `servidor5b1`), la del planificador (`servidor5c`) y la
+del saldo de créditos. Nacieron leyendo el historial real de producción, así que contra una base
+local vacía fallaban todas.
+
+La solución no fue apuntar de nuevo a producción ni bajar las cifras esperadas, sino construir un
+**escenario histórico sintético** que atraviesa las mismas tablas fuente y las mismas reglas de
+imputación y produce exactamente los números aprobados.
+
+```bash
+npm run pruebas:ia-historico                 # reset, esquema, escenario, contrato, 5 suites, limpieza
+npm run pruebas:ia-historico -- --sin-reset  # reusa la base como está
+npm run pruebas:ia-historico -- --dejar      # deja el escenario cargado para inspeccionarlo
+npm run pruebas:ia-historico-generar         # regenera el SQL del escenario
+```
+
+### Cómo está hecho
+
+`db/fixtures-ia-historico.sql` lo **genera** `scripts/pruebas/generar-historico-ia.mjs`. El SQL se
+versiona y es auditable línea por línea, pero no se edita a mano: el generador declara los repartos
+y verifica toda la aritmética del contrato —totales por mes y por fuente, segmentación, promedios,
+mejores días, semanas ISO, turnos, personas, minutos, horas y los deltas entre los dos meses—
+**antes** de emitir una sola línea. Si una suma no cierra, no genera nada y dice qué falló.
+
+Son 122 filas de turnero (dos por día: una de 15 minutos y otra de 30, que es la forma real de una
+jornada), 6 reservas, 1 campeonato con 18 inscripciones pagadas, 4 ingresos manuales y el cronograma
+confirmado de los dos meses con 61 días y 76 jornadas. Nada más: las cantidades se expresan con
+`cantidad_turnos` y `cantidad_personas`, no con miles de filas.
+
+| Familia | Dónde |
+|---|---|
+| `TEST_IA_HIST_2026` | `nombre` de turnos del stand, reservas, campeonato e inscripciones |
+| `TEST_IA_HIST_2026` | `creado_por` de los movimientos manuales |
+| `@example.test` | los únicos correos del escenario |
+
+No se insertan resultados: ni vistas, ni salidas de RPC, ni tablas derivadas, ni mensajes de IA. Los
+totales aparecen al ejecutar la composición canónica de Finanzas, el motor analítico, el
+planificador y el cronograma reales.
+
+### Valores estructurales que no estaban en el enunciado
+
+El contrato del bloque fijaba facturación, turnos y horas. Revisando las expectativas de las
+suites aparecieron otros valores legítimos que el escenario también tiene que reproducir:
+
+| Valor | Agosto | Septiembre | Dónde está declarado |
+|---|---:|---:|---|
+| Personas atendidas | 822 | 738 | `lib/ia/plan/ejecutorPlan.integration.ts` |
+| Minutos de actividad | 13.680 | 12.390 | `lib/ia/plan/ejecutorPlan.integration.ts` |
+| Promedio del mes completo | $434.000 | — | `servidor5b1`, fila **Total** de la tabla |
+| Celdas en cero del desglose | manuales de fin de semana y reservas de días hábiles | — | `servidor5b1`: se publican como `$0` |
+
+Las personas no salen de los turnos: una persona que juega 30 minutos deja dos turnos. Por eso
+cada día lleva dos filas, una de 15 minutos y otra de 30, y cada una cumple la fórmula legacy
+`turnos = personas × (minutos / 15)`. Los minutos de actividad salen solos, porque en legacy son
+`turnos × 15`.
+
+Ojo con los porcentajes: el motor guarda la variación con **dos** decimales (−9,43 % en turnos,
+−2,15 % en horas) y la tabla publicada la muestra con **uno** (−9,4 % y −2,2 %, que son las cifras
+aprobadas). El contrato verifica las dos cosas, y además las filas de la tabla textualmente.
+
+`ejecutorPlan.integration.ts` es de solo lectura, así que sigue corriendo contra producción en
+`npm run pruebas:seguras`; con este escenario cargado también pasa contra la base local.
+
+### El contrato, antes de las suites
+
+`scripts/pruebas/contrato-historico-ia.ts` le pregunta al **motor** y comprueba 40 invariantes: los
+totales de los dos meses y de cada fuente, la ausencia de Gift Cards y Mensualidades, turnos,
+personas y minutos de actividad, las horas del cronograma confirmado, la segmentación de agosto con
+sus días calendario, promedios, mejores días y desglose por grupo, las cinco semanas hábiles, las
+diferencias y variaciones entre los dos meses, que los deltas por fuente sumen exactamente la
+diferencia total, `faltantes: 0`, la lectura `compatible_menor_demanda` y las cuatro filas de la
+tabla publicada.
+
+Si alguno no coincide, **las suites no empiezan**: fallarían por el escenario y no por el código, y
+el mensaje dice qué invariante se rompió.
+
+### Dos barreras, no una
+
+Además del guardián —que solo acepta un loopback validado—, el propio fixture aborta si la base
+tiene turnos fuera de agosto y septiembre de 2026, o reservas con correos que no sean del dominio de
+prueba. Producción tiene las dos cosas, así que ahí el script no llega a escribir. El guardián sigue
+siendo la barrera principal; esto es una segunda cerradura.
+
+### ¿Y las demás suites?
+
+La pregunta importaba: un campeonato, un cronograma confirmado de agosto y septiembre o cuatro
+movimientos de Finanzas podrían romper pruebas de otros módulos. Se midió corriendo **las 53
+suites mutantes con el escenario cargado**: 46 en verde, 0 bloqueadas y exactamente las mismas
+siete fallas preexistentes de Mensualidades, Disponibilidad y Empresas que ya había antes. Ni
+Campeonatos, ni Cronograma, ni Gift Cards, ni Brackets, ni Reservas cambiaron de resultado.
+
+Por eso `npm run pruebas:mutantes` **carga el escenario** antes de empezar: es idempotente, trae
+su propia guardia y hace que las cinco suites pasen sin configuración extra. Se puede omitir con
+`-- --sin-historico`.
+
+El escenario **no** está en `db/orden.txt` a propósito: no es configuración de la base, es un
+escenario de negocio. `npm run pruebas:reset` deja la base limpia, sin historia.
+
+### Por qué el saldo de créditos es aparte
+
+`lib/ia/creditos/saldo.integration.ts` no necesitaba historial de ventas: necesitaba una
+**conciliación anterior con baseline**, la que demuestra que el consumo previo no se descuenta dos
+veces. Antes leía la conciliación real del administrador, lo que la ataba al saldo y al consumo
+verdaderos de SIM. Ahora el test arma esa conciliación previa —sintética, por el camino real, con
+`conciliar()` calculando el baseline del lado del servidor— y la borra al terminar, verificando que
+el ledger vuelve a tener exactamente los movimientos que tenía antes. No depende del escenario
+histórico ni de ningún dato real.
 
 ## Variables y secretos
 

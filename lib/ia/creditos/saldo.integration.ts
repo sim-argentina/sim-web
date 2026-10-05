@@ -5,31 +5,51 @@ import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { resumenSaldo, conciliar } from "@/lib/ia/creditos/saldoServer";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/creditos/saldo.integration.ts
-// El ledger de crédito/consumo es GLOBAL (datos reales de Ramiro). Este test valida por
-// DELTAS con fixtures ZZTEST y los ELIMINA; nunca altera los datos reales.
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/creditos/saldo.integration.ts
+//
+// El ledger de crédito y consumo es GLOBAL: un saldo, un consumo acumulado y una última
+// conciliación para toda la instalación. Varios invariantes de acá necesitan que exista una
+// conciliación ANTERIOR con baseline: es la que demuestra que el consumo previo no se
+// descuenta dos veces. Antes el test leía la conciliación real del administrador, lo que lo
+// ataba al saldo y al consumo verdaderos de SIM. Ahora ARMA esa conciliación previa, sintética
+// y por el camino real —conciliar() calcula el baseline del lado del servidor— y la borra al
+// terminar. No lee el saldo real, ni consumos reales, ni registros reales de ia_ejecuciones.
+//
+// Todo lo que escribe lleva la marca de abajo y se valida por DELTAS.
 
 const MARCA = "zztest-4b51";
+// La conciliación sintética PREEXISTENTE: el punto de partida que el test necesita encontrar.
+const PREVIO = `${MARCA}-previo`;
 async function saldoUsd(): Promise<number> { return Number((await resumenSaldo()).saldo.saldo_usd); }
 
 async function limpiar() {
   await supabaseAdmin.from("ia_ejecuciones").delete().like("modelo", `${MARCA}%`);
   // Conciliaciones ANTES que movimientos: la conciliación referencia el movimiento (FK).
-  await supabaseAdmin.from("ia_saldo_conciliaciones").delete().eq("actor", MARCA);
-  await supabaseAdmin.from("ia_creditos_movimientos").delete().eq("actor", MARCA);
+  // `like`, no `eq`: alcanza también a la conciliación previa sintética.
+  await supabaseAdmin.from("ia_saldo_conciliaciones").delete().like("actor", `${MARCA}%`);
+  await supabaseAdmin.from("ia_creditos_movimientos").delete().like("actor", `${MARCA}%`);
 }
 
 async function main() {
   await limpiar();
-  // Snapshot inicial de los datos reales (para verificar que quedan intactos).
-  const { data: concReal } = await supabaseAdmin.from("ia_saldo_conciliaciones").select("id, saldo_observado_usd, costo_interno_baseline").eq("actor", "admin:ramiro").order("created_at", { ascending: false }).limit(1).maybeSingle();
-  assert.ok(concReal && concReal.costo_interno_baseline != null, "la conciliación real tiene baseline (backfill aplicado)");
-  const baselineReal = concReal!.costo_interno_baseline;
-  const { count: movRealAntes } = await supabaseAdmin.from("ia_creditos_movimientos").select("id", { count: "exact", head: true });
+  // Censo previo: al final el ledger tiene que volver exactamente a este número.
+  const { count: movAntes } = await supabaseAdmin.from("ia_creditos_movimientos").select("id", { count: "exact", head: true });
+
+  // ── Escenario de partida, sintético ──────────────────────────────────────────
+  // Un consumo anterior a la conciliación (así el baseline B queda > 0 y el invariante
+  // S − (C − B) no es trivial) y la conciliación que lo fija, hecha con conciliar(), que
+  // es quien calcula el baseline en el servidor.
+  await supabaseAdmin.from("ia_ejecuciones").insert({ modelo: `${PREVIO}-consumo`, proveedor: "anthropic", tokens_in: 4000, tokens_out: 400, estado: "completa", costo_estimado: 0.004, precios_version: "test", created_at: "2026-08-15T12:00:00.000Z" });
+  const previa = await conciliar({ observadoUsd: "5.00", confirmar: true, motivo: "escenario sintetico previo", actor: PREVIO });
+  assert.ok(previa.ok && previa.committed, "la conciliación previa sintética se registra");
+  const { data: concPrevia } = await supabaseAdmin.from("ia_saldo_conciliaciones").select("id, saldo_observado_usd, costo_interno_baseline").eq("actor", PREVIO).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  assert.ok(concPrevia && concPrevia.costo_interno_baseline != null, "la conciliación previa quedó con baseline");
+  assert.ok(Number(concPrevia!.costo_interno_baseline) > 0, "y el baseline previo es > 0: hubo consumo antes de conciliar");
+  const baselinePrevio = concPrevia!.costo_interno_baseline;
 
   try {
     const base = await saldoUsd();
-    console.log("saldo base (real):", base.toFixed(6));
+    console.log("saldo base (escenario sintético):", base.toFixed(6));
 
     // ── Nueva ejecución REAL reduce el saldo (C sube; es posterior a la conciliación) ──
     const t = new Date().toISOString();
@@ -43,10 +63,10 @@ async function main() {
     assert.ok(Math.abs(s2 - s1) < 1e-9, "una ejecución fake no cambia el saldo");
 
     // ── El consumo PREVIO (baseline B) no se descuenta dos veces ─────────────────
-    // Invariante sobre datos reales (sin hardcode): saldo_base = S − (C_total − B).
+    // Invariante leído de la base, sin hardcode: saldo_base = S − (C_total − B).
     // Como B ya contiene el consumo pre-conciliación, sólo (C−B) se resta → no se duplica.
     const { data: cRpc } = await supabaseAdmin.rpc("ia_costo_interno_acumulado", { p_hasta: null });
-    const S = Number(concReal!.saldo_observado_usd), B = Number(baselineReal), C = Number(cRpc);
+    const S = Number(concPrevia!.saldo_observado_usd), B = Number(baselinePrevio), C = Number(cRpc);
     // base incluye la ejecución ZZTEST de 0.01 insertada arriba → comparo contra s1 (antes de esa) sería base.
     const esperado = S - (C - B); // C aquí ya incluye la ZZTEST-real (0.01) y NO la fake
     assert.ok(Math.abs(base - esperado) < 1e-6 || Math.abs(s1 - esperado) < 1e-6, `saldo = S − (C − B): el consumo previo (B=${B}) no se resta de nuevo`);
@@ -71,13 +91,15 @@ async function main() {
 
     console.log("OK — saldo.integration (4B.5.1): ejecución real baja saldo, fake no consume, consumo previo no se duplica, carga posterior sube, conciliar snapshotea B server-side (anti mass-assignment), segunda conciliación reemplaza baseline.");
   } finally {
+    // La conciliación de partida no pudo ser alterada por nada de lo anterior. Se lee ANTES
+    // de borrarla, porque es parte de la familia que limpia este test.
+    const { data: concDespues } = await supabaseAdmin.from("ia_saldo_conciliaciones").select("costo_interno_baseline").eq("actor", PREVIO).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    assert.equal(concDespues?.costo_interno_baseline, baselinePrevio, "el baseline de la conciliación de partida quedó intacto");
     await limpiar();
-    // Verificar que los datos REALES quedaron intactos.
-    const { data: concDespues } = await supabaseAdmin.from("ia_saldo_conciliaciones").select("costo_interno_baseline").eq("actor", "admin:ramiro").order("created_at", { ascending: false }).limit(1).maybeSingle();
-    assert.equal(concDespues?.costo_interno_baseline, baselineReal, "el baseline real de Ramiro quedó intacto");
-    const { count: movRealDespues } = await supabaseAdmin.from("ia_creditos_movimientos").select("id", { count: "exact", head: true });
-    assert.equal(movRealDespues, movRealAntes, "la cantidad de movimientos reales no cambió");
-    console.log("Limpieza ZZTEST verificada; datos reales intactos.");
+    // Y no queda residuo: el ledger vuelve a tener los movimientos que tenía antes.
+    const { count: movDespues } = await supabaseAdmin.from("ia_creditos_movimientos").select("id", { count: "exact", head: true });
+    assert.equal(movDespues, movAntes, "el ledger quedó con la misma cantidad de movimientos que antes del test");
+    console.log("Limpieza verificada; el ledger quedó como estaba.");
   }
 }
 main().catch((e) => { console.error(e); process.exit(1); });

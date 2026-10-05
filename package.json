@@ -12,7 +12,9 @@
     "pruebas:reset": "node scripts/pruebas/aplicar-esquema.mjs --reset",
     "pruebas:mutantes": "node scripts/pruebas/correr-mutantes.mjs",
     "pruebas:seguras": "node scripts/pruebas/correr-seguras.mjs",
-    "pruebas:detener": "node scripts/pruebas/detener.mjs"
+    "pruebas:detener": "node scripts/pruebas/detener.mjs",
+    "pruebas:ia-historico": "node scripts/pruebas/ia-historico.mjs",
+    "pruebas:ia-historico-generar": "node scripts/pruebas/generar-historico-ia.mjs"
   },
   "dependencies": {
     "@fullcalendar/daygrid": "^6.1.20",
