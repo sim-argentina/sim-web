@@ -4,7 +4,7 @@ import { formatHoras } from "@/lib/cronograma";
 import { consultarMetricasEquipo } from "@/lib/metricasEquipoServer";
 
 // Integración (read-only) del grounding numérico del wrapper consultar_metricas_equipo.
-//   npx tsx --env-file=.env.local lib/ia/toolsUnits.integration.ts
+//   npx tsx --env-file=.env.test.local lib/ia/toolsUnits.integration.ts
 // NO consume la API de Claude. NO modifica datos.
 
 async function main() {

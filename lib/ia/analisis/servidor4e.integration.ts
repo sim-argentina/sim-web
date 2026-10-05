@@ -2,7 +2,7 @@
 // escritura únicamente en tablas ia_*/ia_ipc_indice con fixtures ZZTEST). Proveedor de Claude
 // SIEMPRE falso; Tavily SIEMPRE falso. Cero llamadas reales.
 //
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/analisis/servidor4e.integration.ts
+// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.test.local lib/ia/analisis/servidor4e.integration.ts
 
 // GUARDIÁN: esta suite escribe en la base. Si el destino no es una base de pruebas aislada,
 // el proceso aborta acá, antes de la primera escritura. Ver lib/guardiaPruebas.ts.

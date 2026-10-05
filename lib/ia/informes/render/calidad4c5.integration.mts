@@ -6,7 +6,7 @@ import { renderFormato } from "@/lib/ia/informes/render/index";
 import { validarInforme, type InformeSpec } from "@/lib/ia/informes/schema";
 import type { ContextoRender } from "@/lib/ia/informes/render/tipos";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/informes/render/calidad4c5.integration.mts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/informes/render/calidad4c5.integration.mts
 // Verifica la Corrección 4C.5 (continuidad de páginas + encabezado) sobre el binario:
 // 4 páginas, fuente incrustada, la página 4 empieza por "Fuentes y metodología" (no a mitad de
 // oración), ninguna oración se parte entre páginas, pies "Página X de 4", corte único, tildes,

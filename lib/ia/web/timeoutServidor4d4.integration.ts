@@ -14,7 +14,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { correrChat } from "@/lib/ia/server";
 import { FakeProviderGuionado } from "@/lib/ia/providerFake";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/web/timeoutServidor4d4.integration.ts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/web/timeoutServidor4d4.integration.ts
 const OWNER = "admin:zztest-4d4";
 async function limpiar(id?: string) { if (id) await supabaseAdmin.from("ia_conversaciones").delete().eq("id", id); await supabaseAdmin.from("ia_conversaciones").delete().eq("owner", OWNER); await supabaseAdmin.from("ia_consumo").delete().eq("owner", OWNER); }
 

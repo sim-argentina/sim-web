@@ -7,7 +7,7 @@ import { consultarMetricasEquipo } from "@/lib/metricasEquipoServer";
 
 // Integración (read-only) del orquestador + herramientas reales, con proveedor
 // GUIONADO determinístico. NO escribe datos. NO usa la API de Claude.
-//   npx tsx --env-file=.env.local lib/ia/orchestrator.integration.ts
+//   npx tsx --env-file=.env.test.local lib/ia/orchestrator.integration.ts
 const MODELOS = { economico: "m-eco", potente: "m-pot" } as const;
 const base = (guion: GuionTurno[]) => ({
   provider: new FakeProviderGuionado(guion), modelos: MODELOS, limites: getLimites(), historialPrevio: [], pregunta: "test",

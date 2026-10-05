@@ -1,3 +1,6 @@
+// GUARDIÁN: esta suite exige la base LOCAL de pruebas. Desde el bloque 5C.2 ninguna
+// integración de IA consulta Producción. Ver lib/guardiaPruebas.ts.
+import "@/lib/guardiaPruebas.activar";
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { completarInformeMetricas } from "@/lib/ia/informes/completar";
@@ -6,7 +9,7 @@ import { validarProcedencia } from "@/lib/ia/informes/procedencia";
 import { validarInforme, type InformeSpec } from "@/lib/ia/informes/schema";
 import { IA_OWNER_ADMIN } from "@/lib/ia/config";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/informes/completar.integration.ts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/informes/completar.integration.ts
 // Lee el motor real (read-only) para Federico ago-2026. NO llama a Claude, NO escribe
 // (el guard de idempotencia hace no-op sobre el informe real ya completo).
 

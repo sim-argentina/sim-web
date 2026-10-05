@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import type { HistorialTurno, IAProvider } from "@/lib/ia/provider";
 import { ejecutarChat, type HerramientaEjecutada } from "@/lib/ia/orchestrator";
 import { crearProvider } from "@/lib/ia/providerFactory";
+import { evaluarProveedor, MENSAJE_FAKE_BLOQUEADO } from "@/lib/ia/proveedorPermitido";
 import { getLimites, getModelos, getProveedor, estimarCostoUSD, iaEstaConfigurada, variablesFaltantes, PRECIOS_VERSION, getPresupuestoWeb } from "@/lib/ia/config";
 import { buscarConocimiento, listarDocumentosActivos, normalizar } from "@/lib/ia/docs/conocimientoServer";
 import { crearBorrador } from "@/lib/ia/informes/informesServer";
@@ -200,6 +201,15 @@ export async function correrChat(
 
   if (!iaEstaConfigurada()) {
     return { ok: false, status: 503, error: "IA SIM todavía no está configurada.", motivo: "no_configurada" };
+  }
+
+  // El proveedor FALSO no puede atender una consulta real. Esto va ANTES de cualquier
+  // lectura o escritura: se sale sin registrar conversación, mensaje, ejecución, consumo
+  // ni crédito, y sin consumir cuota. Ver lib/ia/proveedorPermitido.ts.
+  const permitido = evaluarProveedor();
+  if (!permitido.ok) {
+    console.error(`[ia] proveedor bloqueado (${permitido.codigo}): ${permitido.motivo}`);
+    return { ok: false, status: 503, error: MENSAJE_FAKE_BLOQUEADO, motivo: permitido.codigo };
   }
   const provider = opts?.provider ?? crearProvider();
   if (!provider) {

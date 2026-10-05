@@ -6,7 +6,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { crearBorrador, editarBorrador, confirmarYGenerar, obtenerPreview, listarVersiones, urlDescarga, enviarPapelera, restaurarInforme, purgarInformes } from "@/lib/ia/informes/informesServer";
 import { descargarArchivo, BUCKET_INFORMES } from "@/lib/ia/informes/storage";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/informes/informes.integration.ts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/informes/informes.integration.ts
 // Datos ZZTEST aislados con limpieza verificada. No toca datos de negocio.
 
 const OWNER = "ZZTEST-informes";

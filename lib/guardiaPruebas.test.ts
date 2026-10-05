@@ -215,23 +215,68 @@ function main() {
   }
   console.log("OK — guardia (11): el bloqueo ocurre en el import, antes de abrir cualquier cliente, con código 78.");
 
-  // ── 12) Las suites de SOLO LECTURA contra Production siguen permitidas ─────────────────
+  // ── 12) Las suites de SOLO LECTURA ajenas a IA siguen permitidas ───────────────────────
   {
     const ESCRITURA = /\.(insert|upsert|update|delete)\s*\(/;
     for (const f of [
       "lib/facturacionEventos.contrato.integration.ts",
       "lib/ia/plan/capacidades.contrato.integration.ts",
-      "lib/ia/plan/ejecutorPlan.integration.ts",
       "lib/ia/analisis/ejecutorAnalitico.integration.ts",
     ]) {
       const s = readFileSync(f, "utf8");
       assert.ok(!ESCRITURA.test(s), `${f} tiene que seguir siendo de solo lectura`);
-      assert.ok(!s.includes("guardiaPruebas.activar"), `${f} no necesita el guardián: no escribe`);
     }
   }
-  console.log("OK — guardia (12): las integraciones de solo lectura contra Production siguen corriendo sin guardián.");
+  console.log("OK — guardia (12): las integraciones de solo lectura que no tocan datos de IA siguen corriendo sin escribir.");
 
-  // ── 13) El runner y el entorno de pruebas existen y son coherentes ─────────────────────
+  // ── 13) NINGUNA integración de IA puede ir a Producción (bloque 5C.2) ──────────────────
+  // El 03/10/2026 quedaron 1.558 ejecuciones falsas en la base real porque las suites de IA
+  // corrían con `--env-file=.env.local`. Este contrato falla si una integración de IA nueva
+  // vuelve a leer o escribir Producción: todas tienen que activar el guardián —que solo
+  // acepta un loopback validado— o no tocar la base.
+  {
+    const ESCRITURA_IA = /\.(insert|upsert|update|delete)\s*\(/;
+    const recorrer = (d: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) recorrer(p, out);
+        else if (/\.(test|integration)\.m?ts$/.test(e.name)) out.push(p.split(sep).join("/"));
+      }
+      return out;
+    };
+    // Las dos pruebas de los guardianes necesitan NOMBRAR los refs prohibidos para poder
+    // verificar que quedan bloqueados. Son las únicas excepciones, y están listadas acá.
+    const PUEDEN_NOMBRAR_REFS = new Set(["lib/ia/proveedorPermitido.test.ts"]);
+    const problemas: string[] = [];
+    for (const f of recorrer("lib/ia").sort()) {
+      const s = readFileSync(f, "utf8");
+
+      // Ninguna suite puede nombrar el project ref productivo ni el de SIM TURNOS.
+      if (!PUEDEN_NOMBRAR_REFS.has(f)) {
+        for (const [ref, quien] of Object.entries(REFS_PROHIBIDOS)) {
+          if (s.includes(ref)) problemas.push(`${f} menciona el project ref de ${quien.split(" — ")[0]}`);
+        }
+      }
+      // Ni cargar el entorno de Producción.
+      if (/--env-file=\.env\.local/.test(s)) problemas.push(`${f} documenta o usa --env-file=.env.local`);
+
+      // Si toca la base, tiene que IMPORTAR el activador (no solo nombrarlo).
+      const tocaBase = /supabaseAdmin|createClient/.test(s);
+      const activa = /^\s*import\s+["'`]@\/lib\/guardiaPruebas\.activar["'`]/m.test(s);
+      if (tocaBase && !activa) {
+        problemas.push(`${f} toca la base y no activa el guardián`);
+      }
+    }
+    assert.deepEqual(problemas, [], `integraciones de IA que podrían llegar a Producción:\n  - ${problemas.join("\n  - ")}`);
+
+    // Y la que se movió en 5C.2 tiene que seguir del lado local.
+    const plan = readFileSync("lib/ia/plan/ejecutorPlan.integration.ts", "utf8");
+    assert.ok(plan.includes("guardiaPruebas.activar"), "ejecutorPlan.integration.ts tiene que exigir la base de pruebas");
+    assert.ok(!ESCRITURA_IA.test(plan), "y seguir siendo de solo lectura");
+  }
+  console.log("OK — guardia (13): ninguna integración de IA puede leer ni escribir Producción; todas exigen la base local.");
+
+  // ── 14) El runner y el entorno de pruebas existen y son coherentes ─────────────────────
   {
     for (const f of [
       "scripts/pruebas/entorno.mjs", "scripts/pruebas/iniciar.mjs",
@@ -259,7 +304,7 @@ function main() {
     assert.ok(/project_id = "sim-web-pruebas"/.test(cfg), "el project_id del stack de pruebas es propio");
     assert.ok(!/^port = 54321$/m.test(cfg), "la API no puede quedar en el puerto por defecto");
   }
-  console.log("OK — guardia (13): el runner, el stack local y el template versionado están completos y sin credenciales.");
+  console.log("OK — guardia (14): el runner, el stack local y el template versionado están completos y sin credenciales.");
 
   console.log("\nOK — guardián de base de pruebas: solo loopback validado, sin default permisivo, sin flags, con el entorno revisado y sin forma de omitirlo.");
 }

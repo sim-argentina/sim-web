@@ -1,10 +1,14 @@
+// GUARDIÁN: esta suite exige la base LOCAL de pruebas. No escribe, pero lee cifras de
+// agosto de 2026 y desde el bloque 5C.2 las toma del escenario histórico sintético
+// TEST_IA_HIST_2026, no de Producción. Ver lib/guardiaPruebas.ts.
+import "@/lib/guardiaPruebas.activar";
 import { strict as assert } from "node:assert";
 import { validarPlan, type PlanAnalitico } from "@/lib/ia/analisis/planAnalitico";
 import { ejecutarPlanAnalitico } from "@/lib/ia/analisis/ejecutorAnalitico";
 import { getIngresosAutomaticos } from "@/lib/finanzas";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/analisis/ejecutorAnalitico.integration.ts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/analisis/ejecutorAnalitico.integration.ts
 //
 // Bloque 5B — lee la base REAL, SOLO LECTURA. Agosto de 2026 es un mes cerrado, así que sus
 // cifras se afirman en absoluto (verificadas aparte en SQL sobre fin_eventos_facturacion); el

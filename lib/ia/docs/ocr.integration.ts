@@ -12,7 +12,7 @@ import { crearAdjunto, analizarAdjuntoOCR } from "@/lib/ia/docs/adjuntosServer";
 import { sha256, borrar } from "@/lib/ia/docs/storage";
 import { IA_OWNER_ADMIN } from "@/lib/ia/config";
 
-//   npx tsx --env-file=.env.local lib/ia/docs/ocr.integration.ts
+//   npx tsx --env-file=.env.test.local lib/ia/docs/ocr.integration.ts
 const OWNER = "ZZTEST:ocr";
 const hoy = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Cordoba" });
 // PNG mínimo (magic bytes) — fixture sintético, NO dato de negocio.

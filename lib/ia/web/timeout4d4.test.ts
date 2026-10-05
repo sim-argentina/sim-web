@@ -3,7 +3,7 @@ import { ejecutarChat } from "@/lib/ia/orchestrator";
 import { FakeProviderGuionado } from "@/lib/ia/providerFake";
 import { getModelos } from "@/lib/ia/config";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/web/timeout4d4.test.ts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/web/timeout4d4.test.ts
 // Reloj real acotado: los "timeouts" del fake usan timeoutMs chico (no un sleep largo real).
 
 const modelos = getModelos();

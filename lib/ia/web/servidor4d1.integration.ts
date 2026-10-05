@@ -10,7 +10,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { correrChat } from "@/lib/ia/server";
 import { FakeProviderGuionado } from "@/lib/ia/providerFake";
 
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/web/servidor4d1.integration.ts
+// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.test.local lib/ia/web/servidor4d1.integration.ts
 // ZZTEST + proveedor fake (excluido del saldo). No toca datos reales.
 
 const OWNER = "admin:zztest-4d1";

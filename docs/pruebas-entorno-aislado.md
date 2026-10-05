@@ -45,6 +45,7 @@ npm run pruebas:reset       # vacía la base y reaplica el esquema desde cero
 npm run pruebas:mutantes    # corre las 53 suites que escriben, en serie, contra la base local
 npm run pruebas:seguras     # corre la regresión segura (sin base + solo lectura)
 npm run pruebas:ia-historico  # las cinco suites de IA que dependen del historial (ver abajo)
+npm run pruebas:auditar-ia    # audita residuos de pruebas en las tablas de IA (solo lectura)
 npm run pruebas:detener     # detiene el stack (agregá -- --borrar para tirar los datos)
 ```
 
@@ -219,6 +220,67 @@ verdaderos de SIM. Ahora el test arma esa conciliación previa —sintética, po
 `conciliar()` calculando el baseline del lado del servidor— y la borra al terminar, verificando que
 el ledger vuelve a tener exactamente los movimientos que tenía antes. No depende del escenario
 histórico ni de ningún dato real.
+
+## Residuos de pruebas en Producción, y cómo no volver
+
+El 03/10/2026 se limpiaron 87 filas de negocio (campeonatos, mensualidades, reservas). El
+05/10/2026, en el bloque 5C.2, se limpió lo que había quedado en las tablas de **IA**:
+
+| Tabla | Antes | Después | Qué era |
+|---|---:|---:|---|
+| `ia_ejecuciones` | 1600 | 42 | 1.558 con `proveedor = 'fake'` |
+| `ia_herramientas_ejecuciones` | 1058 | 94 | 964 colgadas de esas ejecuciones |
+| `ia_consumo` | 15 | 13 | 2 owners sintéticos (`admin:zztest-dbg3`, `admin:zzdebug10`) |
+
+Las 1.558 ejecuciones falsas eran **huérfanas**: sus 1.368 conversaciones ya no existían,
+porque el `finally` de cada suite sí había limpiado conversaciones y mensajes. Lo que no
+limpiaba era la ejecución, el consumo ni las herramientas.
+
+El saldo no se movió un centavo: `ia_costo_interno_acumulado` excluye `proveedor = 'fake'`
+por definición, así que esos US$ 20,64 de costo estimado nunca estuvieron en el saldo. Y
+`ia_consumo` del owner real reconcilia **exacto** con sus 42 ejecuciones reales (42
+solicitudes, 1.040.197 tokens de entrada, 49.238 de salida, US$ 2,883311), lo que demuestra
+que ninguna corrida de pruebas escribió bajo el owner real.
+
+### La defensa
+
+`lib/ia/proveedorPermitido.ts` decide **por destino**, igual que el guardián de pruebas, y
+falla cerrada. El proveedor falso solo puede atender una consulta si se puede establecer
+positivamente que la base es un loopback validado, o que el despliegue es Preview o
+Development de Vercel. En Vercel Production está prohibido siempre, y un portátil con
+`.env.local` —que apunta a Producción— también: ese era justamente el camino.
+
+`correrChat` la evalúa **antes** de cualquier lectura o escritura, así que un entorno mal
+configurado no deja conversación, mensaje, ejecución, consumo ni crédito, y no consume
+cuota. `lib/ia/proveedorPermitido.test.ts` lo verifica, incluido que `NODE_ENV` no
+participe de la decisión y que una URL que apenas *contiene* `localhost` no pase.
+
+### La auditoría
+
+```bash
+npm run pruebas:auditar-ia             # Producción (solo lectura)
+npm run pruebas:auditar-ia -- --local  # la base local de pruebas
+```
+
+Informa ejecuciones por proveedor, owners con firma de fixture, conteos de las 26 tablas de
+IA y señales no concluyentes. **No expone contenido**: ni preguntas, ni respuestas, ni
+títulos, ni documentos, ni correos. Devuelve **código 1** si encuentra residuos inequívocos,
+así que sirve en cualquier verificación posterior a un bloque que toque IA.
+
+### Ninguna integración de IA toca Producción
+
+Antes, varias suites de IA corrían con `--env-file=.env.local`. Ahora:
+
+- las 57 suites que exigen la base local la declaran activando el guardián;
+- `ejecutorPlan`, `ejecutorAnalitico`, `completar` y `capacidades.contrato` —de solo
+  lectura— se movieron al Supabase local sobre el escenario `TEST_IA_HIST_2026`;
+- el runner manda a la base local toda suite que active el guardián, aunque no escriba;
+- `lib/guardiaPruebas.test.ts` (control 13) **falla** si una integración de IA nueva
+  menciona un project ref prohibido, documenta `.env.local` o toca la base sin guardián.
+
+El reparto de horas del escenario dejó de ser decorativo: `completar.integration.ts` afirma
+194 h del integrante de la mañana en agosto, así que el escenario las reproduce (11.640 min
+de 24.840) y el contrato del fixture lo verifica.
 
 ## Variables y secretos
 

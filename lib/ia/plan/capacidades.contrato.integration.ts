@@ -1,6 +1,6 @@
 // Bloque 5C — CONTRATO entre el catálogo de capacidades y el registro REAL de herramientas.
 //
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/plan/capacidades.contrato.integration.ts
+// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.test.local lib/ia/plan/capacidades.contrato.integration.ts
 //
 // El catálogo no describe las herramientas de nuevo, pero sí agrega metadatos que el registro no
 // tiene. Esta prueba impide que las dos cosas se separen: si alguien agrega una herramienta, le
@@ -8,6 +8,9 @@
 //
 // Solo lectura: ejecuta cada capacidad una vez contra datos reales y mira la FORMA del resultado.
 
+// GUARDIÁN: esta suite exige la base LOCAL de pruebas. Desde el bloque 5C.2 ninguna
+// integración de IA consulta Producción. Ver lib/guardiaPruebas.ts.
+import "@/lib/guardiaPruebas.activar";
 import { strict as assert } from "node:assert";
 import { HERRAMIENTAS } from "@/lib/ia/tools";
 import { CAPACIDADES, CAPACIDADES_IDS, FUERA_DEL_PLANIFICADOR, accesoDesdeRegistro } from "@/lib/ia/plan/capacidades";

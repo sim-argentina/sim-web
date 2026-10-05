@@ -9,7 +9,7 @@ import { crearAdjunto, listarAdjuntos, promoverAdjunto } from "@/lib/ia/docs/adj
 import { borrar } from "@/lib/ia/docs/storage";
 
 // Integración (DB + Storage privado) del conocimiento. Fixtures ZZTEST, limpieza total.
-//   npx tsx --env-file=.env.local lib/ia/docs/conocimiento.integration.ts
+//   npx tsx --env-file=.env.test.local lib/ia/docs/conocimiento.integration.ts
 const CAT = "ZZTEST_CAT_" + Math.floor(Math.random() * 1e6);
 const OWNER = "ZZTEST:ia-docs";
 const enc = (s: string) => new TextEncoder().encode(s);

@@ -2,7 +2,7 @@
 // (SOLO LECTURA de datos de negocio; escritura únicamente en tablas ia_* con fixtures ZZTEST).
 // Proveedor de Claude SIEMPRE falso; Tavily SIEMPRE falso y verificado sin usar.
 //
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/analisis/servidor5b1.integration.ts
+// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.test.local lib/ia/analisis/servidor5b1.integration.ts
 //
 // El defecto que cubre: la prueba autenticada de 5B publicó DOS respuestas enteras —la del modelo
 // y la del servidor— con el marcador interno en medio, $365.714 contra $365.714,29, los ceros

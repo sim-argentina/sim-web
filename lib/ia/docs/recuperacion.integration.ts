@@ -11,7 +11,7 @@ import { crearCategoria, activarVersion } from "@/lib/ia/docs/conocimientoServer
 import { crearDocumento } from "@/lib/ia/docs/documentosServer";
 import { borrar } from "@/lib/ia/docs/storage";
 
-//   npx tsx --env-file=.env.local lib/ia/docs/recuperacion.integration.ts
+//   npx tsx --env-file=.env.test.local lib/ia/docs/recuperacion.integration.ts
 const enc = (s: string) => new TextEncoder().encode(s);
 const MODELOS = { economico: "m-eco", potente: "m-pot" } as const;
 

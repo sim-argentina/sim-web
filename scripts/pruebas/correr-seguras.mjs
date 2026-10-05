@@ -33,6 +33,10 @@ function walk(d, out = []) {
 const sinBase = [], soloLectura = [];
 for (const f of walk("lib").sort()) {
   const s = readFileSync(f, "utf8");
+  // Si la suite IMPORTA el activador, exige la base de pruebas: no corre acá, ni siquiera
+  // si es de solo lectura. Se busca el import, no una mención: lib/guardiaPruebas.test.ts
+  // nombra el archivo para inspeccionarlo y es una prueba pura.
+  if (/^\s*import\s+["'`]@\/lib\/guardiaPruebas\.activar["'`]/m.test(s)) continue;
   if (!/supabaseAdmin|createClient/.test(s)) { sinBase.push(f); continue; }
   const rpcsMut = [...s.matchAll(RE_RPC)].map((m) => m[1]).filter((n) => !RPC_DE_LECTURA.has(n));
   const mutante = ESCRITURA.test(s) || rpcsMut.length > 0 || /from "@\/app\/api/.test(s);

@@ -109,6 +109,17 @@ async function main() {
       assert.equal(Math.round((minutos / 60) * 100) / 100, esp.horas);
     });
   }
+  // El reparto POR INTEGRANTE no es decorativo: lib/ia/informes/completar.integration.ts
+  // afirma que Federico tiene 194 h (11.640 min) en agosto, y de ahí sale el valor crudo
+  // que el informe publica con la unidad en columna aparte. Si el reparto cambia, se
+  // entera acá y no diez suites más adelante.
+  const horasAgosto = await getHorasMensuales(2026, 8);
+  invariante("agosto: el integrante de la mañana suma 11.640 min (194 h)", () => {
+    const por = Object.fromEntries((horasAgosto?.integrantes ?? []).map((x) => [x.nombre, Number(x.minutos || 0)]));
+    assert.equal(por["Federico"], 11_640, `Federico tiene ${por["Federico"]} min`);
+    assert.equal(por["Francisco"], 13_200, `Francisco tiene ${por["Francisco"]} min`);
+    assert.equal(por["Ramiro"] ?? 0, 0, "el integrante de respaldo no suma minutos: la ventana queda cubierta");
+  });
 
   // ── 4) Segmentación de agosto: la consulta de aceptación de 5B ────────────
   {

@@ -5,7 +5,7 @@ import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { crearBorrador, obtenerPreview } from "@/lib/ia/informes/informesServer";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/informes/recuperacion.integration.ts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/informes/recuperacion.integration.ts
 // Idempotencia y recuperación del borrador (bloque 4C.1). Datos ZZTEST con limpieza.
 
 const OWNER = "ZZTEST-4c1";

@@ -83,8 +83,19 @@ function walk(d, out = []) {
   }
   return out;
 }
+// Una suite corre acá si ESCRIBE, o si ella misma declara que necesita la base de pruebas
+// activando el guardián. Lo segundo cubre las de SOLO LECTURA que igual tienen que correr
+// contra la base local: `ejecutorPlan.integration.ts` lee cifras de agosto y septiembre de
+// 2026 y las toma del escenario sintético, no de Producción.
+// El IMPORT del activador, no una mención: lib/guardiaPruebas.test.ts nombra el archivo
+// para inspeccionarlo y es una prueba pura que corre sin ninguna base.
+const RE_ACTIVADOR = /^\s*import\s+["'`]@\/lib\/guardiaPruebas\.activar["'`]/m;
+function pideBaseDePruebas(s) {
+  return RE_ACTIVADOR.test(s);
+}
 function esMutante(f) {
   const s = readFileSync(f, "utf8");
+  if (pideBaseDePruebas(s)) return true;
   if (!/supabaseAdmin|createClient/.test(s)) return false;
   const rpcsMut = [...s.matchAll(RE_RPC)].map((m) => m[1]).filter((n) => !RPC_DE_LECTURA.has(n));
   return ESCRITURA.test(s) || rpcsMut.length > 0 || /from "@\/app\/api/.test(s);

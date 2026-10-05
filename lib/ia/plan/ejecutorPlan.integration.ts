@@ -1,3 +1,8 @@
+// GUARDIÁN: esta suite exige la base LOCAL de pruebas. No escribe —el caso 22 lo
+// demuestra con un censo antes y después—, pero hasta el 05/10/2026 LEÍA Producción, y era
+// la última integración de IA que lo hacía. Ahora corre sobre el escenario histórico
+// sintético TEST_IA_HIST_2026, que reproduce las mismas cifras. Ver lib/guardiaPruebas.ts.
+import "@/lib/guardiaPruebas.activar";
 import { strict as assert } from "node:assert";
 import { HERRAMIENTAS } from "@/lib/ia/tools";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -6,15 +11,17 @@ import { accesoDesdeRegistro } from "@/lib/ia/plan/capacidades";
 import { ejecutarPlanMulti } from "@/lib/ia/plan/ejecutorPlan";
 import { renderResultadoPlan } from "@/lib/ia/plan/renderPlan";
 
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/plan/ejecutorPlan.integration.ts
+// Ejecutar: npm run pruebas:ia-historico   (o node scripts/pruebas/correr-mutantes.mjs <este archivo>)
 //
-// Bloque 5C — el planificador contra la base REAL, SOLO LECTURA. Agosto y septiembre de 2026 son
-// meses cerrados, así que sus cifras se afirman en absoluto (verificadas aparte con las propias
-// herramientas); el resto se verifica por identidades que no se rompen cuando entran datos nuevos.
+// Bloque 5C — el planificador de punta a punta, SOLO LECTURA, sobre el escenario histórico
+// sintético de agosto y septiembre de 2026 (db/fixtures-ia-historico.sql). Las cifras de esos
+// dos meses se afirman en absoluto; el resto se verifica por identidades que no se rompen
+// cuando entran datos nuevos.
 
 const ACCESO = accesoDesdeRegistro(HERRAMIENTAS);
 
-// Verificado aparte con consulta_analitica_interna y consultar_cronograma.
+// Las cifras del escenario, verificadas aparte por scripts/pruebas/contrato-historico-ia.ts
+// contra el motor real. Son las mismas que tenía el historial de Producción.
 const REAL = {
   ago: { fact: 13_454_000, turnos: 912, personas: 822, minutos: 13_680, horas: 414, fuentes: { turnero: 10_258_000, manuales: 2_950_000, reservas_online: 126_000, campeonatos: 120_000 } },
   sep: { fact: 10_440_000, turnos: 826, personas: 738, minutos: 12_390, horas: 405.08, fuentes: { turnero: 9_454_000, manuales: 670_000, campeonatos: 240_000, reservas_online: 76_000 } },

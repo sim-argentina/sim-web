@@ -3,7 +3,7 @@ import { ejecutarChat } from "@/lib/ia/orchestrator";
 import { FakeProviderGuionado } from "@/lib/ia/providerFake";
 import { getLimites, getModelos } from "@/lib/ia/config";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/web/orquestadorWeb.integration.ts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/web/orquestadorWeb.integration.ts
 // El orquestador es local; solo consultar_empleados hace una lectura (read-only) a la DB.
 
 const modelos = getModelos();

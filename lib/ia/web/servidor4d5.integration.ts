@@ -23,7 +23,7 @@ const emitirValido = (frase: string) => ({
   },
 });
 
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/web/servidor4d5.integration.ts
+// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.test.local lib/ia/web/servidor4d5.integration.ts
 // ZZTEST (no toca datos reales). TAVILY_API_KEY debe estar AUSENTE del entorno real (se inyecta
 // el proveedor web vía opts para no depender de la key real ni de red). La caché web es GLOBAL
 // (correcto en producción); acá se limpia la clave del propio fixture antes/después.

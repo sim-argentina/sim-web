@@ -136,14 +136,37 @@ const datos = {
 // de otro integrante. Los totales salen exactos: agosto 24.840 min = 414,00 h;
 // septiembre 24.305 min = 405,0833… h, que el servidor redondea a 405,08 h.
 const VENTANA = { apertura: "10:00", cierre: "22:00" }; // 720 minutos
-const SEGUNDA_TARDE = { inicio: "16:00", fin: "22:00" }; // 360 minutos
+// Los dos integrantes se parten la ventana SIN huecos (así el de respaldo suma 0) y el
+// primero agrega refuerzos de tarde, que se superponen con el segundo: superponerse entre
+// integrantes distintos es válido, lo que no se admite es que uno se superponga consigo
+// mismo. Por eso los refuerzos empiezan después de que termina su propio turno.
+const TURNOS = {
+  manana:       { inicio: "10:00", fin: "15:00", minutos: 300 },  // integrante A
+  mananaCorta:  { inicio: "10:00", fin: "14:30", minutos: 270 },  // integrante A
+  tarde:        { inicio: "15:00", fin: "22:00", minutos: 420 },  // integrante B
+  tardeLarga:   { inicio: "14:30", fin: "22:00", minutos: 450 },  // integrante B
+  refuerzo:     { inicio: "16:00", fin: "22:00", minutos: 360 },  // integrante A
+  refuerzoCorto:{ inicio: "18:55", fin: "22:00", minutos: 185 },  // integrante A
+};
+// `cortas` son los días en que A entra media hora menos y B compensa; `refuerzos`, los
+// días en que A vuelve a la tarde. El reparto no es decorativo: 4C.2 afirma que el
+// integrante A tiene 194 h (11.640 min) en agosto, y de ahí salen los números.
 const CRONOGRAMA = {
-  8: { segundaTarde: ["2026-08-07", "2026-08-08", "2026-08-14", "2026-08-15", "2026-08-21", "2026-08-22", "2026-08-29"], extra: null },
-  9: {
-    segundaTarde: ["2026-09-04", "2026-09-05", "2026-09-11", "2026-09-12", "2026-09-18", "2026-09-19", "2026-09-25"],
-    // 185 minutos para cerrar en 24.305: 18:55–22:00 del 26.
-    extra: { fecha: "2026-09-26", inicio: "18:55", fin: "22:00", minutos: 185 },
+  8: {
+    cortas: ["2026-08-03", "2026-08-10", "2026-08-17", "2026-08-24", "2026-08-31", "2026-08-06"],
+    refuerzos: ["2026-08-07", "2026-08-08", "2026-08-14", "2026-08-15", "2026-08-21", "2026-08-22", "2026-08-29"],
+    refuerzoCorto: null,
   },
+  9: {
+    cortas: [],
+    refuerzos: ["2026-09-04", "2026-09-05", "2026-09-11", "2026-09-12", "2026-09-18", "2026-09-19", "2026-09-25"],
+    refuerzoCorto: "2026-09-26",
+  },
+};
+// Minutos por integrante que tiene que dar el reparto.
+const HORAS_POR_INTEGRANTE = {
+  8: { a: 11_640, b: 13_200 },  // 194 h y 220 h
+  9: { a: 11_705, b: 12_600 },
 };
 
 // ── Reparto de personas por día ─────────────────────────────────────────────
@@ -231,11 +254,34 @@ for (const mes of [8, 9]) {
     chequear(f.q15.total >= 0 && f.q30.total >= 0, `mes ${mes}: ${f.fecha} un importe quedó negativo`);
   }
 
-  // Cronograma.
+  // Cronograma: minutos por integrante y total del mes.
   const cr = CRONOGRAMA[mes];
-  const minutos = diasDe(mes).length * 720 + cr.segundaTarde.length * 360 + (cr.extra ? cr.extra.minutos : 0);
-  chequear(minutos === c.minutosCronograma, `mes ${mes}: minutos de cronograma ${minutos} ≠ ${c.minutosCronograma}`);
-  for (const f of cr.segundaTarde) chequear(diasDe(mes).includes(f), `mes ${mes}: la segunda jornada ${f} no es un día del mes`);
+  const dias = diasDe(mes);
+  for (const f of [...cr.cortas, ...cr.refuerzos, cr.refuerzoCorto].filter(Boolean)) {
+    chequear(dias.includes(f), `mes ${mes}: ${f} no es un día del mes`);
+  }
+  chequear(new Set(cr.cortas).size === cr.cortas.length, `mes ${mes}: días cortos repetidos`);
+  chequear(new Set(cr.refuerzos).size === cr.refuerzos.length, `mes ${mes}: refuerzos repetidos`);
+  chequear(!cr.refuerzos.includes(cr.refuerzoCorto), `mes ${mes}: el refuerzo corto cae un día que ya tiene refuerzo`);
+
+  const minA = cr.cortas.length * TURNOS.mananaCorta.minutos
+    + (dias.length - cr.cortas.length) * TURNOS.manana.minutos
+    + cr.refuerzos.length * TURNOS.refuerzo.minutos
+    + (cr.refuerzoCorto ? TURNOS.refuerzoCorto.minutos : 0);
+  const minB = cr.cortas.length * TURNOS.tardeLarga.minutos
+    + (dias.length - cr.cortas.length) * TURNOS.tarde.minutos;
+
+  chequear(minA === HORAS_POR_INTEGRANTE[mes].a, `mes ${mes}: integrante A ${minA} min ≠ ${HORAS_POR_INTEGRANTE[mes].a}`);
+  chequear(minB === HORAS_POR_INTEGRANTE[mes].b, `mes ${mes}: integrante B ${minB} min ≠ ${HORAS_POR_INTEGRANTE[mes].b}`);
+  chequear(minA + minB === c.minutosCronograma, `mes ${mes}: minutos de cronograma ${minA + minB} ≠ ${c.minutosCronograma}`);
+
+  // La ventana queda cubierta sin huecos: el integrante de respaldo no suma minutos.
+  chequear(TURNOS.manana.fin === TURNOS.tarde.inicio, "la mañana y la tarde tienen que empalmar");
+  chequear(TURNOS.mananaCorta.fin === TURNOS.tardeLarga.inicio, "la mañana corta y la tarde larga tienen que empalmar");
+  chequear(TURNOS.manana.inicio === VENTANA.apertura && TURNOS.tarde.fin === VENTANA.cierre, "los turnos cubren la ventana");
+  // Y ningún integrante se superpone consigo mismo: el refuerzo arranca después de su turno.
+  chequear(TURNOS.refuerzo.inicio >= TURNOS.manana.fin, "el refuerzo no puede solaparse con la mañana");
+  chequear(TURNOS.refuerzoCorto.inicio >= TURNOS.manana.fin, "el refuerzo corto no puede solaparse con la mañana");
 }
 
 // Horas que publica la herramienta: round(minutos / 60, 2).
@@ -502,27 +548,33 @@ w("from public.cronograma_meses m, (values");
 w(") as v(fecha, mes)");
 w("where m.anio = 2026 and m.mes = v.mes;");
 w();
-w("-- Jornada principal: 10:00–22:00 (720 min) en todos los días abiertos.");
-w("insert into public.cronograma_jornadas (dia_id, empleado_id, hora_inicio, hora_fin, activo)");
-w("select d.id, (select id from public.empleados where es_fallback = false and activo order by nombre_formal limit 1), " + q(VENTANA.apertura) + ", " + q(VENTANA.cierre) + ", true");
-w("from public.cronograma_dias d join public.cronograma_meses m on m.id = d.mes_id");
-w("where m.anio = 2026 and m.mes in (8, 9);");
-w();
-w("-- Segunda jornada de tarde: 16:00–22:00 (360 min) en los días declarados.");
-w("insert into public.cronograma_jornadas (dia_id, empleado_id, hora_inicio, hora_fin, activo)");
-w("select d.id, (select id from public.empleados where es_fallback = false and activo order by nombre_formal desc limit 1), " + q(SEGUNDA_TARDE.inicio) + ", " + q(SEGUNDA_TARDE.fin) + ", true");
-w("from public.cronograma_dias d join public.cronograma_meses m on m.id = d.mes_id");
-w("where m.anio = 2026 and m.mes in (8, 9) and d.fecha in (");
-w("  " + [...CRONOGRAMA[8].segundaTarde, ...CRONOGRAMA[9].segundaTarde].map((f) => q(f) + "::date").join(", "));
-w(");");
-w();
+// Las jornadas se emiten como una sola lista (fecha, integrante, inicio, fin): es más
+// legible que cuatro inserts condicionales y deja ver el reparto de un vistazo.
 {
-  const e = CRONOGRAMA[9].extra;
-  w("-- Jornada corta de " + e.minutos + " minutos: cierra septiembre en 24.305 min = 405,08 h.");
+  const A = "(select id from public.empleados where es_fallback = false and activo order by nombre_formal asc limit 1)";
+  const B = "(select id from public.empleados where es_fallback = false and activo order by nombre_formal desc limit 1)";
+  const jornadas = [];
+  for (const mes of [8, 9]) {
+    const cr = CRONOGRAMA[mes];
+    for (const f of diasDe(mes)) {
+      const corta = cr.cortas.includes(f);
+      jornadas.push([f, "a", corta ? TURNOS.mananaCorta : TURNOS.manana]);
+      jornadas.push([f, "b", corta ? TURNOS.tardeLarga : TURNOS.tarde]);
+      if (cr.refuerzos.includes(f)) jornadas.push([f, "a", TURNOS.refuerzo]);
+      if (cr.refuerzoCorto === f) jornadas.push([f, "a", TURNOS.refuerzoCorto]);
+    }
+  }
+  w("-- Jornadas. El integrante A toma la mañana y vuelve de refuerzo algunas tardes; el B");
+  w("-- cubre la tarde. Entre los dos cierran la ventana sin huecos, así el de respaldo suma");
+  w("-- 0 minutos. Se eligen por orden de nombre, no por UUID: los crea la configuración base.");
+  w("--   agosto      → A " + HORAS_POR_INTEGRANTE[8].a + " min (" + (HORAS_POR_INTEGRANTE[8].a / 60) + " h)  ·  B " + HORAS_POR_INTEGRANTE[8].b + " min (" + (HORAS_POR_INTEGRANTE[8].b / 60) + " h)");
+  w("--   septiembre  → A " + HORAS_POR_INTEGRANTE[9].a + " min  ·  B " + HORAS_POR_INTEGRANTE[9].b + " min");
   w("insert into public.cronograma_jornadas (dia_id, empleado_id, hora_inicio, hora_fin, activo)");
-  w("select d.id, (select id from public.empleados where es_fallback = false and activo order by nombre_formal desc limit 1), " + q(e.inicio) + ", " + q(e.fin) + ", true");
-  w("from public.cronograma_dias d join public.cronograma_meses m on m.id = d.mes_id");
-  w("where m.anio = 2026 and m.mes = 9 and d.fecha = " + q(e.fecha) + "::date;");
+  w("select d.id, case v.quien when 'a' then " + A + " else " + B + " end, v.inicio::time, v.fin::time, true");
+  w("from public.cronograma_dias d, (values");
+  w(jornadas.map(([f, quien, t]) => "  (" + [q(f), q(quien), q(t.inicio), q(t.fin)].join(", ") + ")").join(",\n"));
+  w(") as v(fecha, quien, inicio, fin)");
+  w("where d.fecha = v.fecha::date;");
 }
 w();
 w("commit;");
@@ -532,7 +584,7 @@ writeFileSync(ARCHIVO, L.join("\n") + "\n");
 
 const nStand = [8, 9].reduce((a, m) => a + FILAS[m].reduce((x, f) => x + (f.q15.turnos > 0 ? 1 : 0) + (f.q30.turnos > 0 ? 1 : 0), 0), 0);
 const nInsc = [8, 9].reduce((a, m) => a + datos[m].camp.reduce((x, g) => x + g.cantidad, 0), 0);
-const nJor = 61 + CRONOGRAMA[8].segundaTarde.length + CRONOGRAMA[9].segundaTarde.length + 1;
+const nJor = 61 * 2 + CRONOGRAMA[8].refuerzos.length + CRONOGRAMA[9].refuerzos.length + 1;
 console.log(ARCHIVO + " generado. Contrato numérico verificado, sin problemas.");
 console.log("  turnos_stand " + nStand + " · reservas 6 · campeonatos 1 + " + nInsc + " inscripciones · fin_movimientos 4");
 console.log("  cronograma: 2 meses · 61 días · " + nJor + " jornadas");

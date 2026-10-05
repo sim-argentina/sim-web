@@ -4,7 +4,7 @@
 // por tool_choice, salida estructurada validada, Markdown renderizado localmente. No llama a
 // Claude ni a Tavily reales.
 //
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/web/servidor4d52.integration.ts
+// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.test.local lib/ia/web/servidor4d52.integration.ts
 
 // GUARDIÁN: esta suite escribe en la base. Si el destino no es una base de pruebas aislada,
 // el proceso aborta acá, antes de la primera escritura. Ver lib/guardiaPruebas.ts.

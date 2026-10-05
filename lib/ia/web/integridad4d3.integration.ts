@@ -11,7 +11,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { correrChat } from "@/lib/ia/server";
 import { FakeProviderGuionado } from "@/lib/ia/providerFake";
 
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/web/integridad4d3.integration.ts
+// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.test.local lib/ia/web/integridad4d3.integration.ts
 const OWNER = "admin:zztest-4d3";
 const PARCIAL = "## Datos internos de SIM\n- Stand: 489 operaciones, 814 personas.\n- No tengo en";
 const fuente = (u: string, t: string) => ({ url: u, titulo: t, dominio: u.replace(/^https?:\/\/(www\.)?/, "").split("/")[0], orden: 0 });

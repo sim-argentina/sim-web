@@ -6,7 +6,7 @@ import { renderFormato } from "@/lib/ia/informes/render/index";
 import { validarInforme, type InformeSpec } from "@/lib/ia/informes/schema";
 import type { ContextoRender } from "@/lib/ia/informes/render/tipos";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/informes/render/calidad4c4.integration.mts
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/informes/render/calidad4c4.integration.mts
 // Verifica la Corrección 4C.4 sobre el binario: fuente Liberation Sans INCRUSTADA
 // (FontFile2 x2), español CON tildes en el PDF, y autofiltros del Excel sobre la tabla
 // completa. NO red/DB, NO Claude; snapshot congelado como fixture.

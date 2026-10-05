@@ -8,7 +8,7 @@ import { correrChat } from "@/lib/ia/server";
 
 // Integración de la capa server con proveedor FALSO. Aísla por owner ZZTEST y limpia
 // todo. Read-only sobre datos de negocio; solo escribe tablas ia_* de prueba.
-//   npx tsx --env-file=.env.local lib/ia/server.integration.ts
+//   npx tsx --env-file=.env.test.local lib/ia/server.integration.ts
 const OWNER = "ZZTEST:ia-owner";
 
 function hoyISO() { return new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Cordoba" }); }

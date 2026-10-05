@@ -4,7 +4,7 @@ import { ejecutarChat } from "@/lib/ia/orchestrator";
 import { FakeProviderGuionado } from "@/lib/ia/providerFake";
 import { getModelos } from "@/lib/ia/config";
 
-// Ejecutar: npx tsx --env-file=.env.local lib/ia/web/timeout4d41.test.ts — sin esperas reales.
+// Ejecutar: npx tsx --env-file=.env.test.local lib/ia/web/timeout4d41.test.ts — sin esperas reales.
 
 const modelos = getModelos();
 // Config de prueba: tope general 60s (equivalente), presupuesto web 250s (equivalente). No hay

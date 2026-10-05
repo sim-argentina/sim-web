@@ -2,7 +2,7 @@
 // escritura únicamente en tablas ia_* con fixtures ZZTEST). Proveedor de Claude SIEMPRE falso;
 // Tavily SIEMPRE falso y verificado sin usar. Cero llamadas reales, cero créditos.
 //
-// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.local lib/ia/analisis/servidor5b.integration.ts
+// Ejecutar: IA_PROVIDER=fake npx tsx --env-file=.env.test.local lib/ia/analisis/servidor5b.integration.ts
 //
 // Qué se puede y qué no se puede probar con un proveedor falso: la traducción de la pregunta al
 // plan la hace el MODELO, así que acá no se verifica su criterio. Sí se verifica lo que garantiza
