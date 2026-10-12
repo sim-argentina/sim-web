@@ -3,6 +3,7 @@ import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { ESTADOS_EVENTO, esFechaValida } from "@/lib/colectivo";
+import { habilitarProductosActivosEnEvento } from "@/lib/colectivoProductos";
 
 const txt = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
@@ -80,6 +81,19 @@ export async function POST(req: Request) {
       .select()
       .single();
     if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "colectivo/eventos POST", error });
+
+    // Arranca vendiendo los productos activos del catálogo; el admin los ajusta
+    // desde el evento. Si esto falla, el evento ya existe: se avisa en vez de
+    // devolver error (reintentar crearía un evento duplicado).
+    const prod = await habilitarProductosActivosEnEvento(data.id as string);
+    if (!prod.ok) {
+      console.error("colectivo/eventos POST productos ::", prod.detalle);
+      return NextResponse.json({
+        ok: true,
+        evento: data,
+        aviso: "El evento se creó, pero no se pudieron habilitar sus productos. Configuralos desde el evento.",
+      });
+    }
     return NextResponse.json({ ok: true, evento: data });
   } catch {
     return NextResponse.json({ error: "Error creando evento" }, { status: 500 });

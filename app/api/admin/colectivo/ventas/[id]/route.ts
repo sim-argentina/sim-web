@@ -3,7 +3,10 @@ import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
-import { limpiarPagosColectivo, resumirPagos, esFechaValida, fechaDentroDelEvento } from "@/lib/colectivo";
+import {
+  limpiarPagosColectivo, resumirPagos, esFechaValida, fechaDentroDelEvento, COLUMNAS_VENTA_COLECTIVO,
+} from "@/lib/colectivo";
+import { productoVendibleEnEvento } from "@/lib/colectivoProductos";
 
 const txt = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
@@ -18,7 +21,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const { data: venta } = await supabaseAdmin
       .from("colectivo_ventas")
-      .select("id, colectivo_eventos(estado, fecha_inicio, fecha_fin)")
+      .select("id, evento_id, producto_id, colectivo_eventos(estado, fecha_inicio, fecha_fin)")
       .eq("id", id)
       .maybeSingle();
     if (!venta) return NextResponse.json({ error: "Venta no encontrada" }, { status: 404 });
@@ -45,8 +48,21 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "La fecha de la venta debe estar dentro del evento" }, { status: 400 });
     }
 
-    const producto_nombre = txt(body.producto_nombre);
-    if (!producto_nombre) return NextResponse.json({ error: "Elegí un producto" }, { status: 400 });
+    // Mismo producto: la venta conserva el suyo aunque hoy ya no esté disponible
+    // (deshabilitado en el evento o inactivo en el catálogo). Cambiarlo por otro
+    // exige que ese otro sea vendible en el evento, y toma su nombre del catálogo.
+    const productoPedido = String(body.producto_id || "");
+    let cambioProducto: { producto_id: string; producto_nombre: string } | null = null;
+    if (productoPedido && productoPedido !== venta.producto_id) {
+      if (!isValidUuid(productoPedido)) return NextResponse.json({ error: "Elegí un producto" }, { status: 400 });
+      const vendible = await productoVendibleEnEvento(venta.evento_id as string, productoPedido);
+      if (!vendible.ok) {
+        if (vendible.status === 500) return failResponse(500, vendible.error, { logContext: "colectivo/ventas/[id] producto", error: vendible.detalle });
+        return NextResponse.json({ error: vendible.error }, { status: vendible.status });
+      }
+      cambioProducto = { producto_id: vendible.valor.id, producto_nombre: vendible.valor.nombre };
+    }
+
     const cantidad = Number(body.cantidad);
     if (!Number.isInteger(cantidad) || cantidad <= 0) return NextResponse.json({ error: "La cantidad debe ser mayor a 0" }, { status: 400 });
     const precio = Number(body.precio_unitario);
@@ -74,8 +90,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const { data, error } = await supabaseAdmin
       .from("colectivo_ventas")
       .update({
-        producto_id: isValidUuid(String(body.producto_id || "")) ? String(body.producto_id) : null,
-        producto_nombre,
+        ...cambioProducto,
         fecha,
         cantidad,
         precio_unitario: Math.round(precio),
@@ -90,7 +105,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
-      .select()
+      .select(COLUMNAS_VENTA_COLECTIVO)
       .single();
     if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "colectivo/ventas/[id] PATCH", error });
     return NextResponse.json({ ok: true, venta: data });

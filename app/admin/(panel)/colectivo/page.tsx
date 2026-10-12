@@ -96,6 +96,7 @@ export default function ColectivoPage() {
       });
       const d = await r.json();
       if (!r.ok) { setMsg(d.error || "Error"); return; }
+      if (d.aviso) alert(d.aviso);
       setShowForm(false); setForm(blankEvento); setEditId(null); cargar();
     } finally { setSaving(false); }
   };
@@ -148,11 +149,18 @@ export default function ColectivoPage() {
             <h1 className="text-3xl font-black uppercase md:text-5xl">Colectivo</h1>
             <p className="mt-2 max-w-2xl text-sm text-white/60">Eventos itinerantes con turnero de simuladores y venta de productos.</p>
           </div>
-          {!showForm && (
-            <button onClick={abrirNuevo} className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black uppercase transition hover:bg-red-700">
-              + Nuevo evento
-            </button>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {esAdmin && (
+              <Link href="/admin/colectivo/productos" className="rounded-xl border border-white/15 px-5 py-3 text-sm font-black uppercase text-white/80 transition hover:border-white hover:text-white">
+                Productos
+              </Link>
+            )}
+            {!showForm && (
+              <button onClick={abrirNuevo} className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black uppercase transition hover:bg-red-700">
+                + Nuevo evento
+              </button>
+            )}
+          </div>
         </div>
 
         {showForm && (

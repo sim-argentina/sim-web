@@ -36,6 +36,9 @@ campeonatos-bracket-reiniciar.sql
 # ── 5. Turnero ──────────────────────────────────────────────────────────────
 turnero-cambio-diario.sql
 
+# ── 5b. Colectivo (productos por evento, turnos = personas) ─────────────────
+colectivo-productos-por-evento.sql
+
 # ── 6. Equipo y cronograma ──────────────────────────────────────────────────
 ia-empleados-bloque1.sql
 ia-cronograma-bloque2.sql

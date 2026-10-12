@@ -7,6 +7,7 @@ import { getTurnoTimerState, useNow, TURNO_BADGE_CLASS } from "@/lib/turnoTimer"
 import {
   SIMULADORES_COLECTIVO, METODOS_PAGO_COLECTIVO, POSNETS_COLECTIVO,
   DURACIONES_SUGERIDAS, DURACION_DEFAULT, ESTADO_EVENTO_LABEL,
+  PERSONAS_COLECTIVO, turnosColectivo, esVendibleEnEvento, resumirVentasPorProducto,
 } from "@/lib/colectivo";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -18,14 +19,16 @@ type Evento = {
   telefono_contacto: string | null; observaciones: string | null; estado: string;
 };
 type Turno = {
-  id: number; evento_id: string; nombre?: string | null; telefono?: string | null;
-  fecha: string; hora?: string | null; hora_estimada_subida?: string | null;
+  id: number; evento_id: string;
+  fecha: string; hora?: string | null;
   hora_subida?: string | null; hora_bajada?: string | null; simuladores?: string[] | string;
   cantidad_personas?: number; cantidad_minutos?: number; cantidad_turnos?: number;
   total?: number; metodo_pago?: string; turno_listo?: boolean; posnet_pago?: string | null;
   pagos_detalle?: PagoDetalle[] | string; estado?: string; observaciones?: string | null;
 };
-type Producto = { id: string; nombre: string; precio_predeterminado: number; activo: boolean };
+// Producto del catálogo con su disponibilidad en este evento. El admin recibe todo
+// el catálogo; el staff, solo los vendibles.
+type Producto = { id: string; nombre: string; precio_predeterminado: number; activo: boolean; habilitado: boolean };
 type Venta = {
   id: string; evento_id: string; producto_id: string | null; producto_nombre: string;
   fecha: string; fecha_hora: string; cantidad: number; precio_unitario: number; total: number;
@@ -41,13 +44,6 @@ function horaActual() {
 }
 function fechaLocalISO(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-function sumarMinutosAHora(hora: string, minutos: number) {
-  if (!hora) return "";
-  const [h, m] = hora.split(":").map(Number);
-  const d = new Date();
-  d.setHours(h, m + minutos, 0, 0);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 function normalizarSimuladores(s?: string[] | string): string[] {
   if (Array.isArray(s)) return s;
@@ -107,7 +103,7 @@ export default function EventoColectivoPage() {
       fetch(`/api/admin/colectivo/eventos/${eventoId}`, { cache: "no-store" }).then((r) => r.json()),
       fetch(`/api/admin/colectivo/eventos/${eventoId}/turnos`, { cache: "no-store" }).then((r) => r.json()),
       fetch(`/api/admin/colectivo/eventos/${eventoId}/ventas`, { cache: "no-store" }).then((r) => r.json()),
-      fetch(`/api/admin/colectivo/productos`, { cache: "no-store" }).then((r) => r.json()),
+      fetch(`/api/admin/colectivo/eventos/${eventoId}/productos`, { cache: "no-store" }).then((r) => r.json()),
     ]);
     if (evR.evento) {
       setEvento(evR.evento);
@@ -220,18 +216,17 @@ export default function EventoColectivoPage() {
 }
 
 // ═════════ Formulario de turno ═════════
+// Turnos = personas (4 personas × 30' = 4 turnos). El servidor lo vuelve a
+// imponer: lo que muestra este campo es solo informativo.
 function TurneroForm({ eventoId, dia, onSaved, editando, onCancelEdit }: {
   eventoId: string; dia: string; onSaved: () => void; editando?: Turno | null; onCancelEdit?: () => void;
 }) {
   const [hora, setHora] = useState(horaActual());
-  const [horaEstimada, setHoraEstimada] = useState("");
   const [horaSubida, setHoraSubida] = useState("");
-  const [nombre, setNombre] = useState("");
-  const [telefono, setTelefono] = useState("");
+  const [horaBajada, setHoraBajada] = useState("");
   const [simuladores, setSimuladores] = useState<string[]>([]);
   const [personas, setPersonas] = useState(1);
   const [minutos, setMinutos] = useState(DURACION_DEFAULT);
-  const [cantTurnos, setCantTurnos] = useState(1);
   const [pagos, setPagos] = useState<PagoDetalle[]>([{ metodo_pago: "efectivo", monto: "", posnet_pago: "" }]);
   const [observaciones, setObservaciones] = useState("");
   const [gratis, setGratis] = useState(false);
@@ -240,25 +235,27 @@ function TurneroForm({ eventoId, dia, onSaved, editando, onCancelEdit }: {
   useEffect(() => {
     if (!editando) return;
     setHora(editando.hora || horaActual());
-    setHoraEstimada(editando.hora_estimada_subida || "");
     setHoraSubida(editando.hora_subida || "");
-    setNombre(editando.nombre || "");
-    setTelefono(editando.telefono || "");
+    setHoraBajada(editando.hora_bajada || "");
     setSimuladores(normalizarSimuladores(editando.simuladores));
     setPersonas(editando.cantidad_personas || 1);
     setMinutos(editando.cantidad_minutos || DURACION_DEFAULT);
-    setCantTurnos(editando.cantidad_turnos || 1);
     setPagos(normalizarPagos(editando.pagos_detalle, editando.metodo_pago, editando.total, editando.posnet_pago));
     setObservaciones(editando.observaciones || "");
     setGratis(editando.metodo_pago === "gratis");
   }, [editando]);
 
-  const horaBajada = useMemo(() => sumarMinutosAHora(horaSubida, minutos), [horaSubida, minutos]);
+  const turnos = turnosColectivo(personas);
   const totalPagos = useMemo(() => pagos.reduce((a, p) => a + (Number(p.monto) || 0), 0), [pagos]);
+  // Un turno histórico puede tener más de 6 personas: se muestra su valor para
+  // poder editar el resto sin cambiarlo.
+  const opcionesPersonas: number[] = (PERSONAS_COLECTIVO as readonly number[]).includes(personas)
+    ? [...PERSONAS_COLECTIVO]
+    : [...PERSONAS_COLECTIVO, personas];
 
   const reset = () => {
-    setHora(horaActual()); setHoraEstimada(""); setHoraSubida(""); setNombre(""); setTelefono("");
-    setSimuladores([]); setPersonas(1); setMinutos(DURACION_DEFAULT); setCantTurnos(1);
+    setHora(horaActual()); setHoraSubida(""); setHoraBajada("");
+    setSimuladores([]); setPersonas(1); setMinutos(DURACION_DEFAULT);
     setPagos([{ metodo_pago: "efectivo", monto: "", posnet_pago: "" }]); setObservaciones(""); setGratis(false);
   };
   const toggleSim = (s: string) => setSimuladores((a) => a.includes(s) ? a.filter((x) => x !== s) : [...a, s]);
@@ -276,9 +273,8 @@ function TurneroForm({ eventoId, dia, onSaved, editando, onCancelEdit }: {
     try {
       const pagosLimpios = limpiarPagos(pagos);
       const payload = {
-        nombre, telefono, fecha: dia, hora,
-        hora_estimada_subida: horaEstimada, hora_subida: horaSubida, hora_bajada: horaBajada,
-        simuladores, cantidad_personas: personas, cantidad_minutos: minutos, cantidad_turnos: cantTurnos,
+        fecha: dia, hora, hora_subida: horaSubida, hora_bajada: horaBajada,
+        simuladores, cantidad_personas: personas, cantidad_minutos: minutos,
         observaciones, turno_listo: editando?.turno_listo || false,
         ...(gratis ? { metodo_pago: "gratis", pagos_detalle: [] } : { pagos_detalle: pagosLimpios }),
       };
@@ -297,19 +293,16 @@ function TurneroForm({ eventoId, dia, onSaved, editando, onCancelEdit }: {
         {editando && <button type="button" onClick={onCancelEdit} className="rounded-full border border-white/15 px-4 py-2 text-xs font-black uppercase text-white/70 hover:border-white hover:text-white">Cancelar edición</button>}
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
         <Campo label="Hora toma"><input type="time" value={hora} onChange={(e) => setHora(e.target.value)} className={inp} /></Campo>
-        <Campo label="Hora estimada"><input type="time" value={horaEstimada} onChange={(e) => setHoraEstimada(e.target.value)} className={inp} /></Campo>
-        <Campo label="Hora subida"><input type="time" value={horaSubida} onChange={(e) => setHoraSubida(e.target.value)} className={inp} /></Campo>
-        <Campo label="Hora bajada"><input type="time" value={horaBajada} readOnly className={`${inp} opacity-60`} /></Campo>
-        <Campo label="Cliente (opcional)"><input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Sin identificar" className={inp} /></Campo>
-        <Campo label="Teléfono (opcional)"><input value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="351..." className={inp} /></Campo>
-        <Campo label="Personas"><input type="number" min={1} value={personas} onChange={(e) => setPersonas(Math.max(1, Number(e.target.value) || 1))} className={inp} /></Campo>
-        <Campo label="Total"><input readOnly value={dinero(gratis ? 0 : totalPagos)} className={`${inp} opacity-60`} /></Campo>
-      </div>
-
-      <div className="mt-3 grid gap-3 md:grid-cols-4 xl:grid-cols-8">
-        <div className="xl:col-span-2">
+        <Campo label="Hora subida · opcional"><input type="time" value={horaSubida} onChange={(e) => setHoraSubida(e.target.value)} className={inp} /></Campo>
+        <Campo label="Hora bajada · opcional"><input type="time" value={horaBajada} onChange={(e) => setHoraBajada(e.target.value)} className={inp} /></Campo>
+        <Campo label="Personas">
+          <select value={personas} onChange={(e) => setPersonas(Number(e.target.value))} className={inp}>
+            {opcionesPersonas.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </Campo>
+        <div>
           <Campo label="Minutos">
             <input type="number" min={1} value={minutos} onChange={(e) => setMinutos(Math.max(1, Number(e.target.value) || 1))} className={inp} />
           </Campo>
@@ -319,8 +312,12 @@ function TurneroForm({ eventoId, dia, onSaved, editando, onCancelEdit }: {
             ))}
           </div>
         </div>
-        <Campo label="Turnos"><input type="number" min={1} value={cantTurnos} onChange={(e) => setCantTurnos(Math.max(1, Number(e.target.value) || 1))} className={inp} /></Campo>
-        <div className="xl:col-span-4"><Campo label="Observaciones"><input value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="Notas internas" className={inp} /></Campo></div>
+        <Campo label="Turnos"><input readOnly tabIndex={-1} value={turnos} title="Turnos = personas" className={`${inp} opacity-60`} /></Campo>
+        <Campo label="Total"><input readOnly tabIndex={-1} value={dinero(gratis ? 0 : totalPagos)} className={`${inp} opacity-60`} /></Campo>
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px]">
+        <Campo label="Observaciones"><input value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="Notas internas" className={inp} /></Campo>
         <div className="flex items-end"><button type="submit" disabled={guardando} className="w-full rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase hover:bg-red-700 disabled:opacity-50">{guardando ? "..." : editando ? "Actualizar" : "Guardar"}</button></div>
       </div>
 
@@ -372,18 +369,23 @@ function TurneroForm({ eventoId, dia, onSaved, editando, onCancelEdit }: {
 }
 
 // ═════════ Turnos guardados ═════════
+const COLS_TURNOS = "grid-cols-[56px_96px_64px_64px_minmax(140px,1.2fr)_60px_56px_76px_minmax(150px,1.4fr)_100px_100px_88px]";
+
 function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, esAdmin, onSaved }: {
   turnos: Turno[]; dia: string; now: number; cerrado: boolean; eventoId: string; esAdmin: boolean; onSaved: () => void;
 }) {
   const [editando, setEditando] = useState<Turno | null>(null);
   const [aEliminar, setAEliminar] = useState<Turno | null>(null);
   const [eliminando, setEliminando] = useState(false);
+  const totalTurnos = useMemo(() => turnos.reduce((a, t) => a + (Number(t.cantidad_turnos) || 1), 0), [turnos]);
 
+  // Solo marca / desmarca "listo": no reescribe el resto del turno.
   const toggleListo = async (t: Turno, valor: boolean) => {
-    await fetch(`/api/admin/colectivo/turnos/${t.id}`, {
+    const r = await fetch(`/api/admin/colectivo/turnos/${t.id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...t, turno_listo: valor }),
+      body: JSON.stringify({ accion: "listo", turno_listo: valor }),
     });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Error"); }
     onSaved();
   };
 
@@ -412,16 +414,16 @@ function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, esAdmin, onSaved
           <h2 className="text-xl font-black uppercase text-red-500">Turnos guardados</h2>
           <p className="text-sm text-white/50">{dia}</p>
         </div>
-        <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/70">{turnos.length} turnos</div>
+        <div className="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/70">{totalTurnos} turnos</div>
       </div>
 
       {turnos.length === 0 ? (
         <div className="rounded-2xl border border-white/10 bg-black p-5 text-white/60">No hay turnos cargados para este día.</div>
       ) : (
         <div className="overflow-x-auto">
-          <div className="min-w-[1180px] space-y-2">
-            <div className="grid grid-cols-[60px_70px_80px_80px_1.4fr_1.2fr_70px_70px_70px_1.4fr_120px_110px_70px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
-              <span>Listo</span><span>Toma</span><span>Sube</span><span>Baja</span><span>Cliente</span><span>Simus</span><span>Pers.</span><span>Min.</span><span>Turnos</span><span>Pago</span><span>Posnet</span><span>Total</span><span></span>
+          <div className="min-w-[1080px] space-y-2">
+            <div className={`grid ${COLS_TURNOS} gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35`}>
+              <span>Listo</span><span>Toma</span><span>Sube</span><span>Baja</span><span>Simus</span><span>Pers.</span><span>Min.</span><span>Turnos</span><span>Pago</span><span>Posnet</span><span>Total</span><span></span>
             </div>
             {turnos.map((t) => {
               const simus = normalizarSimuladores(t.simuladores);
@@ -431,18 +433,16 @@ function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, esAdmin, onSaved
               const timer = getTurnoTimerState({ fecha: t.fecha, horaSubida: t.hora_subida, minutos: t.cantidad_minutos, listo: t.turno_listo, cancelado: t.estado === "cancelado" }, now);
               const pagoStr = pagos.length ? pagos.map((p) => `${formatearPago(p.metodo_pago)} ${dinero(Number(p.monto) || 0)}`).join(" + ") : formatearPago(t.metodo_pago);
               return (
-                <div key={t.id} className={`grid grid-cols-[60px_70px_80px_80px_1.4fr_1.2fr_70px_70px_70px_1.4fr_120px_110px_70px] items-center gap-2 rounded-xl border px-3 py-2 text-sm ${timer.status === "listo" ? "border-green-500/50 bg-green-950/25" : timer.status === "rojo" ? "border-red-500/60 bg-red-950/30" : timer.status === "amarillo" ? "border-amber-500/50 bg-amber-950/20" : "border-white/10 bg-black"}`}>
+                <div key={t.id} className={`grid ${COLS_TURNOS} items-center gap-2 rounded-xl border px-3 py-2 text-sm ${timer.status === "listo" ? "border-green-500/50 bg-green-950/25" : timer.status === "rojo" ? "border-red-500/60 bg-red-950/30" : timer.status === "amarillo" ? "border-amber-500/50 bg-amber-950/20" : "border-white/10 bg-black"}`}>
                   <label className="flex items-center justify-center">
                     <input type="checkbox" checked={listo} disabled={cerrado} onChange={(e) => toggleListo(t, e.target.checked)} className="h-5 w-5 accent-red-600 disabled:opacity-40" />
                   </label>
-                  <span className="font-black">{t.hora || "-"}</span>
-                  <span className="text-white/70">{t.hora_subida || "-"}</span>
-                  <span className="text-white/70">{t.hora_bajada || sumarMinutosAHora(t.hora_subida || "", t.cantidad_minutos || DURACION_DEFAULT) || "-"}</span>
                   <div className="min-w-0">
-                    <p className={`truncate font-black ${listo ? "text-white/60 line-through" : ""}`}>{t.nombre || "Sin identificar"}</p>
-                    <p className="truncate text-xs text-white/40">{t.telefono || "—"}</p>
+                    <p className={`font-black ${listo ? "text-white/60 line-through" : ""}`}>{t.hora || "-"}</p>
                     <span className={`mt-1 inline-flex w-fit items-center rounded-md px-2 py-0.5 text-[11px] font-bold ${TURNO_BADGE_CLASS[timer.status]}`}>{timer.label}</span>
                   </div>
+                  <span className="text-white/70">{t.hora_subida || "-"}</span>
+                  <span className="text-white/70">{t.hora_bajada || "-"}</span>
                   <span className="truncate text-white/70">{simus.length ? simus.join(", ") : "-"}</span>
                   <span>{t.cantidad_personas || 1}</span>
                   <span>{t.cantidad_minutos || DURACION_DEFAULT}</span>
@@ -480,7 +480,7 @@ function TurnosGuardados({ turnos, dia, now, cerrado, eventoId, esAdmin, onSaved
             </p>
             <div className="mt-3 space-y-1 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm">
               <div className="flex justify-between gap-4"><span className="text-white/45">Fecha / Hora</span><span className="font-bold text-white">{aEliminar.fecha} · {aEliminar.hora || "-"}</span></div>
-              <div className="flex justify-between gap-4"><span className="text-white/45">Cliente</span><span className="font-bold text-white">{aEliminar.nombre || "Sin identificar"}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-white/45">Personas / Turnos</span><span className="font-bold text-white">{aEliminar.cantidad_personas || 1} / {aEliminar.cantidad_turnos || 1}</span></div>
               <div className="flex justify-between gap-4"><span className="text-white/45">Minutos</span><span className="font-bold text-white">{aEliminar.cantidad_minutos || DURACION_DEFAULT}</span></div>
               <div className="flex justify-between gap-4"><span className="text-white/45">Simuladores</span><span className="font-bold text-white text-right">{normalizarSimuladores(aEliminar.simuladores).join(", ") || "-"}</span></div>
               <div className="flex justify-between gap-4"><span className="text-white/45">Importe</span><span className="font-black text-red-500">{dinero(Number(aEliminar.total || 0))}</span></div>
@@ -569,6 +569,9 @@ function ResumenDia({ turnos, dia }: { turnos: Turno[]; dia: string }) {
 }
 
 // ═════════ Venta de productos ═════════
+// Solo se venden los productos activos en el catálogo y habilitados en este
+// evento. Una venta ya registrada conserva su producto aunque después se
+// deshabilite: al editarla se sigue mostrando como "(no disponible)".
 function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, onSaved, onProductosChange }: {
   eventoId: string; dia: string; productos: Producto[]; ventas: Venta[]; cerrado: boolean; esAdmin: boolean; onSaved: () => void; onProductosChange: () => void;
 }) {
@@ -586,12 +589,21 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
   const [showConfig, setShowConfig] = useState(false);
 
   const total = useMemo(() => Math.round(cantidad * precio), [cantidad, precio]);
+  const vendibles = useMemo(() => productos.filter(esVendibleEnEvento), [productos]);
+  const opciones = useMemo(() => {
+    const ops = vendibles.map((p) => ({ value: p.id, label: p.nombre }));
+    if (editId && !vendibles.some((p) => p.id === productoId)) {
+      ops.unshift({ value: productoId ?? "", label: `${productoNombre} (no disponible)` });
+    }
+    return ops;
+  }, [vendibles, editId, productoId, productoNombre]);
 
-  const elegirProducto = (nombre: string) => {
-    const p = productos.find((x) => x.nombre === nombre);
-    setProductoNombre(nombre);
-    setProductoId(p?.id || null);
-    if (p && !editId) { setPrecio(p.precio_predeterminado); setPagos([{ metodo_pago: "efectivo", monto: String(p.precio_predeterminado * cantidad), posnet_pago: "" }]); }
+  const elegirProducto = (id: string) => {
+    const p = vendibles.find((x) => x.id === id);
+    if (!p) return;
+    setProductoNombre(p.nombre);
+    setProductoId(p.id);
+    if (!editId) { setPrecio(p.precio_predeterminado); setPagos([{ metodo_pago: "efectivo", monto: String(p.precio_predeterminado * cantidad), posnet_pago: "" }]); }
   };
   const reset = () => {
     setProductoNombre(""); setProductoId(null); setCantidad(1); setPrecio(0); setCliente(""); setTelefono("");
@@ -614,11 +626,11 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
   };
 
   const guardar = async () => {
-    if (!productoNombre) { alert("Elegí un producto."); return; }
+    if (!productoId && !editId) { alert("Elegí un producto."); return; }
     setGuardando(true);
     try {
       const payload = {
-        producto_id: productoId, producto_nombre: productoNombre, fecha: dia,
+        producto_id: productoId, fecha: dia,
         cantidad, precio_unitario: precio, cliente, telefono, observaciones,
         ...(bonificada ? { estado: "bonificada" } : { pagos_detalle: limpiarPagos(pagos) }),
       };
@@ -642,18 +654,25 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
     <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-black uppercase text-red-500">Venta de productos</h2>
-        <button onClick={() => setShowConfig((s) => !s)} className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-black uppercase text-white/60 hover:border-white hover:text-white">Precios predeterminados</button>
+        {esAdmin && !cerrado && (
+          <button onClick={() => setShowConfig((s) => !s)} className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-black uppercase text-white/60 hover:border-white hover:text-white">Productos del evento</button>
+        )}
       </div>
 
-      {showConfig && <ConfigProductos productos={productos} onChange={onProductosChange} />}
+      {esAdmin && !cerrado && showConfig && <ProductosDelEvento eventoId={eventoId} productos={productos} onChange={onProductosChange} />}
 
       {!cerrado && (
         <div className="mb-5 rounded-2xl border border-white/10 bg-black/60 p-4">
+          {vendibles.length === 0 && !editId && (
+            <p className="mb-3 text-sm font-bold text-amber-300">
+              No hay productos habilitados para este evento.{esAdmin ? " Habilitalos en «Productos del evento»." : ""}
+            </p>
+          )}
           <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
             <Campo label="Producto">
-              <select value={productoNombre} onChange={(e) => elegirProducto(e.target.value)} className={inp}>
-                <option value="">Elegir...</option>
-                {productos.filter((p) => p.activo).map((p) => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+              <select value={productoId ?? ""} onChange={(e) => elegirProducto(e.target.value)} className={inp}>
+                {!editId && <option value="">Elegir...</option>}
+                {opciones.map((o) => <option key={o.value || "historico"} value={o.value}>{o.label}</option>)}
               </select>
             </Campo>
             <Campo label="Cantidad"><input type="number" min={1} value={cantidad} onChange={(e) => setCantidad(Math.max(1, Number(e.target.value) || 1))} className={inp} /></Campo>
@@ -745,26 +764,47 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
   );
 }
 
-function ConfigProductos({ productos, onChange }: { productos: Producto[]; onChange: () => void }) {
-  const [precios, setPrecios] = useState<Record<string, string>>({});
-  const guardar = async (p: Producto) => {
-    const val = precios[p.id] ?? String(p.precio_predeterminado);
-    const r = await fetch("/api/admin/colectivo/productos", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, precio_predeterminado: Number(val) }) });
-    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Error"); return; }
-    onChange();
+// Qué productos del catálogo se venden en este evento (solo admin). Se puede
+// cambiar con el evento en curso: habilitar lo suma a la venta al instante y
+// deshabilitar lo saca de las ventas nuevas, sin tocar las ya registradas.
+function ProductosDelEvento({ eventoId, productos, onChange }: { eventoId: string; productos: Producto[]; onChange: () => void }) {
+  const [guardando, setGuardando] = useState<string | null>(null);
+  const cambiar = async (p: Producto, habilitado: boolean) => {
+    setGuardando(p.id);
+    try {
+      const r = await fetch(`/api/admin/colectivo/eventos/${eventoId}/productos`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ producto_id: p.id, habilitado }),
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Error"); return; }
+      onChange();
+    } finally { setGuardando(null); }
   };
   return (
     <div className="mb-4 rounded-2xl border border-white/10 bg-black p-4">
-      <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Precios predeterminados (editables)</p>
-      <div className="grid gap-2 md:grid-cols-2">
-        {productos.map((p) => (
-          <div key={p.id} className="flex items-center gap-2">
-            <span className="w-24 font-bold">{p.nombre}</span>
-            <input type="number" min={0} defaultValue={p.precio_predeterminado} onChange={(e) => setPrecios((x) => ({ ...x, [p.id]: e.target.value }))} className={`${inp} flex-1`} />
-            <button onClick={() => guardar(p)} className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black uppercase hover:bg-red-700">Guardar</button>
-          </div>
-        ))}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Productos disponibles en este evento</p>
+        <Link href="/admin/colectivo/productos" className="text-[11px] font-black uppercase text-red-400 hover:text-red-300">Administrar catálogo →</Link>
       </div>
+      {productos.length === 0 ? (
+        <p className="text-sm text-white/45">El catálogo está vacío. Creá productos desde «Administrar catálogo».</p>
+      ) : (
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {productos.map((p) => {
+            // Un producto inactivo no se puede habilitar; si quedó habilitado, se puede quitar.
+            const bloqueado = guardando !== null || (!p.activo && !p.habilitado);
+            return (
+              <label key={p.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2 ${p.habilitado && p.activo ? "border-red-500/50 bg-red-950/20" : "border-white/10 bg-white/[0.02]"} ${bloqueado ? "opacity-60" : "cursor-pointer"}`}>
+                <input type="checkbox" checked={p.habilitado} disabled={bloqueado} onChange={(e) => cambiar(p, e.target.checked)} className="h-4 w-4 accent-red-500" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-black">{p.nombre}</span>
+                  <span className="block text-xs text-white/45">{dinero(p.precio_predeterminado)}{!p.activo ? " · inactivo en catálogo" : ""}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -784,18 +824,15 @@ function ResumenGeneral({ turnos, ventas }: { turnos: Turno[]; ventas: Venta[] }
     const facturacionSim = aGrup.totalFacturado;
     const promedioPorTurno = aGrup.cantidadTurnos > 0 ? Math.round(facturacionSim / aGrup.cantidadTurnos) : 0;
 
-    // B. Productos (activas cuentan facturación; bonificadas cuentan unidades)
-    const ventasContables = ventas.filter((v) => v.estado === "activa" || v.estado === "bonificada");
-    let gorras = 0, buzos = 0, unidades = 0, factGorras = 0, factBuzos = 0, factProductos = 0;
+    // B. Productos (activas cuentan facturación; bonificadas cuentan unidades).
+    // Por producto según lo que dice cada venta: sin nombres fijos.
+    const porProducto = resumirVentasPorProducto(ventas);
+    const unidades = porProducto.reduce((a, p) => a + p.unidades, 0);
+    const factProductos = porProducto.reduce((a, p) => a + p.total, 0);
     const prodPorMetodo: Record<string, { cantidad: number; total: number }> = {};
     const prodPorPosnet: Record<string, { cantidad: number; total: number }> = {};
-    ventasContables.forEach((v) => {
-      const esGorra = /gorra/i.test(v.producto_nombre); const esBuzo = /buzo/i.test(v.producto_nombre);
-      unidades += v.cantidad;
-      if (esGorra) gorras += v.cantidad; if (esBuzo) buzos += v.cantidad;
+    ventas.forEach((v) => {
       if (v.estado === "activa") {
-        factProductos += v.total;
-        if (esGorra) factGorras += v.total; if (esBuzo) factBuzos += v.total;
         normalizarPagos(v.pagos_detalle, v.metodo_pago || undefined, v.total, v.posnet_pago).filter((p) => Number(p.monto) > 0).forEach((p) => {
           const metodo = formatearPago(p.metodo_pago); const monto = Number(p.monto) || 0;
           prodPorMetodo[metodo] = prodPorMetodo[metodo] || { cantidad: 0, total: 0 };
@@ -822,7 +859,7 @@ function ResumenGeneral({ turnos, ventas }: { turnos: Turno[]; ventas: Venta[] }
 
     return {
       a: { ...aGrup, personas, minutosVendidos, turnosGratis, facturacionSim, promedioPorTurno },
-      b: { gorras, buzos, unidades, factGorras, factBuzos, factProductos, prodPorMetodo, prodPorPosnet },
+      b: { porProducto, unidades, factProductos, prodPorMetodo, prodPorPosnet },
       c: { facturacionSim, factProductos, totalCombinado: facturacionSim + factProductos, porMetodoTotal, posnetTotal },
     };
   }, [turnos, ventas]);
@@ -849,15 +886,24 @@ function ResumenGeneral({ turnos, ventas }: { turnos: Turno[]; ventas: Venta[] }
       </div>
 
       <h3 className="mb-2 mt-6 text-sm font-black uppercase tracking-[0.15em] text-white/50">B · Venta de productos</h3>
-      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Kpi label="Gorras vendidas" valor={String(r.b.gorras)} />
-        <Kpi label="Buzos vendidos" valor={String(r.b.buzos)} />
+      <div className="grid gap-3 md:grid-cols-2">
         <Kpi label="Unidades totales" valor={String(r.b.unidades)} />
-        <Kpi label="Fact. gorras" valor={dinero(r.b.factGorras)} />
-        <Kpi label="Fact. buzos" valor={dinero(r.b.factBuzos)} />
         <Kpi label="Fact. productos" valor={dinero(r.b.factProductos)} destacado />
       </div>
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-white/40">Por producto</p>
+          {r.b.porProducto.length === 0 ? <p className="text-sm text-white/45">Sin ventas</p> : (
+            <div className="space-y-2">
+              {r.b.porProducto.map((p) => (
+                <div key={p.nombre} className="flex items-start justify-between gap-3 text-sm">
+                  <span className="font-bold text-white/70">{p.nombre}</span>
+                  <span className="text-right font-black">{p.unidades} {p.unidades === 1 ? "unidad" : "unidades"} / <span className="text-red-500">{dinero(p.total)}</span></span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <ResumenBox titulo="Recaudación por método" data={r.b.prodPorMetodo} />
         <ResumenBox titulo="Por posnet" data={r.b.prodPorPosnet} />
       </div>

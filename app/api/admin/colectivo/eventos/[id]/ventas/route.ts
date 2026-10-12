@@ -3,7 +3,10 @@ import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
-import { limpiarPagosColectivo, resumirPagos, esFechaValida, fechaDentroDelEvento } from "@/lib/colectivo";
+import {
+  limpiarPagosColectivo, resumirPagos, esFechaValida, fechaDentroDelEvento, COLUMNAS_VENTA_COLECTIVO,
+} from "@/lib/colectivo";
+import { productoVendibleEnEvento } from "@/lib/colectivoProductos";
 
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const txt = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -17,7 +20,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const fecha = new URL(req.url).searchParams.get("fecha");
   let query = supabaseAdmin
     .from("colectivo_ventas")
-    .select("*")
+    .select(COLUMNAS_VENTA_COLECTIVO)
     .eq("evento_id", id)
     .order("fecha_hora", { ascending: false });
   if (fecha && FECHA_RE.test(fecha)) query = query.eq("fecha", fecha);
@@ -51,13 +54,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "La fecha de la venta debe estar dentro del evento" }, { status: 400 });
     }
 
-    const producto_nombre = txt(body.producto_nombre);
-    if (!producto_nombre) return NextResponse.json({ error: "Elegí un producto" }, { status: 400 });
-    const producto_id = isValidUuid(String(body.producto_id || "")) ? String(body.producto_id) : null;
+    // El producto sale del catálogo y tiene que estar activo y habilitado en este
+    // evento. El nombre que queda en la venta es el del catálogo, no el del cliente.
+    const producto_id = String(body.producto_id || "");
+    if (!isValidUuid(producto_id)) return NextResponse.json({ error: "Elegí un producto" }, { status: 400 });
+    const vendible = await productoVendibleEnEvento(id, producto_id);
+    if (!vendible.ok) {
+      if (vendible.status === 500) return failResponse(500, vendible.error, { logContext: "colectivo/ventas POST producto", error: vendible.detalle });
+      return NextResponse.json({ error: vendible.error }, { status: vendible.status });
+    }
+    const producto_nombre = vendible.valor.nombre;
 
     const cantidad = Number(body.cantidad);
     if (!Number.isInteger(cantidad) || cantidad <= 0) return NextResponse.json({ error: "La cantidad debe ser mayor a 0" }, { status: 400 });
-    const precio = Number(body.precio_unitario);
+    // Precio de ESTA venta: el que cargó el operador; si no mandó ninguno, el
+    // predeterminado del catálogo. Cambiar el catálogo después no lo altera.
+    const sinPrecio = body.precio_unitario === undefined || body.precio_unitario === null || body.precio_unitario === "";
+    const precio = sinPrecio ? vendible.valor.precio_predeterminado : Number(body.precio_unitario);
     if (!Number.isFinite(precio) || precio < 0) return NextResponse.json({ error: "Precio unitario inválido" }, { status: 400 });
 
     const total = Math.round(cantidad * precio);
@@ -103,7 +116,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         estado,
         created_by: auth.role,
       }])
-      .select()
+      .select(COLUMNAS_VENTA_COLECTIVO)
       .single();
     if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "colectivo/ventas POST", error });
 
