@@ -39,6 +39,8 @@
 --     from public.turnos_historicos_correccion_anio r
 --    where r.correccion = 'excel-oct-dic-2025' and r.id = t.id
 --      and t.fecha = r.fecha_nueva and t.hash_unico = r.hash_nuevo;
+--   Antes, deshacer db/turnos-historicos-transferencias.sql: dos de estas filas
+--   (noviembre y diciembre) cambiaron después su pago y su hash (TRASF → TRANSFERENCIA).
 -- ============================================================================
 do $correccion$
 declare

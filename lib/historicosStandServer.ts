@@ -1,47 +1,25 @@
 // Persistencia de los Excel históricos del stand (tabla turnos_historicos).
-// La validación vive en lib/historicosStand.ts (pura); acá solo se escribe.
+// La validación y la forma canónica de cada fila viven en lib/historicosStand.ts
+// (puro, compartido con el navegador); acá solo se escribe.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-
-type TurnoHistoricoBody = {
-  archivo_nombre: string;
-  archivo_key: string;
-  fecha: string;
-  hora_subida?: string;
-  hora_bajada?: string;
-  hora_tomado?: string;
-  metodo_pago: string;
-  total: number;
-  cantidad_simuladores: number;
-  cantidad_turnos: number;
-  duracion: number;
-  escuderia?: string;
-  hash_unico: string;
-};
+import { filaHistoricaCanonica } from "@/lib/historicosStand";
 
 /**
  * Inserta las ventas nuevas e ignora las que ya existen (mismo `hash_unico`).
- * Devuelve cuántas se insertaron: reimportar un archivo con el mismo año da 0.
+ * Cada fila se rearma acá con el pago normalizado y el hash recalculado: el
+ * hash que manda el navegador no se usa. Devuelve cuántas se insertaron:
+ * reimportar un archivo con el mismo año da 0.
  */
 export async function guardarTurnosHistoricos(
-  turnos: TurnoHistoricoBody[],
+  turnos: Record<string, unknown>[],
 ): Promise<{ ok: true; recibidos: number; insertados: number } | { ok: false; error: unknown }> {
-  const rows = turnos.map((t) => ({
-    archivo_nombre: t.archivo_nombre,
-    archivo_key: t.archivo_key,
-    fecha: t.fecha,
-    hora_subida: t.hora_subida || null,
-    hora_bajada: t.hora_bajada || null,
-    hora_tomado: t.hora_tomado || null,
-    metodo_pago: t.metodo_pago,
-    total: Number(t.total || 0),
-    cantidad_simuladores: Number(t.cantidad_simuladores || 1),
-    cantidad_turnos: Number(t.cantidad_turnos || 1),
-    duracion: Number(t.duracion || 15),
-    escuderia: t.escuderia || null,
-    hash_unico: t.hash_unico,
-    origen: "excel",
-  }));
+  const porHash = new Map<string, ReturnType<typeof filaHistoricaCanonica>>();
+  for (const t of turnos) {
+    const fila = filaHistoricaCanonica(t);
+    if (!porHash.has(fila.hash_unico)) porHash.set(fila.hash_unico, fila);
+  }
+  const rows = [...porHash.values()];
 
   const { data, error } = await supabaseAdmin
     .from("turnos_historicos")
@@ -52,7 +30,7 @@ export async function guardarTurnosHistoricos(
     .select("id");
 
   if (error) return { ok: false, error };
-  return { ok: true, recibidos: rows.length, insertados: (data ?? []).length };
+  return { ok: true, recibidos: turnos.length, insertados: (data ?? []).length };
 }
 
 /**

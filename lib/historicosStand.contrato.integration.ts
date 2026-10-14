@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { hoyEnSim } from "@/lib/agenda";
-import { validarFechaHistorica } from "@/lib/historicosStand";
+import { filaHistoricaCanonica, normalizarMetodoPago, validarFechaHistorica } from "@/lib/historicosStand";
 
 // Contrato de SOLO LECTURA sobre turnos_historicos (los Excel importados en Métricas).
 // Vigila la firma del defecto que corrigió db/turnos-historicos-correccion-anio.sql:
@@ -11,7 +11,10 @@ import { validarFechaHistorica } from "@/lib/historicosStand";
 //   · ninguna venta registrada ANTES de que empezara su propio mes (imposible);
 //   · el hash empieza por `archivo_key|fecha|`, así reimportar con el año correcto
 //     no duplica;
-//   · las tres plantillas de octubre a diciembre están en 2025.
+//   · las tres plantillas de octubre a diciembre están en 2025;
+//   · el pago está normalizado y el hash guardado es el canónico (el que recalcula
+//     el servidor al importar): si no, reimportar esa venta la duplicaría
+//     (db/turnos-historicos-transferencias.sql unificó TRASF/TRANF).
 //
 //   npx tsx --env-file=.env.local lib/historicosStand.contrato.integration.ts
 
@@ -28,11 +31,11 @@ function fechaAr(instante: string) {
 }
 
 async function main() {
-  const filas: { id: number; archivo_key: string; fecha: string; hash_unico: string; created_at: string }[] = [];
+  const filas: (Record<string, unknown> & { id: number; archivo_key: string; fecha: string; hash_unico: string; created_at: string; metodo_pago: string })[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabaseAdmin
       .from("turnos_historicos")
-      .select("id, archivo_key, fecha, hash_unico, created_at")
+      .select("*")
       .order("id")
       .range(from, from + 999);
     if (error) throw error;
@@ -51,10 +54,12 @@ async function main() {
     }
     const esperado = PLANTILLAS_2025[f.archivo_key];
     if (esperado && f.fecha.slice(0, 7) !== esperado) fallas.push(`id ${f.id}: ${f.archivo_key} en ${f.fecha}, se esperaba ${esperado}`);
+    if (normalizarMetodoPago(f.metodo_pago) !== f.metodo_pago) fallas.push(`id ${f.id}: pago sin normalizar (${f.metodo_pago})`);
+    if (filaHistoricaCanonica(f).hash_unico !== f.hash_unico) fallas.push(`id ${f.id}: el hash guardado no es el canónico; reimportarla la duplicaría`);
   }
 
   assert.equal(fallas.length, 0, `turnos_historicos inconsistentes (${fallas.length}):\n${fallas.slice(0, 10).join("\n")}`);
-  console.log(`OK — ${filas.length} históricos: sin fechas futuras ni anteriores a su carga, hash alineado con la fecha, plantillas de oct–dic en 2025.`);
+  console.log(`OK — ${filas.length} históricos: sin fechas futuras ni anteriores a su carga, hash alineado con la fecha, plantillas de oct–dic en 2025, pagos normalizados y hash canónico.`);
 }
 
 main().catch((e) => {

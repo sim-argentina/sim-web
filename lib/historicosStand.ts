@@ -17,8 +17,14 @@
 // duración | escudería. Reimportar el mismo archivo con el MISMO año no duplica
 // (upsert ignora el hash repetido); con OTRO año son ventas distintas. Por eso
 // la corrección de datos reescribe el segmento de fecha del hash junto con la
-// fecha (db/turnos-historicos-correccion-anio.sql) y la API exige que el hash
-// empiece por `archivo_key|fecha|`.
+// fecha (db/turnos-historicos-correccion-anio.sql).
+//
+// UNA SOLA NORMALIZACIÓN
+// El pago y el hash se calculan con las mismas funciones en el navegador y en
+// el servidor: la API rearma cada fila con filaHistoricaCanonica y recalcula el
+// hash, sin confiar en el que manda el navegador. "Trasf", "Tranf" y "Transf."
+// son TRANSFERENCIA (db/turnos-historicos-transferencias.sql unificó las cuatro
+// filas que habían quedado como TRASF/TRANF).
 // ============================================================================
 
 /** Primer año aceptado para un Excel histórico. */
@@ -482,23 +488,65 @@ export function construirTurnos(
 // ── Validación del lote en el servidor ───────────────────────────────────────
 
 /**
- * Valida lo que llega a POST /api/turnos-historicos. La fecha tiene que existir,
- * no ser futura, y el hash tiene que empezar por `archivo_key|fecha|`: así la
- * deduplicación por `hash_unico` siempre mira la misma fecha que se guarda.
+ * Valida lo que llega a POST /api/turnos-historicos: archivo identificado,
+ * fecha que exista y no sea futura, y un medio de pago reconocible. El hash no
+ * se valida porque el servidor lo recalcula (filaHistoricaCanonica).
  */
 export function validarLoteHistorico(turnos: unknown, hoy: string): string | null {
   if (!Array.isArray(turnos) || turnos.length === 0) return "No se recibieron turnos para guardar";
   for (const t of turnos as Record<string, unknown>[]) {
     const archivoKey = typeof t?.archivo_key === "string" ? t.archivo_key : "";
-    const hash = typeof t?.hash_unico === "string" ? t.hash_unico : "";
-    if (!archivoKey || !hash || typeof t?.archivo_nombre !== "string" || !t.archivo_nombre) {
-      return "Cada turno necesita archivo_nombre, archivo_key y hash_unico";
+    if (!archivoKey || typeof t?.archivo_nombre !== "string" || !t.archivo_nombre) {
+      return "Cada turno necesita archivo_nombre y archivo_key";
     }
     const invalida = validarFechaHistorica(t.fecha, hoy);
     if (invalida) return `${t.archivo_nombre}: ${invalida}`;
-    if (!hash.startsWith(`${archivoKey}|${t.fecha}|`)) {
-      return `${t.archivo_nombre}: el hash no corresponde a la fecha ${String(t.fecha)}`;
-    }
+    if (!normalizarMetodoPago(t.metodo_pago)) return `${t.archivo_nombre}: falta el medio de pago (${String(t.fecha)})`;
   }
   return null;
+}
+
+/** Venta tal como se guarda en turnos_historicos. */
+export type FilaHistoricaGuardable = {
+  archivo_nombre: string;
+  archivo_key: string;
+  fecha: string;
+  hora_subida: string | null;
+  hora_bajada: string | null;
+  hora_tomado: string | null;
+  metodo_pago: string;
+  total: number;
+  cantidad_simuladores: number;
+  cantidad_turnos: number;
+  duracion: number;
+  escuderia: string | null;
+  hash_unico: string;
+  origen: "excel";
+};
+
+/**
+ * La fila que se guarda, armada en el SERVIDOR con las mismas funciones que el
+ * importador: pago normalizado ("Trasf", "Tranf", "Transf." → TRANSFERENCIA) y
+ * hash recalculado sobre los valores que se guardan. Un navegador con una
+ * versión vieja de la página no puede guardar otra variante ni otro hash para
+ * la misma venta. Para una venta armada por construirTurnos da el mismo hash.
+ */
+export function filaHistoricaCanonica(t: Record<string, unknown>): FilaHistoricaGuardable {
+  const texto = (v: unknown) => (v === null || v === undefined || v === "" ? null : String(v));
+  const fila = {
+    archivo_nombre: String(t.archivo_nombre ?? ""),
+    archivo_key: String(t.archivo_key ?? ""),
+    fecha: String(t.fecha ?? ""),
+    hora_subida: texto(t.hora_subida),
+    hora_bajada: texto(t.hora_bajada),
+    hora_tomado: texto(t.hora_tomado),
+    metodo_pago: normalizarMetodoPago(t.metodo_pago),
+    total: Number(t.total || 0),
+    cantidad_simuladores: Number(t.cantidad_simuladores || 1),
+    cantidad_turnos: Number(t.cantidad_turnos || 1),
+    duracion: Number(t.duracion || 15),
+    escuderia: texto(t.escuderia),
+    origen: "excel" as const,
+  };
+  return { ...fila, hash_unico: crearHashTurno(fila, fila.archivo_key) };
 }

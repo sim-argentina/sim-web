@@ -74,6 +74,31 @@ async function main() {
     assert.equal((await filas()).length, 3);
     console.log("OK 2 — reimportar con el mismo año no duplica");
 
+    // 2b) Una transferencia escrita "Trasf", y después la misma venta mandada por
+    //     un navegador con la versión vieja ("TRANSF" y su hash): el servidor guarda
+    //     siempre TRANSFERENCIA con el hash canónico, así que no se duplica.
+    const conTransf = construirTurnos(
+      analizarArchivo(NOMBRE, [{ nombre: "04", filas: [{ ...venta(25000, "20:00"), "Metodo de Pago": "Trasf" }], fechas: [] }], HOY),
+      2025, "10", HOY,
+    ).turnos;
+    r = await guardarTurnosHistoricos(conTransf);
+    assert.ok(r.ok);
+    assert.equal(r.insertados, 1);
+    const viejo = conTransf.map((t) => ({ ...t, metodo_pago: "TRANSF", hash_unico: t.hash_unico.replace("|TRANSFERENCIA|", "|TRANSF|") }));
+    r = await guardarTurnosHistoricos(viejo);
+    assert.ok(r.ok);
+    assert.equal(r.insertados, 0, "la variante vieja no crea otra venta");
+    const { data: transf } = await supabaseAdmin
+      .from("turnos_historicos")
+      .select("metodo_pago, hash_unico")
+      .eq("archivo_key", archivo.archivoKey)
+      .eq("fecha", "2025-10-04");
+    assert.deepEqual(transf, [{ metodo_pago: "TRANSFERENCIA", hash_unico: conTransf[0].hash_unico }]);
+    assert.equal(await borrarImportacionHistorica(archivo.archivoKey, 2025).then(() => null), null);
+    r = await guardarTurnosHistoricos(de2025.turnos);
+    assert.equal(r.ok && r.insertados, 3);
+    console.log("OK 2b — Trasf / TRANSF de un navegador viejo se guardan como TRANSFERENCIA, sin duplicar");
+
     // 3) El mismo archivo como 2026: son otras ventas.
     const de2026 = construirTurnos(archivo, 2026, "10", HOY);
     assert.deepEqual(de2026.errores, []);

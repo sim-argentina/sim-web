@@ -9,7 +9,9 @@ import {
   crearHashTurno,
   diaDesdeHoja,
   fechaHistorica,
+  filaHistoricaCanonica,
   mesDesdeNombre,
+  normalizarMetodoPago,
   validarFechaHistorica,
   validarLoteHistorico,
   validarPeriodo,
@@ -209,8 +211,53 @@ assert.equal(validarLoteHistorico(r2025.turnos, HOY), null);
 assert.match(validarLoteHistorico([], HOY)!, /No se recibieron/);
 assert.match(validarLoteHistorico(undefined, HOY)!, /No se recibieron/);
 assert.match(validarLoteHistorico([{ ...primera, fecha: "2026-11-02" }], HOY)!, /posterior a hoy/);
-assert.match(validarLoteHistorico([{ ...primera, fecha: "2025-10-03" }], HOY)!, /hash no corresponde/);
 assert.match(validarLoteHistorico([{ ...primera, archivo_key: "" }], HOY)!, /necesita/);
-assert.match(validarLoteHistorico([{ ...primera, fecha: "2025-11-31", hash_unico: `${primera.archivo_key}|2025-11-31|x` }], HOY)!, /no existe/);
+assert.match(validarLoteHistorico([{ ...primera, fecha: "2025-11-31" }], HOY)!, /no existe/);
+assert.match(validarLoteHistorico([{ ...primera, metodo_pago: "" }], HOY)!, /medio de pago/);
+// El hash del navegador no se valida: el servidor lo recalcula.
+assert.equal(validarLoteHistorico([{ ...primera, hash_unico: "cualquier-cosa" }], HOY), null);
+
+// ── Una sola normalización: navegador (construirTurnos) y servidor (canónica) ─
+// Para toda venta armada por el importador, la fila canónica del servidor da el
+// MISMO pago y el MISMO hash.
+const libroMixto = analizarArchivo("Turnos Marzo.xlsx", [
+  hoja("01", [
+    venta(10000, { "Metodo de Pago": "Trasf" }),
+    venta(20000, { "Metodo de Pago": "Tranf", Escuderia: null }),
+    venta(30000, { "Metodo de Pago": "Transf.", "Hora de bajada": null }),
+    venta(40000, { "Metodo de Pago": "Transferencia" }),
+    venta(5000, { "Metodo de Pago": "Débito", "Cant. Turnos": null, "Tiempo (Min)": null }),
+    venta(6000, { "Metodo de Pago": "mercado pago" }),
+  ]),
+], HOY);
+const mixto = construirTurnos(libroMixto, 2026, "03", HOY);
+assert.equal(mixto.turnos.length, 6);
+assert.deepEqual(mixto.turnos.map((t) => t.metodo_pago), ["TRANSFERENCIA", "TRANSFERENCIA", "TRANSFERENCIA", "TRANSFERENCIA", "DÉBITO", "QR"]);
+for (const t of [...mixto.turnos, ...r2025.turnos, ...r2026.turnos]) {
+  const canonica = filaHistoricaCanonica(t);
+  assert.equal(canonica.hash_unico, t.hash_unico, `mismo hash en navegador y servidor: ${t.hash_unico}`);
+  assert.equal(canonica.metodo_pago, t.metodo_pago);
+  assert.equal(canonica.total, t.total);
+  assert.equal(canonica.cantidad_turnos, t.cantidad_turnos);
+}
+// La normalización es estable: normalizar lo ya normalizado no lo cambia.
+for (const v of ["TRANSFERENCIA", "QR", "EFECTIVO", "DÉBITO", "CRÉDITO", "GRATIS", "MIXTO"]) {
+  assert.equal(normalizarMetodoPago(v), v);
+}
+for (const v of ["TRASF", "TRANF", "TRANSF", "Transf.", "trasferencia", "transferencia bancaria"]) {
+  assert.equal(normalizarMetodoPago(v), "TRANSFERENCIA", v);
+}
+// Un navegador con la versión vieja (pago "TRANSF" y su hash): el servidor guarda la canónica.
+const viejo = { ...mixto.turnos[2], metodo_pago: "TRANSF", hash_unico: mixto.turnos[2].hash_unico.replace("|TRANSFERENCIA|", "|TRANSF|") };
+assert.equal(filaHistoricaCanonica(viejo).metodo_pago, "TRANSFERENCIA");
+assert.equal(filaHistoricaCanonica(viejo).hash_unico, mixto.turnos[2].hash_unico);
+// La corrección SQL de TRASF/TRANF reescribe solo el segmento 6 del hash: da el
+// mismo hash que calcula hoy el importador para esa venta.
+const guardadoViejo = mixto.turnos[0].hash_unico.replace("|TRANSFERENCIA|", "|TRASF|");
+const partes = guardadoViejo.split("|");
+assert.equal(partes.length, 11);
+assert.equal(partes[5], "TRASF");
+partes[5] = "TRANSFERENCIA";
+assert.equal(partes.join("|"), mixto.turnos[0].hash_unico);
 
 console.log("historicosStand: OK");

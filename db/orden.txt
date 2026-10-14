@@ -38,6 +38,7 @@ turnero-cambio-diario.sql
 
 # ── 5a. Métricas: históricos del stand (respaldo de la corrección de año; sin filas no corrige nada)
 turnos-historicos-correccion-anio.sql
+turnos-historicos-transferencias.sql
 
 # ── 5b. Colectivo (productos por evento, turnos = personas) ─────────────────
 colectivo-productos-por-evento.sql
