@@ -8,8 +8,16 @@ import {
   SIMULADORES_COLECTIVO, METODOS_PAGO_COLECTIVO, POSNETS_COLECTIVO,
   DURACIONES_SUGERIDAS, DURACION_DEFAULT, ESTADO_EVENTO_LABEL,
   PERSONAS_COLECTIVO, turnosColectivo, esVendibleEnEvento, resumirVentasPorProducto,
-  CANTIDADES_VENTA_COLECTIVO,
+  CANTIDADES_VENTA_COLECTIVO, CATEGORIAS_GASTO_COLECTIVO, MEDIOS_PAGO_GASTO_COLECTIVO,
 } from "@/lib/colectivo";
+import { hoyEnSim } from "@/lib/agenda";
+
+const PESTANAS_EVENTO = [
+  { value: "turnero", label: "Turnero" },
+  { value: "productos", label: "Productos" },
+  { value: "caja", label: "Caja" },
+] as const;
+type Pestana = (typeof PESTANAS_EVENTO)[number]["value"];
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 type PagoDetalle = { metodo_pago: string; monto: number | string; posnet_pago?: string | null };
@@ -97,6 +105,7 @@ export default function EventoColectivoPage() {
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [dia, setDia] = useState<string>("");
+  const [pestana, setPestana] = useState<Pestana>("turnero");
   const now = useNow();
 
   const cargar = useCallback(async () => {
@@ -182,8 +191,8 @@ export default function EventoColectivoPage() {
             </div>
           </div>
 
-          {/* Selector de día del evento */}
-          <div className="mt-4 flex flex-wrap items-center gap-2">
+          {/* Selector de día del evento (la caja es de todo el evento: no lo usa) */}
+          <div className={`mt-4 flex flex-wrap items-center gap-2 ${pestana === "caja" ? "hidden" : ""}`}>
             <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Día del evento</span>
             {dias.map((d) => (
               <button key={d} onClick={() => setDia(d)} className={`rounded-full border px-3 py-1.5 text-xs font-black transition ${d === dia ? "border-red-500 bg-red-600 text-white" : "border-white/15 bg-black text-white/60 hover:border-red-500 hover:text-white"}`}>
@@ -199,18 +208,35 @@ export default function EventoColectivoPage() {
           </div>
         )}
 
-        {/* Turnero del día */}
-        {!cerrado && <TurneroForm eventoId={eventoId} dia={dia} onSaved={cargar} />}
+        {/* Pestañas del evento */}
+        <div className="mb-6 flex flex-wrap gap-2">
+          {PESTANAS_EVENTO.map((p) => (
+            <button key={p.value} onClick={() => setPestana(p.value)} className={`rounded-full border px-5 py-2 text-xs font-black uppercase tracking-[0.12em] transition ${pestana === p.value ? "border-red-500 bg-red-600 text-white" : "border-white/15 bg-black text-white/60 hover:border-red-500 hover:text-white"}`}>
+              {p.label}
+            </button>
+          ))}
+        </div>
 
-        <TurnosGuardados turnos={turnosDelDia} dia={dia} now={now} cerrado={cerrado} eventoId={eventoId} esAdmin={esAdmin} onSaved={cargar} />
+        {pestana === "turnero" && (
+          <>
+            {/* Turnero del día */}
+            {!cerrado && <TurneroForm eventoId={eventoId} dia={dia} onSaved={cargar} />}
 
-        <ResumenDia turnos={turnosDelDia} dia={dia} />
+            <TurnosGuardados turnos={turnosDelDia} dia={dia} now={now} cerrado={cerrado} eventoId={eventoId} esAdmin={esAdmin} onSaved={cargar} />
 
-        {/* Venta de productos */}
-        <VentaProductos eventoId={eventoId} dia={dia} productos={productos} ventas={ventasDelDia} cerrado={cerrado} esAdmin={esAdmin} onSaved={cargar} onProductosChange={cargar} />
+            <ResumenDia turnos={turnosDelDia} dia={dia} />
+          </>
+        )}
 
-        {/* Resumen general del evento */}
-        <ResumenGeneral turnos={turnos} ventas={ventas} />
+        {pestana === "productos" && (
+          /* Venta de productos */
+          <VentaProductos eventoId={eventoId} dia={dia} productos={productos} ventas={ventasDelDia} cerrado={cerrado} esAdmin={esAdmin} onSaved={cargar} onProductosChange={cargar} />
+        )}
+
+        {/* Resumen general del evento (turnos + productos), en las dos pestañas operativas */}
+        {pestana !== "caja" && <ResumenGeneral turnos={turnos} ventas={ventas} />}
+
+        {pestana === "caja" && <CajaEvento eventoId={eventoId} cerrado={cerrado} />}
       </section>
     </main>
   );
@@ -947,6 +973,196 @@ function ResumenGeneral({ turnos, ventas }: { turnos: Turno[]; ventas: Venta[] }
             ))}</div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ═════════ Caja del evento ═════════
+// La caja del Colectivo es interna al evento y no forma parte de Finanzas SIM:
+// registra los gastos del evento y muestra ingresos − gastos = neto. El resumen
+// lo calcula el servidor (calcularCajaEvento) y se vuelve a pedir después de
+// cada alta, edición o eliminación.
+type Gasto = {
+  id: string; fecha: string; categoria: string; concepto: string; monto: number | string;
+  medio_pago: string; observaciones: string | null; created_at: string;
+};
+type ResumenCaja = {
+  ingresosTurnos: number; ingresosProductos: number; ingresos: number;
+  gastos: number; cantidadGastos: number; neto: number;
+};
+const etiquetaCategoria = (v: string) => CATEGORIAS_GASTO_COLECTIVO.find((c) => c.value === v)?.label ?? v;
+const etiquetaMedio = (v: string) => MEDIOS_PAGO_GASTO_COLECTIVO.find((m) => m.value === v)?.label ?? v;
+function dineroCaja(v: number | string) {
+  const n = Number(v) || 0;
+  const abs = Math.abs(n).toLocaleString("es-AR", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 });
+  return `${n < 0 ? "−" : ""}$${abs}`;
+}
+function horaDeCarga(iso: string) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "America/Argentina/Buenos_Aires" });
+}
+const gastoVacio = () => ({ fecha: hoyEnSim(), categoria: "", concepto: "", monto: "", medio_pago: "efectivo", observaciones: "" });
+
+function CajaEvento({ eventoId, cerrado }: { eventoId: string; cerrado: boolean }) {
+  const [resumen, setResumen] = useState<ResumenCaja | null>(null);
+  const [gastos, setGastos] = useState<Gasto[]>([]);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState(gastoVacio);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [guardando, setGuardando] = useState(false);
+
+  const cargar = useCallback(async () => {
+    const r = await fetch(`/api/admin/colectivo/eventos/${eventoId}/caja`, { cache: "no-store" });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { setError(d.error || "No se pudo cargar la caja"); return; }
+    setError("");
+    setResumen(d.resumen);
+    setGastos(Array.isArray(d.gastos) ? d.gastos : []);
+  }, [eventoId]);
+  useEffect(() => { cargar(); }, [cargar]);
+
+  const set = (k: keyof ReturnType<typeof gastoVacio>, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const reset = () => { setForm(gastoVacio()); setEditId(null); };
+
+  const guardar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGuardando(true);
+    try {
+      const url = editId ? `/api/admin/colectivo/gastos/${editId}` : `/api/admin/colectivo/eventos/${eventoId}/caja`;
+      const r = await fetch(url, {
+        method: editId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, monto: form.monto === "" ? null : Number(form.monto) }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(d.error || "Error"); return; }
+      reset();
+      await cargar();
+    } finally { setGuardando(false); }
+  };
+  const abrirEdicion = (g: Gasto) => {
+    setEditId(g.id);
+    setForm({ fecha: g.fecha, categoria: g.categoria, concepto: g.concepto, monto: String(Number(g.monto)), medio_pago: g.medio_pago, observaciones: g.observaciones || "" });
+    document.getElementById("caja-registrar-gasto")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  const eliminar = async (g: Gasto) => {
+    if (!confirm(`¿Eliminar el gasto «${g.concepto}» de ${dineroCaja(g.monto)}?`)) return;
+    const r = await fetch(`/api/admin/colectivo/gastos/${g.id}`, { method: "DELETE" });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "Error"); return; }
+    if (editId === g.id) reset();
+    await cargar();
+  };
+
+  const neto = resumen?.neto ?? 0;
+
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4 md:p-5">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <h2 className="text-2xl font-black uppercase text-red-500">Caja del evento</h2>
+        <p className="rounded-xl border border-white/10 bg-black px-3 py-1 text-[11px] font-bold text-white/55">Uso interno del Colectivo. No impacta en Finanzas SIM.</p>
+      </div>
+
+      {error && <p className="mb-4 rounded-2xl border border-red-500/30 bg-red-950/20 px-4 py-3 text-sm font-bold text-red-300">{error}</p>}
+
+      {/* Indicadores principales */}
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Ingresos del evento</p>
+          <p className="mt-1 text-2xl font-black text-white">{resumen ? dineroCaja(resumen.ingresos) : "…"}</p>
+          {resumen && <p className="mt-1 text-xs text-white/45">Turnos {dineroCaja(resumen.ingresosTurnos)} · Productos {dineroCaja(resumen.ingresosProductos)}</p>}
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Gastos del evento</p>
+          <p className="mt-1 text-2xl font-black text-white">{resumen ? dineroCaja(resumen.gastos) : "…"}</p>
+          {resumen && <p className="mt-1 text-xs text-white/45">{resumen.cantidadGastos} {resumen.cantidadGastos === 1 ? "gasto" : "gastos"}</p>}
+        </div>
+        <div className={`rounded-2xl border p-4 ${neto < 0 ? "border-red-500/40 bg-red-950/20" : "border-green-500/30 bg-green-950/15"}`}>
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Neto del evento</p>
+          <p className={`mt-1 text-2xl font-black ${neto < 0 ? "text-red-400" : "text-green-300"}`}>{resumen ? dineroCaja(neto) : "…"}</p>
+          <p className="mt-1 text-xs text-white/45">Ingresos − gastos</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_280px]">
+        {/* Registrar gasto */}
+        {cerrado ? (
+          <div className="rounded-2xl border border-white/10 bg-black p-4 text-sm font-bold text-white/55">El evento está cerrado: la caja es de solo consulta.</div>
+        ) : (
+          <form id="caja-registrar-gasto" onSubmit={guardar} className="rounded-2xl border border-white/10 bg-black/60 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-black uppercase tracking-[0.15em] text-white/70">{editId ? "Editar gasto" : "Registrar gasto"}</h3>
+              {editId && <button type="button" onClick={reset} className="rounded-full border border-white/15 px-3 py-1 text-[11px] font-black uppercase text-white/60 hover:border-white hover:text-white">Cancelar edición</button>}
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <Campo label="Fecha"><input type="date" required value={form.fecha} onChange={(e) => set("fecha", e.target.value)} className={inp} /></Campo>
+              <Campo label="Categoría">
+                <select required value={form.categoria} onChange={(e) => set("categoria", e.target.value)} className={inp}>
+                  <option value="">Elegir...</option>
+                  {CATEGORIAS_GASTO_COLECTIVO.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </Campo>
+              <Campo label="Medio de pago">
+                <select required value={form.medio_pago} onChange={(e) => set("medio_pago", e.target.value)} className={inp}>
+                  {MEDIOS_PAGO_GASTO_COLECTIVO.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </Campo>
+              <div className="md:col-span-2 xl:col-span-2">
+                <Campo label="Concepto / detalle"><input required maxLength={120} value={form.concepto} onChange={(e) => set("concepto", e.target.value)} placeholder="Ej.: nafta ida al evento" className={inp} /></Campo>
+              </div>
+              <Campo label="Monto"><input type="number" required min={0.01} step="0.01" inputMode="decimal" value={form.monto} onChange={(e) => set("monto", e.target.value)} placeholder="0" className={inp} /></Campo>
+              <div className="md:col-span-2 xl:col-span-2">
+                <Campo label="Observaciones (opcional)"><input maxLength={500} value={form.observaciones} onChange={(e) => set("observaciones", e.target.value)} className={inp} /></Campo>
+              </div>
+              <div className="flex items-end">
+                <button type="submit" disabled={guardando} className="w-full rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase hover:bg-red-700 disabled:opacity-50">{guardando ? "..." : editId ? "Actualizar" : "Agregar gasto"}</button>
+              </div>
+            </div>
+          </form>
+        )}
+
+        {/* Resumen */}
+        <div className="rounded-2xl border border-red-500/30 bg-red-950/15 p-4">
+          <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-white/40">Resumen</p>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between gap-3"><span className="font-bold text-white/60">Total ingresos</span><span className="font-black">{resumen ? dineroCaja(resumen.ingresos) : "…"}</span></div>
+            <div className="flex justify-between gap-3"><span className="font-bold text-white/60">Total gastos</span><span className="font-black">{resumen ? dineroCaja(resumen.gastos) : "…"}</span></div>
+            <div className="flex justify-between gap-3 border-t border-white/10 pt-2"><span className="font-bold text-white/60">Resultado final</span><span className={`font-black ${neto < 0 ? "text-red-400" : "text-green-300"}`}>{resumen ? dineroCaja(neto) : "…"}</span></div>
+            <div className="flex justify-between gap-3"><span className="font-bold text-white/60">Gastos registrados</span><span className="font-black">{resumen?.cantidadGastos ?? "…"}</span></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Gastos cargados */}
+      <div className="mt-5">
+        <h3 className="mb-3 text-sm font-black uppercase tracking-[0.15em] text-white/50">Gastos cargados</h3>
+        {gastos.length === 0 ? (
+          <div className="rounded-2xl border border-white/10 bg-black p-4 text-sm text-white/50">Todavía no hay gastos cargados.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[680px] text-sm">
+              <thead className="text-left text-[10px] font-black uppercase tracking-[0.12em] text-white/35"><tr><th className="pb-2">Fecha / hora</th><th className="pb-2">Categoría</th><th className="pb-2">Concepto</th><th className="pb-2">Medio de pago</th><th className="pb-2 text-right">Monto</th><th className="pb-2"></th></tr></thead>
+              <tbody className="divide-y divide-white/5">
+                {gastos.map((g) => (
+                  <tr key={g.id} className={editId === g.id ? "bg-red-950/20" : ""}>
+                    <td className="py-2 font-bold">{g.fecha.slice(8, 10)}/{g.fecha.slice(5, 7)}<span className="text-white/40"> · {horaDeCarga(g.created_at)}</span></td>
+                    <td className="py-2 text-white/70">{etiquetaCategoria(g.categoria)}</td>
+                    <td className="py-2"><p className="font-bold">{g.concepto}</p>{g.observaciones && <p className="text-xs text-white/40">{g.observaciones}</p>}</td>
+                    <td className="py-2 text-white/70">{etiquetaMedio(g.medio_pago)}</td>
+                    <td className="py-2 text-right font-black text-red-400">{dineroCaja(g.monto)}</td>
+                    <td className="py-2 pl-3">
+                      {!cerrado && (
+                        <div className="flex justify-end gap-1">
+                          <button onClick={() => abrirEdicion(g)} className="rounded-lg border border-white/15 px-2 py-1 text-xs font-black uppercase text-white/70 hover:border-red-500">Editar</button>
+                          <button onClick={() => eliminar(g)} className="rounded-lg border border-red-500/40 px-2 py-1 text-xs font-black uppercase text-red-300 hover:bg-red-700 hover:text-white">Eliminar</button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

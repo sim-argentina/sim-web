@@ -5,6 +5,8 @@ import {
   PERSONAS_COLECTIVO, turnosColectivo, normalizarPersonasColectivo, normalizarHoraOpcional,
   CANTIDADES_VENTA_COLECTIVO, normalizarCantidadVentaColectivo,
   esVendibleEnEvento, resumirVentasPorProducto, COLUMNAS_TURNO_COLECTIVO, COLUMNAS_VENTA_COLECTIVO,
+  normalizarGastoColectivo, calcularCajaEvento, CATEGORIAS_GASTO_COLECTIVO, MEDIOS_PAGO_GASTO_COLECTIVO,
+  COLUMNAS_GASTO_COLECTIVO,
 } from "@/lib/colectivo";
 
 // Colectivo — turnos = personas, horarios opcionales y catálogo de productos.
@@ -78,6 +80,55 @@ assert.deepEqual(resumen, [
 ], "cada producto vendido aparece solo; bonificadas suman unidades sin plata; anuladas no cuentan");
 assert.deepEqual(resumirVentasPorProducto([]), []);
 console.log("OK — resumen por producto dinámico (Gorra, Buzo, Remera, Sticker) sin nombres fijos.");
+
+// ── 5b) caja del evento: validación del gasto ───────────────────────────────
+assert.deepEqual(CATEGORIAS_GASTO_COLECTIVO.map((c) => c.label), ["Combustible", "Peajes", "Comida", "Insumos", "Estacionamiento", "Otros"]);
+assert.deepEqual(MEDIOS_PAGO_GASTO_COLECTIVO.map((m) => m.label), ["Efectivo", "Transferencia", "Tarjeta", "Otro"]);
+const gastoOk = { fecha: "2026-10-14", categoria: "combustible", concepto: "  Nafta   ida  ", monto: "45320.505", medio_pago: "efectivo", observaciones: "  " };
+const g1 = normalizarGastoColectivo(gastoOk);
+assert.ok(g1.ok);
+if (g1.ok) assert.deepEqual(g1.gasto, { fecha: "2026-10-14", categoria: "combustible", concepto: "Nafta ida", monto: 45320.51, medio_pago: "efectivo", observaciones: null });
+const malos: [Record<string, unknown>, RegExp][] = [
+  [{ fecha: "" }, /fecha/], [{ fecha: "2026-02-31" }, /fecha/], [{ fecha: "14/10/2026" }, /fecha/],
+  [{ categoria: "" }, /categoría/], [{ categoria: "viaticos" }, /categoría/],
+  [{ concepto: "   " }, /concepto/], [{ concepto: "x".repeat(121) }, /concepto/],
+  [{ monto: 0 }, /mayor a 0/], [{ monto: -10 }, /mayor a 0/], [{ monto: "" }, /mayor a 0/], [{ monto: "abc" }, /mayor a 0/],
+  [{ monto: 0.001 }, /mayor a 0/], [{ monto: 100_000_001 }, /rango/],
+  [{ medio_pago: "" }, /medio de pago/], [{ medio_pago: "cheque" }, /medio de pago/],
+  [{ observaciones: "x".repeat(501) }, /observaciones/],
+];
+for (const [cambio, re] of malos) {
+  const r = normalizarGastoColectivo({ ...gastoOk, ...cambio });
+  assert.ok(!r.ok && re.test(r.error), `rechaza ${JSON.stringify(cambio).slice(0, 60)} → ${r.ok ? "aceptado" : r.error}`);
+}
+assert.ok(!normalizarGastoColectivo(null).ok && !normalizarGastoColectivo("x").ok);
+console.log("OK — gasto de caja: fecha real, categoría y medio de la lista, concepto, monto > 0 (2 decimales) obligatorios; observaciones opcional.");
+
+// ── 5c) caja del evento: ingresos − gastos = neto ───────────────────────────
+const caja = calcularCajaEvento({
+  turnos: [
+    { total: 20000, estado: "activo", metodo_pago: "efectivo" },
+    { total: "30000", estado: "activo", metodo_pago: "mixto" },
+    { total: 0, estado: "activo", metodo_pago: "gratis" },
+    { total: 99999, estado: "cancelado", metodo_pago: "efectivo" },
+  ],
+  ventas: [
+    { total: 40000, estado: "activa" },
+    { total: 20000, estado: "bonificada" },
+    { total: 50000, estado: "anulada" },
+  ],
+  gastos: [
+    { monto: "15000.50" },
+    { monto: 4999.5 },
+    { monto: 70000, eliminado_at: "2026-10-14T18:00:00Z" },
+  ],
+});
+assert.deepEqual(caja, { ingresosTurnos: 50000, ingresosProductos: 40000, ingresos: 90000, gastos: 20000, cantidadGastos: 2, neto: 70000 },
+  "sin turnos cancelados ni gratis, sin ventas bonificadas ni anuladas, sin gastos eliminados");
+assert.equal(calcularCajaEvento({ turnos: [], ventas: [], gastos: [{ monto: 1000 }] }).neto, -1000, "el neto puede ser negativo");
+assert.deepEqual(calcularCajaEvento({ turnos: [], ventas: [], gastos: [] }), { ingresosTurnos: 0, ingresosProductos: 0, ingresos: 0, gastos: 0, cantidadGastos: 0, neto: 0 });
+assert.ok(!/eliminado/.test(COLUMNAS_GASTO_COLECTIVO), "la API no devuelve las marcas de eliminación");
+console.log("OK — caja: ingresos = turnos y ventas válidos, gastos = vigentes, neto = ingresos − gastos.");
 
 // ── 6) contratos de fuente ──────────────────────────────────────────────────
 const leer = (p: string) => readFileSync(p, "utf8");
@@ -171,4 +222,20 @@ for (const f of fuentesFinanzas) {
   // Un literal con el nombre de una tabla (los comentarios que aclaran la separación no cuentan).
   assert.ok(!/["'`]colectivo_\w+/i.test(leer(f)), `${f} no consulta tablas colectivo_*`);
 }
-console.log(`OK — contratos de fuente: sin productos fijos, turnero y ventas sin datos de la persona, turnos = personas en el servidor, permisos de admin y Finanzas sin colectivo_* (${fuentesColectivo.length} + ${fuentesFinanzas.length} archivos).`);
+// Caja: rutas para admin y staff, separada de Finanzas y con su aviso.
+const rutasCaja = ["app/api/admin/colectivo/eventos/[id]/caja/route.ts", "app/api/admin/colectivo/gastos/[id]/route.ts"];
+for (const f of rutasCaja) {
+  const s = leer(f);
+  assert.ok(/requireStaffOrAdmin/.test(s) && !/requireAdmin\b/.test(s), `${f}: admin y staff`);
+  assert.ok(/no forma parte de Finanzas SIM/.test(s), `${f}: declara que la caja no es Finanzas`);
+  assert.ok(!/fin_[a-z]/.test(s.replace(/fin_\*/g, "")), `${f}: no toca tablas ni funciones fin_*`);
+}
+assert.ok(/eliminado_at: ahora, eliminado_por: auth\.role/.test(leer(rutasCaja[1])) && !/\.delete\(\)/.test(leer(rutasCaja[1])), "eliminar un gasto es lógico");
+const cajaUi = seccion("// ═════════ Caja del evento", "// ─── UI compartida");
+for (const texto of ["Caja del evento", "Uso interno del Colectivo. No impacta en Finanzas SIM.", "Ingresos del evento", "Gastos del evento", "Neto del evento", "Agregar gasto", "Gastos cargados", "Resultado final"]) {
+  assert.ok(cajaUi.includes(texto), `la caja muestra «${texto}»`);
+}
+assert.ok(/\{ value: "caja", label: "Caja" \}/.test(paginaEvento) && /\{ value: "turnero", label: "Turnero" \}/.test(paginaEvento) && /\{ value: "productos", label: "Productos" \}/.test(paginaEvento), "pestañas Turnero, Productos y Caja");
+assert.ok(/colectivo_gastos/.test(leer("app/api/admin/colectivo/eventos/[id]/route.ts")), "un evento con gastos vigentes no se puede eliminar");
+
+console.log(`OK — contratos de fuente: sin productos fijos, turnero y ventas sin datos de la persona, caja interna (admin y staff, sin fin_*), turnos = personas en el servidor, permisos de admin y Finanzas sin colectivo_* (${fuentesColectivo.length} + ${fuentesFinanzas.length} archivos).`);

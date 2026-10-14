@@ -44,6 +44,9 @@ export const ESTADO_EVENTO_LABEL: Record<string, string> = {
 // los conserva intactos.
 export const COLUMNAS_TURNO_COLECTIVO =
   "id, evento_id, fecha, hora, hora_subida, hora_bajada, simuladores, cantidad_simuladores, cantidad_personas, cantidad_minutos, cantidad_turnos, metodo_pago, posnet_pago, pagos_detalle, turno_listo, total, estado, observaciones, created_by, created_at, updated_at";
+// Gastos de la caja: sin eliminado_at/eliminado_por (solo se listan los vigentes).
+export const COLUMNAS_GASTO_COLECTIVO =
+  "id, evento_id, fecha, categoria, concepto, monto, medio_pago, observaciones, created_by, created_at, updated_at";
 export const COLUMNAS_VENTA_COLECTIVO =
   "id, evento_id, producto_id, producto_nombre, fecha, fecha_hora, cantidad, precio_unitario, total, observaciones, metodo_pago, posnet_pago, pagos_detalle, estado, created_by, created_at, updated_at";
 
@@ -185,4 +188,101 @@ export function esFechaValida(f: unknown): f is string {
 // ¿La fecha está dentro del rango del evento (inclusive)?
 export function fechaDentroDelEvento(fecha: string, inicio: string, fin: string): boolean {
   return esFechaValida(fecha) && fecha >= inicio && fecha <= fin;
+}
+
+// ── Caja del evento ─────────────────────────────────────────────────────────
+// La caja del Colectivo es interna al evento y no forma parte de Finanzas SIM:
+// no alimenta fin_*, saldos, cierres ni reportes financieros de SIM, y no
+// aparece en /admin/finanzas. Es solo una herramienta operativa del Colectivo
+// para registrar los gastos de un evento y ver cuánto quedó realmente.
+
+// Listas fijas del bloque 1 (la tabla las valida con un CHECK igual).
+export const CATEGORIAS_GASTO_COLECTIVO = [
+  { value: "combustible", label: "Combustible" },
+  { value: "peajes", label: "Peajes" },
+  { value: "comida", label: "Comida" },
+  { value: "insumos", label: "Insumos" },
+  { value: "estacionamiento", label: "Estacionamiento" },
+  { value: "otros", label: "Otros" },
+] as const;
+export const MEDIOS_PAGO_GASTO_COLECTIVO = [
+  { value: "efectivo", label: "Efectivo" },
+  { value: "transferencia", label: "Transferencia" },
+  { value: "tarjeta", label: "Tarjeta" },
+  { value: "otro", label: "Otro" },
+] as const;
+const CONCEPTO_MAX = 120;
+const OBSERVACIONES_MAX = 500;
+// Tope de sanidad para un gasto: frena un dedo de más, no es una regla de negocio.
+export const GASTO_MONTO_MAX = 100_000_000;
+
+export type GastoColectivoNormalizado = {
+  fecha: string;
+  categoria: string;
+  concepto: string;
+  monto: number;
+  medio_pago: string;
+  observaciones: string | null;
+};
+
+// Fecha de calendario real (rechaza 2026-02-31).
+function esFechaCalendario(f: unknown): f is string {
+  if (!esFechaValida(f)) return false;
+  const d = new Date(`${f}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === f;
+}
+
+// Valida y normaliza un gasto (alta o edición): fecha, categoría, concepto,
+// monto (> 0, hasta 2 decimales) y medio de pago obligatorios; observaciones opcional.
+export function normalizarGastoColectivo(body: unknown):
+  | { ok: true; gasto: GastoColectivoNormalizado }
+  | { ok: false; error: string } {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  if (!esFechaCalendario(b.fecha)) return { ok: false, error: "Elegí la fecha del gasto" };
+  const categoria = typeof b.categoria === "string" ? b.categoria : "";
+  if (!CATEGORIAS_GASTO_COLECTIVO.some((c) => c.value === categoria)) return { ok: false, error: "Elegí una categoría" };
+  const concepto = typeof b.concepto === "string" ? b.concepto.trim().replace(/\s+/g, " ") : "";
+  if (!concepto) return { ok: false, error: "Escribí el concepto del gasto" };
+  if (concepto.length > CONCEPTO_MAX) return { ok: false, error: `El concepto admite hasta ${CONCEPTO_MAX} caracteres` };
+  const crudo = typeof b.monto === "string" && b.monto.trim() ? Number(b.monto) : b.monto;
+  if (typeof crudo !== "number" || !Number.isFinite(crudo) || crudo <= 0) return { ok: false, error: "El monto debe ser mayor a 0" };
+  const monto = Math.round(crudo * 100) / 100;
+  if (monto <= 0) return { ok: false, error: "El monto debe ser mayor a 0" };
+  if (monto > GASTO_MONTO_MAX) return { ok: false, error: "Monto fuera de rango" };
+  const medio_pago = typeof b.medio_pago === "string" ? b.medio_pago : "";
+  if (!MEDIOS_PAGO_GASTO_COLECTIVO.some((m) => m.value === medio_pago)) return { ok: false, error: "Elegí el medio de pago" };
+  const obs = typeof b.observaciones === "string" ? b.observaciones.trim() : "";
+  if (obs.length > OBSERVACIONES_MAX) return { ok: false, error: `Las observaciones admiten hasta ${OBSERVACIONES_MAX} caracteres` };
+  return { ok: true, gasto: { fecha: b.fecha, categoria, concepto, monto, medio_pago, observaciones: obs || null } };
+}
+
+// Resultado de la caja de un evento.
+//   ingresos = turnos válidos + ventas de productos válidas (la misma facturación
+//              que muestra el resumen del evento): sin turnos cancelados ni
+//              gratuitos, sin ventas bonificadas ni anuladas.
+//   gastos   = gastos de la caja no eliminados.
+//   neto     = ingresos − gastos (puede ser negativo).
+export function calcularCajaEvento(datos: {
+  turnos: { total: number | string | null; estado?: string | null; metodo_pago?: string | null }[];
+  ventas: { total: number | string | null; estado: string }[];
+  gastos: { monto: number | string; eliminado_at?: string | null }[];
+}): { ingresosTurnos: number; ingresosProductos: number; ingresos: number; gastos: number; cantidadGastos: number; neto: number } {
+  const redondear = (n: number) => Math.round(n * 100) / 100;
+  const ingresosTurnos = datos.turnos
+    .filter((t) => t.estado !== "cancelado" && t.metodo_pago !== "gratis")
+    .reduce((a, t) => a + (Number(t.total) || 0), 0);
+  const ingresosProductos = datos.ventas
+    .filter((v) => v.estado === "activa")
+    .reduce((a, v) => a + (Number(v.total) || 0), 0);
+  const vigentes = datos.gastos.filter((g) => !g.eliminado_at);
+  const gastos = redondear(vigentes.reduce((a, g) => a + (Number(g.monto) || 0), 0));
+  const ingresos = redondear(ingresosTurnos + ingresosProductos);
+  return {
+    ingresosTurnos: redondear(ingresosTurnos),
+    ingresosProductos: redondear(ingresosProductos),
+    ingresos,
+    gastos,
+    cantidadGastos: vigentes.length,
+    neto: redondear(ingresos - gastos),
+  };
 }

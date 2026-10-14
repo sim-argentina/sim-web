@@ -42,6 +42,7 @@ turnos-historicos-transferencias.sql
 
 # ── 5b. Colectivo (productos por evento, turnos = personas) ─────────────────
 colectivo-productos-por-evento.sql
+colectivo-caja-bloque1.sql
 
 # ── 6. Equipo y cronograma ──────────────────────────────────────────────────
 ia-empleados-bloque1.sql

@@ -95,13 +95,18 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const { id } = await params;
   if (!isValidUuid(id)) return NextResponse.json({ error: "Evento no encontrado" }, { status: 404 });
 
-  // Solo se puede eliminar si no tiene información asociada.
-  const [{ count: turnos }, { count: ventas }] = await Promise.all([
+  // Solo se puede eliminar si no tiene información asociada (los gastos de caja
+  // eliminados no cuentan: la FK los borra junto con el evento).
+  const [{ count: turnos }, { count: ventas }, { count: gastos }] = await Promise.all([
     supabaseAdmin.from("colectivo_turnos").select("id", { count: "exact", head: true }).eq("evento_id", id),
     supabaseAdmin.from("colectivo_ventas").select("id", { count: "exact", head: true }).eq("evento_id", id),
+    supabaseAdmin.from("colectivo_gastos").select("id", { count: "exact", head: true }).eq("evento_id", id).is("eliminado_at", null),
   ]);
   if ((turnos ?? 0) > 0 || (ventas ?? 0) > 0) {
     return NextResponse.json({ error: "El evento tiene turnos o ventas asociados. No se puede eliminar." }, { status: 400 });
+  }
+  if ((gastos ?? 0) > 0) {
+    return NextResponse.json({ error: "El evento tiene gastos cargados en la caja. No se puede eliminar." }, { status: 400 });
   }
   const { error } = await supabaseAdmin.from("colectivo_eventos").delete().eq("id", id);
   if (error) return failResponse(500, "No se pudo completar la operación", { logContext: "colectivo/eventos/[id] DELETE", error });
