@@ -64,10 +64,27 @@ export function turnosColectivo(personas: number): number {
 // tener más (8, 12); al editarlo se acepta ese valor SOLO si no cambia, para no
 // obligar a reescribir el histórico. Devuelve null si no es válido.
 export function normalizarPersonasColectivo(input: unknown, personasGuardadas?: number | null): number | null {
+  return enteroDeSelector(input, PERSONAS_MAX, personasGuardadas);
+}
+
+// Cantidad por venta de productos: selector cerrado de 1 a 20.
+export const CANTIDADES_VENTA_COLECTIVO: readonly number[] = Array.from({ length: 20 }, (_, i) => i + 1);
+const CANTIDAD_VENTA_MAX = CANTIDADES_VENTA_COLECTIVO[CANTIDADES_VENTA_COLECTIVO.length - 1];
+
+// Cantidad válida de una venta: entero de 1 a 20. Una venta registrada antes del
+// selector con más unidades se puede editar si la cantidad no cambia; no se
+// recorta ni se reescribe. Devuelve null si no es válida.
+export function normalizarCantidadVentaColectivo(input: unknown, cantidadGuardada?: number | null): number | null {
+  return enteroDeSelector(input, CANTIDAD_VENTA_MAX, cantidadGuardada);
+}
+
+// Entero de 1 a `max` (acepta el string de un <select>). Por encima de `max`,
+// solo el valor ya guardado: compatibilidad con registros anteriores al selector.
+function enteroDeSelector(input: unknown, max: number, guardado?: number | null): number | null {
   const n = typeof input === "string" && input.trim() ? Number(input) : input;
   if (typeof n !== "number" || !Number.isInteger(n) || n <= 0) return null;
-  if (n <= PERSONAS_MAX) return n;
-  return personasGuardadas != null && n === personasGuardadas ? n : null;
+  if (n <= max) return n;
+  return guardado != null && n === guardado ? n : null;
 }
 
 // Hora opcional (subida/bajada): vacía → null; "HH:MM" o "HH:MM:SS" → "HH:MM".

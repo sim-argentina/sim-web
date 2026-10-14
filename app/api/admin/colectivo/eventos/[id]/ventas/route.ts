@@ -5,6 +5,7 @@ import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
 import {
   limpiarPagosColectivo, resumirPagos, esFechaValida, fechaDentroDelEvento, COLUMNAS_VENTA_COLECTIVO,
+  normalizarCantidadVentaColectivo,
 } from "@/lib/colectivo";
 import { productoVendibleEnEvento } from "@/lib/colectivoProductos";
 
@@ -65,8 +66,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     const producto_nombre = vendible.valor.nombre;
 
-    const cantidad = Number(body.cantidad);
-    if (!Number.isInteger(cantidad) || cantidad <= 0) return NextResponse.json({ error: "La cantidad debe ser mayor a 0" }, { status: 400 });
+    const cantidad = normalizarCantidadVentaColectivo(body.cantidad);
+    if (cantidad === null) return NextResponse.json({ error: "Elegí una cantidad entre 1 y 20" }, { status: 400 });
     // Precio de ESTA venta: el que cargó el operador; si no mandó ninguno, el
     // predeterminado del catálogo. Cambiar el catálogo después no lo altera.
     const sinPrecio = body.precio_unitario === undefined || body.precio_unitario === null || body.precio_unitario === "";

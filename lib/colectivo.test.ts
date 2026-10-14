@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   PERSONAS_COLECTIVO, turnosColectivo, normalizarPersonasColectivo, normalizarHoraOpcional,
+  CANTIDADES_VENTA_COLECTIVO, normalizarCantidadVentaColectivo,
   esVendibleEnEvento, resumirVentasPorProducto, COLUMNAS_TURNO_COLECTIVO, COLUMNAS_VENTA_COLECTIVO,
 } from "@/lib/colectivo";
 
@@ -29,6 +30,19 @@ assert.equal(normalizarPersonasColectivo(8, 6), null, "no se puede SUBIR a 8");
 assert.equal(normalizarPersonasColectivo(12, 8), null, "ni cambiar un histórico por otro valor fuera de rango");
 assert.equal(normalizarPersonasColectivo(3, 8), 3, "un histórico se puede bajar a 1..6");
 console.log("OK — personas 1..6; los históricos de más de 6 se conservan solo si no cambian.");
+
+// ── 2b) cantidad de una venta: 1..20; una histórica mayor solo si no cambia ──
+assert.deepEqual([...CANTIDADES_VENTA_COLECTIVO], Array.from({ length: 20 }, (_, i) => i + 1), "el selector ofrece exactamente 1..20");
+for (const c of CANTIDADES_VENTA_COLECTIVO) assert.equal(normalizarCantidadVentaColectivo(c), c);
+assert.equal(normalizarCantidadVentaColectivo("20"), 20, "acepta el valor de un select");
+for (const malo of [0, -1, 21, 100, 1.5, NaN, "x", "", null, undefined, true, {}]) {
+  assert.equal(normalizarCantidadVentaColectivo(malo), null, `rechaza ${String(malo)}`);
+}
+assert.equal(normalizarCantidadVentaColectivo(25, 25), 25, "una venta histórica de 25 se edita sin cambiar la cantidad");
+assert.equal(normalizarCantidadVentaColectivo(25, 20), null, "no se puede SUBIR a 25");
+assert.equal(normalizarCantidadVentaColectivo(30, 25), null, "ni cambiar una histórica por otro valor fuera de rango");
+assert.equal(normalizarCantidadVentaColectivo(3, 25), 3, "una histórica se puede bajar a 1..20");
+console.log("OK — cantidad de venta 1..20; las históricas de más de 20 se conservan solo si no cambian.");
 
 // ── 3) subida y bajada opcionales ───────────────────────────────────────────
 for (const vacia of [undefined, null, "", "   "]) assert.deepEqual(normalizarHoraOpcional(vacia), { ok: true, hora: null });
@@ -115,7 +129,16 @@ for (const f of ["app/api/admin/colectivo/eventos/[id]/turnos/route.ts", "app/ap
 for (const f of ["app/api/admin/colectivo/eventos/[id]/ventas/route.ts", "app/api/admin/colectivo/ventas/[id]/route.ts"]) {
   const s = leer(f);
   assert.ok(/cliente: txt\(body\.cliente\)/.test(s) && /telefono: txt\(body\.telefono\)/.test(s), `${f} sigue guardando comprador y teléfono opcionales`);
+  assert.ok(/normalizarCantidadVentaColectivo\(body\.cantidad/.test(s) && !/Number\(body\.cantidad\)/.test(s), `${f} valida la cantidad 1..20 en el servidor`);
 }
+assert.ok(/normalizarCantidadVentaColectivo\(body\.cantidad, Number\(venta\.cantidad\)/.test(leer("app/api/admin/colectivo/ventas/[id]/route.ts")),
+  "la edición compara contra la cantidad guardada (compatibilidad histórica)");
+// Cantidad: selector 1..20 (no input numérico) que recalcula el subtotal.
+const campoCantidad = /<Campo label="Cantidad">[\s\S]*?<\/Campo>/.exec(ventasUi)?.[0] ?? "";
+assert.ok(/<select value=\{cantidad\} onChange=\{\(e\) => cambiarCantidad\(Number\(e\.target\.value\)\)\}/.test(campoCantidad), "Cantidad es un select");
+assert.ok(/opcionesCantidad\.map/.test(campoCantidad) && !/type="number"/.test(campoCantidad), "Cantidad usa las opciones 1..20, sin input numérico");
+assert.ok(/const total = useMemo\(\(\) => Math\.round\(cantidad \* precio\), \[cantidad, precio\]\)/.test(ventasUi), "subtotal = cantidad × precio unitario");
+assert.ok(/Pagos \(deben sumar \{dinero\(total\)\}\)/.test(ventasUi), "lo que deben sumar los pagos es ese subtotal");
 assert.ok(!/nombre|telefono|hora_estimada/.test(COLUMNAS_TURNO_COLECTIVO), "la API de turnos no devuelve columnas legacy");
 assert.ok(/\bcliente\b/.test(COLUMNAS_VENTA_COLECTIVO) && /\btelefono\b/.test(COLUMNAS_VENTA_COLECTIVO), "la API de ventas devuelve comprador y teléfono");
 

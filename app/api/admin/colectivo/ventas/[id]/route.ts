@@ -5,6 +5,7 @@ import { requireStaffOrAdmin } from "@/lib/adminGuards";
 import { isValidUuid } from "@/lib/security";
 import {
   limpiarPagosColectivo, resumirPagos, esFechaValida, fechaDentroDelEvento, COLUMNAS_VENTA_COLECTIVO,
+  normalizarCantidadVentaColectivo,
 } from "@/lib/colectivo";
 import { productoVendibleEnEvento } from "@/lib/colectivoProductos";
 
@@ -21,7 +22,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const { data: venta } = await supabaseAdmin
       .from("colectivo_ventas")
-      .select("id, evento_id, producto_id, colectivo_eventos(estado, fecha_inicio, fecha_fin)")
+      .select("id, evento_id, producto_id, cantidad, colectivo_eventos(estado, fecha_inicio, fecha_fin)")
       .eq("id", id)
       .maybeSingle();
     if (!venta) return NextResponse.json({ error: "Venta no encontrada" }, { status: 404 });
@@ -63,8 +64,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       cambioProducto = { producto_id: vendible.valor.id, producto_nombre: vendible.valor.nombre };
     }
 
-    const cantidad = Number(body.cantidad);
-    if (!Number.isInteger(cantidad) || cantidad <= 0) return NextResponse.json({ error: "La cantidad debe ser mayor a 0" }, { status: 400 });
+    // Una venta histórica con más de 20 unidades se puede editar si no cambia la cantidad.
+    const cantidad = normalizarCantidadVentaColectivo(body.cantidad, Number(venta.cantidad) || null);
+    if (cantidad === null) return NextResponse.json({ error: "Elegí una cantidad entre 1 y 20" }, { status: 400 });
     const precio = Number(body.precio_unitario);
     if (!Number.isFinite(precio) || precio < 0) return NextResponse.json({ error: "Precio unitario inválido" }, { status: 400 });
 

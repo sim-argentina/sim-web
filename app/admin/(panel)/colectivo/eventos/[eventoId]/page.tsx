@@ -8,6 +8,7 @@ import {
   SIMULADORES_COLECTIVO, METODOS_PAGO_COLECTIVO, POSNETS_COLECTIVO,
   DURACIONES_SUGERIDAS, DURACION_DEFAULT, ESTADO_EVENTO_LABEL,
   PERSONAS_COLECTIVO, turnosColectivo, esVendibleEnEvento, resumirVentasPorProducto,
+  CANTIDADES_VENTA_COLECTIVO,
 } from "@/lib/colectivo";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -597,6 +598,22 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
     }
     return ops;
   }, [vendibles, editId, productoId, productoNombre]);
+  // 1..20; una venta histórica con más unidades muestra su valor para poder
+  // editar el resto sin cambiarlo.
+  const opcionesCantidad: number[] = CANTIDADES_VENTA_COLECTIVO.includes(cantidad)
+    ? [...CANTIDADES_VENTA_COLECTIVO]
+    : [...CANTIDADES_VENTA_COLECTIVO, cantidad];
+
+  // El subtotal (y lo que deben sumar los pagos) sale de cantidad × precio. Un
+  // único pago que cubría el subtotal anterior acompaña al nuevo; pagos
+  // divididos o cargados a mano no se tocan.
+  const cambiarCantidad = (n: number) => {
+    const subtotalAnterior = Math.round(cantidad * precio);
+    setCantidad(n);
+    setPagos((a) => (a.length === 1 && subtotalAnterior > 0 && Number(a[0].monto) === subtotalAnterior
+      ? [{ ...a[0], monto: String(Math.round(n * precio)) }]
+      : a));
+  };
 
   const elegirProducto = (id: string) => {
     const p = vendibles.find((x) => x.id === id);
@@ -675,7 +692,11 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
                 {opciones.map((o) => <option key={o.value || "historico"} value={o.value}>{o.label}</option>)}
               </select>
             </Campo>
-            <Campo label="Cantidad"><input type="number" min={1} value={cantidad} onChange={(e) => setCantidad(Math.max(1, Number(e.target.value) || 1))} className={inp} /></Campo>
+            <Campo label="Cantidad">
+              <select value={cantidad} onChange={(e) => cambiarCantidad(Number(e.target.value))} className={inp}>
+                {opcionesCantidad.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </Campo>
             <Campo label="Precio unitario"><input type="number" min={0} value={precio} onChange={(e) => setPrecio(Math.max(0, Number(e.target.value) || 0))} className={inp} /></Campo>
             <Campo label="Subtotal"><input readOnly value={dinero(total)} className={`${inp} opacity-60`} /></Campo>
             <Campo label="Comprador (opcional)"><input value={cliente} onChange={(e) => setCliente(e.target.value)} className={inp} /></Campo>
