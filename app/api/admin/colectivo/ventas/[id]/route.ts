@@ -89,6 +89,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       posnet_pago = r.posnet_pago;
     }
 
+    // cliente y telefono (legacy) no se tocan: una venta vieja que los tenga los conserva.
     const { data, error } = await supabaseAdmin
       .from("colectivo_ventas")
       .update({
@@ -97,8 +98,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         cantidad,
         precio_unitario: Math.round(precio),
         total,
-        cliente: txt(body.cliente),
-        telefono: txt(body.telefono),
         observaciones: txt(body.observaciones),
         metodo_pago,
         posnet_pago,

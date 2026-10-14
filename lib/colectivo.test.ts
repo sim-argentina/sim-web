@@ -103,8 +103,8 @@ for (const f of fuentesColectivo) {
   assert.ok(!/gorra|buzo/i.test(leer(f)), `${f} no nombra productos fijos`);
 }
 
-// El TURNERO ya no pide ni muestra cliente, teléfono ni hora estimada. La venta de
-// productos conserva su comprador y teléfono opcionales.
+// Ni el turnero ni la venta de productos piden o muestran datos de la persona:
+// turnos sin cliente, teléfono ni hora estimada; ventas sin comprador ni teléfono.
 const paginaEvento = leer("app/admin/(panel)/colectivo/eventos/[eventoId]/page.tsx");
 const seccion = (desde: string, hasta: string) => {
   const a = paginaEvento.indexOf(desde), b = paginaEvento.indexOf(hasta);
@@ -119,8 +119,11 @@ for (const prohibido of [/hora_estimada/, /Hora estimada/i, /Sin identificar/i, 
   assert.ok(!prohibido.test(tipoTurno), `el tipo Turno no contiene ${prohibido}`);
 }
 const ventasUi = seccion("// ═════════ Venta de productos", "// ═════════ Resumen general del evento");
-for (const requerido of [/label="Comprador \(opcional\)"/, /label="Teléfono \(opcional\)"/, /cliente, telefono, observaciones/, /<th className="pb-2">Comprador<\/th>/]) {
-  assert.ok(requerido.test(ventasUi), `la venta de productos conserva ${requerido}`);
+const tipoVenta = /type Venta = \{[\s\S]*?\};/.exec(paginaEvento)?.[0] ?? "";
+assert.ok(tipoVenta, "tipo Venta");
+for (const prohibido of [/Comprador/i, /Teléfono/i, /\bcliente\b/i, /\btelefono\b/, /setCliente|setTelefono/, /Sin identificar/i]) {
+  assert.ok(!prohibido.test(ventasUi), `la venta de productos (formulario, edición y tabla) no contiene ${prohibido}`);
+  assert.ok(!prohibido.test(tipoVenta), `el tipo Venta no contiene ${prohibido}`);
 }
 for (const f of ["app/api/admin/colectivo/eventos/[id]/turnos/route.ts", "app/api/admin/colectivo/turnos/[id]/route.ts"]) {
   const s = leer(f);
@@ -128,7 +131,7 @@ for (const f of ["app/api/admin/colectivo/eventos/[id]/turnos/route.ts", "app/ap
 }
 for (const f of ["app/api/admin/colectivo/eventos/[id]/ventas/route.ts", "app/api/admin/colectivo/ventas/[id]/route.ts"]) {
   const s = leer(f);
-  assert.ok(/cliente: txt\(body\.cliente\)/.test(s) && /telefono: txt\(body\.telefono\)/.test(s), `${f} sigue guardando comprador y teléfono opcionales`);
+  assert.ok(!/\bcliente:|\btelefono:|body\.cliente|body\.telefono/.test(s), `${f} no acepta ni escribe comprador/teléfono`);
   assert.ok(/normalizarCantidadVentaColectivo\(body\.cantidad/.test(s) && !/Number\(body\.cantidad\)/.test(s), `${f} valida la cantidad 1..20 en el servidor`);
 }
 assert.ok(/normalizarCantidadVentaColectivo\(body\.cantidad, Number\(venta\.cantidad\)/.test(leer("app/api/admin/colectivo/ventas/[id]/route.ts")),
@@ -140,7 +143,7 @@ assert.ok(/opcionesCantidad\.map/.test(campoCantidad) && !/type="number"/.test(c
 assert.ok(/const total = useMemo\(\(\) => Math\.round\(cantidad \* precio\), \[cantidad, precio\]\)/.test(ventasUi), "subtotal = cantidad × precio unitario");
 assert.ok(/Pagos \(deben sumar \{dinero\(total\)\}\)/.test(ventasUi), "lo que deben sumar los pagos es ese subtotal");
 assert.ok(!/nombre|telefono|hora_estimada/.test(COLUMNAS_TURNO_COLECTIVO), "la API de turnos no devuelve columnas legacy");
-assert.ok(/\bcliente\b/.test(COLUMNAS_VENTA_COLECTIVO) && /\btelefono\b/.test(COLUMNAS_VENTA_COLECTIVO), "la API de ventas devuelve comprador y teléfono");
+assert.ok(!/cliente|telefono/.test(COLUMNAS_VENTA_COLECTIVO), "la API de ventas no devuelve comprador ni teléfono");
 
 // turnos = personas en el servidor: las dos rutas que escriben lo imponen e ignoran cantidad_turnos del cliente.
 for (const f of ["app/api/admin/colectivo/eventos/[id]/turnos/route.ts", "app/api/admin/colectivo/turnos/[id]/route.ts"]) {
@@ -168,4 +171,4 @@ for (const f of fuentesFinanzas) {
   // Un literal con el nombre de una tabla (los comentarios que aclaran la separación no cuentan).
   assert.ok(!/["'`]colectivo_\w+/i.test(leer(f)), `${f} no consulta tablas colectivo_*`);
 }
-console.log(`OK — contratos de fuente: sin productos fijos, turnero sin cliente/teléfono/hora estimada, ventas con comprador/teléfono opcionales, turnos = personas en el servidor, permisos de admin y Finanzas sin colectivo_* (${fuentesColectivo.length} + ${fuentesFinanzas.length} archivos).`);
+console.log(`OK — contratos de fuente: sin productos fijos, turnero y ventas sin datos de la persona, turnos = personas en el servidor, permisos de admin y Finanzas sin colectivo_* (${fuentesColectivo.length} + ${fuentesFinanzas.length} archivos).`);

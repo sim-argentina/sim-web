@@ -33,7 +33,7 @@ type Producto = { id: string; nombre: string; precio_predeterminado: number; act
 type Venta = {
   id: string; evento_id: string; producto_id: string | null; producto_nombre: string;
   fecha: string; fecha_hora: string; cantidad: number; precio_unitario: number; total: number;
-  cliente?: string | null; telefono?: string | null; observaciones?: string | null;
+  observaciones?: string | null;
   metodo_pago?: string | null; posnet_pago?: string | null; pagos_detalle?: PagoDetalle[] | string;
   estado: string;
 };
@@ -580,8 +580,6 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
   const [productoId, setProductoId] = useState<string | null>(null);
   const [cantidad, setCantidad] = useState(1);
   const [precio, setPrecio] = useState(0);
-  const [cliente, setCliente] = useState("");
-  const [telefono, setTelefono] = useState("");
   const [observaciones, setObservaciones] = useState("");
   const [pagos, setPagos] = useState<PagoDetalle[]>([{ metodo_pago: "efectivo", monto: "", posnet_pago: "" }]);
   const [bonificada, setBonificada] = useState(false);
@@ -623,7 +621,7 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
     if (!editId) { setPrecio(p.precio_predeterminado); setPagos([{ metodo_pago: "efectivo", monto: String(p.precio_predeterminado * cantidad), posnet_pago: "" }]); }
   };
   const reset = () => {
-    setProductoNombre(""); setProductoId(null); setCantidad(1); setPrecio(0); setCliente(""); setTelefono("");
+    setProductoNombre(""); setProductoId(null); setCantidad(1); setPrecio(0);
     setObservaciones(""); setPagos([{ metodo_pago: "efectivo", monto: "", posnet_pago: "" }]); setBonificada(false); setEditId(null);
   };
   const actPago = (i: number, campo: keyof PagoDetalle, v: string) => setPagos((a) => a.map((p, idx) => {
@@ -635,7 +633,7 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
 
   const abrirEdicion = (v: Venta) => {
     setEditId(v.id); setProductoNombre(v.producto_nombre); setProductoId(v.producto_id);
-    setCantidad(v.cantidad); setPrecio(v.precio_unitario); setCliente(v.cliente || ""); setTelefono(v.telefono || "");
+    setCantidad(v.cantidad); setPrecio(v.precio_unitario);
     setObservaciones(v.observaciones || "");
     setPagos(normalizarPagos(v.pagos_detalle, v.metodo_pago || undefined, v.total, v.posnet_pago));
     setBonificada(v.estado === "bonificada");
@@ -648,7 +646,7 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
     try {
       const payload = {
         producto_id: productoId, fecha: dia,
-        cantidad, precio_unitario: precio, cliente, telefono, observaciones,
+        cantidad, precio_unitario: precio, observaciones,
         ...(bonificada ? { estado: "bonificada" } : { pagos_detalle: limpiarPagos(pagos) }),
       };
       const url = editId ? `/api/admin/colectivo/ventas/${editId}` : `/api/admin/colectivo/eventos/${eventoId}/ventas`;
@@ -685,7 +683,7 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
               No hay productos habilitados para este evento.{esAdmin ? " Habilitalos en «Productos del evento»." : ""}
             </p>
           )}
-          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-3 md:grid-cols-4">
             <Campo label="Producto">
               <select value={productoId ?? ""} onChange={(e) => elegirProducto(e.target.value)} className={inp}>
                 {!editId && <option value="">Elegir...</option>}
@@ -699,8 +697,6 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
             </Campo>
             <Campo label="Precio unitario"><input type="number" min={0} value={precio} onChange={(e) => setPrecio(Math.max(0, Number(e.target.value) || 0))} className={inp} /></Campo>
             <Campo label="Subtotal"><input readOnly value={dinero(total)} className={`${inp} opacity-60`} /></Campo>
-            <Campo label="Comprador (opcional)"><input value={cliente} onChange={(e) => setCliente(e.target.value)} className={inp} /></Campo>
-            <Campo label="Teléfono (opcional)"><input value={telefono} onChange={(e) => setTelefono(e.target.value)} className={inp} /></Campo>
           </div>
 
           <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-black/60 p-3">
@@ -751,8 +747,8 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
         <div className="rounded-2xl border border-white/10 bg-black p-4 text-sm text-white/50">No hay ventas este día.</div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-sm">
-            <thead className="text-left text-[10px] font-black uppercase tracking-[0.12em] text-white/35"><tr><th className="pb-2">Producto</th><th className="pb-2">Cant.</th><th className="pb-2">P. unit.</th><th className="pb-2">Total</th><th className="pb-2">Pago</th><th className="pb-2">Comprador</th><th className="pb-2">Estado</th><th className="pb-2"></th></tr></thead>
+          <table className="w-full min-w-[640px] text-sm">
+            <thead className="text-left text-[10px] font-black uppercase tracking-[0.12em] text-white/35"><tr><th className="pb-2">Producto</th><th className="pb-2">Cant.</th><th className="pb-2">P. unit.</th><th className="pb-2">Total</th><th className="pb-2">Pago</th><th className="pb-2">Estado</th><th className="pb-2"></th></tr></thead>
             <tbody className="divide-y divide-white/5">
               {ventas.map((v) => {
                 const pagos = normalizarPagos(v.pagos_detalle, v.metodo_pago || undefined, v.total, v.posnet_pago).filter((p) => Number(p.monto) > 0);
@@ -764,7 +760,6 @@ function VentaProductos({ eventoId, dia, productos, ventas, cerrado, esAdmin, on
                     <td className="py-2">{dinero(v.precio_unitario)}</td>
                     <td className="py-2 font-black text-red-400">{dinero(v.total)}</td>
                     <td className="py-2 text-white/70">{pagoStr}</td>
-                    <td className="py-2 text-white/60">{v.cliente || "—"}</td>
                     <td className="py-2"><span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${v.estado === "activa" ? "bg-green-900 text-green-300" : v.estado === "bonificada" ? "bg-blue-900 text-blue-300" : "bg-zinc-800 text-zinc-400"}`}>{v.estado}</span></td>
                     <td className="py-2">
                       {!cerrado && v.estado !== "anulada" && (

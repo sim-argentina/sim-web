@@ -56,7 +56,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     // El producto sale del catálogo y tiene que estar activo y habilitado en este
-    // evento. El nombre que queda en la venta es el del catálogo, no el del cliente.
+    // evento. El nombre que queda en la venta es el del catálogo, no el que mande el navegador.
     const producto_id = String(body.producto_id || "");
     if (!isValidUuid(producto_id)) return NextResponse.json({ error: "Elegí un producto" }, { status: 400 });
     const vendible = await productoVendibleEnEvento(id, producto_id);
@@ -108,8 +108,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         cantidad,
         precio_unitario: Math.round(precio),
         total,
-        cliente: txt(body.cliente),
-        telefono: txt(body.telefono),
         observaciones: txt(body.observaciones),
         metodo_pago,
         posnet_pago,

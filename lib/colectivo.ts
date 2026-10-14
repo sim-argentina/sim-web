@@ -37,14 +37,15 @@ export const ESTADO_EVENTO_LABEL: Record<string, string> = {
   cancelado: "Cancelado",
 };
 
-// Columnas que devuelven las APIs. En turnos, las legacy (nombre, telefono,
-// hora_estimada_subida) quedan en la base por compatibilidad histórica, pero el
-// turnero ya no las pide, ni las escribe ni las muestra. Las ventas conservan su
-// comprador y teléfono opcionales.
+// Columnas que devuelven las APIs. Los datos que identificaban a la persona
+// (turnos: nombre, telefono, hora_estimada_subida; ventas: cliente, telefono)
+// quedan en la base por compatibilidad histórica, pero el Colectivo ya no los
+// pide, ni los escribe ni los muestra: una venta o un turno viejo que los tenga
+// los conserva intactos.
 export const COLUMNAS_TURNO_COLECTIVO =
   "id, evento_id, fecha, hora, hora_subida, hora_bajada, simuladores, cantidad_simuladores, cantidad_personas, cantidad_minutos, cantidad_turnos, metodo_pago, posnet_pago, pagos_detalle, turno_listo, total, estado, observaciones, created_by, created_at, updated_at";
 export const COLUMNAS_VENTA_COLECTIVO =
-  "id, evento_id, producto_id, producto_nombre, fecha, fecha_hora, cantidad, precio_unitario, total, cliente, telefono, observaciones, metodo_pago, posnet_pago, pagos_detalle, estado, created_by, created_at, updated_at";
+  "id, evento_id, producto_id, producto_nombre, fecha, fecha_hora, cantidad, precio_unitario, total, observaciones, metodo_pago, posnet_pago, pagos_detalle, estado, created_by, created_at, updated_at";
 
 export const DURACIONES_SUGERIDAS = [10, 20, 30] as const;
 export const DURACION_DEFAULT = 10;
