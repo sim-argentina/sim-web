@@ -151,9 +151,14 @@ export default function ColectivoPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {esAdmin && (
-              <Link href="/admin/colectivo/productos" className="rounded-xl border border-white/15 px-5 py-3 text-sm font-black uppercase text-white/80 transition hover:border-white hover:text-white">
-                Productos
-              </Link>
+              <>
+                <Link href="/admin/colectivo/productos" className="rounded-xl border border-white/15 px-5 py-3 text-sm font-black uppercase text-white/80 transition hover:border-white hover:text-white">
+                  Productos
+                </Link>
+                <Link href="/admin/colectivo/categorias-caja" className="rounded-xl border border-white/15 px-5 py-3 text-sm font-black uppercase text-white/80 transition hover:border-white hover:text-white">
+                  Categorías de caja
+                </Link>
+              </>
             )}
             {!showForm && (
               <button onClick={abrirNuevo} className="rounded-xl bg-red-600 px-5 py-3 text-sm font-black uppercase transition hover:bg-red-700">

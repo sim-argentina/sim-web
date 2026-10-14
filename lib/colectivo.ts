@@ -44,9 +44,10 @@ export const ESTADO_EVENTO_LABEL: Record<string, string> = {
 // los conserva intactos.
 export const COLUMNAS_TURNO_COLECTIVO =
   "id, evento_id, fecha, hora, hora_subida, hora_bajada, simuladores, cantidad_simuladores, cantidad_personas, cantidad_minutos, cantidad_turnos, metodo_pago, posnet_pago, pagos_detalle, turno_listo, total, estado, observaciones, created_by, created_at, updated_at";
-// Gastos de la caja: sin eliminado_at/eliminado_por (solo se listan los vigentes).
+// Movimientos de la caja: sin eliminado_at/eliminado_por (solo se listan los
+// vigentes) ni la columna vieja `categoria` del bloque 1.
 export const COLUMNAS_GASTO_COLECTIVO =
-  "id, evento_id, fecha, categoria, concepto, monto, medio_pago, observaciones, created_by, created_at, updated_at";
+  "id, evento_id, fecha, categoria_id, categoria_nombre, tipo, concepto, monto, medio_pago, observaciones, created_by, created_at, updated_at";
 export const COLUMNAS_VENTA_COLECTIVO =
   "id, evento_id, producto_id, producto_nombre, fecha, fecha_hora, cantidad, precio_unitario, total, observaciones, metodo_pago, posnet_pago, pagos_detalle, estado, created_by, created_at, updated_at";
 
@@ -194,17 +195,27 @@ export function fechaDentroDelEvento(fecha: string, inicio: string, fin: string)
 // La caja del Colectivo es interna al evento y no forma parte de Finanzas SIM:
 // no alimenta fin_*, saldos, cierres ni reportes financieros de SIM, y no
 // aparece en /admin/finanzas. Es solo una herramienta operativa del Colectivo
-// para registrar los gastos de un evento y ver cuánto quedó realmente.
+// para registrar los costos y gastos de un evento y ver cuánto quedó realmente.
+//
+// Cada movimiento de la caja (tabla colectivo_gastos) pertenece a una categoría
+// administrable (colectivo_caja_categorias) y es COSTO o GASTO según la categoría
+// al momento de registrarlo: el movimiento guarda ese tipo y el nombre de la
+// categoría, así cambiar el catálogo después no reescribe lo que pasó.
 
-// Listas fijas del bloque 1 (la tabla las valida con un CHECK igual).
-export const CATEGORIAS_GASTO_COLECTIVO = [
-  { value: "combustible", label: "Combustible" },
-  { value: "peajes", label: "Peajes" },
-  { value: "comida", label: "Comida" },
-  { value: "insumos", label: "Insumos" },
-  { value: "estacionamiento", label: "Estacionamiento" },
-  { value: "otros", label: "Otros" },
+export const TIPOS_CAJA = [
+  { value: "costo", label: "Costo" },
+  { value: "gasto", label: "Gasto" },
 ] as const;
+export type TipoCaja = (typeof TIPOS_CAJA)[number]["value"];
+export function esTipoCaja(v: unknown): v is TipoCaja {
+  return v === "costo" || v === "gasto";
+}
+// Pill del tipo (misma en la caja y en la administración de categorías).
+export const PILL_TIPO_CAJA: Record<TipoCaja, string> = {
+  costo: "bg-amber-900/70 text-amber-300",
+  gasto: "bg-sky-900/70 text-sky-300",
+};
+
 export const MEDIOS_PAGO_GASTO_COLECTIVO = [
   { value: "efectivo", label: "Efectivo" },
   { value: "transferencia", label: "Transferencia" },
@@ -213,12 +224,25 @@ export const MEDIOS_PAGO_GASTO_COLECTIVO = [
 ] as const;
 const CONCEPTO_MAX = 120;
 const OBSERVACIONES_MAX = 500;
-// Tope de sanidad para un gasto: frena un dedo de más, no es una regla de negocio.
+export const CATEGORIA_CAJA_NOMBRE_MAX = 60;
+// Tope de sanidad para un movimiento: frena un dedo de más, no es una regla de negocio.
 export const GASTO_MONTO_MAX = 100_000_000;
 
-export type GastoColectivoNormalizado = {
+// Nombre de categoría tal como se guarda: sin espacios en los bordes ni repetidos.
+export function normalizarNombreCategoriaCaja(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim().replace(/\s+/g, " ");
+  return s && s.length <= CATEGORIA_CAJA_NOMBRE_MAX ? s : null;
+}
+// Clave para detectar duplicados: igual que el índice único de la base
+// (sin mayúsculas ni espacios repetidos).
+export function claveCategoriaCaja(nombre: string): string {
+  return nombre.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export type MovimientoCajaNormalizado = {
   fecha: string;
-  categoria: string;
+  categoria_id: string;
   concepto: string;
   monto: number;
   medio_pago: string;
@@ -231,18 +255,21 @@ function esFechaCalendario(f: unknown): f is string {
   const d = new Date(`${f}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === f;
 }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Valida y normaliza un gasto (alta o edición): fecha, categoría, concepto,
-// monto (> 0, hasta 2 decimales) y medio de pago obligatorios; observaciones opcional.
-export function normalizarGastoColectivo(body: unknown):
-  | { ok: true; gasto: GastoColectivoNormalizado }
+// Valida y normaliza un movimiento (alta o edición): fecha, categoría, concepto,
+// monto (> 0, hasta 2 decimales) y medio de pago obligatorios; observaciones
+// opcional. Que la categoría exista y esté activa lo comprueba el servidor; el
+// tipo (costo/gasto) no se recibe: sale de la categoría.
+export function normalizarMovimientoCaja(body: unknown):
+  | { ok: true; movimiento: MovimientoCajaNormalizado }
   | { ok: false; error: string } {
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
-  if (!esFechaCalendario(b.fecha)) return { ok: false, error: "Elegí la fecha del gasto" };
-  const categoria = typeof b.categoria === "string" ? b.categoria : "";
-  if (!CATEGORIAS_GASTO_COLECTIVO.some((c) => c.value === categoria)) return { ok: false, error: "Elegí una categoría" };
+  if (!esFechaCalendario(b.fecha)) return { ok: false, error: "Elegí la fecha del movimiento" };
+  const categoria_id = typeof b.categoria_id === "string" ? b.categoria_id : "";
+  if (!UUID_RE.test(categoria_id)) return { ok: false, error: "Elegí una categoría" };
   const concepto = typeof b.concepto === "string" ? b.concepto.trim().replace(/\s+/g, " ") : "";
-  if (!concepto) return { ok: false, error: "Escribí el concepto del gasto" };
+  if (!concepto) return { ok: false, error: "Escribí el concepto del movimiento" };
   if (concepto.length > CONCEPTO_MAX) return { ok: false, error: `El concepto admite hasta ${CONCEPTO_MAX} caracteres` };
   const crudo = typeof b.monto === "string" && b.monto.trim() ? Number(b.monto) : b.monto;
   if (typeof crudo !== "number" || !Number.isFinite(crudo) || crudo <= 0) return { ok: false, error: "El monto debe ser mayor a 0" };
@@ -253,20 +280,35 @@ export function normalizarGastoColectivo(body: unknown):
   if (!MEDIOS_PAGO_GASTO_COLECTIVO.some((m) => m.value === medio_pago)) return { ok: false, error: "Elegí el medio de pago" };
   const obs = typeof b.observaciones === "string" ? b.observaciones.trim() : "";
   if (obs.length > OBSERVACIONES_MAX) return { ok: false, error: `Las observaciones admiten hasta ${OBSERVACIONES_MAX} caracteres` };
-  return { ok: true, gasto: { fecha: b.fecha, categoria, concepto, monto, medio_pago, observaciones: obs || null } };
+  return { ok: true, movimiento: { fecha: b.fecha, categoria_id, concepto, monto, medio_pago, observaciones: obs || null } };
 }
+
+export type ResumenCajaEvento = {
+  ingresosTurnos: number;
+  ingresosProductos: number;
+  ingresos: number;
+  costos: number;
+  cantidadCostos: number;
+  gastos: number;
+  cantidadGastos: number;
+  cantidadMovimientos: number;
+  neto: number;
+};
 
 // Resultado de la caja de un evento.
 //   ingresos = turnos válidos + ventas de productos válidas (la misma facturación
 //              que muestra el resumen del evento): sin turnos cancelados ni
 //              gratuitos, sin ventas bonificadas ni anuladas.
-//   gastos   = gastos de la caja no eliminados.
-//   neto     = ingresos − gastos (puede ser negativo).
+//   costos   = movimientos vigentes registrados como COSTO.
+//   gastos   = movimientos vigentes registrados como GASTO.
+//   neto     = ingresos − costos − gastos (puede ser negativo).
+// Cada movimiento cuenta con el tipo que guardó al registrarse, no con el tipo
+// actual de su categoría.
 export function calcularCajaEvento(datos: {
   turnos: { total: number | string | null; estado?: string | null; metodo_pago?: string | null }[];
   ventas: { total: number | string | null; estado: string }[];
-  gastos: { monto: number | string; eliminado_at?: string | null }[];
-}): { ingresosTurnos: number; ingresosProductos: number; ingresos: number; gastos: number; cantidadGastos: number; neto: number } {
+  movimientos: { monto: number | string; tipo: string | null; eliminado_at?: string | null }[];
+}): ResumenCajaEvento {
   const redondear = (n: number) => Math.round(n * 100) / 100;
   const ingresosTurnos = datos.turnos
     .filter((t) => t.estado !== "cancelado" && t.metodo_pago !== "gratis")
@@ -274,15 +316,22 @@ export function calcularCajaEvento(datos: {
   const ingresosProductos = datos.ventas
     .filter((v) => v.estado === "activa")
     .reduce((a, v) => a + (Number(v.total) || 0), 0);
-  const vigentes = datos.gastos.filter((g) => !g.eliminado_at);
-  const gastos = redondear(vigentes.reduce((a, g) => a + (Number(g.monto) || 0), 0));
+  const vigentes = datos.movimientos.filter((m) => !m.eliminado_at);
+  const costosMov = vigentes.filter((m) => m.tipo === "costo");
+  const gastosMov = vigentes.filter((m) => m.tipo !== "costo");
+  const suma = (l: { monto: number | string }[]) => redondear(l.reduce((a, m) => a + (Number(m.monto) || 0), 0));
   const ingresos = redondear(ingresosTurnos + ingresosProductos);
+  const costos = suma(costosMov);
+  const gastos = suma(gastosMov);
   return {
     ingresosTurnos: redondear(ingresosTurnos),
     ingresosProductos: redondear(ingresosProductos),
     ingresos,
+    costos,
+    cantidadCostos: costosMov.length,
     gastos,
-    cantidadGastos: vigentes.length,
-    neto: redondear(ingresos - gastos),
+    cantidadGastos: gastosMov.length,
+    cantidadMovimientos: vigentes.length,
+    neto: redondear(ingresos - costos - gastos),
   };
 }

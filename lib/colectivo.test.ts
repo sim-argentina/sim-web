@@ -5,8 +5,8 @@ import {
   PERSONAS_COLECTIVO, turnosColectivo, normalizarPersonasColectivo, normalizarHoraOpcional,
   CANTIDADES_VENTA_COLECTIVO, normalizarCantidadVentaColectivo,
   esVendibleEnEvento, resumirVentasPorProducto, COLUMNAS_TURNO_COLECTIVO, COLUMNAS_VENTA_COLECTIVO,
-  normalizarGastoColectivo, calcularCajaEvento, CATEGORIAS_GASTO_COLECTIVO, MEDIOS_PAGO_GASTO_COLECTIVO,
-  COLUMNAS_GASTO_COLECTIVO,
+  normalizarMovimientoCaja, calcularCajaEvento, MEDIOS_PAGO_GASTO_COLECTIVO, COLUMNAS_GASTO_COLECTIVO,
+  TIPOS_CAJA, esTipoCaja, normalizarNombreCategoriaCaja, claveCategoriaCaja,
 } from "@/lib/colectivo";
 
 // Colectivo — turnos = personas, horarios opcionales y catálogo de productos.
@@ -81,16 +81,19 @@ assert.deepEqual(resumen, [
 assert.deepEqual(resumirVentasPorProducto([]), []);
 console.log("OK — resumen por producto dinámico (Gorra, Buzo, Remera, Sticker) sin nombres fijos.");
 
-// ── 5b) caja del evento: validación del gasto ───────────────────────────────
-assert.deepEqual(CATEGORIAS_GASTO_COLECTIVO.map((c) => c.label), ["Combustible", "Peajes", "Comida", "Insumos", "Estacionamiento", "Otros"]);
+// ── 5b) caja del evento: validación del movimiento ──────────────────────────
 assert.deepEqual(MEDIOS_PAGO_GASTO_COLECTIVO.map((m) => m.label), ["Efectivo", "Transferencia", "Tarjeta", "Otro"]);
-const gastoOk = { fecha: "2026-10-14", categoria: "combustible", concepto: "  Nafta   ida  ", monto: "45320.505", medio_pago: "efectivo", observaciones: "  " };
-const g1 = normalizarGastoColectivo(gastoOk);
+assert.deepEqual(TIPOS_CAJA.map((t) => t.value), ["costo", "gasto"]);
+assert.ok(esTipoCaja("costo") && esTipoCaja("gasto") && !esTipoCaja("COSTO") && !esTipoCaja("") && !esTipoCaja(null));
+const CAT = "6f1c2a4e-1b2c-4d3e-8f90-123456789abc";
+const gastoOk = { fecha: "2026-10-14", categoria_id: CAT, concepto: "  Nafta   ida  ", monto: "45320.505", medio_pago: "efectivo", observaciones: "  ", tipo: "gasto" };
+const g1 = normalizarMovimientoCaja(gastoOk);
 assert.ok(g1.ok);
-if (g1.ok) assert.deepEqual(g1.gasto, { fecha: "2026-10-14", categoria: "combustible", concepto: "Nafta ida", monto: 45320.51, medio_pago: "efectivo", observaciones: null });
+// El tipo que mande el cliente no se toma: sale de la categoría en el servidor.
+if (g1.ok) assert.deepEqual(g1.movimiento, { fecha: "2026-10-14", categoria_id: CAT, concepto: "Nafta ida", monto: 45320.51, medio_pago: "efectivo", observaciones: null });
 const malos: [Record<string, unknown>, RegExp][] = [
   [{ fecha: "" }, /fecha/], [{ fecha: "2026-02-31" }, /fecha/], [{ fecha: "14/10/2026" }, /fecha/],
-  [{ categoria: "" }, /categoría/], [{ categoria: "viaticos" }, /categoría/],
+  [{ categoria_id: "" }, /categoría/], [{ categoria_id: "combustible" }, /categoría/], [{ categoria_id: null }, /categoría/],
   [{ concepto: "   " }, /concepto/], [{ concepto: "x".repeat(121) }, /concepto/],
   [{ monto: 0 }, /mayor a 0/], [{ monto: -10 }, /mayor a 0/], [{ monto: "" }, /mayor a 0/], [{ monto: "abc" }, /mayor a 0/],
   [{ monto: 0.001 }, /mayor a 0/], [{ monto: 100_000_001 }, /rango/],
@@ -98,13 +101,20 @@ const malos: [Record<string, unknown>, RegExp][] = [
   [{ observaciones: "x".repeat(501) }, /observaciones/],
 ];
 for (const [cambio, re] of malos) {
-  const r = normalizarGastoColectivo({ ...gastoOk, ...cambio });
+  const r = normalizarMovimientoCaja({ ...gastoOk, ...cambio });
   assert.ok(!r.ok && re.test(r.error), `rechaza ${JSON.stringify(cambio).slice(0, 60)} → ${r.ok ? "aceptado" : r.error}`);
 }
-assert.ok(!normalizarGastoColectivo(null).ok && !normalizarGastoColectivo("x").ok);
-console.log("OK — gasto de caja: fecha real, categoría y medio de la lista, concepto, monto > 0 (2 decimales) obligatorios; observaciones opcional.");
+assert.ok(!normalizarMovimientoCaja(null).ok && !normalizarMovimientoCaja("x").ok);
+console.log("OK — movimiento de caja: fecha real, categoría (id), medio de la lista, concepto, monto > 0 (2 decimales); el tipo no lo elige el cliente.");
 
-// ── 5c) caja del evento: ingresos − gastos = neto ───────────────────────────
+// ── 5c) categorías de caja: nombre y duplicados ─────────────────────────────
+assert.equal(normalizarNombreCategoriaCaja("  Publicidad    evento  "), "Publicidad evento");
+for (const malo of ["", "   ", null, 5, "x".repeat(61)]) assert.equal(normalizarNombreCategoriaCaja(malo), null, `rechaza ${String(malo).slice(0, 10)}`);
+assert.equal(claveCategoriaCaja("  ALOJAMIENTO   Hotel "), claveCategoriaCaja("alojamiento hotel"), "duplicado sin distinguir mayúsculas ni espacios");
+assert.notEqual(claveCategoriaCaja("Peajes"), claveCategoriaCaja("Peaje"));
+console.log("OK — categorías de caja: nombre normalizado y duplicados sin distinguir mayúsculas ni espacios.");
+
+// ── 5d) caja del evento: ingresos − costos − gastos = neto ──────────────────
 const caja = calcularCajaEvento({
   turnos: [
     { total: 20000, estado: "activo", metodo_pago: "efectivo" },
@@ -117,18 +127,29 @@ const caja = calcularCajaEvento({
     { total: 20000, estado: "bonificada" },
     { total: 50000, estado: "anulada" },
   ],
-  gastos: [
-    { monto: "15000.50" },
-    { monto: 4999.5 },
-    { monto: 70000, eliminado_at: "2026-10-14T18:00:00Z" },
+  movimientos: [
+    { monto: "15000.50", tipo: "costo" },
+    { monto: 4999.5, tipo: "costo" },
+    { monto: 30000, tipo: "gasto" },
+    { monto: 70000, tipo: "costo", eliminado_at: "2026-10-14T18:00:00Z" },
+    { monto: 9000, tipo: "gasto", eliminado_at: "2026-10-14T18:00:00Z" },
   ],
 });
-assert.deepEqual(caja, { ingresosTurnos: 50000, ingresosProductos: 40000, ingresos: 90000, gastos: 20000, cantidadGastos: 2, neto: 70000 },
-  "sin turnos cancelados ni gratis, sin ventas bonificadas ni anuladas, sin gastos eliminados");
-assert.equal(calcularCajaEvento({ turnos: [], ventas: [], gastos: [{ monto: 1000 }] }).neto, -1000, "el neto puede ser negativo");
-assert.deepEqual(calcularCajaEvento({ turnos: [], ventas: [], gastos: [] }), { ingresosTurnos: 0, ingresosProductos: 0, ingresos: 0, gastos: 0, cantidadGastos: 0, neto: 0 });
+assert.deepEqual(caja, {
+  ingresosTurnos: 50000, ingresosProductos: 40000, ingresos: 90000,
+  costos: 20000, cantidadCostos: 2, gastos: 30000, cantidadGastos: 1, cantidadMovimientos: 3, neto: 40000,
+}, "sin turnos cancelados ni gratis, sin ventas bonificadas ni anuladas, sin movimientos eliminados; neto = ingresos − costos − gastos");
+// Ejemplo del pedido: 2.580.000 − 600.000 − 150.000 = 1.830.000.
+const ejemplo = calcularCajaEvento({ turnos: [{ total: 2580000, estado: "activo" }], ventas: [], movimientos: [{ monto: 600000, tipo: "costo" }, { monto: 150000, tipo: "gasto" }] });
+assert.equal(ejemplo.neto, 1830000);
+assert.equal(calcularCajaEvento({ turnos: [], ventas: [], movimientos: [{ monto: 1000, tipo: "costo" }] }).neto, -1000, "el neto puede ser negativo");
+assert.deepEqual(calcularCajaEvento({ turnos: [], ventas: [], movimientos: [] }), {
+  ingresosTurnos: 0, ingresosProductos: 0, ingresos: 0, costos: 0, cantidadCostos: 0, gastos: 0, cantidadGastos: 0, cantidadMovimientos: 0, neto: 0,
+});
 assert.ok(!/eliminado/.test(COLUMNAS_GASTO_COLECTIVO), "la API no devuelve las marcas de eliminación");
-console.log("OK — caja: ingresos = turnos y ventas válidos, gastos = vigentes, neto = ingresos − gastos.");
+assert.ok(/\btipo\b/.test(COLUMNAS_GASTO_COLECTIVO) && /categoria_nombre/.test(COLUMNAS_GASTO_COLECTIVO) && /categoria_id/.test(COLUMNAS_GASTO_COLECTIVO), "la API devuelve tipo y nombre guardados");
+assert.ok(!/(^|, )categoria(,|$)/.test(COLUMNAS_GASTO_COLECTIVO), "la columna vieja `categoria` ya no se usa");
+console.log("OK — caja: ingresos = turnos y ventas válidos, costos y gastos por el tipo guardado en cada movimiento, neto = ingresos − costos − gastos.");
 
 // ── 6) contratos de fuente ──────────────────────────────────────────────────
 const leer = (p: string) => readFileSync(p, "utf8");
@@ -146,6 +167,7 @@ const fuentesColectivo = [
   ...archivos("app/api/admin/colectivo"),
   "lib/colectivo.ts",
   "lib/colectivoProductos.ts",
+  "lib/colectivoCaja.ts",
 ];
 assert.ok(fuentesColectivo.length >= 12, "encontró las fuentes del Colectivo");
 
@@ -230,11 +252,27 @@ for (const f of rutasCaja) {
   assert.ok(/no forma parte de Finanzas SIM/.test(s), `${f}: declara que la caja no es Finanzas`);
   assert.ok(!/fin_[a-z]/.test(s.replace(/fin_\*/g, "")), `${f}: no toca tablas ni funciones fin_*`);
 }
-assert.ok(/eliminado_at: ahora, eliminado_por: auth\.role/.test(leer(rutasCaja[1])) && !/\.delete\(\)/.test(leer(rutasCaja[1])), "eliminar un gasto es lógico");
+assert.ok(/eliminado_at: ahora, eliminado_por: auth\.role/.test(leer(rutasCaja[1])) && !/\.delete\(\)/.test(leer(rutasCaja[1])), "eliminar un movimiento es lógico");
+// El tipo sale de la categoría: el alta lo toma del catálogo; la edición lo
+// conserva salvo que cambie la categoría. Ninguna ruta lee body.tipo.
+assert.ok(/tipo: cat\.valor\.tipo/.test(leer(rutasCaja[0])) && /categoria_nombre: cat\.valor\.nombre/.test(leer(rutasCaja[0])), "el alta guarda tipo y nombre de la categoría");
+assert.ok(/r\.movimiento\.categoria_id !== m\.mov\.categoria_id/.test(leer(rutasCaja[1])), "la edición conserva tipo y nombre si no cambia la categoría");
+for (const f of rutasCaja) assert.ok(!/body\.tipo/.test(leer(f)), `${f}: el cliente no elige costo/gasto`);
+// Categorías: solo admin en el servidor, y separadas de Finanzas.
+const rutaCategorias = leer("app/api/admin/colectivo/caja-categorias/route.ts");
+assert.ok(!/requireStaffOrAdmin/.test(rutaCategorias), "las categorías de caja no admiten staff");
+assert.equal((rutaCategorias.match(/await requireAdmin\(\)/g) ?? []).length, 4, "GET, POST, PATCH y DELETE de categorías exigen admin");
+assert.ok(!/fin_[a-z]/.test(rutaCategorias.replace(/fin_\*/g, "").replace(/fin_categorias/g, "")) && !/from\("fin_/.test(rutaCategorias), "las categorías de caja no tocan Finanzas");
+// Sin categorías fijas en el código: viven en la base (la siembra es solo la migración).
+for (const f of fuentesColectivo) {
+  assert.ok(!/Combustible|Peajes|Estacionamiento|Insumos/.test(leer(f)), `${f} no nombra categorías de caja fijas`);
+}
 const cajaUi = seccion("// ═════════ Caja del evento", "// ─── UI compartida");
-for (const texto of ["Caja del evento", "Uso interno del Colectivo. No impacta en Finanzas SIM.", "Ingresos del evento", "Gastos del evento", "Neto del evento", "Agregar gasto", "Gastos cargados", "Resultado final"]) {
+for (const texto of ["Caja del evento", "Uso interno del Colectivo. No impacta en Finanzas SIM.", ">Ingresos<", ">Costos<", ">Gastos<", ">Neto<", "Ingresos − costos − gastos",
+  "Registrar costo / gasto", "Movimientos de caja", "Total costos", "Total gastos", "Resultado final", "Movimientos registrados", "Todas las categorías"]) {
   assert.ok(cajaUi.includes(texto), `la caja muestra «${texto}»`);
 }
+assert.ok(!/Gastos cargados|Agregar gasto|Registrar gasto/.test(cajaUi), "la caja ya no habla solo de gastos");
 assert.ok(/\{ value: "caja", label: "Caja" \}/.test(paginaEvento) && /\{ value: "turnero", label: "Turnero" \}/.test(paginaEvento) && /\{ value: "productos", label: "Productos" \}/.test(paginaEvento), "pestañas Turnero, Productos y Caja");
 assert.ok(/colectivo_gastos/.test(leer("app/api/admin/colectivo/eventos/[id]/route.ts")), "un evento con gastos vigentes no se puede eliminar");
 
