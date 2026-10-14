@@ -36,6 +36,9 @@ campeonatos-bracket-reiniciar.sql
 # ── 5. Turnero ──────────────────────────────────────────────────────────────
 turnero-cambio-diario.sql
 
+# ── 5a. Métricas: históricos del stand (respaldo de la corrección de año; sin filas no corrige nada)
+turnos-historicos-correccion-anio.sql
+
 # ── 5b. Colectivo (productos por evento, turnos = personas) ─────────────────
 colectivo-productos-por-evento.sql
 

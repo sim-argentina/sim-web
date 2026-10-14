@@ -2,22 +2,9 @@ import { NextResponse } from "next/server";
 import { failResponse } from "@/lib/apiError";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaffOrAdmin } from "@/lib/adminGuards";
-
-type TurnoHistoricoBody = {
-  archivo_nombre: string;
-  archivo_key: string;
-  fecha: string;
-  hora_subida?: string;
-  hora_bajada?: string;
-  hora_tomado?: string;
-  metodo_pago: string;
-  total: number;
-  cantidad_simuladores: number;
-  cantidad_turnos: number;
-  duracion: number;
-  escuderia?: string;
-  hash_unico: string;
-};
+import { hoyEnSim } from "@/lib/agenda";
+import { validarLoteHistorico } from "@/lib/historicosStand";
+import { borrarImportacionHistorica, guardarTurnosHistoricos } from "@/lib/historicosStandServer";
 
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -83,46 +70,25 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const turnos = body.turnos as TurnoHistoricoBody[];
+    const turnos = body?.turnos;
 
-    if (!Array.isArray(turnos) || turnos.length === 0) {
-      return NextResponse.json(
-        { error: "No se recibieron turnos para guardar" },
-        { status: 400 }
-      );
+    // El año de cada archivo lo confirma quien importa; acá se rechaza cualquier
+    // fecha inexistente o futura, y un hash que no corresponda a la fecha.
+    const invalido = validarLoteHistorico(turnos, hoyEnSim());
+    if (invalido) {
+      return NextResponse.json({ error: invalido }, { status: 400 });
     }
 
-    const rows = turnos.map((t) => ({
-      archivo_nombre: t.archivo_nombre,
-      archivo_key: t.archivo_key,
-      fecha: t.fecha,
-      hora_subida: t.hora_subida || null,
-      hora_bajada: t.hora_bajada || null,
-      hora_tomado: t.hora_tomado || null,
-      metodo_pago: t.metodo_pago,
-      total: Number(t.total || 0),
-      cantidad_simuladores: Number(t.cantidad_simuladores || 1),
-      cantidad_turnos: Number(t.cantidad_turnos || 1),
-      duracion: Number(t.duracion || 15),
-      escuderia: t.escuderia || null,
-      hash_unico: t.hash_unico,
-      origen: "excel",
-    }));
+    const r = await guardarTurnosHistoricos(turnos);
 
-    const { error } = await supabaseAdmin
-      .from("turnos_historicos")
-      .upsert(rows, {
-        onConflict: "hash_unico",
-        ignoreDuplicates: true,
-      });
-
-    if (error) {
-      return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-historicos", error });
+    if (!r.ok) {
+      return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-historicos", error: r.error });
     }
 
     return NextResponse.json({
       ok: true,
-      recibidos: rows.length,
+      recibidos: r.recibidos,
+      insertados: r.insertados,
     });
   } catch (error) {
     console.error("POST turnos_historicos error:", error);
@@ -139,6 +105,7 @@ export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const archivoKey = searchParams.get("archivo_key");
+    const anioParam = searchParams.get("anio");
 
     if (!archivoKey) {
       return NextResponse.json(
@@ -147,13 +114,14 @@ export async function DELETE(req: Request) {
       );
     }
 
-    const { error } = await supabaseAdmin
-      .from("turnos_historicos")
-      .delete()
-      .eq("archivo_key", archivoKey);
+    if (anioParam !== null && !/^\d{4}$/.test(anioParam)) {
+      return NextResponse.json({ error: "Año inválido" }, { status: 400 });
+    }
 
-    if (error) {
-      return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-historicos", error });
+    const r = await borrarImportacionHistorica(archivoKey, anioParam === null ? null : Number(anioParam));
+
+    if (!r.ok) {
+      return failResponse(500, "No se pudo completar la operación", { logContext: "turnos-historicos", error: r.error });
     }
 
     return NextResponse.json({ ok: true });

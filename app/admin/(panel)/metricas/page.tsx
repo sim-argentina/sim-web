@@ -1,8 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
 import { agregarStand, comparativoStandPorDuracion, personasDeFila } from "@/lib/metricasStand";
+import { hoyEnSim } from "@/lib/agenda";
+import {
+  aniosSeleccionables,
+  analizarArchivo,
+  construirTurnos,
+  crearHashTurno,
+  excelTimeToString,
+  MESES,
+  nombreMes,
+  normalizarMetodoPago,
+  normalizeText,
+  numberValue,
+  type ArchivoAnalizado,
+  type TurnoHistoricoImportado,
+} from "@/lib/historicosStand";
+import { leerHojasExcel } from "@/lib/historicosStandExcel";
 // (B8) Duración por la modalidad de cada fila: legacy conserva 15/30 como siempre;
 // v2 muestra 10/20/30 reales (nunca convierte 10 o 20 en 15).
 import { comparativoReservasPorDuracion } from "@/lib/minutosComerciales";
@@ -92,28 +107,12 @@ type CampInscripcion = {
 
 type CampeonatoLite = { id: string; nombre: string };
 
-function normalizeText(value: any) {
-  return String(value ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-}
-
-function numberValue(value: any) {
-  if (value === null || value === undefined || value === "") return 0;
-  if (typeof value === "number") return value;
-
-  return (
-    Number(
-      String(value)
-        .replace("$", "")
-        .replace(/\./g, "")
-        .replace(",", ".")
-        .trim()
-    ) || 0
-  );
-}
+/** Excel elegido, a la espera de que se confirmen su mes y su año. */
+type ArchivoPendiente = {
+  analisis: ArchivoAnalizado;
+  mes: string;
+  anio: string;
+};
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -173,69 +172,6 @@ function startOfYear(date: Date) {
 
 function endOfYear(date: Date) {
   return new Date(date.getFullYear(), 11, 31);
-}
-
-function excelTimeToString(value: any) {
-  if (!value) return "";
-
-  if (value instanceof Date) {
-    return value.toLocaleTimeString("es-AR", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  }
-
-  if (typeof value === "number") {
-    const totalMinutes = Math.round(value * 24 * 60);
-    const hours = Math.floor(totalMinutes / 60) % 24;
-    const minutes = totalMinutes % 60;
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-  }
-
-  return String(value);
-}
-
-function monthFromFileName(fileName: string) {
-  const name = normalizeText(fileName);
-
-  const months: Record<string, string> = {
-    enero: "01",
-    febrero: "02",
-    marzo: "03",
-    abril: "04",
-    mayo: "05",
-    junio: "06",
-    julio: "07",
-    agosto: "08",
-    septiembre: "09",
-    setiembre: "09",
-    octubre: "10",
-    noviembre: "11",
-    diciembre: "12",
-  };
-
-  for (const key of Object.keys(months)) {
-    if (name.includes(key)) return months[key];
-  }
-
-  return String(new Date().getMonth() + 1).padStart(2, "0");
-}
-
-function normalizarMetodoPago(value: any) {
-  const v = normalizeText(value);
-
-  if (!v) return "";
-  if (v.includes("qr") || v.includes("mp") || v.includes("mercado")) return "QR";
-  if (v === "ef" || v.includes("efectivo") || v.includes("cash")) return "EFECTIVO";
-  if (v.includes("deb")) return "DÉBITO";
-  if (v.includes("cred") || v.includes("credito")) return "CRÉDITO";
-  if (  v.includes("trasf") ||  v.includes("tranf") ||  v.includes("transfer") ||
-  v.includes("transferencia")
-)
-  return "TRANSFERENCIA";
-
-  return v.toUpperCase();
 }
 
 function obtenerEscuderias(value: any) {
@@ -359,59 +295,14 @@ function fechaConDia(fecha: string) {
   if (!date) return fecha || "Sin dato";
 
   const dia = date.toLocaleDateString("es-AR", { weekday: "long" });
+  // Con el año: los históricos ocupan 2025 y 2026, y "20/12" sola sería ambigua.
   const corto = date.toLocaleDateString("es-AR", {
     day: "2-digit",
     month: "2-digit",
+    year: "numeric",
   });
 
   return `${capitalizar(dia)} ${corto}`;
-}
-
-function getRowValue(row: any, posiblesNombres: string[]) {
-  const entries = Object.entries(row);
-
-  for (const nombre of posiblesNombres) {
-    const buscado = normalizeText(nombre);
-    const match = entries.find(([key]) => normalizeText(key) === buscado);
-    if (match) return match[1];
-  }
-
-  for (const nombre of posiblesNombres) {
-    const buscado = normalizeText(nombre);
-    const match = entries.find(([key]) => normalizeText(key).includes(buscado));
-    if (match) return match[1];
-  }
-
-  return null;
-}
-
-function crearArchivoKey(fileName: string) {
-  return normalizeText(fileName)
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function crearHashTurno(t: TurnoStand, archivoKey = "") {
-  // Filas en vivo del turnero (no Excel) tienen id único (PK): se deduplican por
-  // ese id. Los campos hora_tomado/duracion/escuderia están vacíos en vivo, así
-  // que el hash por contenido colapsaba ventas distintas que coincidían en
-  // fecha/monto/turnos (mismo importe, mismo día). El id evita ese falso duplicado.
-  if (t.origen !== "excel" && t.id != null) {
-    return `stand-id:${t.id}`;
-  }
-  return [
-    archivoKey || t.archivo_key || "",
-    t.fecha || "",
-    excelTimeToString(t.hora_tomado || ""),
-    excelTimeToString(t.hora_subida || ""),
-    excelTimeToString(t.hora_bajada || ""),
-    normalizarMetodoPago(t.metodo_pago),
-    numberValue(t.total ?? t.monto),
-    numberValue(t.cantidad_simuladores || t.personas || 1),
-    numberValue(t.cantidad_turnos || 1),
-    numberValue(t.duracion || 0),
-    normalizeText(t.escuderia || t.simulador || ""),
-  ].join("|");
 }
 
 function addToRecord(record: Record<string, number>, key: string | null | undefined, value = 1) {
@@ -459,6 +350,8 @@ function clavePeriodo(fecha: string, agrupacion: Agrupacion) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
 
+  // Las etiquetas de día y semana llevan el año: con históricos de 2025 y datos de
+  // 2026, "Semana 06/10 - 12/10" aparecería dos veces en el gráfico y en el selector.
   if (agrupacion === "dia") {
     return {
       key: `${year}-${month}-${day}`,
@@ -467,6 +360,7 @@ function clavePeriodo(fecha: string, agrupacion: Agrupacion) {
           weekday: "long",
           day: "2-digit",
           month: "2-digit",
+          year: "numeric",
         })
       ),
       sortValue: `${year}-${month}-${day}`,
@@ -483,9 +377,11 @@ function clavePeriodo(fecha: string, agrupacion: Agrupacion) {
       label: `Semana ${start.toLocaleDateString("es-AR", {
         day: "2-digit",
         month: "2-digit",
+        year: "2-digit",
       })} - ${end.toLocaleDateString("es-AR", {
         day: "2-digit",
         month: "2-digit",
+        year: "2-digit",
       })}`,
       sortValue: startKey,
     };
@@ -833,6 +729,8 @@ export default function AdminMetricasPage() {
 
   const [loading, setLoading] = useState(true);
   const [importando, setImportando] = useState(false);
+  // Excel elegidos que esperan la confirmación de mes y año (no se importa nada antes).
+  const [pendientes, setPendientes] = useState<ArchivoPendiente[]>([]);
 
   const [quickPeriod, setQuickPeriod] = useState<QuickPeriod>("mes");
   const [busqueda, setBusqueda] = useState("");
@@ -935,126 +833,67 @@ export default function AdminMetricasPage() {
     }
   }
 
-  async function leerExcel(file: File) {
+  // Paso 1: leer los Excel elegidos. Nada se guarda todavía: cada archivo espera
+  // que se confirmen su mes y su año. El año NUNCA se toma de la fecha actual
+  // (así se guardaron como 2026 los Excel de octubre a diciembre de 2025).
+  async function elegirExcel(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || []) as File[];
+    e.target.value = "";
+    if (files.length === 0) return;
+
     // Validación defensiva antes de parsear (tamaño + extensión).
     const MAX_EXCEL_BYTES = 5 * 1024 * 1024;
-    if (file.size > MAX_EXCEL_BYTES) {
-      alert("El archivo supera el máximo de 5 MB.");
-      return [];
+    const hoy = hoyEnSim();
+    const nuevos: ArchivoPendiente[] = [];
+    const rechazados: string[] = [];
+
+    for (const file of files) {
+      if (file.size > MAX_EXCEL_BYTES) {
+        rechazados.push(`${file.name}: supera el máximo de 5 MB.`);
+        continue;
+      }
+      if (!/\.(xlsx|xls)$/i.test(file.name)) {
+        rechazados.push(`${file.name}: formato inválido. Subí un archivo .xlsx.`);
+        continue;
+      }
+      try {
+        const analisis = analizarArchivo(file.name, leerHojasExcel(await file.arrayBuffer()), hoy);
+        nuevos.push({
+          analisis,
+          mes: analisis.mesDetectado ?? "",
+          anio: analisis.anioDetectado ? String(analisis.anioDetectado) : "",
+        });
+      } catch (error) {
+        console.error(error);
+        rechazados.push(`${file.name}: no se pudo leer el Excel.`);
+      }
     }
-    if (!/\.(xlsx|xls)$/i.test(file.name)) {
-      alert("Formato inválido. Subí un archivo .xlsx.");
-      return [];
-    }
 
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(new Uint8Array(buffer), {
-      type: "array",
-      cellDates: true,
-    });
-
-    const year = new Date().getFullYear();
-    const month = monthFromFileName(file.name);
-    const archivoKey = crearArchivoKey(file.name);
-
-    const turnosImportados: TurnoStand[] = [];
-    const claves = new Set<string>();
-
-    workbook.SheetNames.forEach((sheetName) => {
-      const dayNumber = Number(sheetName);
-      if (!dayNumber || dayNumber < 1 || dayNumber > 31) return;
-
-      const sheet = workbook.Sheets[sheetName];
-
-      const rows: any[] = XLSX.utils.sheet_to_json(sheet, {
-        defval: null,
-      });
-
-      const day = String(dayNumber).padStart(2, "0");
-      const fecha = `${year}-${month}-${day}`;
-
-      rows.forEach((row) => {
-        const monto = numberValue(getRowValue(row, ["Monto"]));
-        const metodoPago = normalizarMetodoPago(
-          getRowValue(row, ["Metodo de Pago", "Método de Pago", "Pago"])
-        );
-
-        if (!monto || monto <= 0) return;
-        if (!metodoPago) return;
-
-        const escuderia = String(
-          getRowValue(row, ["Escuderia", "Escudería", "Simulador"]) || ""
-        );
-
-        const cantidadSimuladores =
-          numberValue(getRowValue(row, ["Cant. de Sim.", "Cantidad de Sim", "Cant Sim"])) || 1;
-
-        const cantidadTurnos =
-          numberValue(getRowValue(row, ["Cant. Turnos", "Cantidad Turnos", "Turnos"])) ||
-          cantidadSimuladores ||
-          1;
-
-        const duracion =
-          numberValue(getRowValue(row, ["Tiempo (Min)", "Tiempo", "Duracion", "Duración"])) || 15;
-
-        const turnoParseado: TurnoStand = {
-          archivo_nombre: file.name,
-          archivo_key: archivoKey,
-          fecha,
-          hora_tomado: excelTimeToString(
-            getRowValue(row, ["Hora que se tomo el turno", "Hora tomado"])
-          ),
-          hora_subida: excelTimeToString(getRowValue(row, ["Hora de subida", "Hora subida"])),
-          hora_bajada: excelTimeToString(getRowValue(row, ["Hora de bajada", "Hora bajada"])),
-          metodo_pago: metodoPago,
-          total: monto,
-          cantidad_simuladores: cantidadSimuladores,
-          cantidad_turnos: cantidadTurnos,
-          duracion,
-          escuderia,
-          simulador: escuderia,
-          origen: "excel",
-        };
-
-        const hash = crearHashTurno(turnoParseado, archivoKey);
-        if (claves.has(hash)) return;
-
-        claves.add(hash);
-        turnoParseado.hash_unico = hash;
-        turnosImportados.push(turnoParseado);
-      });
-    });
-
-    return turnosImportados;
+    if (rechazados.length) alert(rechazados.join("\n"));
+    if (nuevos.length) setPendientes(nuevos);
   }
 
-  async function importarExcel(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files || []) as File[];
-    if (files.length === 0) return;
+  function actualizarPendiente(indice: number, cambios: Partial<Pick<ArchivoPendiente, "mes" | "anio">>) {
+    setPendientes((prev) => prev.map((p, i) => (i === indice ? { ...p, ...cambios } : p)));
+  }
+
+  // Paso 2: con mes y año confirmados en TODOS los archivos, se guardan.
+  async function confirmarImportacion() {
+    if (!revisionPendientes.length || revisionPendientes.some((r) => r.bloqueado)) return;
+
+    const turnos: TurnoHistoricoImportado[] = revisionPendientes.flatMap((r) => r.turnos);
+    let insertados = 0;
 
     try {
       setImportando(true);
 
-      const resultados = await Promise.all(files.map((file) => leerExcel(file)));
-      const turnos = resultados.flat();
-
-      if (turnos.length === 0) {
-        alert("No se encontraron turnos válidos en los Excel.");
-        return;
-      }
-
-      const chunks: TurnoStand[][] = [];
       for (let i = 0; i < turnos.length; i += 500) {
-        chunks.push(turnos.slice(i, i + 500));
-      }
-
-      for (const chunk of chunks) {
         const res = await fetch("/api/turnos-historicos", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ turnos: chunk }),
+          body: JSON.stringify({ turnos: turnos.slice(i, i + 500) }),
         });
 
         const json = await res.json();
@@ -1062,39 +901,45 @@ export default function AdminMetricasPage() {
         if (!res.ok) {
           throw new Error(json.error || "Error guardando turnos históricos");
         }
+        insertados += Number(json.insertados ?? 0);
       }
-
-      await cargarDatos();
 
       const facturacion = turnos.reduce((acc, t) => acc + numberValue(t.total), 0);
       const turnosVendidos = turnos.reduce(
         (acc, t) => acc + numberValue(t.cantidad_turnos),
         0
       );
+      const detalle = pendientes
+        .map((p) => `· ${p.analisis.nombre}: ${nombreMes(p.mes)} de ${p.anio}`)
+        .join("\n");
 
       alert(
-        `Excel importado y guardado en Supabase.\nArchivos: ${files.length}\nVentas leídas: ${turnos.length}\nTurnos vendidos leídos: ${turnosVendidos}\nFacturación leída: ${formatMoney(facturacion)}`
+        `Excel importado y guardado en Supabase.\n${detalle}\nVentas leídas: ${turnos.length}\nVentas nuevas: ${insertados}\nYa importadas (ignoradas): ${turnos.length - insertados}\nTurnos vendidos leídos: ${turnosVendidos}\nFacturación leída: ${formatMoney(facturacion)}`
       );
-    } catch (error: any) {
+
+      setPendientes([]);
+      window.location.reload();
+    } catch (error) {
       console.error(error);
-      alert(error.message || "Error importando Excel");
+      alert(error instanceof Error && error.message ? error.message : "Error importando Excel");
+      // Puede haberse guardado una parte: se refresca. Reintentar no duplica (hash).
+      await cargarDatos();
     } finally {
-  setImportando(false);
-
-  if (e.target) {
-    e.target.value = "";
+      setImportando(false);
+    }
   }
 
-  window.location.reload();
-}
-  }
-
-  async function borrarImportacion(archivoKey: string) {
-    const confirmar = confirm("¿Seguro que querés borrar esta importación?");
+  async function borrarImportacion(archivoKey: string, anio: string, nombre: string) {
+    const confirmar = confirm(
+      `¿Seguro que querés borrar la importación "${nombre}"${anio ? ` de ${anio}` : ""}?`
+    );
     if (!confirmar) return;
 
     try {
-      const res = await fetch(`/api/turnos-historicos?archivo_key=${archivoKey}`, {
+      // Con el año: el mismo archivo puede estar importado en dos años distintos.
+      const params = new URLSearchParams({ archivo_key: archivoKey });
+      if (/^\d{4}$/.test(anio)) params.set("anio", anio);
+      const res = await fetch(`/api/turnos-historicos?${params.toString()}`, {
         method: "DELETE",
       });
 
@@ -1156,32 +1001,93 @@ export default function AdminMetricasPage() {
     });
   }, [turnosStand, turnosHistoricos, busqueda, fechaDesde, fechaHasta]);
 
+  // Una importación = archivo + año: el mismo Excel puede estar cargado en dos años.
   const importaciones = useMemo(() => {
     const map = new Map<
       string,
-      { archivo_key: string; archivo_nombre: string; ventas: number; facturacion: number }
+      {
+        key: string;
+        archivo_key: string;
+        anio: string;
+        archivo_nombre: string;
+        meses: Set<string>;
+        ventas: number;
+        facturacion: number;
+      }
     >();
 
     turnosHistoricos.forEach((t) => {
-      const key = t.archivo_key || "sin-key";
+      const archivoKey = t.archivo_key || "sin-key";
+      const anio = (t.fecha || "").slice(0, 4);
+      const key = `${archivoKey}|${anio}`;
       if (!map.has(key)) {
         map.set(key, {
-          archivo_key: key,
-          archivo_nombre: t.archivo_nombre || key,
+          key,
+          archivo_key: archivoKey,
+          anio,
+          archivo_nombre: t.archivo_nombre || archivoKey,
+          meses: new Set(),
           ventas: 0,
           facturacion: 0,
         });
       }
 
       const item = map.get(key)!;
+      item.meses.add((t.fecha || "").slice(5, 7));
       item.ventas += 1;
       item.facturacion += numberValue(t.total);
     });
 
-    return Array.from(map.values()).sort((a, b) =>
-      a.archivo_nombre.localeCompare(b.archivo_nombre)
-    );
+    return Array.from(map.values())
+      .map((imp) => {
+        const meses = [...imp.meses].filter(Boolean).sort();
+        return {
+          ...imp,
+          orden: `${imp.anio}-${meses[0] ?? ""}`,
+          periodo: meses.length
+            ? `${meses.map((m) => nombreMes(m)).join(", ")} ${imp.anio}`
+            : "Sin fecha",
+        };
+      })
+      .sort(
+        (a, b) =>
+          a.orden.localeCompare(b.orden) || a.archivo_nombre.localeCompare(b.archivo_nombre)
+      );
   }, [turnosHistoricos]);
+
+  // Años en los que ya está cargado cada archivo: reimportarlo con el MISMO año
+  // no duplica (mismo hash_unico); con OTRO año crea ventas nuevas en ese año.
+  const aniosImportadosPorArchivo = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    turnosHistoricos.forEach((t) => {
+      const archivoKey = t.archivo_key || "";
+      const anio = (t.fecha || "").slice(0, 4);
+      if (!archivoKey || !anio) return;
+      if (!map.has(archivoKey)) map.set(archivoKey, new Set());
+      map.get(archivoKey)!.add(anio);
+    });
+    return map;
+  }, [turnosHistoricos]);
+
+  const revisionPendientes = useMemo(() => {
+    const hoy = hoyEnSim();
+    return pendientes.map((p) => {
+      const { turnos, errores } = construirTurnos(
+        p.analisis,
+        p.anio ? Number(p.anio) : null,
+        p.mes || null,
+        hoy
+      );
+      const sinVentas = errores.length === 0 && turnos.length === 0;
+      const aniosPrevios = [...(aniosImportadosPorArchivo.get(p.analisis.archivoKey) ?? [])].sort();
+      return {
+        turnos,
+        errores: sinVentas ? ["No se encontraron ventas en las hojas de días."] : errores,
+        bloqueado: sinVentas || errores.length > 0,
+        aniosPrevios,
+      };
+    });
+  }, [pendientes, aniosImportadosPorArchivo]);
 
   const opcionesIngresos = useMemo(() => {
     return opcionesPeriodo(standFiltrado, agrupacionIngresos);
@@ -1533,6 +1439,148 @@ export default function AdminMetricasPage() {
 
   return (
     <main className="min-h-screen bg-[#050505] text-white">
+      {pendientes.length > 0 && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/75 p-4 md:p-10"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="titulo-confirmar-anio"
+        >
+          <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#0b0b0b] p-6">
+            <h2 id="titulo-confirmar-anio" className="text-2xl font-bold text-white">
+              Confirmá el mes y el año de cada Excel
+            </h2>
+            <p className="mt-2 text-sm text-white/60">
+              No se guarda nada hasta que confirmes. El año no se toma de la fecha de hoy: si el
+              archivo lo indica se propone, y si no, elegilo.
+            </p>
+
+            <div className="mt-6 space-y-4">
+              {pendientes.map((p, i) => {
+                const r = revisionPendientes[i];
+                if (!r) return null;
+                const faltaElegir = !p.mes || !p.anio;
+                const yaEnEseAnio = Boolean(p.anio) && r.aniosPrevios.includes(p.anio);
+                const enOtroAnio =
+                  Boolean(p.anio) && r.aniosPrevios.length > 0 && !r.aniosPrevios.includes(p.anio);
+                const fechas = r.turnos.map((t) => t.fecha).sort();
+                const fmt = (f: string) => f.split("-").reverse().join("/");
+
+                return (
+                  <div
+                    key={`${p.analisis.archivoKey}-${i}`}
+                    className="rounded-xl border border-white/10 bg-black/30 p-4"
+                  >
+                    <p className="break-words font-semibold text-white">{p.analisis.nombre}</p>
+                    <p className="mt-1 text-sm text-white/50">
+                      {p.analisis.ventasLeidas} {p.analisis.ventasLeidas === 1 ? "venta" : "ventas"} en{" "}
+                      {p.analisis.dias.length} {p.analisis.dias.length === 1 ? "hoja de día" : "hojas de días"} ·{" "}
+                      {p.analisis.motivoAnio}
+                    </p>
+
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor={`importar-mes-${i}`} className="mb-1 block text-xs text-white/60">
+                          Mes
+                        </label>
+                        <select
+                          id={`importar-mes-${i}`}
+                          value={p.mes}
+                          onChange={(e) => actualizarPendiente(i, { mes: e.target.value })}
+                          disabled={importando}
+                          className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                        >
+                          <option value="">Elegí el mes</option>
+                          {[...new Set(Object.values(MESES))].map((m) => (
+                            <option key={m} value={m}>
+                              {capitalizar(nombreMes(m))}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor={`importar-anio-${i}`} className="mb-1 block text-xs text-white/60">
+                          Año
+                        </label>
+                        <select
+                          id={`importar-anio-${i}`}
+                          value={p.anio}
+                          onChange={(e) => actualizarPendiente(i, { anio: e.target.value })}
+                          disabled={importando}
+                          className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white outline-none focus:border-red-500"
+                        >
+                          <option value="">Elegí el año</option>
+                          {aniosSeleccionables(hoyEnSim()).map((a) => (
+                            <option key={a} value={String(a)}>
+                              {a}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {faltaElegir ? (
+                      <p className="mt-3 text-sm text-amber-300">Elegí el mes y el año para continuar.</p>
+                    ) : r.errores.length > 0 ? (
+                      <ul className="mt-3 space-y-1 text-sm text-red-400">
+                        {r.errores.slice(0, 5).map((err) => (
+                          <li key={err}>{err}</li>
+                        ))}
+                        {r.errores.length > 5 && <li>…y {r.errores.length - 5} más.</li>}
+                      </ul>
+                    ) : (
+                      <p className="mt-3 text-sm text-emerald-300">
+                        {r.turnos.length === 1
+                          ? `Se importa 1 venta, del ${fmt(fechas[0])}.`
+                          : `Se importan ${r.turnos.length} ventas, del ${fmt(fechas[0])} al ${fmt(fechas[fechas.length - 1])}.`}
+                      </p>
+                    )}
+
+                    {yaEnEseAnio && (
+                      <p className="mt-2 text-sm text-white/60">
+                        Este archivo ya está importado en {p.anio}: las ventas repetidas se ignoran.
+                      </p>
+                    )}
+                    {enOtroAnio && (
+                      <p className="mt-2 text-sm text-amber-300">
+                        Atención: este archivo ya está importado en {r.aniosPrevios.join(", ")}.
+                        Importarlo como {p.anio} agrega sus ventas también en {p.anio}: entre años
+                        distintos no se deduplican.
+                      </p>
+                    )}
+                    {p.analisis.hojasIgnoradas.length > 0 && (
+                      <p className="mt-2 text-xs text-white/45">
+                        Hojas que no son un día y no se importan:{" "}
+                        {p.analisis.hojasIgnoradas.join(", ")}.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                onClick={() => setPendientes([])}
+                disabled={importando}
+                className="rounded-xl border border-white/15 px-4 py-3 text-sm text-white/80 hover:bg-white/5 disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarImportacion}
+                disabled={importando || revisionPendientes.some((r) => r.bloqueado)}
+                className="rounded-xl border border-red-500/40 bg-red-500/20 px-4 py-3 text-sm font-semibold text-white hover:bg-red-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {importando
+                  ? "Importando..."
+                  : `Importar ${pendientes.length} ${pendientes.length === 1 ? "archivo" : "archivos"}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mx-auto max-w-7xl px-6 py-10">
         <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
@@ -1671,7 +1719,7 @@ export default function AdminMetricasPage() {
       type="file"
       multiple
       accept=".xlsx,.xls,.csv"
-      onChange={importarExcel}
+      onChange={elegirExcel}
       disabled={importando}
       className="hidden"
     />
@@ -1808,18 +1856,18 @@ export default function AdminMetricasPage() {
                 <div className="space-y-3">
                   {importaciones.map((imp) => (
                     <div
-                      key={imp.archivo_key}
+                      key={imp.key}
                       className="flex flex-col gap-3 rounded-xl border border-white/10 bg-black/30 p-4 md:flex-row md:items-center md:justify-between"
                     >
                       <div>
                         <p className="font-semibold text-white">{imp.archivo_nombre}</p>
                         <p className="text-sm text-white/50">
-                          Ventas: {imp.ventas} · Facturación: {formatMoney(imp.facturacion)}
+                          Período: {capitalizar(imp.periodo)} · Ventas: {imp.ventas} · Facturación: {formatMoney(imp.facturacion)}
                         </p>
                       </div>
 
                       <button
-                        onClick={() => borrarImportacion(imp.archivo_key)}
+                        onClick={() => borrarImportacion(imp.archivo_key, imp.anio, imp.archivo_nombre)}
                         className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm text-white hover:bg-red-500/20"
                       >
                         Borrar importación
