@@ -318,3 +318,25 @@ export function trackMensualidadReservaConfirmada(params: {
     minutes_used: Math.round(Number(params.minutos_consumidos) || 0),
   });
 }
+
+// ── Reservas: experiencia post-pago (EXPERIMENTAL) ───────────────────────────
+// /reservas/confirmacion reemplaza a /reservas/exito SOLO para quien entra al
+// experimento; en ese flujo /reservas/exito no se visita, así que el purchase
+// se dispara acá, con el mismo transaction_id (reserva_<id>) y el mismo dedupe,
+// y recién cuando la BASE confirmó el pago. Sin PII ni fecha/hora concretas.
+
+/** Se mostró el comprobante de una reserva pagada. */
+export function trackReservaPagoConfirmadoVista(transactionId: string): void {
+  gaEvent("reserva_payment_success_view", { funnel: "reserva" });
+  trackPurchase("reserva", transactionId);
+}
+
+/** Tocó "Agregar a Google Calendar". */
+export function trackAgregarCalendario(): void {
+  gaEvent("add_to_calendar_click", { funnel: "reserva", calendar: "google" });
+}
+
+/** Descargó el .ics ("Agregar a otro calendario"). */
+export function trackDescargaIcs(): void {
+  gaEvent("calendar_ics_download", { funnel: "reserva" });
+}

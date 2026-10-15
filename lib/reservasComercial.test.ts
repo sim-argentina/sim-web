@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { CORTE_MODALIDAD_V2_MS } from "@/lib/modalidadComercial";
@@ -846,6 +847,17 @@ async function main() {
     }
     process.env.MERCADOPAGO_ACCESS_TOKEN = "TEST-B3-SIN-RED";
     process.env.NEXT_PUBLIC_BASE_URL = "https://b3.invalid";
+    // (Post-pago experimental) Sesión del panel firmada con un secreto DESCARTABLE
+    // y next/headers en memoria, para probar las dos llaves del retorno nuevo.
+    process.env.ADMIN_SESSION_SECRET = randomBytes(32).toString("hex");
+    let cookiePanel: string | undefined;
+    const rutaHeaders = require.resolve("next/headers");
+    require.cache[rutaHeaders] = {
+      id: rutaHeaders, filename: rutaHeaders, loaded: true,
+      exports: {
+        cookies: async () => ({ get: (n: string) => (cookiePanel && n === "sim-admin-session" ? { name: n, value: cookiePanel } : undefined) }),
+      },
+    } as unknown as NodeJS.Module;
     const { Preference } = await import("mercadopago");
     const preferencias: Array<{ body: { items: Array<{ unit_price: number }>; external_reference: string } }> = [];
     (Preference.prototype as unknown as { create: (a: unknown) => Promise<unknown> }).create = async (a: unknown) => {
@@ -961,6 +973,58 @@ async function main() {
     assert.equal(fila.duracion_minutos, 20);
     assert.equal(fila.total, 34000);
     assert.equal(preferencias[1].body.items[0].unit_price, 34000);
+
+    // f2) Retorno de Mercado Pago. Variable apagada: el de siempre, sin auto_return,
+    // mismo cuerpo y mismo orden. Prendida sin sesión (cliente común): idéntico.
+    // Prendida + sesión del panel: experiencia post-pago firmada + auto_return.
+    const RETORNO = {
+      success: "https://b3.invalid/reservas/exito",
+      failure: "https://b3.invalid/reservas/error",
+      pending: "https://b3.invalid/reservas/pendiente",
+    };
+    const cuerpoPref = (i: number) => preferencias[i].body as unknown as Record<string, unknown>;
+    assert.deepEqual(cuerpoPref(0).back_urls, RETORNO);
+    assert.equal("auto_return" in cuerpoPref(0), false, "sin auto_return");
+    assert.deepEqual(Object.keys(cuerpoPref(0)), ["items", "external_reference", "back_urls", "notification_url"]);
+    const pedirPref = () => rutaPreferencia.POST(post("/api/mercadopago/preference", cuerpo({
+      fecha: habil, hora: "12:40", duracion_minutos: 15, modalidad_vista: "legacy", precio_visto: 12000,
+    })));
+    process.env.EXPERIMENTAL_RESERVA_POSTPAY = "true";
+    reiniciar();
+    override("legacy");
+    cookiePanel = undefined;
+    res = await pedirPref();
+    assert.equal(res.status, 200);
+    assert.deepEqual(cuerpoPref(preferencias.length - 1).back_urls, RETORNO, "cliente común: retorno de siempre");
+    assert.equal("auto_return" in cuerpoPref(preferencias.length - 1), false);
+    assert.deepEqual(Object.keys(cuerpoPref(preferencias.length - 1)), Object.keys(cuerpoPref(0)), "cuerpo idéntico");
+    const { createSessionToken } = await import("@/lib/adminSession");
+    const { firmarComprobante } = await import("@/lib/reservaPostpay");
+    cookiePanel = await createSessionToken("admin");
+    reiniciar();
+    override("legacy");
+    res = await pedirPref();
+    assert.equal(res.status, 200);
+    fila = tabla("reservas")[0];
+    const exp = cuerpoPref(preferencias.length - 1);
+    const firma = firmarComprobante(Number(fila.id));
+    assert.deepEqual(exp.back_urls, {
+      success: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=exito`,
+      pending: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=pendiente`,
+      failure: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=error`,
+    });
+    assert.equal(exp.auto_return, "approved");
+    assert.equal(exp.external_reference, `reserva_${fila.id}`, "la relación con el webhook no cambia");
+    assert.equal(exp.notification_url, "https://b3.invalid/api/mercadopago/webhook");
+    assert.equal(fila.estado, "pendiente_pago", "la reserva se crea igual que siempre");
+    // Apagada otra vez, aun con sesión: el retorno de siempre.
+    delete process.env.EXPERIMENTAL_RESERVA_POSTPAY;
+    reiniciar();
+    override("legacy");
+    res = await pedirPref();
+    assert.deepEqual(cuerpoPref(preferencias.length - 1).back_urls, RETORNO);
+    assert.equal("auto_return" in cuerpoPref(preferencias.length - 1), false);
+    cookiePanel = undefined;
 
     // g) Pestaña vieja (pago): 409, 0 reservas, 0 preferencias, 0 Finanzas.
     const antes = preferencias.length;

@@ -8,6 +8,7 @@ import { validarCodigoDescuento } from "@/lib/codigosDescuento";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
+import { experimentoPostpayActivo, retornoExperimental } from "@/lib/reservaPostpay";
 
 const falloJson = (f: Fallo) =>
   NextResponse.json(
@@ -123,6 +124,13 @@ export async function POST(req: Request) {
     }
     reservaPendienteId = reservaPendiente.id;
 
+    // (Experimental, oculto) Experiencia post-pago nueva: solo con
+    // EXPERIMENTAL_RESERVA_POSTPAY=true Y una sesión del panel verificada en el
+    // servidor. Si no, el retorno de siempre, idéntico (ver lib/reservaPostpay.ts).
+    const experimental = (await experimentoPostpayActivo())
+      ? retornoExperimental(baseUrl, reservaPendiente.id)
+      : null;
+
     const preference = new Preference(client);
     const result = await preference.create({
       body: {
@@ -136,11 +144,12 @@ export async function POST(req: Request) {
           },
         ],
         external_reference: `reserva_${reservaPendiente.id}`,
-        back_urls: {
+        back_urls: experimental ?? {
           success: `${baseUrl}/reservas/exito`,
           failure: `${baseUrl}/reservas/error`,
           pending: `${baseUrl}/reservas/pendiente`,
         },
+        ...(experimental ? { auto_return: "approved" } : {}),
         notification_url: `${baseUrl}/api/mercadopago/webhook`,
       },
     });

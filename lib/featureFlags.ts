@@ -20,3 +20,14 @@ export function flagHabilitada(valor: string | undefined | null): boolean {
 export function mensualidadesHabilitadas(): boolean {
   return flagHabilitada(process.env.MENSUALIDADES_ENABLED);
 }
+
+// Experiencia post-pago de Reservas (EXPERIMENTAL, todavía no pública). Con la
+// variable en "true" se habilitan /reservas/confirmacion y sus APIs, pero la
+// preferencia de Mercado Pago SOLO vuelve ahí cuando quien reserva tiene una
+// sesión del panel (admin o staff) verificada en el servidor: un cliente común
+// sigue con el retorno de siempre aunque la variable esté prendida. Apagada
+// (ausente o cualquier otro valor): todo exactamente como antes y las rutas
+// nuevas responden 404. Ver lib/reservaPostpay.ts.
+export function reservaPostpayHabilitada(): boolean {
+  return flagHabilitada(process.env.EXPERIMENTAL_RESERVA_POSTPAY);
+}
