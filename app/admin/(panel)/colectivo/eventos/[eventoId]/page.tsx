@@ -9,7 +9,7 @@ import {
   DURACIONES_SUGERIDAS, DURACION_DEFAULT, ESTADO_EVENTO_LABEL,
   PERSONAS_COLECTIVO, turnosColectivo, esVendibleEnEvento, resumirVentasPorProducto,
   CANTIDADES_VENTA_COLECTIVO, MEDIOS_PAGO_GASTO_COLECTIVO, PILL_TIPO_CAJA,
-  type TipoCaja, type ResumenCajaEvento,
+  type TipoCaja, type ResumenCajaEvento, type InformeEvento, type LineaInforme,
 } from "@/lib/colectivo";
 import { hoyEnSim } from "@/lib/agenda";
 
@@ -17,6 +17,7 @@ const PESTANAS_EVENTO = [
   { value: "turnero", label: "Turnero" },
   { value: "productos", label: "Productos" },
   { value: "caja", label: "Caja" },
+  { value: "informe", label: "Informe" },
 ] as const;
 type Pestana = (typeof PESTANAS_EVENTO)[number]["value"];
 
@@ -192,8 +193,8 @@ export default function EventoColectivoPage() {
             </div>
           </div>
 
-          {/* Selector de día del evento (la caja es de todo el evento: no lo usa) */}
-          <div className={`mt-4 flex flex-wrap items-center gap-2 ${pestana === "caja" ? "hidden" : ""}`}>
+          {/* Selector de día del evento (la caja y el informe son de todo el evento: no lo usan) */}
+          <div className={`mt-4 flex flex-wrap items-center gap-2 ${pestana === "caja" || pestana === "informe" ? "hidden" : ""}`}>
             <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white/40">Día del evento</span>
             {dias.map((d) => (
               <button key={d} onClick={() => setDia(d)} className={`rounded-full border px-3 py-1.5 text-xs font-black transition ${d === dia ? "border-red-500 bg-red-600 text-white" : "border-white/15 bg-black text-white/60 hover:border-red-500 hover:text-white"}`}>
@@ -235,9 +236,11 @@ export default function EventoColectivoPage() {
         )}
 
         {/* Resumen general del evento (turnos + productos), en las dos pestañas operativas */}
-        {pestana !== "caja" && <ResumenGeneral turnos={turnos} ventas={ventas} />}
+        {(pestana === "turnero" || pestana === "productos") && <ResumenGeneral turnos={turnos} ventas={ventas} />}
 
         {pestana === "caja" && <CajaEvento eventoId={eventoId} cerrado={cerrado} esAdmin={esAdmin} />}
+
+        {pestana === "informe" && <InformeDelEvento eventoId={eventoId} />}
       </section>
     </main>
   );
@@ -1231,6 +1234,204 @@ function CajaEvento({ eventoId, cerrado, esAdmin }: { eventoId: string; cerrado:
                         </div>
                       )}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═════════ Informe del evento ═════════
+// Informe interno del Colectivo: resumen ejecutivo del evento, solo lectura. Lo
+// arma el servidor en el momento (armarInformeEvento) con las mismas reglas que
+// la caja, desde los registros históricos del evento: sirve igual para eventos
+// activos, finalizados o viejos. No forma parte de Finanzas SIM.
+type RespuestaInforme = {
+  evento: { nombre: string; fecha_inicio: string; fecha_fin: string; localidad: string | null; provincia: string | null; ubicacion: string | null; estado: string };
+  informe: InformeEvento;
+  movimientos: Movimiento[];
+};
+const fechaLarga = (f: string) => `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`;
+const porcentaje = (n: number) => `${n.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+
+function LineaMonto({ etiqueta, valor, detalle, fuerte }: { etiqueta: string; valor: number; detalle?: string; fuerte?: boolean }) {
+  return (
+    <div className={`flex items-baseline justify-between gap-3 text-sm ${fuerte ? "border-t border-white/10 pt-2" : ""}`}>
+      <span className={`min-w-0 ${fuerte ? "font-black text-white" : "font-bold text-white/70"}`}>{etiqueta}{detalle && <span className="ml-1 text-xs font-bold text-white/35">{detalle}</span>}</span>
+      <span className={`shrink-0 font-black ${fuerte ? "text-white" : "text-white/90"}`}>{dineroCaja(valor)}</span>
+    </div>
+  );
+}
+function BloqueInforme({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black p-4">
+      <p className="mb-3 text-[11px] font-black uppercase tracking-[0.16em] text-white/40">{titulo}</p>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+function ListaLineas({ lineas, vacio, total, etiquetaTotal }: { lineas: LineaInforme[]; vacio: string; total?: number; etiquetaTotal?: string }) {
+  if (lineas.length === 0) return <p className="text-sm text-white/40">{vacio}</p>;
+  return (
+    <>
+      {lineas.map((l) => <LineaMonto key={l.clave} etiqueta={l.etiqueta} valor={l.total} detalle={`· ${l.cantidad}`} />)}
+      {total !== undefined && etiquetaTotal && <LineaMonto etiqueta={etiquetaTotal} valor={total} fuerte />}
+    </>
+  );
+}
+
+function InformeDelEvento({ eventoId }: { eventoId: string }) {
+  const [datos, setDatos] = useState<RespuestaInforme | null>(null);
+  const [error, setError] = useState("");
+
+  const cargar = useCallback(async () => {
+    const r = await fetch(`/api/admin/colectivo/eventos/${eventoId}/informe`, { cache: "no-store" });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { setError(d.error || "No se pudo armar el informe"); return; }
+    setError("");
+    setDatos(d as RespuestaInforme);
+  }, [eventoId]);
+  // Carga asíncrona inicial: los setState ocurren tras el await, no de forma
+  // síncrona (falso positivo de react-hooks/set-state-in-effect).
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { cargar(); }, [cargar]);
+
+  if (error) return <div className="rounded-2xl border border-red-500/30 bg-red-950/20 px-4 py-3 text-sm font-bold text-red-300">{error}</div>;
+  if (!datos) return <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 text-sm text-white/60">Armando el informe...</div>;
+
+  const { evento, informe, movimientos } = datos;
+  const r = informe.resumen;
+  const positivo = r.neto >= 0;
+  const ubicacion = [evento.localidad, evento.provincia, evento.ubicacion].filter(Boolean).join(" · ");
+  const t = informe.turnos;
+  const p = informe.productos;
+
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4 md:p-5">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <h2 className="text-2xl font-black uppercase text-red-500">Informe del evento</h2>
+        <p className="rounded-xl border border-white/10 bg-black px-3 py-1 text-[11px] font-bold text-white/55">Informe interno del Colectivo. No forma parte de Finanzas SIM.</p>
+      </div>
+
+      <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <span className="font-black text-white">{evento.nombre}</span>
+        <span className="text-white/55">{fechaLarga(evento.fecha_inicio)}{evento.fecha_fin !== evento.fecha_inicio ? ` → ${fechaLarga(evento.fecha_fin)}` : ""}</span>
+        {ubicacion && <span className="text-white/45">{ubicacion}</span>}
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${evento.estado === "activo" ? "bg-green-900 text-green-300" : evento.estado === "proximo" ? "bg-blue-900 text-blue-300" : evento.estado === "cancelado" ? "bg-red-900 text-red-300" : "bg-zinc-800 text-zinc-400"}`}>{ESTADO_EVENTO_LABEL[evento.estado] || evento.estado}</span>
+      </div>
+
+      {/* Resumen principal (en celular, una card por fila) */}
+      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Ingresos</p>
+          <p className="mt-1 text-xl font-black text-white md:text-2xl">{dineroCaja(r.ingresos)}</p>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Costos</p>
+          <p className="mt-1 text-xl font-black text-white md:text-2xl">{dineroCaja(r.costos)}</p>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Gastos</p>
+          <p className="mt-1 text-xl font-black text-white md:text-2xl">{dineroCaja(r.gastos)}</p>
+        </div>
+        <div className={`rounded-2xl border p-4 ${positivo ? "border-green-500/30 bg-green-950/15" : "border-red-500/40 bg-red-950/20"}`}>
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Resultado neto</p>
+          <p className={`mt-1 text-xl font-black md:text-2xl ${positivo ? "text-green-300" : "text-red-400"}`}>{dineroCaja(r.neto)}</p>
+        </div>
+        <div className={`rounded-2xl border p-4 ${informe.margen === null ? "border-white/10 bg-black" : positivo ? "border-green-500/30 bg-green-950/15" : "border-red-500/40 bg-red-950/20"}`}>
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Margen del evento</p>
+          <p className={`mt-1 text-xl font-black md:text-2xl ${informe.margen === null ? "text-white/50" : positivo ? "text-green-300" : "text-red-400"}`}>{informe.margen === null ? "—" : porcentaje(informe.margen)}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        {/* Ingresos */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-black uppercase tracking-[0.15em] text-white/60">Ingresos</h3>
+          <BloqueInforme titulo="Por origen">
+            <LineaMonto etiqueta="Turnos" valor={r.ingresosTurnos} />
+            <LineaMonto etiqueta="Productos" valor={r.ingresosProductos} />
+            <LineaMonto etiqueta="Total ingresos" valor={r.ingresos} fuerte />
+          </BloqueInforme>
+          <BloqueInforme titulo="Por método de pago">
+            <ListaLineas lineas={informe.ingresosPorMetodo} vacio="Sin cobros." total={r.ingresos} etiquetaTotal="Total cobrado" />
+          </BloqueInforme>
+          <BloqueInforme titulo="Turnos">
+            <LineaMonto etiqueta="Facturación" valor={t.facturacion} />
+            <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+              <div className="rounded-xl bg-white/[0.04] px-2 py-2"><p className="text-lg font-black">{t.cantidad}</p><p className="text-[10px] font-bold uppercase text-white/40">Turnos{t.gratis > 0 ? ` · ${t.gratis} gratis` : ""}</p></div>
+              <div className="rounded-xl bg-white/[0.04] px-2 py-2"><p className="text-lg font-black">{t.personas}</p><p className="text-[10px] font-bold uppercase text-white/40">Personas</p></div>
+              <div className="rounded-xl bg-white/[0.04] px-2 py-2"><p className="text-lg font-black">{t.minutos.toLocaleString("es-AR")}</p><p className="text-[10px] font-bold uppercase text-white/40">Minutos</p></div>
+            </div>
+            {t.porDuracion.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {t.porDuracion.map((d) => <span key={d.minutos} className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] font-bold text-white/55">{d.minutos}′ · {d.turnos} {d.turnos === 1 ? "turno" : "turnos"}</span>)}
+              </div>
+            )}
+          </BloqueInforme>
+          <BloqueInforme titulo="Productos">
+            {p.items.length === 0 ? <p className="text-sm text-white/40">Sin ventas de productos.</p> : (
+              <>
+                {p.items.map((it) => (
+                  <div key={it.nombre} className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="min-w-0 font-bold text-white/70">{it.nombre}
+                      <span className="ml-1 text-xs font-bold text-white/35">· {it.unidades} {it.unidades === 1 ? "unidad" : "unidades"}{it.bonificadas > 0 ? ` + ${it.bonificadas} bonificada${it.bonificadas === 1 ? "" : "s"}` : ""}</span>
+                    </span>
+                    <span className="shrink-0 font-black text-white/90">{dineroCaja(it.total)}</span>
+                  </div>
+                ))}
+                <div className="flex items-baseline justify-between gap-3 border-t border-white/10 pt-2 text-sm">
+                  <span className="font-black text-white">Total productos<span className="ml-1 text-xs font-bold text-white/35">· {p.unidades} {p.unidades === 1 ? "unidad" : "unidades"}</span></span>
+                  <span className="font-black text-white">{dineroCaja(p.facturacion)}</span>
+                </div>
+                {p.bonificadas > 0 && <p className="text-[11px] text-white/40">Las bonificadas se entregaron sin cobro: no suman ingresos.</p>}
+              </>
+            )}
+          </BloqueInforme>
+        </div>
+
+        {/* Egresos */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-black uppercase tracking-[0.15em] text-white/60">Egresos</h3>
+          <BloqueInforme titulo="Totales">
+            <LineaMonto etiqueta="Costos" valor={r.costos} detalle={`· ${r.cantidadCostos}`} />
+            <LineaMonto etiqueta="Gastos" valor={r.gastos} detalle={`· ${r.cantidadGastos}`} />
+            <LineaMonto etiqueta="Total egresos" valor={informe.egresos} fuerte />
+          </BloqueInforme>
+          <BloqueInforme titulo="Costos por categoría">
+            <ListaLineas lineas={informe.costosPorCategoria} vacio="Sin costos cargados." total={r.costos} etiquetaTotal="Total costos" />
+          </BloqueInforme>
+          <BloqueInforme titulo="Gastos por categoría">
+            <ListaLineas lineas={informe.gastosPorCategoria} vacio="Sin gastos cargados." total={r.gastos} etiquetaTotal="Total gastos" />
+          </BloqueInforme>
+          <BloqueInforme titulo="Egresos por medio de pago">
+            <ListaLineas lineas={informe.egresosPorMedio} vacio="Sin egresos." total={informe.egresos} etiquetaTotal="Total egresos" />
+          </BloqueInforme>
+        </div>
+      </div>
+
+      {/* Detalle de costos y gastos (solo lectura; se editan en la pestaña Caja) */}
+      <div className="mt-5">
+        <h3 className="mb-3 text-sm font-black uppercase tracking-[0.15em] text-white/60">Detalle de costos y gastos</h3>
+        {movimientos.length === 0 ? (
+          <div className="rounded-2xl border border-white/10 bg-black p-4 text-sm text-white/50">Sin costos ni gastos cargados.</div>
+        ) : (
+          <div className="overflow-x-auto rounded-2xl border border-white/10 bg-black px-4 py-2">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="text-left text-[10px] font-black uppercase tracking-[0.12em] text-white/35"><tr><th className="py-2">Fecha</th><th className="py-2">Tipo</th><th className="py-2">Categoría</th><th className="py-2">Concepto</th><th className="py-2">Medio de pago</th><th className="py-2 text-right">Monto</th></tr></thead>
+              <tbody className="divide-y divide-white/5">
+                {movimientos.map((m) => (
+                  <tr key={m.id}>
+                    <td className="py-2 font-bold">{fechaLarga(m.fecha)}</td>
+                    <td className="py-2"><PillTipo tipo={m.tipo} /></td>
+                    <td className="py-2 text-white/70">{m.categoria_nombre}</td>
+                    <td className="py-2 font-bold">{m.concepto}</td>
+                    <td className="py-2 text-white/70">{etiquetaMedio(m.medio_pago)}</td>
+                    <td className="py-2 text-right font-black text-red-400">{dineroCaja(m.monto)}</td>
                   </tr>
                 ))}
               </tbody>

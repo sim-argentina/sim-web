@@ -309,16 +309,15 @@ export function calcularCajaEvento(datos: {
   ventas: { total: number | string | null; estado: string }[];
   movimientos: { monto: number | string; tipo: string | null; eliminado_at?: string | null }[];
 }): ResumenCajaEvento {
-  const redondear = (n: number) => Math.round(n * 100) / 100;
   const ingresosTurnos = datos.turnos
-    .filter((t) => t.estado !== "cancelado" && t.metodo_pago !== "gratis")
+    .filter(turnoFacturable)
     .reduce((a, t) => a + (Number(t.total) || 0), 0);
   const ingresosProductos = datos.ventas
-    .filter((v) => v.estado === "activa")
+    .filter(ventaFacturable)
     .reduce((a, v) => a + (Number(v.total) || 0), 0);
-  const vigentes = datos.movimientos.filter((m) => !m.eliminado_at);
-  const costosMov = vigentes.filter((m) => m.tipo === "costo");
-  const gastosMov = vigentes.filter((m) => m.tipo !== "costo");
+  const vigentes = datos.movimientos.filter(movimientoVigente);
+  const costosMov = vigentes.filter(esCosto);
+  const gastosMov = vigentes.filter((m) => !esCosto(m));
   const suma = (l: { monto: number | string }[]) => redondear(l.reduce((a, m) => a + (Number(m.monto) || 0), 0));
   const ingresos = redondear(ingresosTurnos + ingresosProductos);
   const costos = suma(costosMov);
@@ -333,5 +332,187 @@ export function calcularCajaEvento(datos: {
     cantidadGastos: gastosMov.length,
     cantidadMovimientos: vigentes.length,
     neto: redondear(ingresos - costos - gastos),
+  };
+}
+
+// ── Reglas únicas de la caja y del informe ──────────────────────────────────
+// Caja, Informe y cualquier resumen económico del evento usan estas mismas
+// reglas: no hay una versión paralela.
+//   · turno facturable: no cancelado y no gratuito.
+//   · venta facturable: activa (no bonificada ni anulada).
+//   · movimiento vigente: no eliminado; COSTO o GASTO según el tipo guardado.
+export function turnoFacturable(t: { estado?: string | null; metodo_pago?: string | null }): boolean {
+  return t.estado !== "cancelado" && t.metodo_pago !== "gratis";
+}
+export function ventaFacturable(v: { estado: string }): boolean {
+  return v.estado === "activa";
+}
+export function movimientoVigente(m: { eliminado_at?: string | null }): boolean {
+  return !m.eliminado_at;
+}
+function esCosto(m: { tipo: string | null }): boolean {
+  return m.tipo === "costo";
+}
+function redondear(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+// ── Informe del evento ──────────────────────────────────────────────────────
+// Resumen ejecutivo del evento, calculado en el momento desde los registros
+// (turnos, ventas y movimientos de caja): no hay copias ni tablas propias. Es
+// interno del Colectivo y no forma parte de Finanzas SIM.
+//
+// Las cifras principales SON las de la caja (calcularCajaEvento); los desgloses
+// salen de los mismos registros con las mismas reglas, así que cierran:
+//   turnos + productos = ingresos = Σ por método de cobro
+//   Σ costos por categoría = costos · Σ gastos por categoría = gastos
+//   costos + gastos = egresos = Σ egresos por medio de pago
+//   ingresos − egresos = resultado neto
+// Los movimientos se agrupan por el tipo y el nombre de categoría que guardaron
+// al registrarse (no por el catálogo de hoy), y las ventas por su propio nombre
+// y total, así un evento viejo no cambia si después cambia el catálogo.
+
+export const SIN_DETALLE_PAGO = "sin_detalle";
+const ETIQUETA_COBRO: Record<string, string> = { qr: "QR / MP", mixto: "Mixto", [SIN_DETALLE_PAGO]: "Sin detalle de pago" };
+export function etiquetaMetodoCobro(metodo: string): string {
+  return ETIQUETA_COBRO[metodo] ?? METODOS_PAGO_COLECTIVO.find((m) => m.value === metodo)?.label ?? metodo;
+}
+export function etiquetaMedioEgreso(medio: string): string {
+  return MEDIOS_PAGO_GASTO_COLECTIVO.find((m) => m.value === medio)?.label ?? medio;
+}
+
+// Cobros de un turno o venta facturable por método. Si los pagos registrados
+// cierran con el total, se usan (pagos divididos incluidos). Si no hay pagos, el
+// total va al método principal. Si hay pagos que no cierran, el total va a "sin
+// detalle": el total es lo que suma a ingresos y no se inventa un reparto.
+function cobrosPorMetodo(total: number, metodo: string | null | undefined, pagos: unknown): { metodo: string; monto: number }[] {
+  let lista: unknown = pagos;
+  if (typeof lista === "string") { try { lista = JSON.parse(lista); } catch { lista = []; } }
+  const validos = (Array.isArray(lista) ? lista : [])
+    .map((p) => ({ metodo: String((p as Record<string, unknown>)?.metodo_pago ?? "").trim(), monto: Number((p as Record<string, unknown>)?.monto) || 0 }))
+    .filter((p) => p.monto > 0);
+  if (validos.length === 0) return total > 0 ? [{ metodo: metodo || SIN_DETALLE_PAGO, monto: total }] : [];
+  const suma = validos.reduce((a, p) => a + p.monto, 0);
+  if (Math.abs(suma - total) > 0.005) return total > 0 ? [{ metodo: SIN_DETALLE_PAGO, monto: total }] : [];
+  return validos.map((p) => ({ metodo: p.metodo || SIN_DETALLE_PAGO, monto: p.monto }));
+}
+
+type TurnoInforme = {
+  total: number | string | null; estado?: string | null; metodo_pago?: string | null; pagos_detalle?: unknown;
+  cantidad_turnos?: number | null; cantidad_personas?: number | null; cantidad_minutos?: number | null;
+};
+type VentaInforme = {
+  total: number | string | null; estado: string; metodo_pago?: string | null; pagos_detalle?: unknown;
+  producto_nombre: string | null; cantidad: number;
+};
+type MovimientoInforme = {
+  monto: number | string; tipo: string | null; eliminado_at?: string | null;
+  categoria_nombre: string | null; medio_pago: string;
+};
+export type LineaInforme = { clave: string; etiqueta: string; total: number; cantidad: number };
+
+export type InformeEvento = {
+  resumen: ResumenCajaEvento;
+  egresos: number;
+  margen: number | null; // % con 1 decimal; null si no hubo ingresos
+  ingresosPorMetodo: LineaInforme[];
+  turnos: {
+    facturacion: number; cantidad: number; gratis: number; personas: number; minutos: number;
+    porDuracion: { minutos: number; turnos: number }[];
+  };
+  productos: {
+    items: { nombre: string; unidades: number; bonificadas: number; total: number }[];
+    unidades: number; bonificadas: number; facturacion: number;
+  };
+  costosPorCategoria: LineaInforme[];
+  gastosPorCategoria: LineaInforme[];
+  egresosPorMedio: LineaInforme[];
+};
+
+function agrupar<T>(items: T[], clave: (x: T) => string, etiqueta: (k: string) => string, monto: (x: T) => number): LineaInforme[] {
+  const por = new Map<string, LineaInforme>();
+  for (const x of items) {
+    const k = clave(x);
+    const l = por.get(k) ?? { clave: k, etiqueta: etiqueta(k), total: 0, cantidad: 0 };
+    l.total += monto(x);
+    l.cantidad += 1;
+    por.set(k, l);
+  }
+  return [...por.values()]
+    .map((l) => ({ ...l, total: redondear(l.total) }))
+    .sort((a, b) => b.total - a.total || a.etiqueta.localeCompare(b.etiqueta, "es"));
+}
+
+export function armarInformeEvento(datos: {
+  turnos: TurnoInforme[];
+  ventas: VentaInforme[];
+  movimientos: MovimientoInforme[];
+}): InformeEvento {
+  const resumen = calcularCajaEvento(datos);
+  const egresos = redondear(resumen.costos + resumen.gastos);
+  const margen = resumen.ingresos > 0 ? Math.round((resumen.neto / resumen.ingresos) * 1000) / 10 : null;
+
+  const turnosFact = datos.turnos.filter(turnoFacturable);
+  const ventasFact = datos.ventas.filter(ventaFacturable);
+  const cobros = [
+    ...turnosFact.flatMap((t) => cobrosPorMetodo(Number(t.total) || 0, t.metodo_pago, t.pagos_detalle)),
+    ...ventasFact.flatMap((v) => cobrosPorMetodo(Number(v.total) || 0, v.metodo_pago, v.pagos_detalle)),
+  ];
+  const ingresosPorMetodo = agrupar(cobros, (c) => c.metodo, etiquetaMetodoCobro, (c) => c.monto);
+
+  // Actividad: todos los turnos no cancelados (los gratuitos también se
+  // jugaron), con el mismo criterio que el resumen general del evento.
+  const jugados = datos.turnos.filter((t) => t.estado !== "cancelado");
+  const cant = (t: TurnoInforme) => Number(t.cantidad_turnos) || 1;
+  const porDur = new Map<number, number>();
+  for (const t of jugados) {
+    const m = Number(t.cantidad_minutos) || DURACION_DEFAULT;
+    porDur.set(m, (porDur.get(m) ?? 0) + cant(t));
+  }
+  const turnos = {
+    facturacion: resumen.ingresosTurnos,
+    cantidad: jugados.reduce((a, t) => a + cant(t), 0),
+    gratis: jugados.filter((t) => t.metodo_pago === "gratis").reduce((a, t) => a + cant(t), 0),
+    personas: jugados.reduce((a, t) => a + (Number(t.cantidad_personas) || 1), 0),
+    minutos: jugados.reduce((a, t) => a + (Number(t.cantidad_minutos) || DURACION_DEFAULT) * cant(t), 0),
+    porDuracion: [...porDur.entries()].sort((a, b) => a[0] - b[0]).map(([minutos, turnos]) => ({ minutos, turnos })),
+  };
+
+  // Productos: unidades vendidas y facturación de las ventas activas; las
+  // bonificadas se cuentan aparte (unidades entregadas, sin ingreso).
+  const porProd = new Map<string, { nombre: string; unidades: number; bonificadas: number; total: number }>();
+  for (const v of datos.ventas) {
+    const bonificada = v.estado === "bonificada";
+    if (!ventaFacturable(v) && !bonificada) continue;
+    const nombre = (v.producto_nombre || "").trim() || "Sin producto";
+    const p = porProd.get(nombre) ?? { nombre, unidades: 0, bonificadas: 0, total: 0 };
+    if (bonificada) p.bonificadas += Number(v.cantidad) || 0;
+    else { p.unidades += Number(v.cantidad) || 0; p.total += Number(v.total) || 0; }
+    porProd.set(nombre, p);
+  }
+  const items = [...porProd.values()]
+    .map((p) => ({ ...p, total: redondear(p.total) }))
+    .sort((a, b) => b.total - a.total || b.unidades - a.unidades || a.nombre.localeCompare(b.nombre, "es"));
+  const productos = {
+    items,
+    unidades: items.reduce((a, p) => a + p.unidades, 0),
+    bonificadas: items.reduce((a, p) => a + p.bonificadas, 0),
+    facturacion: resumen.ingresosProductos,
+  };
+
+  const vigentes = datos.movimientos.filter(movimientoVigente);
+  const nombreCat = (m: MovimientoInforme) => (m.categoria_nombre || "").trim() || "Sin categoría";
+  const porCategoria = (lista: MovimientoInforme[]) => agrupar(lista, nombreCat, (k) => k, (m) => Number(m.monto) || 0);
+
+  return {
+    resumen,
+    egresos,
+    margen,
+    ingresosPorMetodo,
+    turnos,
+    productos,
+    costosPorCategoria: porCategoria(vigentes.filter(esCosto)),
+    gastosPorCategoria: porCategoria(vigentes.filter((m) => !esCosto(m))),
+    egresosPorMedio: agrupar(vigentes, (m) => m.medio_pago, etiquetaMedioEgreso, (m) => Number(m.monto) || 0),
   };
 }

@@ -7,6 +7,8 @@ import {
   esVendibleEnEvento, resumirVentasPorProducto, COLUMNAS_TURNO_COLECTIVO, COLUMNAS_VENTA_COLECTIVO,
   normalizarMovimientoCaja, calcularCajaEvento, MEDIOS_PAGO_GASTO_COLECTIVO, COLUMNAS_GASTO_COLECTIVO,
   TIPOS_CAJA, esTipoCaja, normalizarNombreCategoriaCaja, claveCategoriaCaja,
+  armarInformeEvento, turnoFacturable, ventaFacturable, movimientoVigente, etiquetaMetodoCobro, SIN_DETALLE_PAGO,
+  type InformeEvento,
 } from "@/lib/colectivo";
 
 // Colectivo — turnos = personas, horarios opcionales y catálogo de productos.
@@ -151,6 +153,117 @@ assert.ok(/\btipo\b/.test(COLUMNAS_GASTO_COLECTIVO) && /categoria_nombre/.test(C
 assert.ok(!/(^|, )categoria(,|$)/.test(COLUMNAS_GASTO_COLECTIVO), "la columna vieja `categoria` ya no se usa");
 console.log("OK — caja: ingresos = turnos y ventas válidos, costos y gastos por el tipo guardado en cada movimiento, neto = ingresos − costos − gastos.");
 
+// ── 5e) informe del evento ──────────────────────────────────────────────────
+const sumaL = (l: { total: number }[]) => Math.round(l.reduce((a, x) => a + x.total, 0) * 100) / 100;
+// Identidades que tiene que cumplir cualquier informe (contra la caja y entre sí).
+function verificarCoherencia(inf: InformeEvento, caja: ReturnType<typeof calcularCajaEvento>, ctx: string) {
+  const r = inf.resumen;
+  assert.deepEqual(r, caja, `${ctx}: el informe usa exactamente el resumen de la caja`);
+  assert.equal(Math.round((r.ingresosTurnos + r.ingresosProductos) * 100) / 100, r.ingresos, `${ctx}: turnos + productos = ingresos`);
+  assert.equal(sumaL(inf.ingresosPorMetodo), r.ingresos, `${ctx}: Σ métodos de cobro = ingresos`);
+  assert.equal(sumaL(inf.costosPorCategoria), r.costos, `${ctx}: Σ categorías de costos = costos`);
+  assert.equal(sumaL(inf.gastosPorCategoria), r.gastos, `${ctx}: Σ categorías de gastos = gastos`);
+  assert.equal(inf.egresos, Math.round((r.costos + r.gastos) * 100) / 100, `${ctx}: costos + gastos = egresos`);
+  assert.equal(sumaL(inf.egresosPorMedio), inf.egresos, `${ctx}: Σ medios de pago de egresos = egresos`);
+  assert.equal(Math.round((r.ingresos - inf.egresos) * 100) / 100, r.neto, `${ctx}: ingresos − egresos = neto`);
+  assert.equal(inf.turnos.facturacion, r.ingresosTurnos, `${ctx}: facturación de turnos = caja`);
+  assert.equal(inf.productos.facturacion, r.ingresosProductos, `${ctx}: facturación de productos = caja`);
+  assert.equal(sumaL(inf.productos.items), r.ingresosProductos, `${ctx}: Σ productos = facturación de productos`);
+  if (r.ingresos > 0) assert.equal(inf.margen, Math.round((r.neto / r.ingresos) * 1000) / 10, `${ctx}: margen`);
+  else assert.equal(inf.margen, null, `${ctx}: sin ingresos no hay margen`);
+}
+
+const datosInforme = {
+  turnos: [
+    { total: 20000, estado: "activo", metodo_pago: "efectivo", pagos_detalle: [{ metodo_pago: "efectivo", monto: 20000 }], cantidad_turnos: 2, cantidad_personas: 2, cantidad_minutos: 10 },
+    // pago dividido
+    { total: 40000, estado: "activo", metodo_pago: "mixto", pagos_detalle: [{ metodo_pago: "qr", monto: 25000 }, { metodo_pago: "transferencia", monto: 15000 }], cantidad_turnos: 4, cantidad_personas: 4, cantidad_minutos: 20 },
+    // pagos como texto JSON (filas viejas)
+    { total: 10000, estado: "activo", metodo_pago: "debito", pagos_detalle: JSON.stringify([{ metodo_pago: "debito", monto: 10000 }]), cantidad_turnos: 1, cantidad_personas: 1, cantidad_minutos: 10 },
+    { total: 0, estado: "activo", metodo_pago: "gratis", pagos_detalle: [], cantidad_turnos: 1, cantidad_personas: 1, cantidad_minutos: 10 },
+    { total: 99999, estado: "cancelado", metodo_pago: "efectivo", pagos_detalle: [{ metodo_pago: "efectivo", monto: 99999 }], cantidad_turnos: 5, cantidad_personas: 5, cantidad_minutos: 30 },
+  ],
+  ventas: [
+    { total: 40000, estado: "activa", metodo_pago: "efectivo", pagos_detalle: [{ metodo_pago: "efectivo", monto: 40000 }], producto_nombre: "Gorra", cantidad: 2 },
+    { total: 50000, estado: "activa", metodo_pago: "mixto", pagos_detalle: [{ metodo_pago: "credito", monto: 30000 }, { metodo_pago: "efectivo", monto: 20000 }], producto_nombre: "Buzo", cantidad: 1 },
+    { total: 20000, estado: "bonificada", metodo_pago: null, pagos_detalle: [], producto_nombre: "Gorra", cantidad: 1 },
+    { total: 50000, estado: "anulada", metodo_pago: "efectivo", pagos_detalle: [{ metodo_pago: "efectivo", monto: 50000 }], producto_nombre: "Buzo", cantidad: 1 },
+  ],
+  movimientos: [
+    { monto: 30000, tipo: "costo", categoria_nombre: "Combustible", medio_pago: "efectivo" },
+    { monto: "12500.50", tipo: "costo", categoria_nombre: "Peajes", medio_pago: "tarjeta" },
+    { monto: 8000, tipo: "costo", categoria_nombre: "Combustible", medio_pago: "transferencia" },
+    // nombre y tipo históricos: hoy la categoría puede llamarse distinto o ser gasto
+    { monto: 15000, tipo: "costo", categoria_nombre: "Alojamiento", medio_pago: "efectivo" },
+    { monto: 9000, tipo: "gasto", categoria_nombre: "Publicidad evento", medio_pago: "transferencia" },
+    { monto: 2000, tipo: "gasto", categoria_nombre: "Otros", medio_pago: "otro" },
+    { monto: 70000, tipo: "gasto", categoria_nombre: "Otros", medio_pago: "efectivo", eliminado_at: "2026-10-14T10:00:00Z" },
+  ],
+};
+const inf = armarInformeEvento(datosInforme);
+verificarCoherencia(inf, calcularCajaEvento(datosInforme), "escenario");
+assert.deepEqual([inf.resumen.ingresosTurnos, inf.resumen.ingresosProductos, inf.resumen.ingresos], [70000, 90000, 160000], "sin gratis, cancelados, bonificadas ni anuladas");
+assert.deepEqual([inf.resumen.costos, inf.resumen.gastos, inf.egresos, inf.resumen.neto], [65500.5, 11000, 76500.5, 83499.5]);
+assert.equal(inf.margen, 52.2, "83.499,50 / 160.000 = 52,2 %");
+assert.deepEqual(inf.ingresosPorMetodo.map((l) => [l.etiqueta, l.total]), [
+  ["Efectivo", 80000], ["QR / MP", 25000], ["Crédito", 30000], ["Transferencia", 15000], ["Débito", 10000],
+].sort((a, b) => (b[1] as number) - (a[1] as number)), "pagos divididos repartidos por método; JSON en texto incluido");
+assert.deepEqual(inf.costosPorCategoria.map((l) => [l.etiqueta, l.total, l.cantidad]), [["Combustible", 38000, 2], ["Alojamiento", 15000, 1], ["Peajes", 12500.5, 1]]);
+assert.deepEqual(inf.gastosPorCategoria.map((l) => [l.etiqueta, l.total]), [["Publicidad evento", 9000], ["Otros", 2000]], "el movimiento eliminado no cuenta");
+assert.deepEqual(inf.egresosPorMedio.map((l) => [l.etiqueta, l.total]), [["Efectivo", 45000], ["Transferencia", 17000], ["Tarjeta", 12500.5], ["Otro", 2000]]);
+assert.deepEqual(inf.turnos, { facturacion: 70000, cantidad: 8, gratis: 1, personas: 8, minutos: 120, porDuracion: [{ minutos: 10, turnos: 4 }, { minutos: 20, turnos: 4 }] },
+  "actividad sin cancelados (el gratis se jugó); minutos = minutos × turnos");
+assert.deepEqual(inf.productos, {
+  items: [{ nombre: "Buzo", unidades: 1, bonificadas: 0, total: 50000 }, { nombre: "Gorra", unidades: 2, bonificadas: 1, total: 40000 }],
+  unidades: 3, bonificadas: 1, facturacion: 90000,
+}, "bonificadas aparte y sin ingreso; anuladas fuera");
+
+// Ejemplo del pedido: 2.580.000 − 600.000 − 150.000 = 1.830.000, margen 70,9 %.
+const infEj = armarInformeEvento({ turnos: [{ total: 2580000, estado: "activo", metodo_pago: "efectivo", pagos_detalle: [] }], ventas: [],
+  movimientos: [{ monto: 600000, tipo: "costo", categoria_nombre: "Personal", medio_pago: "transferencia" }, { monto: 150000, tipo: "gasto", categoria_nombre: "Publicidad", medio_pago: "efectivo" }] });
+assert.equal(infEj.resumen.neto, 1830000); assert.equal(infEj.margen, 70.9);
+assert.deepEqual(infEj.ingresosPorMetodo.map((l) => [l.clave, l.total]), [["efectivo", 2580000]], "sin pagos registrados: el total va al método principal");
+// Sin ingresos: margen "—" (null), nunca división por cero; neto negativo.
+const sinIngresos = { turnos: [], ventas: [], movimientos: [{ monto: 5000, tipo: "costo", categoria_nombre: "Combustible", medio_pago: "efectivo" }] };
+const infCero = armarInformeEvento(sinIngresos);
+assert.equal(infCero.margen, null); assert.equal(infCero.resumen.neto, -5000);
+verificarCoherencia(infCero, calcularCajaEvento(sinIngresos), "sin ingresos");
+// Pagos que no cierran con el total: el total manda y va a "sin detalle" (la suma sigue cerrando).
+const infRaro = armarInformeEvento({ turnos: [{ total: 10000, estado: "activo", metodo_pago: "efectivo", pagos_detalle: [{ metodo_pago: "efectivo", monto: 7000 }] }], ventas: [], movimientos: [] });
+assert.deepEqual(infRaro.ingresosPorMetodo.map((l) => [l.clave, l.total]), [[SIN_DETALLE_PAGO, 10000]]);
+assert.equal(etiquetaMetodoCobro("qr"), "QR / MP"); assert.equal(etiquetaMetodoCobro("cheque"), "cheque", "un método no previsto se muestra tal cual");
+assert.ok(turnoFacturable({ estado: "activo", metodo_pago: "qr" }) && !turnoFacturable({ estado: "activo", metodo_pago: "gratis" }) && !turnoFacturable({ estado: "cancelado", metodo_pago: "qr" }));
+assert.ok(ventaFacturable({ estado: "activa" }) && !ventaFacturable({ estado: "bonificada" }) && !ventaFacturable({ estado: "anulada" }));
+assert.ok(movimientoVigente({}) && !movimientoVigente({ eliminado_at: "2026-10-14T00:00:00Z" }));
+
+// Propiedad: con cualquier combinación de registros las identidades se cumplen.
+let semilla = 20261014;
+const azar = () => { semilla = (semilla * 1103515245 + 12345) % 2147483648; return semilla / 2147483648; };
+const elegir = <T,>(l: readonly T[]) => l[Math.floor(azar() * l.length)];
+const metodos = ["efectivo", "qr", "debito", "credito", "transferencia"] as const;
+const pagosAzar = (total: number) => {
+  if (total === 0) return [];
+  if (azar() < 0.4) { const a = Math.round(total * azar() * 100) / 100; return [{ metodo_pago: elegir(metodos), monto: a }, { metodo_pago: elegir(metodos), monto: Math.round((total - a) * 100) / 100 }].filter((p) => p.monto > 0); }
+  return [{ metodo_pago: elegir(metodos), monto: total }];
+};
+for (let i = 0; i < 300; i++) {
+  const turnos = Array.from({ length: Math.floor(azar() * 8) }, () => {
+    const gratis = azar() < 0.15; const total = gratis ? 0 : Math.round(azar() * 80) * 1000;
+    return { total, estado: azar() < 0.1 ? "cancelado" : "activo", metodo_pago: gratis ? "gratis" : elegir(metodos), pagos_detalle: pagosAzar(total), cantidad_turnos: 1 + Math.floor(azar() * 6), cantidad_personas: 1 + Math.floor(azar() * 6), cantidad_minutos: elegir([10, 20, 30]) };
+  });
+  const ventas = Array.from({ length: Math.floor(azar() * 6) }, () => {
+    const estado = elegir(["activa", "activa", "bonificada", "anulada"]); const total = Math.round(azar() * 100) * 500;
+    return { total, estado, metodo_pago: "efectivo", pagos_detalle: estado === "bonificada" ? [] : pagosAzar(total), producto_nombre: elegir(["Gorra", "Buzo", "Remera"]), cantidad: 1 + Math.floor(azar() * 5) };
+  });
+  const movimientos = Array.from({ length: Math.floor(azar() * 7) }, () => ({
+    monto: Math.round(azar() * 5000000) / 100, tipo: elegir(["costo", "gasto"]), categoria_nombre: elegir(["Combustible", "Peajes", "Otros", "Publicidad"]),
+    medio_pago: elegir(["efectivo", "transferencia", "tarjeta", "otro"]), eliminado_at: azar() < 0.15 ? "2026-10-14T00:00:00Z" : null,
+  }));
+  const d = { turnos, ventas, movimientos };
+  verificarCoherencia(armarInformeEvento(d), calcularCajaEvento(d), `caso ${i}`);
+}
+console.log("OK — informe: = caja; turnos + productos = ingresos = Σ métodos (pagos divididos); Σ categorías = costos/gastos; Σ medios = egresos; margen y '—' sin ingresos; 300 eventos al azar coherentes.");
+
 // ── 6) contratos de fuente ──────────────────────────────────────────────────
 const leer = (p: string) => readFileSync(p, "utf8");
 function archivos(dir: string, out: string[] = []): string[] {
@@ -276,4 +389,23 @@ assert.ok(!/Gastos cargados|Agregar gasto|Registrar gasto/.test(cajaUi), "la caj
 assert.ok(/\{ value: "caja", label: "Caja" \}/.test(paginaEvento) && /\{ value: "turnero", label: "Turnero" \}/.test(paginaEvento) && /\{ value: "productos", label: "Productos" \}/.test(paginaEvento), "pestañas Turnero, Productos y Caja");
 assert.ok(/colectivo_gastos/.test(leer("app/api/admin/colectivo/eventos/[id]/route.ts")), "un evento con gastos vigentes no se puede eliminar");
 
-console.log(`OK — contratos de fuente: sin productos fijos, turnero y ventas sin datos de la persona, caja interna (admin y staff, sin fin_*), turnos = personas en el servidor, permisos de admin y Finanzas sin colectivo_* (${fuentesColectivo.length} + ${fuentesFinanzas.length} archivos).`);
+// Informe: solo lectura, admin y staff, mismas reglas que la caja, sin Finanzas.
+const rutaInforme = leer("app/api/admin/colectivo/eventos/[id]/informe/route.ts");
+assert.ok(/requireStaffOrAdmin/.test(rutaInforme) && /armarInformeEvento/.test(rutaInforme), "informe: admin y staff, armado con la función central");
+assert.ok(!/\.(insert|update|upsert|delete)\(/.test(rutaInforme), "informe: solo lectura");
+assert.ok(/no forma parte de Finanzas SIM/.test(rutaInforme) && !/fin_[a-z]/.test(rutaInforme.replace(/fin_\*/g, "")), "informe: sin Finanzas");
+assert.ok(/\.is\("eliminado_at", null\)/.test(rutaInforme), "informe: sin movimientos eliminados");
+// Una sola definición de las reglas de facturación: nadie más las reescribe.
+const libColectivo = leer("lib/colectivo.ts");
+assert.equal((libColectivo.match(/t\.estado !== "cancelado" && t\.metodo_pago !== "gratis"/g) ?? []).length, 1, "la regla del turno facturable existe una sola vez");
+assert.ok(/\.filter\(turnoFacturable\)/.test(libColectivo) && /\.filter\(ventaFacturable\)/.test(libColectivo) && /\.filter\(movimientoVigente\)/.test(libColectivo));
+assert.ok(/const resumen = calcularCajaEvento\(datos\)/.test(libColectivo), "el informe toma sus totales de la caja");
+const informeUi = seccion("// ═════════ Informe del evento", "// ─── UI compartida");
+for (const texto of ["Informe del evento", "Informe interno del Colectivo. No forma parte de Finanzas SIM.", ">Ingresos<", ">Costos<", ">Gastos<", ">Resultado neto<", ">Margen del evento<",
+  "Por origen", "Por método de pago", "Costos por categoría", "Gastos por categoría", "Egresos por medio de pago", "Total egresos", "Detalle de costos y gastos"]) {
+  assert.ok(informeUi.includes(texto), `el informe muestra «${texto}»`);
+}
+assert.ok(!/Editar|Eliminar|method: "(POST|PATCH|DELETE)"/.test(informeUi), "el informe no edita nada");
+assert.ok(/\{ value: "informe", label: "Informe" \}/.test(paginaEvento), "pestaña Informe");
+
+console.log(`OK — contratos de fuente: sin productos fijos, turnero y ventas sin datos de la persona, caja e informe internos (admin y staff, sin fin_*, informe solo lectura con las reglas de la caja), turnos = personas en el servidor, permisos de admin y Finanzas sin colectivo_* (${fuentesColectivo.length} + ${fuentesFinanzas.length} archivos).`);
