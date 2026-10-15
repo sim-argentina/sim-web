@@ -10,6 +10,7 @@ import {
   PERSONAS_COLECTIVO, turnosColectivo, esVendibleEnEvento, resumirVentasPorProducto,
   CANTIDADES_VENTA_COLECTIVO, MEDIOS_PAGO_GASTO_COLECTIVO, PILL_TIPO_CAJA,
   type TipoCaja, type ResumenCajaEvento, type InformeEvento, type LineaInforme,
+  formatearMontoAR, formatearPorcentajeAR, formatearFechaAR,
 } from "@/lib/colectivo";
 import { hoyEnSim } from "@/lib/agenda";
 
@@ -994,11 +995,8 @@ type Movimiento = {
 };
 type CategoriaCaja = { id: string; nombre: string; tipo: TipoCaja; activo: boolean };
 const etiquetaMedio = (v: string) => MEDIOS_PAGO_GASTO_COLECTIVO.find((m) => m.value === v)?.label ?? v;
-function dineroCaja(v: number | string) {
-  const n = Number(v) || 0;
-  const abs = Math.abs(n).toLocaleString("es-AR", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 });
-  return `${n < 0 ? "−" : ""}$${abs}`;
-}
+// Mismo formato que el PDF del informe (formatearMontoAR).
+const dineroCaja = (v: number | string) => formatearMontoAR(v);
 function horaDeCarga(iso: string) {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "America/Argentina/Buenos_Aires" });
@@ -1255,8 +1253,7 @@ type RespuestaInforme = {
   informe: InformeEvento;
   movimientos: Movimiento[];
 };
-const fechaLarga = (f: string) => `${f.slice(8, 10)}/${f.slice(5, 7)}/${f.slice(0, 4)}`;
-const porcentaje = (n: number) => `${n.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+const fechaLarga = formatearFechaAR;
 
 function LineaMonto({ etiqueta, valor, detalle, fuerte }: { etiqueta: string; valor: number; detalle?: string; fuerte?: boolean }) {
   return (
@@ -1287,6 +1284,23 @@ function ListaLineas({ lineas, vacio, total, etiquetaTotal }: { lineas: LineaInf
 function InformeDelEvento({ eventoId }: { eventoId: string }) {
   const [datos, setDatos] = useState<RespuestaInforme | null>(null);
   const [error, setError] = useState("");
+  const [descargando, setDescargando] = useState(false);
+
+  // El PDF lo arma el servidor con los mismos datos que esta pantalla
+  // (/informe/pdf usa cargarInformeEvento, igual que /informe).
+  const descargarPdf = async () => {
+    setDescargando(true);
+    try {
+      const r = await fetch(`/api/admin/colectivo/eventos/${eventoId}/informe/pdf`, { cache: "no-store" });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); alert(d.error || "No se pudo generar el PDF"); return; }
+      const nombre = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") ?? "")?.[1] ?? "SIM-Colectivo-informe.pdf";
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = nombre;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally { setDescargando(false); }
+  };
 
   const cargar = useCallback(async () => {
     const r = await fetch(`/api/admin/colectivo/eventos/${eventoId}/informe`, { cache: "no-store" });
@@ -1295,9 +1309,6 @@ function InformeDelEvento({ eventoId }: { eventoId: string }) {
     setError("");
     setDatos(d as RespuestaInforme);
   }, [eventoId]);
-  // Carga asíncrona inicial: los setState ocurren tras el await, no de forma
-  // síncrona (falso positivo de react-hooks/set-state-in-effect).
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { cargar(); }, [cargar]);
 
   if (error) return <div className="rounded-2xl border border-red-500/30 bg-red-950/20 px-4 py-3 text-sm font-bold text-red-300">{error}</div>;
@@ -1314,7 +1325,10 @@ function InformeDelEvento({ eventoId }: { eventoId: string }) {
     <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4 md:p-5">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <h2 className="text-2xl font-black uppercase text-red-500">Informe del evento</h2>
-        <p className="rounded-xl border border-white/10 bg-black px-3 py-1 text-[11px] font-bold text-white/55">Informe interno del Colectivo. No forma parte de Finanzas SIM.</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="rounded-xl border border-white/10 bg-black px-3 py-1 text-[11px] font-bold text-white/55">Informe interno del Colectivo. No forma parte de Finanzas SIM.</p>
+          <button onClick={descargarPdf} disabled={descargando} className="rounded-xl bg-red-600 px-4 py-2 text-xs font-black uppercase text-white hover:bg-red-700 disabled:opacity-50">{descargando ? "Generando PDF..." : "Descargar PDF"}</button>
+        </div>
       </div>
 
       <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
@@ -1344,7 +1358,7 @@ function InformeDelEvento({ eventoId }: { eventoId: string }) {
         </div>
         <div className={`rounded-2xl border p-4 ${informe.margen === null ? "border-white/10 bg-black" : positivo ? "border-green-500/30 bg-green-950/15" : "border-red-500/40 bg-red-950/20"}`}>
           <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/40">Margen del evento</p>
-          <p className={`mt-1 text-xl font-black md:text-2xl ${informe.margen === null ? "text-white/50" : positivo ? "text-green-300" : "text-red-400"}`}>{informe.margen === null ? "—" : porcentaje(informe.margen)}</p>
+          <p className={`mt-1 text-xl font-black md:text-2xl ${informe.margen === null ? "text-white/50" : positivo ? "text-green-300" : "text-red-400"}`}>{formatearPorcentajeAR(informe.margen)}</p>
         </div>
       </div>
 

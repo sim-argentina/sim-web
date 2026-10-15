@@ -372,6 +372,31 @@ function redondear(n: number): number {
 // al registrarse (no por el catálogo de hoy), y las ventas por su propio nombre
 // y total, así un evento viejo no cambia si después cambia el catálogo.
 
+// Formato argentino, el mismo en la pantalla y en el PDF del informe.
+//   importes: $2.580.000 · $57.820,50 (centavos solo si los hay)
+//   porcentaje: 70,9 % (null → "—")     fecha: DD/MM/YYYY
+export function formatearMontoAR(v: number | string, signoNegativo = "−"): string {
+  const n = Number(v) || 0;
+  const abs = Math.abs(n).toLocaleString("es-AR", { minimumFractionDigits: Number.isInteger(n) ? 0 : 2, maximumFractionDigits: 2 });
+  return `${n < 0 ? signoNegativo : ""}$${abs}`;
+}
+export function formatearPorcentajeAR(n: number | null): string {
+  return n === null ? "—" : `${n.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+}
+export function formatearFechaAR(iso: string): string {
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+}
+// "DD/MM/YYYY HH:mm" en hora de Argentina.
+export function fechaHoraArgentina(d: Date): string {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("es-AR", {
+      timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(d).map((x) => [x.type, x.value]),
+  );
+  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}`;
+}
+
 export const SIN_DETALLE_PAGO = "sin_detalle";
 const ETIQUETA_COBRO: Record<string, string> = { qr: "QR / MP", mixto: "Mixto", [SIN_DETALLE_PAGO]: "Sin detalle de pago" };
 export function etiquetaMetodoCobro(metodo: string): string {

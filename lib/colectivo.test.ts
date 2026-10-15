@@ -390,11 +390,16 @@ assert.ok(/\{ value: "caja", label: "Caja" \}/.test(paginaEvento) && /\{ value: 
 assert.ok(/colectivo_gastos/.test(leer("app/api/admin/colectivo/eventos/[id]/route.ts")), "un evento con gastos vigentes no se puede eliminar");
 
 // Informe: solo lectura, admin y staff, mismas reglas que la caja, sin Finanzas.
+// Pantalla y PDF cargan los datos con la misma función (cargarInformeEvento), y
+// esa función arma el informe con armarInformeEvento.
 const rutaInforme = leer("app/api/admin/colectivo/eventos/[id]/informe/route.ts");
-assert.ok(/requireStaffOrAdmin/.test(rutaInforme) && /armarInformeEvento/.test(rutaInforme), "informe: admin y staff, armado con la función central");
-assert.ok(!/\.(insert|update|upsert|delete)\(/.test(rutaInforme), "informe: solo lectura");
-assert.ok(/no forma parte de Finanzas SIM/.test(rutaInforme) && !/fin_[a-z]/.test(rutaInforme.replace(/fin_\*/g, "")), "informe: sin Finanzas");
-assert.ok(/\.is\("eliminado_at", null\)/.test(rutaInforme), "informe: sin movimientos eliminados");
+const cargaInforme = leer("lib/colectivoInforme.ts");
+assert.ok(/requireStaffOrAdmin/.test(rutaInforme) && /cargarInformeEvento\(id\)/.test(rutaInforme), "informe: admin y staff, con la carga compartida");
+assert.ok(/armarInformeEvento\(/.test(cargaInforme), "la carga compartida arma el informe con la función central");
+assert.ok(!/\.(insert|update|upsert|delete)\(/.test(rutaInforme + cargaInforme), "informe: solo lectura");
+assert.ok(/no forma parte de Finanzas SIM/.test(rutaInforme) && /no forma parte de Finanzas SIM/.test(cargaInforme), "informe: declara que no es Finanzas");
+assert.ok(!/fin_[a-z]/.test((rutaInforme + cargaInforme).replace(/fin_\*/g, "")), "informe: sin Finanzas");
+assert.ok(/\.is\("eliminado_at", null\)/.test(cargaInforme), "informe: sin movimientos eliminados");
 // Una sola definición de las reglas de facturación: nadie más las reescribe.
 const libColectivo = leer("lib/colectivo.ts");
 assert.equal((libColectivo.match(/t\.estado !== "cancelado" && t\.metodo_pago !== "gratis"/g) ?? []).length, 1, "la regla del turno facturable existe una sola vez");
