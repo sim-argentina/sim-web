@@ -4,7 +4,7 @@
 //   node scripts/pruebas/interacciones-demo-local.mjs --limpiar  # solo borra la demo
 //
 // Carga, con la marca "DEMO LOCAL" (sin nombres ni teléfonos reales):
-//   · inicio del registro LOCAL fijo: 2026-10-01 00:00 (Córdoba), solo si no había uno.
+//   · inicio del registro LOCAL fijo: 2026-10-02 00:00 (Córdoba), solo si no había uno.
 //     Es un valor de pruebas; NO define el lanzamiento de Producción.
 //   · turnos del Turnero de hoy alrededor de la hora actual (ids negativos -950xxx),
 //     uno gratis y uno con total y método contradictorios;
@@ -38,7 +38,7 @@ if (process.argv.includes("--limpiar")) {
 }
 
 sql(`update public.interacciones_config
-       set inicio_registro = timestamp '2026-10-01 00:00' at time zone 'America/Argentina/Cordoba'
+       set inicio_registro = timestamp '2026-10-02 00:00' at time zone 'America/Argentina/Cordoba'
      where id and inicio_registro is null;`);
 
 // Turnos de hoy (y uno de hace 49 h), con fecha y hora de Córdoba calculadas en la base.

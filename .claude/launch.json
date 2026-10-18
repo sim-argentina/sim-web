@@ -12,6 +12,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["scripts/pruebas/next-local.mjs", "dev", "--port", "3100"],
       "port": 3100
+    },
+    {
+      "name": "interacciones-local-build",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/pruebas/next-local.mjs", "start", "--port", "3100"],
+      "port": 3100
     }
   ]
 }

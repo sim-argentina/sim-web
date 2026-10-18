@@ -71,16 +71,16 @@ async function main() {
 
   // ── 4. Períodos frente al inicio del registro (Córdoba) ─────────────────
   {
-    const inicio = "2026-10-01T03:00:00+00:00"; // 01/10 00:00 Cba
-    assert.deepEqual(periodo("2026-09-01", "2026-09-30", inicio, "2026-10-18").estado, "sin_registro", "antes del inicio: sin datos de registro");
-    const parcial = periodo("2026-09-25", "2026-10-05", inicio, "2026-10-18");
-    assert.deepEqual([parcial.estado, parcial.cubierto], ["parcial", { desde: "2026-10-01", hasta: "2026-10-05", dias: 5 }]);
+    const inicio = "2026-11-01T03:00:00+00:00"; // 01/11 00:00 Cba
+    assert.deepEqual(periodo("2026-10-02", "2026-10-31", inicio, "2026-11-18").estado, "sin_registro", "antes del inicio: sin datos de registro");
+    const parcial = periodo("2026-10-26", "2026-11-05", inicio, "2026-11-18");
+    assert.deepEqual([parcial.estado, parcial.cubierto], ["parcial", { desde: "2026-11-01", hasta: "2026-11-05", dias: 5 }]);
     assert.equal(parcial.dias, 11);
-    assert.deepEqual(periodo("2026-10-02", "2026-10-08", inicio, "2026-10-18").estado, "completo");
-    assert.deepEqual(periodo("2026-10-10", "2026-10-25", inicio, "2026-10-18").cubierto, { desde: "2026-10-10", hasta: "2026-10-18", dias: 9 }, "nunca después de hoy");
-    assert.equal(periodo("2026-10-01", "2026-10-05", null, "2026-10-18").estado, "sin_inicio");
-    // Inicio a las 02:59 UTC del 01/10 = 30/09 23:59 en Córdoba: el 30/09 ya tiene registro.
-    assert.equal(periodo("2026-09-30", "2026-09-30", "2026-10-01T02:59:00Z", "2026-10-18").estado, "completo");
+    assert.deepEqual(periodo("2026-11-02", "2026-11-08", inicio, "2026-11-18").estado, "completo");
+    assert.deepEqual(periodo("2026-11-10", "2026-11-25", inicio, "2026-11-18").cubierto, { desde: "2026-11-10", hasta: "2026-11-18", dias: 9 }, "nunca después de hoy");
+    assert.equal(periodo("2026-11-01", "2026-11-05", null, "2026-11-18").estado, "sin_inicio");
+    // Inicio a las 02:59 UTC del 01/11 = 31/10 23:59 en Córdoba: el 31/10 ya tiene registro.
+    assert.equal(periodo("2026-10-31", "2026-10-31", "2026-11-01T02:59:00Z", "2026-11-18").estado, "completo");
     assert.deepEqual(rangoRapido("hoy", "2026-10-18"), { desde: "2026-10-18", hasta: "2026-10-18" });
     assert.deepEqual(rangoRapido("7d", "2026-10-18"), { desde: "2026-10-12", hasta: "2026-10-18" }, "7 días inclusivos");
     assert.deepEqual(rangoRapido("30d", "2026-10-18"), { desde: "2026-09-19", hasta: "2026-10-18" });
@@ -203,10 +203,10 @@ async function main() {
 
   // ── 11. Parámetros de la API de métricas ─────────────────────────────────
   {
-    const ok = validarParamsMetricas(new URLSearchParams("desde=2026-10-01&hasta=2026-10-18&comp_desde=2026-09-13&comp_hasta=2026-09-30&rango_etario=sin_dato&franja=otros"));
-    assert.ok(ok.ok && ok.valor.comparar?.desde === "2026-09-13" && ok.valor.filtros.rango_etario === "sin_dato" && ok.valor.filtros.franja === "otros");
-    for (const malo of ["desde=2026-10-18&hasta=2026-10-01", "desde=2025-01-01&hasta=2026-10-18", "desde=2026-10-01", "desde=2026-10-01&hasta=2026-10-02&rol=admin",
-      "desde=2026-10-01&hasta=2026-10-02&resultado=compro", "desde=2026-10-01&hasta=2026-10-02&comp_desde=2026-09-01", "desde=2026-10-01&hasta=2026-10-02&atendio=Juan"]) {
+    const ok = validarParamsMetricas(new URLSearchParams("desde=2026-11-01&hasta=2026-11-18&comp_desde=2026-10-14&comp_hasta=2026-10-31&rango_etario=sin_dato&franja=otros"));
+    assert.ok(ok.ok && ok.valor.comparar?.desde === "2026-10-14" && ok.valor.filtros.rango_etario === "sin_dato" && ok.valor.filtros.franja === "otros");
+    for (const malo of ["desde=2026-11-18&hasta=2026-11-01", "desde=2025-01-01&hasta=2026-10-18", "desde=2026-11-01", "desde=2026-11-01&hasta=2026-11-02&rol=admin",
+      "desde=2026-11-01&hasta=2026-11-02&resultado=compro", "desde=2026-11-01&hasta=2026-11-02&comp_desde=2026-09-01", "desde=2026-11-01&hasta=2026-11-02&atendio=Juan"]) {
       assert.equal(validarParamsMetricas(new URLSearchParams(malo)).ok, false, malo);
     }
   }

@@ -26,7 +26,7 @@ import { execFileSync } from "node:child_process";
 
 const MARCA = "zzmetricas_b4";
 const CONTENEDOR = "supabase_db_sim-web-pruebas";
-const INICIO_DEMO_LOCAL = "2026-10-01 00:00";
+const INICIO_DEMO_LOCAL = "2026-10-02 00:00";
 {
   const u = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "http://invalido");
   assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(u.hostname), "psql solo contra el stack local");

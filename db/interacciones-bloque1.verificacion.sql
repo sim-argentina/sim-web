@@ -317,13 +317,13 @@ begin
     --   alta 19/10 00:05 Cba (= 19/10 03:05Z): vale desde 18/10 00:00 Cba (= 18/10 03:00Z).
     --   17/10 23:30 Cba es 18/10 02:30Z: por fecha UTC pasaría; por fecha SIM, no.
     v_ok :=
-          public.interacciones_validar_ocurrida('staff', '2026-10-18T03:00:00Z', '2026-10-19T03:05:00Z', '2026-10-19T03:05:00Z', '2026-10-01T03:00:00Z') is null
-      and public.interacciones_validar_ocurrida('staff', '2026-10-18T02:59:59Z', '2026-10-19T03:05:00Z', '2026-10-19T03:05:00Z', '2026-10-01T03:00:00Z') = 'fuera_de_ventana'
-      and public.interacciones_validar_ocurrida('staff', '2026-10-18T02:30:00Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-01T03:00:00Z') = 'fuera_de_ventana'
-      and public.interacciones_validar_ocurrida('admin', '2026-10-18T02:30:00Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-01T03:00:00Z') is null
-      and public.interacciones_validar_ocurrida('admin', '2026-10-01T02:59:59Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-01T03:00:00Z') = 'ocurrida_en_antes_del_inicio'
-      and public.interacciones_validar_ocurrida('admin', '2026-10-19T12:02:00Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-01T03:00:00Z') is null
-      and public.interacciones_validar_ocurrida('admin', '2026-10-19T12:02:01Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-01T03:00:00Z') = 'ocurrida_en_futura'
+          public.interacciones_validar_ocurrida('staff', '2026-10-18T03:00:00Z', '2026-10-19T03:05:00Z', '2026-10-19T03:05:00Z', '2026-10-02T03:00:00Z') is null
+      and public.interacciones_validar_ocurrida('staff', '2026-10-18T02:59:59Z', '2026-10-19T03:05:00Z', '2026-10-19T03:05:00Z', '2026-10-02T03:00:00Z') = 'fuera_de_ventana'
+      and public.interacciones_validar_ocurrida('staff', '2026-10-18T02:30:00Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-02T03:00:00Z') = 'fuera_de_ventana'
+      and public.interacciones_validar_ocurrida('admin', '2026-10-18T02:30:00Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-02T03:00:00Z') is null
+      and public.interacciones_validar_ocurrida('admin', '2026-10-02T02:59:59Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-02T03:00:00Z') = 'ocurrida_en_antes_del_inicio'
+      and public.interacciones_validar_ocurrida('admin', '2026-10-19T12:02:00Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-02T03:00:00Z') is null
+      and public.interacciones_validar_ocurrida('admin', '2026-10-19T12:02:01Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-02T03:00:00Z') = 'ocurrida_en_futura'
       and public.interacciones_validar_ocurrida('admin', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', '2026-10-19T12:00:00Z', null) = 'registro_no_iniciado'
       and public.interacciones_staff_puede_corregir('2026-10-18T00:30:00Z', '2026-10-20T00:30:00Z')
       and not public.interacciones_staff_puede_corregir('2026-10-18T00:30:00Z', '2026-10-20T00:30:01Z')
