@@ -108,5 +108,11 @@ sim-control-m7.sql
 esquema-base-cierre.sql
 esquema-base-permisos.sql
 
+# ── 13b. Interacciones del stand ────────────────────────────────────────────
+# Va DESPUÉS de esquema-base-permisos.sql a propósito: ese archivo da DML a
+# service_role sobre TODAS las tablas de public, y este módulo se lo recorta a
+# lectura (toda escritura pasa por sus RPCs). Necesita turnos_stand y empleados.
+interacciones-bloque1.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql

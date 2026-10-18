@@ -92,10 +92,13 @@ export async function PATCH(
 }
 
 // DELETE: eliminación física DEFINITIVA de un turno del Turnero SIM. SOLO admin.
-// El turno no tiene registros hijos (los pagos viven en el JSON pagos_detalle de
-// la propia fila), así que borrarlo no deja huérfanos ni rompe FKs. Las métricas
-// y resúmenes leen la tabla en vivo, por lo que el turno deja de contar apenas se
-// elimina. No se conserva historial del turno borrado (es hard delete).
+// Los pagos viven en el JSON pagos_detalle de la propia fila. El único registro
+// hijo es el vínculo de Interacciones (interaccion_turnos, ON DELETE CASCADE): se
+// borra solo, la interacción vuelve a "pendiente" y queda el evento
+// turno_eliminado con el ID y los datos mínimos del turno (sin nombre ni
+// teléfono). Este borrado no cambia ni se bloquea por eso. Las métricas y
+// resúmenes leen la tabla en vivo, por lo que el turno deja de contar apenas se
+// elimina. El Turnero no conserva historial del turno borrado (es hard delete).
 export async function DELETE(
   _req: Request,
   context: { params: Promise<{ id: string }> },
