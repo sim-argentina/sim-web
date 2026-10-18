@@ -494,6 +494,13 @@ Fechas en las pruebas del módulo: ninguna usa el 01/10/2026. La guarda de `lib/
 - **Orden:** migración → despliegue. El código anterior funciona con la base nueva (las columnas de antes siguen, la vista solo agrega al final y la forma de un rango se sigue aceptando); el código nuevo necesita la base nueva.
 - **Volver al código anterior** es seguro para los datos: la base rechaza que la pantalla anterior trunque una selección múltiple (409 `cliente_desactualizado`) o deje más rangos que personas. Pero esa pantalla mostraría como "Sin dato" los grupos con varios rangos y su análisis los contaría así: conviene corregir hacia adelante y, si hiciera falta, pausar altas. No se borran columnas ni datos.
 
+#### Registro de la publicación del perfil v2 (18/10/2026)
+
+- **Antes:** SIM WEB con el esquema del commit `5a7c52d` (huella de 7 partes idéntica a la local), **0 interacciones**, inicio `2026-10-18 15:00:33.403811 UTC` y sin pausa. Despliegue servido: `dpl_45y2cka2xVfeKSJY1UxkkWuGyXQZ` (`839afb8`), que queda como retorno de código.
+- **Migración:** `interacciones_perfil_v2`, aplicada por MCP a las 22:19 UTC aprox. con `lock_timeout` de 5 s. Es el extracto de `db/interacciones-bloque1.sql` (sin líneas de comentario) con solo las sentencias que cambian. Antes de aplicarla se comprobó en el stack local que esquema publicado + extracto da la misma huella que el archivo completo, y que re-aplicarlo no cambia nada. Después, la huella de Producción coincide con la esperada. Backfill: 0 filas (no había registros). Inicio, pausa, RLS (sin policies), `service_role` solo lectura y RPCs sin EXECUTE para `anon` quedaron iguales.
+- **Despliegue:** `main` en `596fd14` (código en `ea6fbc8`), despliegue `dpl_8Q2RkQ7Yp5PhBT8LzTTJmXy3LULY` servido por `simexperience.com.ar` desde las 22:22 UTC. Sin sesión, las APIs del módulo responden 401 y el panel y el análisis redirigen al login; sin errores de runtime.
+- **Pendiente:** validar con una sesión real del personal y de admin (formularios, detalle y análisis) y la primera carga real con rangos o tipo de grupo.
+
 ### Guía (A/B/C)
 
 Esta guía prepara acciones; no las ejecuta ni las autoriza. Cada paso de B y C necesita una decisión explícita.
