@@ -1,0 +1,295 @@
+import { strict as assert } from "node:assert";
+import {
+  CAMPOS_PROHIBIDOS, LIMITES, coincideBusqueda, codificarCursor, decodificarCursor, dtoInteraccion, errorDeRpc,
+  fechaSim, horaSim, instanteValido, minutoLocal, normalizarIdTurno, pagoContradictorio, permisosPara,
+  staffPuedeCorregir, staffPuedeDeclarar, esFuturo, validarCuerpoAlta, validarCuerpoAnulacion, validarCuerpoCierre,
+  validarCuerpoEdicion, validarCuerpoVinculo, validarDatos, validarDesvinculo, validarFiltrosListado,
+  validarParamsVinculables, ventanaVinculables, type DetalleBase,
+} from "@/lib/interacciones";
+
+// Interacciones del stand · contrato puro (Bloque 2). Sin base, sin red.
+// Ejecutar: npx tsx lib/interacciones.test.ts
+// Córdoba = UTC−3 todo el año: 03:00Z es la medianoche de SIM.
+
+const K = "2f1b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d";
+const err = <T>(r: { ok: true; valor: T } | { ok: false; e: { codigo: string; campo?: string; status: number } }) =>
+  r.ok ? "ok" : `${r.e.status}:${r.e.codigo}${r.e.campo ? `:${r.e.campo}` : ""}`;
+
+async function main() {
+  // ── 1. IDs bigint: siempre cadena, sin perder precisión ───────────────────
+  {
+    assert.equal(normalizarIdTurno("2138"), "2138");
+    assert.equal(normalizarIdTurno("-910001"), "-910001");
+    assert.equal(normalizarIdTurno("9007199254740993"), "9007199254740993", "por encima de 2^53, intacto");
+    assert.equal(normalizarIdTurno("9223372036854775807"), "9223372036854775807", "máximo int8");
+    for (const malo of [2138, "9223372036854775808", "-9223372036854775809", "012", "+5", "1e3", "1.0", " 5", "", "-0", null, undefined, "abc"]) {
+      assert.equal(normalizarIdTurno(malo), null, `${JSON.stringify(malo)} no es un id válido`);
+    }
+    assert.equal(err(validarCuerpoVinculo({ version: 1, turnos: [2138] })), "400:campo_invalido:turnos", "un número de JSON se rechaza");
+    assert.equal(err(validarCuerpoVinculo({ version: 1, turnos: ["1", "1"] })), "400:turnos_repetidos");
+    assert.equal(err(validarCuerpoVinculo({ version: 1, turnos: ["1", "2", "3", "4", "5"] })), "400:maximo_turnos_por_interaccion_pedido");
+    assert.equal(err(validarCuerpoVinculo({ version: 1, turnos: [] })), "400:campo_invalido:turnos");
+    const v = validarCuerpoVinculo({ version: 3, turnos: ["9007199254740993"] });
+    assert.ok(v.ok && v.valor.turnos[0] === "9007199254740993");
+  }
+
+  // ── 2. Alta: obligatorios, anulables, desconocidos y autoridad ────────────
+  {
+    const base = { idempotency_key: K, datos: { resultado: "miro", personas_grupo: 1 } };
+    const ok = validarCuerpoAlta(base);
+    assert.ok(ok.ok && ok.valor.turnos.length === 0 && ok.valor.datos.resultado === "miro");
+    assert.equal(err(validarCuerpoAlta({ ...base, idempotency_key: "x" })), "400:campo_invalido:idempotency_key");
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { personas_grupo: 1 } })), "400:campo_invalido:resultado");
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { resultado: "miro" } })), "400:campo_invalido:personas_grupo");
+    for (const p of [0, 51, 2.5, "3"]) {
+      assert.equal(err(validarCuerpoAlta({ ...base, datos: { resultado: "miro", personas_grupo: p } })), "400:campo_invalido:personas_grupo", `personas ${p}`);
+    }
+    // Atributos de autoridad: arriba o dentro de datos → 400, nunca se ignoran.
+    for (const k of ["rol", "registrada_por_rol", "actualizada_por_rol", "anulada_por_rol", "cerrada_por_rol"]) {
+      assert.equal(err(validarCuerpoAlta({ ...base, [k]: "admin" })), `400:campo_no_permitido:${k}`);
+      assert.equal(err(validarCuerpoAlta({ ...base, datos: { ...base.datos, [k]: "admin" } })), `400:campo_no_permitido:${k}`);
+    }
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { ...base.datos, nombre: "Juan" } })), "400:campo_no_permitido:nombre");
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { ...base.datos, telefono: "351" } })), "400:campo_no_permitido:telefono");
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { ...base.datos, edad: 30 } })), "400:campo_desconocido:edad");
+    assert.equal(err(validarCuerpoAlta({ ...base, extra: 1 })), "400:campo_desconocido:extra");
+    assert.ok(CAMPOS_PROHIBIDOS.includes("rol"));
+    // Desglose: los dos o ninguno, y suma el total.
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { resultado: "miro", personas_grupo: 3, hombres: 2 } })), "400:desglose_incompleto");
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { resultado: "miro", personas_grupo: 3, hombres: 2, mujeres: 2 } })), "400:desglose_no_suma");
+    assert.ok(validarCuerpoAlta({ ...base, datos: { resultado: "miro", personas_grupo: 3, hombres: 2, mujeres: 1 } }).ok);
+    assert.ok(validarCuerpoAlta({ ...base, datos: { resultado: "miro", personas_grupo: 3, hombres: null, mujeres: null } }).ok);
+    assert.ok(validarCuerpoAlta({ ...base, datos: { resultado: "miro", personas_grupo: 3, hombres: null } }).ok, "hombres null solo = sin desglose");
+    // Motivo: nunca con "subio"; sí (opcional) con miro/pregunto.
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { resultado: "subio", personas_grupo: 1, motivo: "precio" } })), "400:motivo_no_aplica");
+    assert.ok(validarCuerpoAlta({ ...base, datos: { resultado: "miro", personas_grupo: 1, motivo: "tiempo" } }).ok);
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { resultado: "pregunto", personas_grupo: 1, motivo: "caro" } })), "400:campo_invalido:motivo");
+    // Turnos solo con "subio".
+    assert.equal(err(validarCuerpoAlta({ ...base, turnos: ["1"] })), "400:resultado_no_admite_vinculos");
+    assert.ok(validarCuerpoAlta({ ...base, datos: { resultado: "subio", personas_grupo: 2 }, turnos: ["1", "2"] }).ok);
+    // ocurrida_en: ISO con zona, o null (= ahora).
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { ...base.datos, ocurrida_en: "2026-10-18 10:00" } })), "400:campo_invalido:ocurrida_en");
+    assert.ok(validarCuerpoAlta({ ...base, datos: { ...base.datos, ocurrida_en: "2026-10-18T10:00:00-03:00" } }).ok);
+    assert.ok(validarCuerpoAlta({ ...base, datos: { ...base.datos, ocurrida_en: null } }).ok);
+    // Observaciones: se recortan; vacías = null; > 500 → 400.
+    const o = validarCuerpoAlta({ ...base, datos: { ...base.datos, observaciones: "  caro \n" } });
+    assert.ok(o.ok && o.valor.datos.observaciones === "caro");
+    const vac = validarCuerpoAlta({ ...base, datos: { ...base.datos, observaciones: "   " } });
+    assert.ok(vac.ok && vac.valor.datos.observaciones === null);
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { ...base.datos, observaciones: "x".repeat(501) } })), "400:campo_invalido:observaciones");
+    assert.equal(err(validarCuerpoAlta({ ...base, datos: { ...base.datos, atendio_empleado_id: "Juan" } })), "400:campo_invalido:atendio_empleado_id");
+  }
+
+  // ── 3. Edición parcial: lo omitido no cambia, null vacía, sin borrados silenciosos ──
+  {
+    const r = validarCuerpoEdicion({ version: 2, cambios: { rango_etario: "25_34" } });
+    assert.ok(r.ok);
+    assert.deepEqual(r.ok && r.valor.cambios, { rango_etario: "25_34" }, "solo la clave enviada");
+    assert.equal(r.ok && r.valor.confirmar_liberacion, false);
+    const n = validarCuerpoEdicion({ version: 2, cambios: { observaciones: null, motivo: null } });
+    assert.deepEqual(n.ok && n.valor.cambios, { observaciones: null, motivo: null });
+    assert.equal(err(validarCuerpoEdicion({ version: 2, cambios: {} })), "400:datos_invalidos");
+    assert.equal(err(validarCuerpoEdicion({ cambios: { personas_grupo: 2 } })), "400:campo_invalido:version");
+    assert.equal(err(validarCuerpoEdicion({ version: 0, cambios: { personas_grupo: 2 } })), "400:campo_invalido:version");
+    assert.equal(err(validarCuerpoEdicion({ version: 1, cambios: { hombres: 1 } })), "400:desglose_incompleto", "el desglose cambia de a par");
+    assert.equal(err(validarCuerpoEdicion({ version: 1, cambios: { ocurrida_en: null } })), "400:campo_invalido:ocurrida_en");
+    assert.equal(err(validarCuerpoEdicion({ version: 1, cambios: { resultado: "subio", motivo: "precio" } })), "400:motivo_no_aplica");
+    assert.ok(validarCuerpoEdicion({ version: 1, cambios: { resultado: "subio", motivo: null } }).ok);
+    assert.equal(err(validarCuerpoEdicion({ version: 1, cambios: { registrada_por_rol: "admin" } })), "400:campo_no_permitido:registrada_por_rol");
+    assert.equal(err(validarCuerpoEdicion({ version: 1, rol: "admin", cambios: { personas_grupo: 2 } })), "400:campo_no_permitido:rol");
+    assert.equal(err(validarCuerpoEdicion({ version: 1, cambios: { personas_grupo: 2 }, confirmar_liberacion: "si" })), "400:campo_invalido:confirmar_liberacion");
+  }
+
+  // ── 4. Anulación, cierre y desvínculo ────────────────────────────────────
+  {
+    assert.ok(validarCuerpoAnulacion({ version: 1 }).ok);
+    const a = validarCuerpoAnulacion({ version: 1, motivo: "  duplicada " });
+    assert.ok(a.ok && a.valor.motivo === "duplicada");
+    assert.equal(err(validarCuerpoAnulacion({ version: 1, motivo: "x".repeat(201) })), "400:campo_invalido:motivo");
+    assert.ok(validarCuerpoCierre({ version: 1, motivo: "sin_turno_en_turnero" }).ok);
+    assert.equal(err(validarCuerpoCierre({ version: 1, motivo: "reserva_web" })), "400:campo_invalido:cierre_motivo", "reserva web no es un cierre");
+    assert.equal(err(validarCuerpoCierre({ version: 1, motivo: "otro" })), "400:campo_invalido:cierre_nota");
+    assert.equal(err(validarCuerpoCierre({ version: 1, motivo: "otro", nota: "   " })), "400:campo_invalido:cierre_nota");
+    assert.ok(validarCuerpoCierre({ version: 1, motivo: "otro", nota: "pagó en efectivo aparte" }).ok);
+    assert.equal(err(validarCuerpoCierre({ version: 1, motivo: "otro", nota: "x", cerrada_por_rol: "admin" })), "400:campo_no_permitido:cerrada_por_rol");
+    const d = validarDesvinculo(new URLSearchParams("turno=9007199254740993&version=4"));
+    assert.ok(d.ok && d.valor.turno === "9007199254740993" && d.valor.version === 4);
+    assert.equal(err(validarDesvinculo(new URLSearchParams("turno=12&version=x"))), "400:campo_invalido:version");
+    assert.equal(err(validarDesvinculo(new URLSearchParams("turno=1.5&version=1"))), "400:campo_invalido:turno");
+    assert.equal(err(validarDesvinculo(new URLSearchParams("turno=1&version=1&rol=admin"))), "400:campo_desconocido:rol");
+  }
+
+  // ── 5. Fechas: medianoche de Córdoba y "día anterior" calendario ─────────
+  {
+    const d = (s: string) => new Date(s);
+    assert.equal(fechaSim(d("2026-10-18T02:59:59Z")), "2026-10-17", "02:59Z todavía es el 17 en Córdoba");
+    assert.equal(fechaSim(d("2026-10-18T03:00:00Z")), "2026-10-18", "03:00Z ya es el 18");
+    assert.equal(horaSim(d("2026-10-18T03:00:00Z")), "00:00");
+    assert.equal(horaSim(d("2026-10-19T00:30:00Z")), "21:30");
+    // Alta el 19/10 00:05 (Cba): vale desde el 18/10 00:00:00 (Cba); el 17/10 23:59:59 no.
+    const alta = d("2026-10-19T03:05:00Z");
+    assert.equal(staffPuedeDeclarar(d("2026-10-18T03:00:00Z"), alta), true);
+    assert.equal(staffPuedeDeclarar(d("2026-10-18T02:59:59Z"), alta), false);
+    // 17/10 23:30 Cba = 18/10 02:30Z: por fecha UTC pasaría; por fecha SIM, no.
+    assert.equal(staffPuedeDeclarar(d("2026-10-18T02:30:00Z"), d("2026-10-19T12:00:00Z")), false);
+    // No es una ventana móvil de 24 h: 47 h antes vale si cae en el día anterior.
+    assert.equal(staffPuedeDeclarar(d("2026-10-18T03:00:00Z"), d("2026-10-20T02:59:00Z")), true);
+    assert.equal(staffPuedeCorregir(d("2026-10-18T00:30:00Z"), d("2026-10-20T00:30:00Z")), true, "48 h exactas, inclusive");
+    assert.equal(staffPuedeCorregir(d("2026-10-18T00:30:00Z"), d("2026-10-20T00:30:01Z")), false);
+    assert.equal(esFuturo(d("2026-10-19T12:02:00Z"), d("2026-10-19T12:00:00Z")), false, "margen de 2 min");
+    assert.equal(esFuturo(d("2026-10-19T12:02:01Z"), d("2026-10-19T12:00:00Z")), true);
+    // El resultado no depende de la zona del proceso.
+    const tz = process.env.TZ;
+    try {
+      for (const z of ["UTC", "Asia/Tokyo", "Etc/GMT+12"]) {
+        process.env.TZ = z;
+        assert.equal(fechaSim(d("2026-10-18T02:59:59Z")), "2026-10-17", `TZ=${z}`);
+        assert.equal(staffPuedeDeclarar(d("2026-10-18T02:59:59Z"), alta), false, `TZ=${z}`);
+      }
+    } finally {
+      if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
+    }
+    assert.ok(instanteValido("2026-10-18T10:00:00.123456-03:00") && !instanteValido("2026-10-18T10:00:00") && !instanteValido(1));
+  }
+
+  // ── 6. Ventana de turnos vinculables ─────────────────────────────────────
+  {
+    const v = ventanaVinculables(new Date("2026-10-18T23:30:00Z"));
+    assert.deepEqual([v.ancla.fecha, v.ancla.hora, v.fecha_desde, v.fecha_hasta], ["2026-10-18", "20:30", "2026-10-18", "2026-10-18"]);
+    assert.equal(v.minuto_hasta - v.minuto_desde, 120, "las dos horas previas");
+    assert.ok(minutoLocal("2026-10-18", "18:30")! === v.minuto_desde && minutoLocal("2026-10-18", "18:29")! < v.minuto_desde);
+    // Cruce de medianoche: 00:40 del 19 → desde las 22:40 del 18.
+    const m = ventanaVinculables(new Date("2026-10-19T03:40:00Z"));
+    assert.deepEqual([m.fecha_desde, m.fecha_hasta], ["2026-10-18", "2026-10-19"]);
+    assert.equal(minutoLocal("2026-10-18", "22:40"), m.minuto_desde);
+    const dia = ventanaVinculables(new Date("2026-10-18T23:30:00Z"), "dia");
+    assert.deepEqual([dia.fecha_desde, dia.fecha_hasta, dia.minuto_hasta - dia.minuto_desde], ["2026-10-18", "2026-10-18", 1439]);
+    const tol = ventanaVinculables(new Date("2026-10-18T23:30:00Z"), "tolerancia");
+    assert.deepEqual([tol.fecha_desde, tol.fecha_hasta], ["2026-10-17", "2026-10-19"], `±${LIMITES.tolerancia_dias_turno} día`);
+    assert.ok(coincideBusqueda({ hora: "19:53", personas: 3, minutos: 20 }, { hora: "19:5", personas: 3, minutos: null }));
+    assert.ok(!coincideBusqueda({ hora: "19:53", personas: 3, minutos: 20 }, { hora: "18", personas: null, minutos: null }));
+    assert.ok(!coincideBusqueda({ hora: "19:53", personas: 3, minutos: 20 }, { hora: null, personas: null, minutos: 10 }));
+    const p = validarParamsVinculables(new URLSearchParams("alcance=dia&hora=19:5&personas=3"));
+    assert.ok(p.ok && p.valor.alcance === "dia" && p.valor.hora === "19:5" && p.valor.incluir_vinculados);
+    assert.equal(err(validarParamsVinculables(new URLSearchParams("alcance=semana"))), "400:campo_invalido:alcance");
+    assert.equal(err(validarParamsVinculables(new URLSearchParams("interaccion=" + K + "&ocurrida_en=2026-10-18T10:00:00Z"))), "400:campo_invalido:ocurrida_en");
+    assert.equal(err(validarParamsVinculables(new URLSearchParams("nombre=juan"))), "400:campo_desconocido:nombre");
+  }
+
+  // ── 7. Pago: regla total > 0; los datos contradictorios solo se señalan ──
+  {
+    assert.equal(pagoContradictorio(5000, "gratis"), true);
+    assert.equal(pagoContradictorio(0, "qr"), true);
+    assert.equal(pagoContradictorio(0, "gratis"), false);
+    assert.equal(pagoContradictorio(34000, "qr"), false);
+    assert.equal(pagoContradictorio(null, null), true);
+  }
+
+  // ── 8. Listados: filtros, ventana de staff y cursor ──────────────────────
+  {
+    const ahora = new Date("2026-10-18T22:00:00Z"); // 18/10 19:00 Cba
+    const def = validarFiltrosListado(new URLSearchParams(), "staff", ahora);
+    assert.ok(def.ok && def.valor.desde === "2026-10-18" && def.valor.hasta === "2026-10-18" && def.valor.limite === 20);
+    assert.ok(validarFiltrosListado(new URLSearchParams("desde=2026-10-16"), "staff", ahora).ok, "staff: hoy − 2");
+    assert.equal(err(validarFiltrosListado(new URLSearchParams("desde=2026-10-15"), "staff", ahora)), "403:fuera_de_ventana");
+    assert.ok(validarFiltrosListado(new URLSearchParams("desde=2026-01-01"), "admin", ahora).ok);
+    const pend = validarFiltrosListado(new URLSearchParams("estado=pendiente"), "staff", ahora);
+    assert.ok(pend.ok && pend.valor.desde === null, "pendientes de cualquier fecha");
+    assert.equal(err(validarFiltrosListado(new URLSearchParams("limite=101"), "admin", ahora)), "400:campo_invalido:limite");
+    assert.equal(err(validarFiltrosListado(new URLSearchParams("estado=vendida"), "admin", ahora)), "400:campo_invalido:estado");
+    assert.equal(err(validarFiltrosListado(new URLSearchParams("cursor=%%%"), "admin", ahora)), "400:campo_invalido:cursor");
+    const c = { ocurrida_en: "2026-10-18T22:53:00.123456+00:00", id: K };
+    assert.deepEqual(decodificarCursor(codificarCursor(c)), c);
+    assert.equal(decodificarCursor(codificarCursor({ ...c, id: "x" })), null);
+    const anul = validarFiltrosListado(new URLSearchParams("estado=anulada"), "admin", ahora);
+    assert.ok(anul.ok && anul.valor.incluir_anuladas);
+  }
+
+  // ── 9. Errores de la base → HTTP (sin texto SQL) ─────────────────────────
+  {
+    const m = (code: string, message: string) => {
+      const e = errorDeRpc({ code, message });
+      return e ? `${e.status}:${e.codigo}${e.campo ? `:${e.campo}` : ""}${e.turno_stand_id ? `#${e.turno_stand_id}` : ""}` : null;
+    };
+    assert.equal(m("22023", "campo_invalido:personas_grupo"), "400:campo_invalido:personas_grupo");
+    assert.equal(m("22023", "desglose_no_suma"), "400:desglose_no_suma");
+    assert.equal(m("22023", "turno_fuera_de_tolerancia:9007199254740993"), "400:turno_fuera_de_tolerancia#9007199254740993");
+    assert.equal(m("42501", "fuera_de_ventana"), "403:fuera_de_ventana");
+    assert.equal(m("42501", "solo_admin"), "403:solo_admin");
+    assert.equal(m("P0002", "interaccion_inexistente"), "404:interaccion_inexistente");
+    assert.equal(m("P0002", "turno_inexistente:-5"), "404:turno_inexistente#-5");
+    assert.equal(m("55000", "version_desactualizada"), "409:version_desactualizada");
+    assert.equal(m("23505", "turno_ya_vinculado:2138"), "409:turno_ya_vinculado#2138");
+    assert.equal(m("23505", "idempotency_key_con_otro_payload"), "409:idempotency_key_con_otro_payload");
+    assert.equal(m("23514", "maximo_turnos_por_interaccion"), "409:maximo_turnos_por_interaccion");
+    assert.equal(m("55000", "registro_no_iniciado"), "503:modulo_no_habilitado");
+    assert.equal(m("PGRST202", "Could not find the function public.interaccion_registrar"), "503:modulo_no_instalado");
+    assert.equal(m("42P01", "relation \"public.interacciones_config\" does not exist"), "503:modulo_no_instalado");
+    assert.equal(m("XX000", "algo interno con datos"), null, "desconocido → 500 genérico");
+    assert.equal(m("22023", "campo_invalido:'; drop table"), "400:campo_invalido", "el campo no se refleja si no es un nombre");
+    const e = errorDeRpc({ code: "23505", message: "turno_ya_vinculado:2138" })!;
+    assert.ok(!/turno_ya_vinculado:|SQL|ERROR/.test(e.error), "el mensaje es para personas");
+  }
+
+  // ── 10. Respuesta: versión, estado, permisos y advertencias ──────────────
+  {
+    const det: DetalleBase = {
+      interaccion: {
+        id: K, version: 4, ocurrida_en: "2026-10-18T22:30:00+00:00", fecha_negocio: "2026-10-18", hora_negocio: "19:30:00",
+        registrada_en: "2026-10-18T22:31:00+00:00", registrada_por_rol: "staff", actualizada_en: null, actualizada_por_rol: null,
+        resultado: "subio", personas_grupo: 2, hombres: null, mujeres: null, rango_etario: "18_24", conocia_sim: "no",
+        se_subio_antes: "no_sabe", iniciador: "cliente", atendio_empleado_id: "11111111-2222-4333-8444-555555555555",
+        motivo: null, observaciones: null, cierre_motivo: null, cierre_nota: null, cerrada_en: null, cerrada_por_rol: null,
+        anulada_en: null, anulada_por_rol: null, anulada_motivo: null, idempotency_key: K,
+      },
+      estado: {
+        vinculo_estado: "con_turno", turnos_vinculados: 2, turnos_activos: 2, turnos_pagos: 1, turnos_gratis: 1,
+        turnos_pago_contradictorio: 1, participaciones: 4, venta_verificada: true,
+      },
+      turnos: [
+        { turno_stand_id: "9007199254740993", turno_fecha: "2026-10-18", turno_hora: "19:20", turno_hora_subida: "19:25", turno_personas: 2,
+          turno_minutos: 20, turno_modalidad: "v2_10", turno_total: 34000, turno_pago: true, turno_activo: true, dias_diferencia: 0,
+          fuera_de_tolerancia: false, turno_modificado: true, turno_metodo_pago: "qr", pago_contradictorio: false,
+          vinculado_en: "2026-10-18T22:31:00+00:00", vinculado_por_rol: "staff" },
+        { turno_stand_id: "-3", turno_fecha: "2026-10-18", turno_hora: "19:40", turno_hora_subida: null, turno_personas: 2,
+          turno_minutos: 10, turno_modalidad: "v2_10", turno_total: 0, turno_pago: false, turno_activo: true, dias_diferencia: 0,
+          fuera_de_tolerancia: false, turno_modificado: false, turno_metodo_pago: "qr", pago_contradictorio: true,
+          vinculado_en: "2026-10-18T22:32:00+00:00", vinculado_por_rol: "staff" },
+      ],
+    };
+    const dentro = new Date("2026-10-19T22:00:00Z");
+    const dto = dtoInteraccion(det, { rol: "staff", ahora: dentro, atendio: { nombre: "Ramiro", activo: false } }, { cierre_retirado: true });
+    assert.equal(dto.version, 4);
+    assert.equal(dto.hora_negocio, "19:30");
+    assert.equal(dto.turnos[0].turno_stand_id, "9007199254740993");
+    assert.deepEqual(dto.atendio, { empleado_id: "11111111-2222-4333-8444-555555555555", nombre: "Ramiro", activo: false, declarado: true });
+    assert.equal(dto.vinculo.participaciones, 4, "participaciones, no personas: puede superar el grupo (2)");
+    assert.equal(dto.vinculo.venta_verificada, true);
+    assert.deepEqual(dto.advertencias.map((a) => `${a.codigo}${a.turno_stand_id ? `#${a.turno_stand_id}` : ""}`),
+      ["turno_modificado#9007199254740993", "pago_contradictorio#-3", "cierre_retirado"]);
+    assert.ok(!("idempotency_key" in dto) && !("alta_huella" in dto));
+    assert.deepEqual(dto.permisos, { editar: true, anular: true, vincular: true, desvincular: true, cerrar_sin_vinculo: false });
+    const tarde = dtoInteraccion(det, { rol: "staff", ahora: new Date("2026-10-21T00:00:00Z") });
+    assert.deepEqual(tarde.permisos, { editar: false, anular: false, vincular: true, desvincular: false, cerrar_sin_vinculo: false },
+      "staff fuera de las 48 h: solo puede seguir vinculando");
+    const pend = dtoInteraccion({ ...det, estado: { ...det.estado, vinculo_estado: "pendiente", turnos_vinculados: 0 }, turnos: [] }, { rol: "admin", ahora: dentro });
+    assert.equal(pend.advertencias[0].codigo, "pendiente_de_vinculo");
+    assert.equal(pend.permisos.cerrar_sin_vinculo, true);
+    assert.equal(permisosPara("staff", { registrada_en: det.interaccion.registrada_en as string, resultado: "subio", anulada: false, estado: "pendiente", turnos: 0 }, dentro).cerrar_sin_vinculo, false);
+  }
+
+  // ── 11. Validación de datos sueltos ──────────────────────────────────────
+  {
+    assert.equal(err(validarDatos([], "alta")), "400:datos_invalidos");
+    assert.equal(err(validarDatos({ resultado: "miro", personas_grupo: 1, conocia_sim: "quizas" }, "alta")), "400:campo_invalido:conocia_sim");
+    assert.ok(validarDatos({ resultado: "miro", personas_grupo: 1, conocia_sim: "no_sabe", se_subio_antes: "no_sabe" }, "alta").ok,
+      "\"No sabe\" es una respuesta válida");
+  }
+
+  console.log("OK — Interacciones (Bloque 2, puro): IDs bigint como cadena sin pérdida, alta/edición/anulación/cierre/desvínculo validados sin aceptar autoridad del cliente, edición parcial sin borrados silenciosos, medianoche y día anterior de Córdoba en cualquier TZ, ventana de vinculables (2 h, día, tolerancia, cruce de medianoche), pago contradictorio señalado, listados con cursor y ventana de staff, errores → HTTP sin SQL, respuesta con versión, estado, permisos y advertencias.");
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

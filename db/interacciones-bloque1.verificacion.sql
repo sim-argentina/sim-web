@@ -149,7 +149,12 @@ begin
       (-910015, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '13:00', 2, 10, 2, 0, 'gratis', 'activo', 'v2_10'),
       (-910016, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '13:30', 1, 30, 3, 23000, 'debito', 'activo', 'v2_10'),
       (-910017, 'NOMBRE SECRETO B1', '000-SECRETO', public.interacciones_fecha_sim(now() - interval '49 hours'),
-                '18:00', 1, 20, 2, 17000, 'qr', 'activo', 'v2_10');
+                '18:00', 1, 20, 2, 17000, 'qr', 'activo', 'v2_10'),
+      (-910018, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:00', 1, 10, 1, 5000, 'gratis', 'activo', 'v2_10'),
+      (-910019, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:10', 1, 10, 1, 0, 'qr', 'activo', 'v2_10'),
+      (-910020, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:20', 2, 10, 2, 20000, 'qr', 'activo', 'v2_10'),
+      (-910021, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:30', 2, 10, 2, 20000, 'qr', 'activo', 'v2_10'),
+      (-910022, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:40', 2, 10, 2, 20000, 'qr', 'activo', 'v2_10');
 
     insert into public.empleados (nombre_formal) values ('__TEST_INTERACCIONES_B1') returning id into v_emp;
 
@@ -549,6 +554,48 @@ begin
     -- T25 · el inicio no puede quedar después de interacciones ya registradas.
     v_e := pg_temp.intentar('select public.interacciones_definir_inicio((now() at time zone ''America/Argentina/Cordoba'')::timestamp, ''admin'')');
     v_log := v_log || case when v_e = '55000:inicio_posterior_a_registros' then 'T25 ' else 'FALLA:T25(' || v_e || ') ' end;
+
+    -- T32 · editar la FECHA de una 'subio' con turnos: si un turno vinculado quedaría
+    -- fuera de la tolerancia, se rechaza; dentro de la tolerancia, se acepta.
+    v_e := pg_temp.t_editar(v_y, 1, jsonb_build_object('ocurrida_en', now() - interval '3 days'), 'admin');
+    v_e2 := pg_temp.t_editar(v_y, 1, jsonb_build_object('ocurrida_en', now() - interval '1 minute'), 'admin');
+    v_log := v_log || case when v_e = '22023:turno_fuera_de_tolerancia:-910001' and v_e2 = 'ok'
+                              and pg_temp.nvinc(v_y) = 1 and pg_temp.ver(v_y) = 2
+                           then 'T32 ' else 'FALLA:T32(' || v_e || '|' || v_e2 || ') ' end;
+
+    -- T33 · total y método contradictorios: se SEÑALAN sin cambiar la regla de pago
+    -- (total > 0). 5000 'gratis' cuenta como pago; 0 'qr', como gratis.
+    v_j := public.interaccion_registrar(gen_random_uuid(), '{"resultado":"subio","personas_grupo":2}',
+                                        array[-910018, -910019]::bigint[], 'staff');
+    v_k := (v_j -> 'interaccion' ->> 'id')::uuid;
+    v_log := v_log || case when (select turnos_pagos = 1 and turnos_gratis = 1 and venta_verificada and turnos_pago_contradictorio = 2
+                                   from public.interacciones_stand_estado where interaccion_id = v_k)
+                              and (select bool_and(pago_contradictorio) from public.interacciones_vinculos_control where interaccion_id = v_k)
+                              and (select turno_metodo_pago = 'gratis' and turno_pago from public.interacciones_vinculos_control where turno_stand_id = -910018)
+                              and not (select pago_contradictorio from public.interacciones_cobertura_turnos where turno_stand_id = -910015)
+                              and (select pago_contradictorio from public.interacciones_cobertura_turnos where turno_stand_id = -910019)
+                              and has_function_privilege('service_role', 'public.interacciones_pago_contradictorio(numeric, text)', 'execute')
+                           then 'T33 ' else 'FALLA:T33 ' end;
+
+    -- T34 · respuestas de las RPCs: IDs de turnos como TEXTO; edición y anulación
+    -- informan los turnos liberados; vincular informa si retiró un cierre.
+    v_j := public.interaccion_registrar(gen_random_uuid(), '{"resultado":"subio","personas_grupo":2}',
+                                        array[-910020]::bigint[], 'staff');
+    v_k := (v_j -> 'interaccion' ->> 'id')::uuid;
+    v_ok := jsonb_typeof(v_j -> 'turnos' -> 0 -> 'turno_stand_id') = 'string'
+            and v_j -> 'turnos' -> 0 ->> 'turno_stand_id' = '-910020';
+    v_j := public.interaccion_editar(v_k, 1, '{"resultado":"pregunto"}', 'staff');
+    v_ok := v_ok and v_j -> 'turnos_liberados' = '["-910020"]'::jsonb and (v_j ->> 'cierre_retirado')::boolean = false;
+    v_j := public.interaccion_registrar(gen_random_uuid(), '{"resultado":"subio","personas_grupo":2}', null, 'staff');
+    v_k := (v_j -> 'interaccion' ->> 'id')::uuid;
+    perform public.interaccion_cerrar_sin_vinculo(v_k, 1, 'turno_no_identificable', null, 'admin');
+    v_j := public.interaccion_vincular(v_k, 2, array[-910021]::bigint[], 'staff');
+    v_ok := v_ok and (v_j ->> 'cierre_retirado')::boolean and v_j -> 'turnos' -> 0 ->> 'turno_stand_id' = '-910021';
+    v_j := public.interaccion_vincular(v_k, 3, array[-910022]::bigint[], 'staff');
+    v_ok := v_ok and not (v_j ->> 'cierre_retirado')::boolean;
+    v_j := public.interaccion_anular(v_k, 4, null, 'admin');
+    v_log := v_log || case when v_ok and v_j -> 'turnos_liberados' = '["-910022", "-910021"]'::jsonb
+                           then 'T34 ' else 'FALLA:T34 ' end;
 
     -- T26 · las RPCs de Interacciones no modificaron turnos, reservas, Finanzas,
     -- Mensualidades, Gift Cards, Colectivo ni empleados (huella idéntica), y su

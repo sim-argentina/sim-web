@@ -5,12 +5,19 @@ terminan en consultas y en personas que se suben. Se carga **después** de atend
 un paso previo para vender, cobrar, cargar un turno ni subir a nadie. El Turnero sigue
 funcionando igual.
 
-Estado: **Bloque 1** (base de datos) hecho y verificado en el stack local. Todavía no hay
-API, pantallas ni dashboard, y no está aplicado en Producción.
+Estado:
+
+- **Bloque 1** (base de datos) y **Bloque 2** (lógica de servidor y API) hechos y verificados en el stack local.
+- Todavía no hay pantallas ni dashboard, y nada está aplicado en Producción.
+
+Archivos y pruebas:
 
 - Esquema y RPCs: `db/interacciones-bloque1.sql`
 - Verificación sin huella: `db/interacciones-bloque1.verificacion.sql`
 - Concurrencia y permisos reales (solo local): `node scripts/pruebas/interacciones-bloque1.mjs`
+- Contrato puro (validación, ventanas, errores): `lib/interacciones.ts` · pruebas: `npx tsx lib/interacciones.test.ts`
+- Acceso de servidor: `lib/interaccionesServer.ts` · piezas HTTP: `lib/interaccionesHttp.ts`
+- Rutas reales contra el stack local: `node scripts/pruebas/correr-mutantes.mjs lib/interacciones.integration.ts`
 
 ## Decisiones
 
@@ -61,7 +68,9 @@ API, pantallas ni dashboard, y no está aplicado en Producción.
 - **Turno borrado en el Turnero:**
   - El vínculo se borra solo. Si era el último, la interacción vuelve a `pendiente`; un cierre anterior ya se había retirado al vincular, así que no la oculta.
   - Queda el evento `turno_eliminado` con el ID y los datos mínimos.
+  - **Esos datos son una captura tomada al vincular**, no necesariamente el último estado del turno antes de borrarlo. Si el Turnero lo corrigió en el medio, el evento muestra lo que valía al vincularse. Para capturar el último estado habría que poner un trigger sobre `turnos_stand`, y el Turnero no se toca.
 - **Turno corregido en el Turnero:** nada se bloquea. La vista `interacciones_vinculos_control` marca `turno_modificado` y `fuera_de_tolerancia` (más de ±1 día entre turno e interacción).
+- **Fecha de la interacción corregida:** si es una `subio` con turnos y cambia de día, todos sus turnos tienen que seguir dentro de la tolerancia. Si no, la base rechaza con `turno_fuera_de_tolerancia:<id>`.
 
 ## Métricas (definiciones para los Bloques 4 y 5)
 
@@ -73,7 +82,9 @@ Unidades: **interacciones** (grupos), **personas** (tamaño declarado del grupo)
   - Siempre con su denominador. Con denominador 0 se muestra "Sin datos".
   - Ninguna se llama "conversión a venta".
 - **Estado del vínculo:** las subidas pendientes y las cerradas sin turno son declaraciones sin verificación del Turnero. Se muestran aparte.
-- **Venta verificada:** al menos un turno pago vinculado.
+- **Venta verificada:** existe al menos un turno vinculado elegible (activo) con **total positivo**, según la regla actual del Turnero.
+  - **No** verifica acreditación, cobro ni conciliación financiera: eso es de Finanzas.
+  - Si un turno trae datos contradictorios, la interpretación no cambia en silencio. Puede ser total positivo con método `gratis`, o total 0 con otro método (`interacciones_pago_contradictorio()`). En ese caso se **señala** con `pago_contradictorio` en cada turno, `turnos_pago_contradictorio` en el estado y la advertencia `pago_contradictorio` en la API.
 - **Participaciones:** Σ `cantidad_personas` de los turnos vinculados (valor vivo).
   - **No** son personas únicas: un grupo de 2 que juega dos veces suma 4.
   - No se calcula ningún % contra el tamaño del grupo y no hay restricción entre ambos.
@@ -124,3 +135,112 @@ del Bloque 2 debe leer o replicar estos valores con una prueba de contrato.
   `55000 version_desactualizada | interaccion_anulada | registro_no_iniciado`,
   `23505 turno_ya_vinculado:<id> | idempotency_key_con_otro_payload`,
   `23514 maximo_turnos_por_interaccion`.
+
+## Contrato HTTP (Bloque 2)
+
+Todas las rutas están bajo `/api/admin/interacciones` y responden con `Cache-Control: no-store`.
+
+**Reglas generales:**
+
+- **Autorización:**
+  - Las rutas usan los guards reales del panel: sin sesión válida responden 401.
+  - Las escrituras validan además `isAllowedOrigin`: un origen ajeno recibe 403.
+  - El **rol sale solo de la sesión firmada** y es lo que reciben las RPCs.
+  - Si el cuerpo trae rol, registrador o algún campo de auditoría, la respuesta es 400 `campo_no_permitido`; nunca se ignora en silencio.
+  - Nombre y teléfono también se rechazan con 400.
+- **IDs de turnos:** viajan siempre como **cadenas decimales**, en las entradas y en las respuestas. Un número de JSON se rechaza con 400, porque por encima de 2^53 ya llega redondeado.
+
+### Rutas
+
+| Método y ruta | Rol | Qué hace |
+|---|---|---|
+| `GET /` | staff, admin | Listado paginado más el estado del módulo |
+| `POST /` | staff, admin | Alta idempotente |
+| `GET /[id]` | staff, admin | Detalle (`interaccion_detalle`) |
+| `PATCH /[id]` | staff, admin | Edición parcial con versión |
+| `POST /[id]/anular` | staff, admin | Baja lógica |
+| `POST /[id]/turnos` | staff, admin | Vincular turnos; también completa pendientes viejas, sin ventana |
+| `DELETE /[id]/turnos?turno=<id>&version=<n>` | staff, admin | Desvincular un turno |
+| `POST /[id]/cierre` | **solo admin** | Cerrar sin vínculo |
+| `GET /turnos-vinculables` | staff, admin | Turnos del Turnero sugeridos |
+| `GET /empleados` | staff, admin | Opciones de "Atendió" |
+
+### Cuerpos
+
+- **Alta:** `{ idempotency_key: uuid, datos: {…}, turnos?: ["<id>", …] }`.
+  - El cliente genera la clave al abrir el formulario y la reusa en cada reintento.
+  - En `datos`, obligatorios: `resultado` y `personas_grupo`.
+  - Opcionales y anulables: `ocurrida_en` (ISO con zona; `null` u omitido = ahora), `hombres` y `mujeres` (juntos), `rango_etario`, `conocia_sim`, `se_subio_antes`, `iniciador`, `atendio_empleado_id`, `motivo` y `observaciones`.
+  - Turnos: hasta 4, y solo con `resultado = "subio"`.
+- **Edición:** `{ version, cambios: {…}, confirmar_liberacion?: boolean }`.
+  - **Lo omitido no cambia; `null` vacía.** El desglose hombres/mujeres se envía de a par.
+  - Pasar a `subio` con un motivo cargado exige mandar `motivo: null` explícitamente; si no, 400 `motivo_no_aplica`.
+  - Dejar de ser `subio` cuando hay turnos vinculados o un cierre exige `confirmar_liberacion: true`. Sin eso, la respuesta es 409 `confirmar_liberacion` con la lista de turnos que se liberarían. Nada se borra sin pedirlo.
+- **Vínculo:** `{ version, turnos: ["<id>"] }`.
+- **Anulación:** `{ version, motivo? }`, hasta 200 caracteres.
+- **Cierre:** `{ version, motivo, nota? }`. `motivo` es `sin_turno_en_turnero`, `turno_no_identificable` u `otro`; con `otro`, la nota es obligatoria.
+
+### Respuestas
+
+**Escrituras:**
+
+- **Alta:** 201 `{ interaccion, repetida: false }`. Un reintento con la misma clave y el mismo contenido devuelve 200 `{ interaccion, repetida: true }`, con la fila original. La misma clave con otro contenido da 409.
+- **Edición, vínculo, anulación y cierre:** 200 `{ interaccion, sin_cambios? }`. `sin_cambios: true` significa que no había nada para cambiar y la versión no subió.
+
+**La interacción (`interaccion`) incluye:**
+
+- `id` y `version`, que se reenvía en cada escritura.
+- `ocurrida_en`, `fecha_negocio`, `hora_negocio` (Córdoba), `registrada_en` y `registrada_por_rol`.
+- Los datos del grupo.
+- `atendio`: `{ empleado_id, nombre, activo, declarado: true }`.
+- `cierre` y `anulacion`.
+- `vinculo`: `{ estado, turnos_vinculados, turnos_activos, turnos_pagos, turnos_gratis, turnos_pago_contradictorio, participaciones, venta_verificada }`.
+- `turnos`: cada vínculo con su fecha, hora, personas, minutos, total, `es_pago`, `pago_contradictorio`, `fuera_de_tolerancia` y `turno_modificado`.
+- `permisos`: qué puede hacer este rol ahora, para la pantalla. La base lo vuelve a exigir al escribir.
+- `advertencias`: `pendiente_de_vinculo`, `subida_declarada_sin_turno`, `turno_no_activo`, `turno_fuera_de_tolerancia`, `turno_modificado`, `pago_contradictorio`, `turnos_liberados` y `cierre_retirado`.
+
+**Errores:**
+
+- Forma: `{ error, codigo, campo?, turno_stand_id?, turnos? }`. `error` es un texto para personas: nunca se devuelve SQL ni detalle interno.
+
+| Código HTTP | Cuándo |
+|---|---|
+| 400 | Entrada inválida (`campo_invalido`, `campo_desconocido`, `campo_no_permitido`, `desglose_*`, `motivo_no_aplica`, `turno_fuera_de_tolerancia`, `ocurrida_en_futura`, `empleado_no_disponible`…) |
+| 401 | Sin sesión válida |
+| 403 | Rol (`solo_admin`), ventana (`fuera_de_ventana`) u origen |
+| 404 | `interaccion_inexistente`, `turno_inexistente`, `vinculo_inexistente` |
+| 409 | `version_desactualizada`, `idempotency_key_con_otro_payload`, `turno_ya_vinculado`, `maximo_turnos_por_interaccion`, `interaccion_anulada`, `tiene_turnos_vinculados`, `confirmar_liberacion`… |
+| 503 | `modulo_no_habilitado` (sin inicio del registro) o `modulo_no_instalado` (migración ausente) |
+| 500 | Error inesperado: genérico, con `requestId`; el detalle queda solo en el log |
+
+### Listado: `GET /`
+
+- **Filtros:** `desde`, `hasta` (fechas de Córdoba, YYYY-MM-DD; sin fechas, hoy), `resultado`, `estado` (estado del vínculo), `incluir_anuladas=1` y `limite` (1–100, por defecto 20).
+- **Orden y paginación:** orden **estable** por `ocurrida_en` desc y luego `id` desc. Se pagina con un cursor opaco: `siguiente` es `null` en la última página. No hay offset.
+- **Staff:**
+  - Solo puede pedir desde hoy − 2 hasta hoy; fuera de eso, 403 `fuera_de_ventana`.
+  - Excepción: con `estado=pendiente` ve pendientes de **cualquier** fecha, para completarlas.
+- **Respuesta:** `{ items, siguiente, filtros, modulo: { instalado, habilitado, inicio_registro, limites } }`.
+- **Módulo sin habilitar:** con `habilitado: false` las altas responden 503 `modulo_no_habilitado`. El inicio lo fija un admin al lanzar (`interacciones_definir_inicio`); nunca se infiere.
+
+### Turnos vinculables: `GET /turnos-vinculables`
+
+- **Ancla:** `?interaccion=<uuid>` (su `ocurrida_en`), `?ocurrida_en=<ISO con zona>` o, sin nada, ahora.
+- **Alcance:**
+  - `2h` (por defecto): las dos horas previas, por hora de toma.
+  - `dia`: todo el día de la interacción.
+  - `tolerancia`: ±1 día. Nunca sale de lo que la base acepta.
+- **Búsqueda:** `hora` (prefijo de HH:MM), `personas`, `minutos`.
+- **Turnos ya vinculados:** `incluir_vinculados=0` los oculta.
+- **Origen de los datos:**
+  - Solo `turnos_stand` activos; reservas web, históricos y Colectivo ni se consultan.
+  - Cada turno trae `{ id, fecha, hora, hora_subida, personas, minutos, modalidad, total, es_pago, pago_contradictorio, vinculacion: libre|esta|otra, disponible }`.
+  - **Nunca** devuelve nombre, teléfono, observaciones ni cabina.
+- La consulta orienta la pantalla; la RPC vuelve a validar al vincular.
+
+### Empleados: `GET /empleados?ocurrida_en=`
+
+- **Respuesta:** `{ empleados: [{ id, nombre }], sugeridos: [ids], cronograma: { estado, fuente, oficial } | null, ancla }`.
+- **Empleados:** solo los activos, con id y nombre.
+- **Sugeridos:** quiénes figuran en el cronograma a esa hora. Es solo una sugerencia: no se asigna nada. Si el cronograma no se puede leer, no hay sugerencias y el resto sigue.
+- El endpoint general `/api/admin/empleados` no se amplía.

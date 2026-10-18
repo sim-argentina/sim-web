@@ -90,6 +90,20 @@ as $fn$
 $fn$;
 
 
+-- Datos de pago CONTRADICTORIOS en un turno: total positivo con método 'gratis', o
+-- total cero/nulo con un método que no es 'gratis'. Solo se SEÑALAN: la regla de
+-- pago (total > 0) no cambia por esto.
+create or replace function public.interacciones_pago_contradictorio(p_total numeric, p_metodo text)
+returns boolean
+language sql
+immutable
+set search_path = public
+as $fn$
+  select (coalesce(p_total, 0) > 0 and p_metodo = 'gratis')
+      or (coalesce(p_total, 0) <= 0 and p_metodo is distinct from 'gratis')
+$fn$;
+
+
 -- ── 2. Configuración ────────────────────────────────────────────────────────
 create table if not exists public.interacciones_config (
   id                  boolean primary key default true,
@@ -259,8 +273,11 @@ create index if not exists interacciones_stand_eventos_interaccion_idx
 --   significa que todos los turnos de la visita estén registrados) · turno_no_activo
 --   · cerrada_sin_turno (declarada) · pendiente.
 -- Pago = total del turno > 0 (valor vivo); gratis = total 0. venta_verificada = al
--- menos un turno PAGO vinculado. participaciones = Σ cantidad_personas de los
--- turnos vinculados: participaciones, NO personas únicas.
+-- menos un turno activo vinculado con total positivo: NO verifica acreditación ni
+-- conciliación. Los turnos con total y método contradictorios se cuentan aparte
+-- (turnos_pago_contradictorio) sin cambiar esa regla. participaciones = Σ
+-- cantidad_personas de los turnos vinculados: participaciones, NO personas únicas.
+-- ocurrida_en va al final para ordenar/paginar listados.
 create or replace view public.interacciones_stand_estado
 with (security_invoker = true) as
 select
@@ -283,7 +300,9 @@ select
     when i.cierre_motivo is not null then 'cerrada_sin_turno'
     else 'pendiente'
   end as vinculo_estado,
-  (i.anulada_en is null and coalesce(v.turnos_pagos, 0) > 0) as venta_verificada
+  (i.anulada_en is null and coalesce(v.turnos_pagos, 0) > 0) as venta_verificada,
+  i.ocurrida_en,
+  coalesce(v.turnos_pago_contradictorio, 0)::integer as turnos_pago_contradictorio
 from public.interacciones_stand i
 left join lateral (
   select
@@ -291,7 +310,8 @@ left join lateral (
     count(*) filter (where coalesce(t.estado, 'activo') = 'activo') as turnos_activos,
     count(*) filter (where coalesce(t.estado, 'activo') = 'activo' and coalesce(t.total, 0) > 0) as turnos_pagos,
     count(*) filter (where coalesce(t.estado, 'activo') = 'activo' and coalesce(t.total, 0) <= 0) as turnos_gratis,
-    sum(coalesce(t.cantidad_personas, 0)) filter (where coalesce(t.estado, 'activo') = 'activo') as participaciones
+    sum(coalesce(t.cantidad_personas, 0)) filter (where coalesce(t.estado, 'activo') = 'activo') as participaciones,
+    count(*) filter (where public.interacciones_pago_contradictorio(t.total, t.metodo_pago)) as turnos_pago_contradictorio
   from public.interaccion_turnos it
   join public.turnos_stand t on t.id = it.turno_stand_id
   where it.interaccion_id = i.id
@@ -323,7 +343,9 @@ select
   (t.fecha, t.hora, t.cantidad_personas, t.cantidad_minutos, t.total, t.metodo_pago, t.modalidad)
     is distinct from
   (it.turno_fecha, it.turno_hora, it.turno_personas, it.turno_minutos, it.turno_total, it.turno_metodo_pago, it.turno_modalidad)
-    as turno_modificado
+    as turno_modificado,
+  t.metodo_pago as turno_metodo_pago,
+  public.interacciones_pago_contradictorio(t.total, t.metodo_pago) as pago_contradictorio
 from public.interaccion_turnos it
 join public.interacciones_stand i on i.id = it.interaccion_id
 join public.turnos_stand t on t.id = it.turno_stand_id;
@@ -340,7 +362,8 @@ select
   coalesce(t.total, 0) > 0 as es_pago,
   t.cantidad_personas,
   v.interaccion_id,
-  v.interaccion_id is not null as vinculado
+  v.interaccion_id is not null as vinculado,
+  public.interacciones_pago_contradictorio(t.total, t.metodo_pago) as pago_contradictorio
 from public.turnos_stand t
 left join (
   select it.turno_stand_id, it.interaccion_id
@@ -605,6 +628,7 @@ end;
 $fn$;
 
 -- Datos de una interacción para devolver desde las RPCs (sin la huella interna).
+-- Los IDs bigint de turnos viajan como TEXTO: JSON no los garantiza como número.
 create or replace function public.interaccion_detalle(p_id uuid)
 returns jsonb
 language sql
@@ -615,7 +639,8 @@ as $fn$
     'interaccion', to_jsonb(i) - 'alta_huella',
     'estado', to_jsonb(e) - 'interaccion_id',
     'turnos', coalesce((
-      select jsonb_agg(to_jsonb(c) order by c.vinculado_en, c.turno_stand_id)
+      select jsonb_agg(to_jsonb(c) || jsonb_build_object('turno_stand_id', c.turno_stand_id::text)
+                       order by c.vinculado_en, c.turno_stand_id)
         from public.interacciones_vinculos_control c
        where c.interaccion_id = i.id), '[]'::jsonb)
   )
@@ -958,6 +983,9 @@ $fn$;
 -- "Atendió" solo exige empleado activo si CAMBIA (uno archivado se conserva).
 -- Si deja de ser 'subio': libera los turnos y retira el cierre en la misma
 -- transacción, con historial. Pasar a 'subio' exige motivo null (explícito).
+-- Si cambia la FECHA de una 'subio' con turnos, todos tienen que seguir dentro
+-- de la tolerancia (si no: turno_fuera_de_tolerancia:<id>). La respuesta agrega
+-- 'turnos_liberados' (IDs como texto) y 'cierre_retirado'.
 create or replace function public.interaccion_editar(
   p_id      uuid,
   p_version integer,
@@ -981,6 +1009,7 @@ declare
   v_emp      uuid;
   v_liberados jsonb := '[]'::jsonb;
   v_cierre   jsonb;
+  v_fuera    bigint;
 begin
   if v_rol not in ('admin', 'staff') then
     raise exception 'actor_invalido' using errcode = '42501';
@@ -1026,6 +1055,19 @@ begin
   v_ocu := (v_norm ->> 'ocurrida_en')::timestamptz;
   if v_ocu <> v_row.ocurrida_en then
     perform public.interacciones_exigir_ocurrida(v_rol, v_ocu, v_row.registrada_en);
+  end if;
+  if v_norm ->> 'resultado' = 'subio' and public.interacciones_fecha_sim(v_ocu) <> v_row.fecha_negocio then
+    select it.turno_stand_id into v_fuera
+      from public.interaccion_turnos it
+      join public.turnos_stand t on t.id = it.turno_stand_id
+     where it.interaccion_id = p_id
+       and abs(t.fecha - public.interacciones_fecha_sim(v_ocu))
+           > (public.interacciones_limites() ->> 'tolerancia_dias_turno')::int
+     order by it.turno_stand_id
+     limit 1;
+    if v_fuera is not null then
+      raise exception 'turno_fuera_de_tolerancia:%', v_fuera using errcode = '22023';
+    end if;
   end if;
   v_emp := (v_norm ->> 'atendio_empleado_id')::uuid;
   if v_emp is distinct from v_row.atendio_empleado_id and v_emp is not null
@@ -1077,7 +1119,10 @@ begin
           || case when v_cierre is not null
                   then jsonb_build_object('cierre_retirado', v_cierre) else '{}'::jsonb end);
 
-  return public.interaccion_detalle(p_id);
+  return public.interaccion_detalle(p_id) || jsonb_build_object(
+    'turnos_liberados', (select coalesce(jsonb_agg(e.valor order by e.n), '[]'::jsonb)
+                           from jsonb_array_elements_text(v_liberados) with ordinality as e(valor, n)),
+    'cierre_retirado', v_cierre is not null);
 end;
 $fn$;
 
@@ -1148,7 +1193,7 @@ begin
   perform set_config('sim.interacciones_rol', '', true);
   perform set_config('sim.interacciones_causa', '', true);
 
-  return public.interaccion_detalle(p_id);
+  return public.interaccion_detalle(p_id) || jsonb_build_object('cierre_retirado', v_row.cierre_motivo is not null);
 end;
 $fn$;
 
@@ -1260,7 +1305,9 @@ begin
   insert into public.interacciones_stand_eventos (interaccion_id, tipo, rol, datos)
   values (p_id, 'anulacion', v_rol, jsonb_build_object('motivo', v_motivo, 'turnos_liberados', v_liberados));
 
-  return public.interaccion_detalle(p_id);
+  return public.interaccion_detalle(p_id) || jsonb_build_object(
+    'turnos_liberados', (select coalesce(jsonb_agg(e.valor order by e.n), '[]'::jsonb)
+                           from jsonb_array_elements_text(v_liberados) with ordinality as e(valor, n)));
 end;
 $fn$;
 
@@ -1408,7 +1455,10 @@ revoke all on function public.interaccion_turnos_registrar_alta() from public, a
 revoke all on function public.interaccion_turnos_registrar_baja() from public, anon, authenticated, service_role;
 revoke all on function public.interacciones_stand_proteger() from public, anon, authenticated, service_role;
 
--- Lo que usa la API: límites, detalle y las RPCs.
+-- Lo que usa la API: límites, detalle y las RPCs. interacciones_pago_contradictorio
+-- también: las vistas son security_invoker y la llaman con los permisos de quien lee.
+revoke all on function public.interacciones_pago_contradictorio(numeric, text) from public, anon, authenticated;
+grant execute on function public.interacciones_pago_contradictorio(numeric, text) to service_role;
 revoke all on function public.interacciones_limites() from public, anon, authenticated;
 revoke all on function public.interaccion_detalle(uuid) from public, anon, authenticated;
 revoke all on function public.interaccion_registrar(uuid, jsonb, bigint[], text) from public, anon, authenticated;
