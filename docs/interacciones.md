@@ -11,12 +11,14 @@ Estado:
 - Cierre previo al lanzamiento: borrador sin avisos falsos, pausa de altas separada del inicio histórico y borrado administrativo de cualquier interacción.
 - Verificada en el stack local de pruebas.
 - **En Producción desde el 18/10/2026:** migración aplicada en SIM WEB, código desplegado (commit `5a7c52d`) y registro activo desde las 12:00:33 de Córdoba (15:00:33 UTC). Detalle y punto de retorno en [Lanzamiento](#lanzamiento).
+- **Perfil v2 (18/10/2026):** rangos etarios de selección múltiple, tipo de grupo, "Solo miró" simplificado y motivo "Paseando". Migración incremental y compatibilidad con la pantalla anterior en [Perfil v2](#perfil-v2-edades-múltiples-tipo-de-grupo-y-paseando).
 
 Archivos y pruebas:
 
 - Esquema, vistas y RPCs: `db/interacciones-bloque1.sql` (un solo archivo; está en `db/orden.txt`)
 - Verificación SQL (solo en el stack local: escribe dentro de una transacción que se revierte): `db/interacciones-bloque1.verificacion.sql`
 - Concurrencia y permisos reales (solo local): `node scripts/pruebas/interacciones-bloque1.mjs`
+- Migración del perfil v2 sobre el esquema anterior (solo local, se revierte): `node scripts/pruebas/interacciones-migracion-rangos.mjs`
 - Contrato puro (validación, ventanas, errores): `lib/interacciones.ts` · pruebas: `npx tsx lib/interacciones.test.ts`
 - Acceso de servidor: `lib/interaccionesServer.ts` · piezas HTTP: `lib/interaccionesHttp.ts`
 - Rutas reales contra el stack local: `node scripts/pruebas/correr-mutantes.mjs lib/interacciones.integration.ts`
@@ -45,10 +47,12 @@ Archivos y pruebas:
   - **Obligatorios:** resultado máximo (`miro` | `pregunto` | `subio`) y `personas_grupo` (1–50).
   - **Opcionales:**
     - hombres/mujeres: los dos vacíos, o los dos cargados y sumando el total;
-    - rango etario del grupo: `menos_14`, `14_17`, `18_24`, `25_34`, `35_49`, `50_mas`;
+    - **rangos etarios presentes** (`rangos_etarios`, selección múltiple): `menos_14`, `14_17`, `18_24`, `25_34`, `35_49`, `50_mas`. Dice qué edades hay en el grupo, no cuántas personas de cada una: no hay cantidades por rango ni repartos inferidos. Se guarda en el orden de las opciones, sin repetidos, nunca más rangos distintos que personas y sin un rango "mixto". Lista vacía = sin dato;
+    - **tipo de grupo** (`tipo_grupo`, uno o ninguno): `familia`, `amigos`, `pareja` (Pareja/s), `solo` (Solo/a), `companeros` (de trabajo o estudio), `otro`. Sin completar = "Sin dato", que no es "Otro". Se carga en "Miró y preguntó" y "Se subió";
     - conocía SIM y ya se había subido: `si` / `no` / `no_sabe`;
     - iniciador, atendió y observaciones;
-    - motivo: `precio`, `tiempo`, `espera`, `vuelve_despues`, `no_interesa`, `requisitos`, `acompanantes`, `otro`. Nunca con `subio`.
+    - motivo: `precio`, `tiempo`, `espera`, `vuelve_despues`, `no_interesa`, `requisitos`, `acompanantes`, `paseando`, `otro`. Nunca con `subio`.
+  - `rango_etario` (un solo valor) es la columna de la versión anterior. Queda **sincronizada** por un CHECK: tiene el rango cuando hay exactamente uno y NULL con cero o varios. La conserva la pantalla anterior durante la transición y no se escribe a mano.
   - `ocurrida_en` deriva `fecha_negocio` y `hora_negocio` en Córdoba.
   - Dos bajas lógicas:
     - **anulada** (`anulada_*`, staff o admin): no cuenta en nada, libera sus turnos y se puede ver con "ver anuladas";
@@ -86,6 +90,8 @@ Las **eliminadas** no tienen estado: no aparecen en esta vista ni en `interaccio
 ### Correcciones
 
 - **Edición:** reemplaza en el lugar y sube la versión, sin duplicar. Una versión vieja recibe `version_desactualizada`.
+- **Edades al editar:** la lista viaja completa cuando cambia (`[]` = limpiar); omitida no cambia. Si al bajar las personas quedan más rangos que personas, se rechaza (`rangos_superan_personas`) y no se borra ningún rango: hay que quitar rangos o sumar personas.
+- **"Solo miró" con datos de antes:** si una interacción pasa a "Solo miró" o ya tenía tipo de grupo, conocía, se había subido, iniciador o atendió, esos datos se conservan aunque la pantalla no los muestre; una edición nunca los vacía por omitirlos (el detalle los sigue mostrando).
 - **Cambio de resultado o anulación:** si pasa de `subio` a `miro`/`pregunto` o se anula, los turnos se liberan en la misma transacción y quedan en el historial. Pasar a `subio` exige quitar el motivo explícitamente.
 - **Turno borrado en el Turnero:**
   - El vínculo se borra solo. Si era el último, la interacción vuelve a `pendiente`; un cierre anterior ya se había retirado al vincular, así que no la oculta.
@@ -138,19 +144,27 @@ Cómo se calcula (`lib/interaccionesMetricas.ts`, todo con numerador y denominad
   - La cobertura usa esos mismos días.
 - **Días sin cargas:** valen 0 interacciones registradas en la serie diaria. Eso no prueba que no hubo público. Con las altas pausadas, el dashboard lo avisa desde la fecha de la pausa.
 - **Franjas:** intervalos `[desde, hasta)` de 10–12 a 20–22 (las 12:00 son de 12–14). Lo que cae fuera de 10–22 va a "Otros horarios": nada se duplica ni se pierde.
-- **Distribuciones del perfil** (rango, conocía, ya se subió, iniciador):
+- **Distribuciones del perfil** (conocía, ya se subió, iniciador):
   - n por valor y % sobre los registros **con dato**.
   - "Sin dato" aparte, con la cobertura del dato. "No sabe" es un valor, no un "Sin dato".
   - Tasa Miró→Se subió dentro de cada valor.
+- **Rangos etarios: "grupos que incluyen cada rango".**
+  - Una interacción cuenta una vez en cada rango que tiene, pero **una sola vez** en el total y en el embudo.
+  - Base de los %: interacciones con al menos un rango. Como se superponen, los % pueden sumar más de 100 %; la pantalla lo explica, muestra la cobertura y cuántas tienen más de un rango. Son grupos, no personas por edad. Sin donut.
+- **Tipo de grupo:**
+  - No se releva en "Solo miró": la base son las interacciones que **preguntaron o se subieron**, con "Sin dato" aparte (no es "Otro") y la cobertura del dato.
+  - Por tipo se muestra Preguntó → Se subió con numerador y denominador. Una "Solo miró" que conserva un tipo de antes queda fuera de la base y se informa aparte.
+  - Filtrar por un tipo concreto deja solo consultas y subidas: el dashboard lo avisa, marca Miró→Preguntó y Miró→Se subió como "No aplica" y destaca Preguntó → Se subió (un 100 % Miró→Preguntó sería un artefacto del filtro).
 - **Género:** sumas de hombres y mujeres solo entre grupos con desglose, más la cobertura (personas con desglose / personas observadas).
 - **Motivos:**
   - Base: las que preguntaron y no se subieron. El % es sobre las que tienen motivo; "sin motivo" y su cobertura van aparte.
-  - Los motivos de "Solo miró" se muestran separados y no se suman.
+  - Los motivos de "Solo miró" se muestran separados y no se suman. "Paseando" aparece en los dos grupos.
 - **Atendió (declarado):** volumen y tasas con denominador por empleado (incluye inactivos con su nombre histórico) y "Sin asignar". No es quien registró ni una evaluación de desempeño.
 - **Vínculos:**
   - Se reportan subidas declaradas, con turno, con turno pago, pendientes, cerradas sin turno y con pago contradictorio.
   - **No son una partición**: no se suman entre sí.
   - En pantalla, `venta_verificada` se llama "Con turno pago": es una venta registrada en el Turnero, no una acreditación.
+- **Filtros:** rangos etarios de selección múltiple = "incluye al menos uno" (cada interacción una sola vez aunque coincidan varios; "Sin dato" combinable); tipo de grupo con "Sin dato". En la API: `rango_etario=18_24,50_mas` (una sola vez, sin repetidos) y `tipo_grupo=familia|…|sin_dato`.
 - **Comparación:**
   - Los filtros se aplican a los dos períodos; la cobertura general solo sigue al período.
   - Si los períodos cubren distinta cantidad de días, se avisa que las cantidades no son directamente comparables.
@@ -202,9 +216,9 @@ del Bloque 2 debe leer o replicar estos valores con una prueba de contrato.
   - Si coinciden, una espera a la otra durante lo que dura la transacción y no se cruzan. El Turnero termina siempre. Si el turno se borró primero, la RPC responde 409 `version_desactualizada` sin escribir nada; la pantalla recarga la versión actual y se puede repetir la acción.
   - Antes de este ajuste, con la interacción bloqueada primero, el cruce terminaba en `40P01 deadlock_detected`: el borrado del Turnero se abortaba con un 500 genérico, sin escrituras parciales (reproducido en local el 18/10/2026).
   - Lo cubren `scripts/pruebas/interacciones-bloque1.mjs` (sonda del orden de bloqueo y cruce Turnero-primero para las cuatro RPCs) y la sección 17 de `lib/interacciones.integration.ts` (rutas reales del Turnero y de Interacciones, en los dos órdenes).
-- **Errores:** `22023 campo_invalido:<campo>`, `42501 fuera_de_ventana | solo_admin`,
+- **Errores:** `22023 campo_invalido:<campo> | rangos_repetidos | rangos_superan_personas`, `42501 fuera_de_ventana | solo_admin`,
   `P0002 interaccion_inexistente | interaccion_eliminada`,
-  `55000 version_desactualizada | interaccion_anulada | registro_no_iniciado | altas_pausadas | inicio_ya_definido`,
+  `55000 version_desactualizada | interaccion_anulada | registro_no_iniciado | altas_pausadas | inicio_ya_definido | cliente_desactualizado`,
   `23505 turno_ya_vinculado:<id> | idempotency_key_con_otro_payload`,
   `23514 maximo_turnos_por_interaccion`.
 
@@ -243,10 +257,12 @@ Todas las rutas están bajo `/api/admin/interacciones` y responden con `Cache-Co
 - **Alta:** `{ idempotency_key: uuid, datos: {…}, turnos?: ["<id>", …] }`.
   - El cliente genera la clave al abrir el formulario y la reusa en cada reintento.
   - En `datos`, obligatorios: `resultado` y `personas_grupo`.
-  - Opcionales y anulables: `ocurrida_en` (ISO con zona; `null` u omitido = ahora), `hombres` y `mujeres` (juntos), `rango_etario`, `conocia_sim`, `se_subio_antes`, `iniciador`, `atendio_empleado_id`, `motivo` y `observaciones`.
+  - Opcionales y anulables: `ocurrida_en` (ISO con zona; `null` u omitido = ahora), `hombres` y `mujeres` (juntos), `rangos_etarios` (lista; `[]` o `null` = sin dato), `tipo_grupo`, `conocia_sim`, `se_subio_antes`, `iniciador`, `atendio_empleado_id`, `motivo` y `observaciones`.
+  - Forma anterior: `rango_etario` (un valor) se sigue aceptando y se guarda como lista de uno; nunca junto con `rangos_etarios` (400).
   - Turnos: hasta 4, y solo con `resultado = "subio"`.
 - **Edición:** `{ version, cambios: {…}, confirmar_liberacion?: boolean }`.
-  - **Lo omitido no cambia; `null` vacía.** El desglose hombres/mujeres se envía de a par.
+  - **Lo omitido no cambia; `null` vacía.** El desglose hombres/mujeres se envía de a par. `rangos_etarios` viaja completa; `[]` la limpia.
+  - Una pantalla anterior que manda `rango_etario` sobre una interacción con **varios** rangos recibe 409 `cliente_desactualizado` ("recargá la página"): no puede truncar la selección.
   - Pasar a `subio` con un motivo cargado exige mandar `motivo: null` explícitamente; si no, 400 `motivo_no_aplica`.
   - Dejar de ser `subio` cuando hay turnos vinculados o un cierre exige `confirmar_liberacion: true`. Sin eso, la respuesta es 409 `confirmar_liberacion` con la lista de turnos que se liberarían. Nada se borra sin pedirlo.
 - **Vínculo:** `{ version, turnos: ["<id>"] }`.
@@ -280,11 +296,11 @@ Todas las rutas están bajo `/api/admin/interacciones` y responden con `Cache-Co
 
 | Código HTTP | Cuándo |
 |---|---|
-| 400 | Entrada inválida (`campo_invalido`, `campo_desconocido`, `campo_no_permitido`, `desglose_*`, `motivo_no_aplica`, `turno_fuera_de_tolerancia`, `ocurrida_en_futura`, `empleado_no_disponible`…) |
+| 400 | Entrada inválida (`campo_invalido`, `campo_desconocido`, `campo_no_permitido`, `desglose_*`, `rangos_repetidos`, `rangos_superan_personas`, `motivo_no_aplica`, `turno_fuera_de_tolerancia`, `ocurrida_en_futura`, `empleado_no_disponible`…) |
 | 401 | Sin sesión válida |
 | 403 | Rol (`solo_admin`), ventana (`fuera_de_ventana`) u origen |
 | 404 | `interaccion_inexistente`, `interaccion_eliminada` (la borró un admin), `turno_inexistente`, `vinculo_inexistente` |
-| 409 | `version_desactualizada`, `idempotency_key_con_otro_payload`, `turno_ya_vinculado`, `maximo_turnos_por_interaccion`, `interaccion_anulada`, `tiene_turnos_vinculados`, `confirmar_liberacion`… |
+| 409 | `version_desactualizada`, `cliente_desactualizado`, `idempotency_key_con_otro_payload`, `turno_ya_vinculado`, `maximo_turnos_por_interaccion`, `interaccion_anulada`, `tiene_turnos_vinculados`, `confirmar_liberacion`… |
 | 503 | `modulo_no_habilitado` (sin inicio del registro), `altas_pausadas` (solo altas nuevas) o `modulo_no_instalado` (migración ausente) |
 | 500 | Error inesperado: genérico, con `requestId`; el detalle queda solo en el log |
 
@@ -328,10 +344,13 @@ Staff y admin. En el menú va debajo de "Turnero". "Ir al Turnero" está siempre
 
 - **Accesos y formulario:**
   - Tres accesos grandes: Solo miró, Miró y preguntó, Se subió. Cada uno abre **una sola pantalla**.
-  - Obligatorios: personas (arranca en 1) y cuándo pasó (por defecto "ahora"). Staff puede cargar desde ayer a las 00:00.
-  - El resto es opcional, en chips de un toque; tocar de nuevo vacía el campo. "Sin dato" no es "No sabe".
+  - **"Solo miró"** es corto: personas (arranca en 1, lo único obligatorio), hombres/mujeres, rangos etarios, motivo y observaciones. La fecha y hora es la del guardado. No muestra conocía, se había subido, iniciador, atendió, tipo de grupo, selector de turnos ni "Más datos".
+  - **"Miró y preguntó" y "Se subió":** personas y cuándo pasó (por defecto "ahora"; staff puede cargar desde ayer a las 00:00). El perfil opcional incluye tipo de grupo, hombres/mujeres, rangos etarios, conocía, se había subido, iniciador y atendió.
+  - Lo opcional va en chips de un toque; tocar de nuevo vacía el campo. "Sin dato" no es "No sabe". Nada viene marcado (tampoco "Paseando").
+  - **Rangos etarios presentes:** chips de selección múltiple con casilla (`aria-pressed`), "Podés marcar más de uno". Si hay más rangos que personas (por ejemplo al bajar las personas) se avisa y no se puede guardar, sin desmarcar nada.
   - Hombres y mujeres arrancan vacíos y se cargan de a par. Si no suman el total se avisa y no se puede guardar; nada se completa ni se borra solo.
-  - Motivo: visible en "preguntó", plegado en "miró", inexistente en "se subió".
+  - Motivo: visible en "miró" y "preguntó", inexistente en "se subió".
+  - Cambiar de resultado dentro de una carga nueva no arrastra a "Solo miró" lo completado en otro formulario: el alta manda solo lo visible. En una edición lo oculto conserva su valor.
 - **"Se subió":**
   - Muestra los turnos del Turnero de las 2 h previas a la hora de la interacción.
   - Se puede ampliar al día o a ±1 día y buscar por hora o personas. Se eligen hasta 4.
@@ -344,7 +363,9 @@ Staff y admin. En el menú va debajo de "Turnero". "Ir al Turnero" está siempre
   - Se recuerdan solo si tienen algo propio: un dato distinto del formulario recién abierto o un turno elegido (el resultado del acceso no cuenta). Abrir y cerrar sin tocar nada, o volver todo a como estaba, no deja "Tenés una carga sin guardar".
   - Un envío **incierto** se recuerda siempre, aunque sus datos sean los iniciales: misma clave y mismo contenido para reintentar sin duplicar.
   - Se puede ir al Turnero y volver; el guardado confirmado y "Descartar" los borran. La edición solo se recuerda si difiere de la versión cargada.
+  - Un borrador de la pantalla **anterior** (un rango) se convierte sin perder el rango. Si había quedado incierto, el reintento manda exactamente lo que se había enviado (misma clave, misma huella) antes de transformarlo: si ya había llegado, devuelve la original y no crea otra.
 - **Correcciones:**
+  - El detalle muestra todos los rangos etarios y, en "Solo miró", solo los datos de perfil que tengan valor.
   - El detalle muestra las acciones según `permisos` de la API: editar, vincular o desvincular, anular, cerrar sin turno (solo admin, con motivo) y **"Borrar interacción"** (solo admin).
   - Borrar pide confirmación con fecha y hora, resultado, personas y los turnos que se desvinculan; explica que deja de aparecer en listas y métricas y que los turnos siguen en el Turnero. El motivo es opcional. Al confirmar se cierra el detalle, se actualizan listas y contadores y se avisa el resultado. Si la versión cambió, no borra y muestra la versión actual; si la respuesta se pierde, consulta si la interacción sigue antes de avisar.
   - Las pendientes viejas se completan buscando alrededor de **su** hora.
@@ -357,8 +378,8 @@ Staff y admin. En el menú va debajo de "Turnero". "Ir al Turnero" está siempre
 
 Solo admin, con tres cerraduras: `middleware.ts` (`ADMIN_ONLY`, manda a staff a `/admin/calendario` como el resto de las páginas solo admin), la página redirige a staff a `/admin/interacciones` si llegara a renderizarse y `GET /api/admin/interacciones/metricas` exige `requireAdmin` (403 para staff). Sin caché.
 
-- **Controles:** período (hoy, 7 días, 30 días, personalizado), comparación (período anterior u otro rango) y filtros (resultado, franja, rango, tamaño, conocía, ya se subió, iniciador, motivo, atendió).
-- **Secciones:** tarjetas, embudo acumulativo, distribución exclusiva, evolución diaria (gráfico y tabla), día y franja, motivos, perfil, conocimiento previo y repetición, atribución declarada, y cobertura con vínculos y advertencias.
+- **Controles:** período (hoy, 7 días, 30 días, personalizado), comparación (período anterior u otro rango) y filtros (resultado, franja, tipo de grupo, tamaño, conocía, ya se subió, iniciador, motivo, atendió y rangos etarios con chips "incluye al menos uno").
+- **Secciones:** tarjetas, embudo acumulativo, distribución exclusiva, evolución diaria (gráfico y tabla), día y franja, motivos, perfil (con "grupos que incluyen cada rango"), conocimiento previo y repetición, atribución declarada, tipo de grupo, y cobertura con vínculos y advertencias.
 - **Lo que no muestra:** cifras de ejemplo, importes en las tarjetas y "personas que pasaron".
 - **Estados:** cargando, sin registros, antes del inicio, período parcial, filtros sin resultados, módulo no disponible, **altas pausadas** (desde cuándo) y error con reintento.
 - **Consultas superpuestas:** si se cambian filtros rápido, solo cuenta la respuesta de la consulta más reciente.
@@ -462,6 +483,17 @@ Fechas en las pruebas del módulo: ninguna usa el 01/10/2026. La guarda de `lib/
 - **Despliegue:** `main` en `5a7c52d`, despliegue `dpl_DqUC2hARuARJabtdsUtdadEPiE3X` servido por `simexperience.com.ar`. Sin sesión, las APIs del módulo responden 401 y el panel redirige al login; sin errores de runtime.
 - **Activación:** `interacciones_definir_inicio` con el instante efectivo: `2026-10-18 15:00:33.403811 UTC` = `12:00:33` en Córdoba. Sin pausa.
 
+### Perfil v2: edades múltiples, tipo de grupo y Paseando
+
+- **Qué cambia en la base** (`db/interacciones-bloque1.sql`, re-aplicable):
+  - columnas nuevas `rangos_etarios text[] not null default '{}'` y `tipo_grupo text`, con sus CHECK; la vista `interacciones_analisis` las agrega al final;
+  - `interacciones_stand_motivo_chk` suma `paseando`; la función `interacciones_rangos_canonicos` (sin EXECUTE para nadie) fija el orden;
+  - `interaccion_normalizar`, `interaccion_registrar` e `interaccion_editar` aceptan las dos formas; el trigger de protección suma una única excepción para el backfill.
+- **Registros previos:** un rango único pasa a ser un conjunto de uno; uno vacío sigue sin dato; el tipo queda "Sin dato". No se clasifica nada retroactivamente. El backfill pasa por el trigger de protección (su excepción solo admite copiar el rango anterior, sin tocar nada más), así que no cambia versión, tiempos, vínculos, anulación, borrado ni auditoría, y no se deshabilita ningún trigger, RLS ni permiso. Después, un CHECK ata la columna anterior a la nueva.
+- **Huella de idempotencia:** con un rango (o ninguno) y sin tipo, la huella es la misma que calculaba la versión anterior. Un reintento de la pantalla anterior con su clave devuelve la fila original, también en la forma nueva.
+- **Orden:** migración → despliegue. El código anterior funciona con la base nueva (las columnas de antes siguen, la vista solo agrega al final y la forma de un rango se sigue aceptando); el código nuevo necesita la base nueva.
+- **Volver al código anterior** es seguro para los datos: la base rechaza que la pantalla anterior trunque una selección múltiple (409 `cliente_desactualizado`) o deje más rangos que personas. Pero esa pantalla mostraría como "Sin dato" los grupos con varios rangos y su análisis los contaría así: conviene corregir hacia adelante y, si hiciera falta, pausar altas. No se borran columnas ni datos.
+
 ### Guía (A/B/C)
 
 Esta guía prepara acciones; no las ejecuta ni las autoriza. Cada paso de B y C necesita una decisión explícita.
@@ -476,10 +508,16 @@ Todo lo que escribe datos —fixtures, suites mutantes, concurrencia, navegador�
    npm run pruebas:reset
    ```
 
-2. Suites de escritura del módulo: verificación SQL (T0–T37, se revierte entera), concurrencia real con dos conexiones (incluido el orden de bloqueo frente al Turnero) y permisos por REST.
+2. Suites de escritura del módulo: verificación SQL (T0–T38, se revierte entera), concurrencia real con dos conexiones (incluido el orden de bloqueo frente al Turnero y la pantalla anterior contra la nueva) y permisos por REST.
 
    ```bash
    node scripts/pruebas/interacciones-bloque1.mjs
+   ```
+
+   Migración del perfil v2 sobre el esquema publicado antes (filas creadas con las RPCs anteriores, backfill, preservación, huella e idempotencia; todo en una transacción que se revierte):
+
+   ```bash
+   node scripts/pruebas/interacciones-migracion-rangos.mjs
    ```
 
    ```bash
