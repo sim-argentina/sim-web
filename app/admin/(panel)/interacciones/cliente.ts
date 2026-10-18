@@ -78,12 +78,25 @@ export function moduloNoDisponible(f: FalloApi): boolean {
   return f.codigo === "modulo_no_habilitado" || f.codigo === "modulo_no_instalado";
 }
 
+/** La interacción ya no existe para el panel (un admin la borró, o nunca existió). */
+export function interaccionYaNoExiste(f: FalloApi): boolean {
+  return f.codigo === "interaccion_eliminada" || f.codigo === "interaccion_inexistente";
+}
+
 const json = (b: unknown) => JSON.stringify(b);
 const BASE = "/api/admin/interacciones";
 
-export type EstadoModulo = { instalado: boolean; habilitado: boolean; inicio_registro: string | null };
+export type EstadoModulo = {
+  instalado: boolean;
+  habilitado: boolean;
+  inicio_registro: string | null;
+  /** Carga de nuevas pausada (el inicio no cambia; consultar y corregir sigue). */
+  altas_pausadas: boolean;
+  altas_pausadas_en: string | null;
+};
 export type Pagina = { items: InteraccionDto[]; siguiente: string | null; modulo: EstadoModulo };
 export type Escritura = { interaccion: InteraccionDto; repetida?: boolean; sin_cambios?: boolean };
+export type Eliminacion = { interaccion_id: string; eliminada: true; sin_cambios: boolean; turnos_liberados: string[] };
 export type Vinculables = {
   ventana: { alcance: string; ancla: { instante: string; fecha: string; hora: string }; fecha_desde: string; fecha_hasta: string };
   interaccion: string | null;
@@ -110,6 +123,8 @@ export const api = {
     pedir<Escritura>(`${BASE}/${id}/turnos?${new URLSearchParams({ turno, version: String(version) })}`, { method: "DELETE" }),
   cerrar: (id: string, b: { version: number; motivo: string; nota?: string | null }) =>
     pedir<Escritura>(`${BASE}/${id}/cierre`, { method: "POST", body: json(b) }),
+  eliminar: (id: string, b: { version: number; motivo?: string | null }) =>
+    pedir<Eliminacion>(`${BASE}/${id}/eliminar`, { method: "POST", body: json(b) }),
   vinculables: (q: URLSearchParams, s?: AbortSignal) => pedir<Vinculables>(`${BASE}/turnos-vinculables?${q}`, {}, s),
   empleados: (ocurrida: string | null, s?: AbortSignal) =>
     pedir<Empleados>(`${BASE}/empleados${ocurrida ? `?${new URLSearchParams({ ocurrida_en: ocurrida })}` : ""}`, {}, s),
@@ -220,6 +235,26 @@ export function rebaseEdicion(nueva: InteraccionDto, cambiosDelUsuario: DatosInt
 // ── Borradores (sessionStorage) ────────────────────────────────────────────
 // Uno para la carga nueva y uno por interacción en edición: nunca se mezclan.
 // Sin tokens ni datos de sesión: solo lo que se está cargando.
+//
+// Carga nueva: solo se recuerda si tiene algo propio (un dato distinto del
+// formulario recién abierto, o turnos elegidos). Abrir y cerrar sin tocar nada, o
+// volver todo a como estaba, no deja aviso. Un envío INCIERTO se recuerda siempre,
+// aunque sus datos sean los iniciales: la misma clave y el mismo contenido tienen
+// que poder reintentarse hasta que el servidor diga qué pasó.
+// Edición: solo se recuerda si difiere de la versión cargada (ver Formulario).
+
+const OPCIONALES = ["hombres", "mujeres", "rango_etario", "conocia_sim", "se_subio_antes", "iniciador", "atendio_empleado_id", "motivo"] as const;
+
+/** ¿La carga nueva está como recién abierta? El resultado elegido con el acceso no cuenta como dato. */
+export function altaSinDatos(form: EstadoFormulario, turnos: TurnoElegido[]): boolean {
+  return turnos.length === 0 && form.ocurrida.modo === "ahora" && form.personas === formularioVacio(form.resultado).personas
+    && form.observaciones.trim() === "" && OPCIONALES.every((k) => form[k] === null);
+}
+
+/** ¿Hay que recordar este borrador de carga nueva? */
+export function conservarBorradorAlta(b: Pick<BorradorAlta, "form" | "turnos" | "estado">): boolean {
+  return b.estado === "incierto" || !altaSinDatos(b.form, b.turnos);
+}
 const CLAVE_ALTA = "sim.interacciones.borrador.alta.v1";
 const PREFIJO_EDICION = "sim.interacciones.borrador.edicion.v1.";
 
@@ -263,12 +298,28 @@ function esFormulario(f: unknown): f is EstadoFormulario {
 }
 
 export const borradores = {
+  /** El borrador de carga nueva, si vale la pena recordarlo (uno vacío de antes se descarta). */
   alta(): BorradorAlta | null {
     const b = leer<BorradorAlta>(CLAVE_ALTA);
-    return b && typeof b.clave === "string" && esFormulario(b.form) && Array.isArray(b.turnos) ? b : null;
+    if (!(b && typeof b.clave === "string" && esFormulario(b.form) && Array.isArray(b.turnos))) return null;
+    if (!conservarBorradorAlta(b)) {
+      borrar(CLAVE_ALTA);
+      return null;
+    }
+    return b;
   },
+  /** Guarda tal cual (antes de enviar: el envío queda INCIERTO aunque los datos sean los iniciales). */
   guardarAlta(b: Omit<BorradorAlta, "actualizado">) {
     escribir(CLAVE_ALTA, { ...b, actualizado: new Date().toISOString() });
+  },
+  /** Guarda si tiene algo propio o está incierto; si no, borra el de ESTA carga (nunca uno ajeno). */
+  sincronizarAlta(b: Omit<BorradorAlta, "actualizado">) {
+    if (conservarBorradorAlta(b)) {
+      escribir(CLAVE_ALTA, { ...b, actualizado: new Date().toISOString() });
+      return;
+    }
+    const previo = leer<BorradorAlta>(CLAVE_ALTA);
+    if (!previo || previo.clave === b.clave) borrar(CLAVE_ALTA);
   },
   borrarAlta() {
     borrar(CLAVE_ALTA);

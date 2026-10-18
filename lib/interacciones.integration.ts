@@ -17,7 +17,8 @@ import { sumarDias } from "@/lib/agenda";
 // parciales, edición parcial con versión, ventanas de staff en hora de Córdoba,
 // pendientes viejas, cierre, listados con cursor, turnos vinculables sin datos
 // personales ni reservas web ni históricos, IDs bigint, módulo sin inicio y el
-// contrato de límites/valores entre TypeScript y la base.
+// contrato de límites/valores entre TypeScript y la base. Cierre previo al
+// lanzamiento: pausa de altas (sin tocar el inicio) y borrado administrativo.
 //
 // La sesión se firma con un secreto DESCARTABLE y next/headers se reemplaza por
 // un almacén en memoria (mismo patrón que lib/reservaPostpay.test.ts).
@@ -48,6 +49,7 @@ const claves: string[] = [];
 const interacciones = new Set<string>();
 const turnosFixture: string[] = [];
 let inicioPrevio: string | null = null;
+let pausaPrevia: string | null = null;
 let empleadoId: string | null = null;
 
 async function main() {
@@ -69,6 +71,8 @@ async function main() {
   const TURNOS = await import("@/app/api/admin/interacciones/[id]/turnos/route");
   const CIERRE = await import("@/app/api/admin/interacciones/[id]/cierre/route");
   const VINC = await import("@/app/api/admin/interacciones/turnos-vinculables/route");
+  const ELIM = await import("@/app/api/admin/interacciones/[id]/eliminar/route");
+  const METR = await import("@/app/api/admin/interacciones/metricas/route");
   const EMPS = await import("@/app/api/admin/interacciones/empleados/route");
 
   type Resp = { status: number; json: Record<string, unknown> & { interaccion?: Record<string, unknown> } };
@@ -108,6 +112,8 @@ async function main() {
     V3: { id: "-930013", instante: en(-150 * min) }, V4: { id: "-930014", instante: en(20 * min) },
     V5: { id: "-930015", instante: en(-60 * min) }, VG: { id: "-930016", instante: en(-40 * min), total: 0, metodo: "gratis" },
     VB: { id: BIG, instante: en(-5 * min) },
+    E1: { id: "-930031", instante: en(-35 * min) }, E2: { id: "-930032", instante: en(-45 * min) },
+    E3: { id: "-930033", instante: en(-55 * min), total: 0, metodo: "gratis" },
     OLD: { id: "-930021", instante: new Date(ahora.getTime() - 49 * 3_600_000 - 30 * min) },
   };
   const filasTurnos = Object.values(fx).map((t) => ({
@@ -136,7 +142,8 @@ async function main() {
 
   // ── 1. Módulo sin inicio: se detecta y no se escribe nada ────────────────
   inicioPrevio = sql("select coalesce(inicio_registro::text, '') from public.interacciones_config where id;") || null;
-  sql("update public.interacciones_config set inicio_registro = null where id;");
+  pausaPrevia = sql("select coalesce(altas_pausadas_en::text, '') from public.interacciones_config where id;") || null;
+  sql("update public.interacciones_config set inicio_registro = null, altas_pausadas_en = null where id;");
   {
     const l = await http(RAIZ.GET, "GET", "/api/admin/interacciones", { token: admin });
     assert.equal(l.status, 200);
@@ -340,7 +347,7 @@ async function main() {
       values (gen_random_uuid(), md5('vieja'), now() - interval '49 hours', now() - interval '49 hours', 'staff', 'subio', 2, ${lit(MARCA)}) returning id;`).split("\n")[0];
     interacciones.add(vieja);
     const g = await http(UNA.GET, "GET", `/api/admin/interacciones/${vieja}`, { token: staff, id: vieja });
-    assert.deepEqual(inter(g).permisos, { editar: false, anular: false, vincular: true, desvincular: false, cerrar_sin_vinculo: false });
+    assert.deepEqual(inter(g).permisos, { editar: false, anular: false, vincular: true, desvincular: false, cerrar_sin_vinculo: false, eliminar: false });
     const e = await http(UNA.PATCH, "PATCH", `/api/admin/interacciones/${vieja}`, { token: staff, id: vieja, body: { version: 1, cambios: { personas_grupo: 3 } } });
     assert.deepEqual([e.status, e.json.codigo], [403, "fuera_de_ventana"]);
     const an = await http(ANULAR.POST, "POST", `/api/admin/interacciones/${vieja}/anular`, { token: staff, id: vieja, body: { version: 1 } });
@@ -488,10 +495,116 @@ async function main() {
     assert.ok(!JSON.stringify(conAnul.json).includes("SECRETO"), "13 · sin datos personales");
   }
 
+  // ── 15. Pausa de altas: rechaza cargas nuevas, conserva inicio, historial y correcciones ──
+  {
+    const inicio = sql("select inicio_registro::text from public.interacciones_config where id;");
+    const kGuardada = randomUUID();
+    const guardada = await alta(staff, { resultado: "pregunto", personas_grupo: 2 }, undefined, kGuardada);
+    assert.equal(guardada.status, 201);
+    const { error: ePausa } = await supabaseAdmin.rpc("interacciones_pausar_altas", { p_rol: "admin" });
+    assert.equal(ePausa, null, "15 · la pausa la hace un admin por la RPC");
+    const l = await http(RAIZ.GET, "GET", "/api/admin/interacciones", { token: staff });
+    const modulo = l.json.modulo as Record<string, unknown>;
+    assert.deepEqual([l.status, modulo.habilitado, modulo.altas_pausadas, modulo.inicio_registro !== null], [200, true, true, true],
+      "15 · el listado sigue y distingue pausa de no habilitado");
+    const k = randomUUID();
+    const nueva = await alta(staff, { resultado: "miro", personas_grupo: 1 }, undefined, k);
+    assert.deepEqual([nueva.status, nueva.json.codigo], [503, "altas_pausadas"], "15 · alta nueva → 503 altas_pausadas");
+    assert.ok(!/sql|supabase|config/i.test(String(nueva.json.error)), "15 · sin detalles de infraestructura para el personal");
+    assert.equal(sql(`select count(*) from public.interacciones_stand where idempotency_key = '${k}';`), "0");
+    const repetida = await alta(staff, { resultado: "pregunto", personas_grupo: 2 }, undefined, kGuardada);
+    assert.deepEqual([repetida.status, inter(repetida).id], [200, inter(guardada).id], "15 · el reintento de una carga ya guardada devuelve la original");
+    const ed = await http(UNA.PATCH, "PATCH", `/api/admin/interacciones/${inter(guardada).id}`, { token: staff, id: inter(guardada).id, body: { version: 1, cambios: { motivo: "precio" } } });
+    assert.equal(ed.status, 200, "15 · corregir sigue");
+    const det = await http(UNA.GET, "GET", `/api/admin/interacciones/${inter(guardada).id}`, { token: staff, id: inter(guardada).id });
+    assert.equal(det.status, 200, "15 · consultar sigue");
+    const m = await http(METR.GET, "GET", `/api/admin/interacciones/metricas?desde=${hoy}&hasta=${hoy}`, { token: admin });
+    assert.equal(m.status, 200, "15 · el análisis sigue disponible");
+    assert.equal((m.json.modulo as Record<string, unknown>).altas_pausadas, true, "15 · y avisa la pausa");
+    const { error: eReanudar } = await supabaseAdmin.rpc("interacciones_reanudar_altas", { p_rol: "admin" });
+    assert.equal(eReanudar, null);
+    assert.equal(sql("select inicio_registro::text from public.interacciones_config where id;"), inicio, "15 · pausar y reanudar no tocan el inicio");
+    const otra = await alta(staff, { resultado: "miro", personas_grupo: 1 }, undefined, k);
+    assert.equal(otra.status, 201, "15 · reanudada, la misma carga entra una sola vez");
+    const { error: eInicio } = await supabaseAdmin.rpc("interacciones_definir_inicio", { p_inicio_local: "2020-01-01 00:00", p_rol: "admin" });
+    assert.equal(eInicio?.message, "inicio_ya_definido", "15 · con registros, el inicio histórico no se cambia");
+  }
+
+  // ── 16. Borrado administrativo por la API ────────────────────────────────
+  {
+    const metricasHoy = async () => {
+      const r = await http(METR.GET, "GET", `/api/admin/interacciones/metricas?desde=${hoy}&hasta=${hoy}`, { token: admin });
+      const a = r.json.actual as { metricas: { embudo: { interacciones: number; personas: number; subieron: number } }; cobertura: { turnos: number; vinculados: number } };
+      return { embudo: a.metricas.embudo, cobertura: a.cobertura };
+    };
+    const conTurnos = await alta(staff, { resultado: "subio", personas_grupo: 3 }, [fx.E1.id, fx.E2.id]);
+    const anulada = await alta(staff, { resultado: "miro", personas_grupo: 2 });
+    assert.equal((await http(ANULAR.POST, "POST", `/api/admin/interacciones/${inter(anulada).id}/anular`, { token: staff, id: inter(anulada).id, body: { version: 1 } })).status, 200);
+    const pendiente = await alta(staff, { resultado: "subio", personas_grupo: 1 });
+    const id = inter(conTurnos).id;
+    // Otro dispositivo la corrige después de que el admin abrió la confirmación (v1 → v2).
+    const corregida = await http(UNA.PATCH, "PATCH", `/api/admin/interacciones/${id}`, { token: staff, id, body: { version: 1, cambios: { personas_grupo: 4 } } });
+    assert.equal(inter(corregida).version, 2);
+    const antes = await metricasHoy();
+    const borrar = (token: string, cuerpo: unknown, o: { id?: string; origin?: string | null } = {}) =>
+      http(ELIM.POST, "POST", `/api/admin/interacciones/${o.id ?? id}/eliminar`, { token, id: o.id ?? id, body: cuerpo, origin: o.origin });
+
+    assert.equal((await borrar(staff, { version: 1 })).status, 403, "16 · staff no puede borrar por API");
+    assert.equal((await borrar("", { version: 1 })).status, 401, "16 · sin sesión → 401");
+    assert.equal((await borrar(admin, { version: 1 }, { origin: "https://otro.example" })).status, 403, "16 · origen ajeno → 403");
+    assert.equal((await borrar(admin, { version: 1, rol: "admin" })).status, 400, "16 · el rol no viaja en el cuerpo");
+    const vieja = await borrar(admin, { version: 1 });
+    assert.deepEqual([vieja.status, vieja.json.codigo], [409, "version_desactualizada"], "16 · versión vieja → conflicto, no borra");
+    assert.equal(sql(`select count(*) from public.interaccion_turnos where interaccion_id = '${id}';`), "2");
+
+    const ok = await borrar(admin, { version: 2, motivo: "  carga de prueba  " });
+    assert.equal(ok.status, 200, "16 · admin borra");
+    assert.deepEqual([ok.json.eliminada, ok.json.sin_cambios, [...(ok.json.turnos_liberados as string[])].sort()], [true, false, [fx.E1.id, fx.E2.id].sort()]);
+    assert.ok(!("interaccion" in ok.json), "16 · no devuelve la interacción: ya no existe para el panel");
+    const otraVez = await borrar(admin, { version: 2 });
+    assert.deepEqual([otraVez.status, otraVez.json.sin_cambios], [200, true], "16 · repetirlo no hace nada");
+    assert.equal(sql(`select count(*) from public.interacciones_stand_eventos where interaccion_id = '${id}' and tipo = 'eliminacion' and rol = 'admin';`), "1", "16 · una sola auditoría");
+    assert.equal(sql(`select eliminada_por_rol || '|' || eliminada_motivo from public.interacciones_stand where id = '${id}';`), "admin|carga de prueba");
+
+    const det = await http(UNA.GET, "GET", `/api/admin/interacciones/${id}`, { token: admin, id });
+    assert.equal(det.status, 404, "16 · el detalle ya no la muestra");
+    for (const q of [`desde=${hoy}&hasta=${hoy}&incluir_anuladas=1&limite=100`, "estado=pendiente&limite=100"]) {
+      const l = await http(RAIZ.GET, "GET", `/api/admin/interacciones?${q}`, { token: admin });
+      assert.ok(!(l.json.items as Array<{ id: string }>).some((x) => x.id === id), `16 · no aparece en el listado (${q})`);
+    }
+    const ed = await http(UNA.PATCH, "PATCH", `/api/admin/interacciones/${id}`, { token: admin, id, body: { version: 3, cambios: { personas_grupo: 2 } } });
+    assert.deepEqual([ed.status, ed.json.codigo], [404, "interaccion_eliminada"], "16 · no se edita");
+    const vin = await http(TURNOS.POST, "POST", `/api/admin/interacciones/${id}/turnos`, { token: admin, id, body: { version: 3, turnos: [fx.E3.id] } });
+    assert.deepEqual([vin.status, vin.json.codigo], [404, "interaccion_eliminada"], "16 · no se vuelve a vincular");
+    const anc = await http(VINC.GET, "GET", `/api/admin/interacciones/turnos-vinculables?interaccion=${id}`, { token: admin });
+    assert.equal(anc.status, 404, "16 · tampoco como ancla de vinculables");
+    const libres = await http(VINC.GET, "GET", `/api/admin/interacciones/turnos-vinculables?ocurrida_en=${encodeURIComponent(A.toISOString())}`, { token: staff });
+    const vinc = libres.json.turnos as Array<{ id: string; vinculacion: string }>;
+    assert.deepEqual([fx.E1.id, fx.E2.id].map((t) => vinc.find((x) => x.id === t)?.vinculacion), ["libre", "libre"], "16 · sus turnos quedaron libres");
+    const { data: turnosVivos } = await supabaseAdmin.from("turnos_stand").select("id:id::text, total, estado").in("id", [fx.E1.id, fx.E2.id]);
+    assert.equal((turnosVivos ?? []).length, 2, "16 · los turnos siguen en el Turnero");
+
+    const delAnulada = await borrar(admin, { version: 2 }, { id: inter(anulada).id });
+    const delPendiente = await borrar(admin, { version: 1 }, { id: inter(pendiente).id });
+    assert.deepEqual([delAnulada.status, delPendiente.status], [200, 200], "16 · también una anulada y una pendiente");
+    const conAnuladas = await http(RAIZ.GET, "GET", `/api/admin/interacciones?desde=${hoy}&hasta=${hoy}&incluir_anuladas=1&limite=100`, { token: admin });
+    assert.ok(!(conAnuladas.json.items as Array<{ id: string }>).some((x) => x.id === inter(anulada).id), "16 · \"ver anuladas\" no la devuelve");
+
+    const despues = await metricasHoy();
+    assert.deepEqual([despues.embudo.interacciones, despues.embudo.personas, despues.embudo.subieron],
+      [antes.embudo.interacciones - 2, antes.embudo.personas - 5, antes.embudo.subieron - 2],
+      "16 · deja de contar en el embudo (la anulada ya no contaba)");
+    assert.deepEqual([despues.cobertura.turnos, despues.cobertura.vinculados], [antes.cobertura.turnos, antes.cobertura.vinculados - 2],
+      "16 · cobertura: mismo denominador, numerador sin sus vínculos");
+
+    const otraInter = await alta(staff, { resultado: "subio", personas_grupo: 2 }, [fx.E1.id]);
+    assert.equal(otraInter.status, 201, "16 · el turno liberado se vincula a otra interacción");
+  }
+
   // ── 14. Nada ajeno cambió ────────────────────────────────────────────────
   assert.equal(huellaAjena(), huella0, "14 · turnos, reservas, históricos y Finanzas idénticos");
 
-  console.log("interacciones.integration.ts OK — rutas reales contra el stack local: 401/403/origen, autoridad solo de la sesión, alta idempotente, vínculos atómicos, edición parcial con versión y liberación confirmada, atendió declarado, ventanas de Córdoba, pendiente vieja con tolerancia contra ocurrida_en, cierre solo admin, IDs bigint exactos, vinculables sin datos personales ni reservas/históricos, listados con cursor, módulo sin inicio y contrato de límites.");
+  console.log("interacciones.integration.ts OK — rutas reales contra el stack local: 401/403/origen, autoridad solo de la sesión, alta idempotente, vínculos atómicos, edición parcial con versión y liberación confirmada, atendió declarado, ventanas de Córdoba, pendiente vieja con tolerancia contra ocurrida_en, cierre solo admin, IDs bigint exactos, vinculables sin datos personales ni reservas/históricos, listados con cursor, módulo sin inicio, contrato de límites, pausa de altas que conserva el inicio y borrado solo admin que libera turnos y sale de listas y métricas.");
 }
 
 function limpiar() {
@@ -509,7 +622,8 @@ function limpiar() {
       delete from public.reservas where id = -939001;
       delete from public.turnos_historicos where hash_unico = ${lit(MARCA)};
       ${empleadoId ? `delete from public.empleados where id = '${empleadoId}';` : ""}
-      update public.interacciones_config set inicio_registro = ${inicioPrevio ? `${lit(inicioPrevio)}::timestamptz` : "null"} where id;`);
+      update public.interacciones_config set inicio_registro = ${inicioPrevio ? `${lit(inicioPrevio)}::timestamptz` : "null"},
+        altas_pausadas_en = ${pausaPrevia ? `${lit(pausaPrevia)}::timestamptz` : "null"} where id;`);
     const resto = sql(`select (select count(*) from public.interacciones_stand where observaciones = ${lit(MARCA)})
       + (select count(*) from public.turnos_stand where nombre like ${lit(`%${MARCA}%`)});`);
     assert.equal(resto, "0", "limpieza completa");

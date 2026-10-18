@@ -13,7 +13,8 @@ import Detalle, { tonoEstado } from "./Detalle";
 import Formulario from "./Formulario";
 import { Aviso, Boton, Cargando, Dialogo, Etiqueta, cx } from "./ui";
 
-type EstadoModulo = "cargando" | "listo" | "no_habilitado" | "no_instalado" | "error";
+// pausado = la carga de NUEVAS está pausada; consultar, completar pendientes y corregir sigue.
+type EstadoModulo = "cargando" | "listo" | "pausado" | "no_habilitado" | "no_instalado" | "error";
 type Lista = { items: InteraccionDto[]; siguiente: string | null; cargando: boolean; error: string | null; cargada: boolean };
 const listaVacia: Lista = { items: [], siguiente: null, cargando: false, error: null, cargada: false };
 
@@ -38,6 +39,7 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
   const [edicion, setEdicion] = useState<InteraccionDto | null>(null);
   const [detalle, setDetalle] = useState<{ id: string; accion?: "vincular" } | null>(null);
   const [exito, setExito] = useState<{ i: InteraccionDto; repetida: boolean; edicion?: boolean } | null>(null);
+  const [nota, setNota] = useState<{ tipo: "exito" | "info"; titulo: string; texto: string } | null>(null);
   const seq = useRef({ recientes: 0, pendientes: 0 });
 
   useEffect(() => {
@@ -61,7 +63,7 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
     if (mio !== seq.current[tipo]) return;
     if (r.ok) {
       set((l) => ({ items: cursor ? [...l.items, ...r.data.items] : r.data.items, siguiente: r.data.siguiente, cargando: false, error: null, cargada: true }));
-      setModulo(r.data.modulo.habilitado ? "listo" : "no_habilitado");
+      setModulo(!r.data.modulo.habilitado ? "no_habilitado" : r.data.modulo.altas_pausadas ? "pausado" : "listo");
     } else {
       set((l) => ({ ...l, cargando: false, error: r.error, cargada: true }));
       if (r.codigo === "modulo_no_instalado") setModulo("no_instalado");
@@ -92,11 +94,9 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
     }
     empezarAlta(r);
   }
+  // La carga nueva NO se guarda al abrirla: el formulario la recuerda recién cuando tiene algo propio.
   function empezarAlta(r: Resultado) {
-    const b: BorradorAlta = { clave: nuevaClave(), form: formularioVacio(r), turnos: [], estado: "editando", actualizado: new Date().toISOString() };
-    borradores.guardarAlta(b);
-    setBorradorGuardado(b);
-    setAlta(b);
+    setAlta({ clave: nuevaClave(), form: formularioVacio(r), turnos: [], estado: "editando", actualizado: new Date().toISOString() });
   }
   function descartarBorrador() {
     borradores.borrarAlta();
@@ -107,12 +107,22 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
     setAlta(null);
     setEdicion(null);
     setBorradorGuardado(borradores.alta());
+    setNota(null);
     setExito({ i, repetida: info.repetida, edicion: esEdicion });
     if (esEdicion) setDetalle({ id: i.id });
     refrescar();
   }
+  // Borrada por un admin (o ya no existe): se cierra el detalle, se avisa y se actualizan listas y contadores.
+  function desaparecio(id: string, aviso: { tipo: "exito" | "info"; titulo: string; texto: string }) {
+    setDetalle(null);
+    setEdicion((e) => (e?.id === id ? null : e));
+    setExito((x) => (x?.i.id === id ? null : x));
+    setNota(aviso);
+    refrescar();
+  }
 
   const disponible = modulo === "listo";
+  const consultable = modulo === "listo" || modulo === "pausado";
   const lista = vista === "recientes" ? recientes : pendientes;
 
   return (
@@ -141,6 +151,11 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
         </div>
 
         <div className="space-y-4">
+          {modulo === "pausado" ? (
+            <Aviso tipo="alerta" titulo="La carga de nuevas interacciones está pausada">
+              Podés consultar las registradas, completar pendientes y corregir. El Turnero sigue funcionando normalmente.
+            </Aviso>
+          ) : null}
           {modulo === "no_habilitado" || modulo === "no_instalado" ? (
             <Aviso tipo="alerta" titulo="La carga de Interacciones todavía no está habilitada">
               Podés seguir usando el Turnero normalmente. Cuando se habilite, vas a poder registrar las interacciones acá.
@@ -167,7 +182,13 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
             </Aviso>
           ) : null}
 
-          {borradorGuardado && !alta && disponible ? (
+          {nota ? (
+            <Aviso tipo={nota.tipo} titulo={nota.titulo} acciones={<Boton variante="fantasma" onClick={() => setNota(null)}>Cerrar aviso</Boton>}>
+              {nota.texto}
+            </Aviso>
+          ) : null}
+
+          {borradorGuardado && !alta && consultable ? (
             <Aviso tipo={borradorGuardado.estado === "incierto" ? "alerta" : "info"}
               titulo={borradorGuardado.estado === "incierto" ? "Hay una carga que no sabemos si se guardó" : "Tenés una carga sin guardar"}
               acciones={(
@@ -233,7 +254,7 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
               <p className="mb-4 text-sm text-white/60">“Se subió” sin turno vinculado, de cualquier fecha. Abrila para vincular el turno del Turnero.</p>
             )}
 
-            {lista.error && lista.cargada && modulo === "listo" ? (
+            {lista.error && lista.cargada && consultable ? (
               <Aviso tipo="error" acciones={<Boton onClick={() => void cargar(vista, null)}>Reintentar</Boton>}>{lista.error}</Aviso>
             ) : null}
             {!lista.cargada && lista.cargando ? <Cargando /> : null}
@@ -279,6 +300,7 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
 
       {alta ? (
         <Formulario key={alta.clave} modo="alta" rol={rol} borrador={alta}
+          pausado={modulo === "pausado"} onPausado={() => setModulo("pausado")}
           onCerrar={() => { setAlta(null); setBorradorGuardado(borradores.alta()); }}
           onDescartar={descartarBorrador}
           onGuardado={(i, info) => guardado(i, info)} />
@@ -292,7 +314,8 @@ export default function InteraccionesCliente({ rol }: { rol: Rol }) {
         <Detalle key={`${detalle.id}-${detalle.accion ?? ""}`} id={detalle.id} rol={rol} accionInicial={detalle.accion}
           onCerrar={() => setDetalle(null)}
           onEditar={(i) => { setDetalle(null); setEdicion(i); }}
-          onCambio={() => refrescar()} />
+          onCambio={() => refrescar()}
+          onDesaparecio={(aviso) => desaparecio(detalle.id, aviso)} />
       ) : null}
     </main>
   );

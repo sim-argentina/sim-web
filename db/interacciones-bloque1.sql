@@ -11,11 +11,20 @@
 -- fuera del embudo del stand: no hay forma de vincularlas.
 --
 -- Piezas:
---   · interacciones_config        una fila; inicio_registro = lanzamiento real.
---                                  NULL hasta el lanzamiento: sin inicio no se
---                                  puede registrar nada.
+--   · interacciones_config        una fila. inicio_registro = lanzamiento real,
+--                                  dato HISTÓRICO: NULL hasta el lanzamiento (sin
+--                                  inicio no se registra nada) y, una vez que hay
+--                                  interacciones, ya no se cambia.
+--                                  altas_pausadas_en = desde cuándo están pausadas
+--                                  las ALTAS (NULL = se aceptan). Pausar no toca el
+--                                  inicio ni lo registrado; consultas, correcciones,
+--                                  vínculos, anulaciones y borrado siguen.
 --   · interacciones_stand          la visita. Sin nombre, teléfono ni otro dato
---                                  personal del visitante. Baja lógica (anulada).
+--                                  personal del visitante. Dos bajas lógicas:
+--                                  anulada (staff o admin; se ve con "ver
+--                                  anuladas") y eliminada (solo admin; desaparece
+--                                  de toda vista operativa y de las métricas, y
+--                                  queda solo su auditoría mínima).
 --   · interaccion_turnos           el vínculo: FK real a turnos_stand(id) con
 --                                  ON DELETE CASCADE y UNIQUE(turno_stand_id):
 --                                  un turno pertenece a una sola interacción.
@@ -74,7 +83,8 @@ as $fn$
     'personas_grupo_max', 50,
     'observaciones_max', 500,
     'nota_cierre_max', 300,
-    'motivo_anulacion_max', 200
+    'motivo_anulacion_max', 200,
+    'motivo_eliminacion_max', 200
   )
 $fn$;
 
@@ -115,8 +125,16 @@ create table if not exists public.interacciones_config (
     check (actualizado_por_rol is null or actualizado_por_rol = 'admin')
 );
 
+-- Pausa de ALTAS, separada del inicio (que es histórico). Se agrega con ALTER
+-- para que este archivo siga siendo idempotente sobre una base que ya tenía el
+-- módulo (stack local). Sin inicio no hay nada que pausar.
+alter table public.interacciones_config add column if not exists altas_pausadas_en timestamptz;
+alter table public.interacciones_config drop constraint if exists interacciones_config_pausa_chk;
+alter table public.interacciones_config add constraint interacciones_config_pausa_chk
+  check (altas_pausadas_en is null or inicio_registro is not null);
+
 comment on table public.interacciones_config is
-  'Interacciones del stand: configuración (una fila). inicio_registro = lanzamiento real del módulo; NULL = todavía no se puede registrar.';
+  'Interacciones del stand: configuración (una fila). inicio_registro = lanzamiento real del módulo (histórico; NULL = todavía no se puede registrar). altas_pausadas_en = altas pausadas desde ese instante (NULL = se aceptan altas).';
 
 insert into public.interacciones_config (id) values (true) on conflict (id) do nothing;
 
@@ -204,6 +222,22 @@ comment on column public.interacciones_stand.atendio_empleado_id is
 comment on column public.interacciones_stand.cierre_motivo is
   'Solo admin: subida declarada que se cierra sin turno. Sigue siendo declarada; no la verifica.';
 
+-- Eliminación administrativa (borrado lógico, solo admin, cualquier estado y
+-- fecha). Distinta de la anulación: una eliminada no aparece en ninguna vista
+-- operativa ni en las métricas, no se modifica más y no se restaura. Con ALTER,
+-- igual que la pausa, para que el archivo siga siendo idempotente.
+alter table public.interacciones_stand add column if not exists eliminada_en timestamptz;
+alter table public.interacciones_stand add column if not exists eliminada_por_rol text;
+alter table public.interacciones_stand add column if not exists eliminada_motivo text;
+alter table public.interacciones_stand drop constraint if exists interacciones_stand_eliminada_chk;
+alter table public.interacciones_stand add constraint interacciones_stand_eliminada_chk check (
+  (eliminada_en is null and eliminada_por_rol is null and eliminada_motivo is null)
+  or (eliminada_en is not null and eliminada_por_rol = 'admin'
+      and (eliminada_motivo is null or (char_length(eliminada_motivo) between 1 and 200 and eliminada_motivo !~ '^\s|\s$')))
+);
+comment on column public.interacciones_stand.eliminada_en is
+  'Borrado administrativo (solo admin). La fila se conserva como auditoría mínima; no cuenta ni se muestra en ningún lado.';
+
 create index if not exists interacciones_stand_fecha_idx
   on public.interacciones_stand (fecha_negocio) where anulada_en is null;
 create index if not exists interacciones_stand_subio_idx
@@ -254,14 +288,19 @@ create table if not exists public.interacciones_stand_eventos (
   turno_stand_id bigint,
   datos          jsonb not null default '{}'::jsonb,
   en             timestamptz not null default clock_timestamp(),
-  constraint interacciones_stand_eventos_tipo_chk check (tipo in (
-    'alta', 'edicion', 'vinculo', 'desvinculo', 'anulacion', 'cierre_sin_vinculo',
-    'cierre_retirado', 'turno_eliminado', 'vinculo_eliminado_externo')),
   constraint interacciones_stand_eventos_rol_chk check (rol is null or rol in ('admin', 'staff'))
 );
 
+-- Tipos de evento (con ALTER para poder sumar 'eliminacion' sobre una base que ya
+-- tenía el módulo). 'eliminacion' es la auditoría mínima del borrado: interacción,
+-- rol (admin), instante y turnos liberados.
+alter table public.interacciones_stand_eventos drop constraint if exists interacciones_stand_eventos_tipo_chk;
+alter table public.interacciones_stand_eventos add constraint interacciones_stand_eventos_tipo_chk check (tipo in (
+  'alta', 'edicion', 'vinculo', 'desvinculo', 'anulacion', 'cierre_sin_vinculo',
+  'cierre_retirado', 'turno_eliminado', 'vinculo_eliminado_externo', 'eliminacion'));
+
 comment on table public.interacciones_stand_eventos is
-  'Interacciones del stand: historial (append-only) de altas, ediciones, vínculos, cierres, anulaciones y turnos borrados en el Turnero. Sin nombre ni teléfono.';
+  'Interacciones del stand: historial (append-only) de altas, ediciones, vínculos, cierres, anulaciones, eliminaciones y turnos borrados en el Turnero. Sin nombre ni teléfono. Auditoría: ninguna vista operativa ni métrica lo lee.';
 
 create index if not exists interacciones_stand_eventos_interaccion_idx
   on public.interacciones_stand_eventos (interaccion_id, en);
@@ -277,7 +316,8 @@ create index if not exists interacciones_stand_eventos_interaccion_idx
 -- conciliación. Los turnos con total y método contradictorios se cuentan aparte
 -- (turnos_pago_contradictorio) sin cambiar esa regla. participaciones = Σ
 -- cantidad_personas de los turnos vinculados: participaciones, NO personas únicas.
--- ocurrida_en va al final para ordenar/paginar listados.
+-- ocurrida_en va al final para ordenar/paginar listados. Las ELIMINADAS no
+-- aparecen en esta vista ni en ninguna de las siguientes (ni con "ver anuladas").
 create or replace view public.interacciones_stand_estado
 with (security_invoker = true) as
 select
@@ -315,7 +355,8 @@ left join lateral (
   from public.interaccion_turnos it
   join public.turnos_stand t on t.id = it.turno_stand_id
   where it.interaccion_id = i.id
-) v on true;
+) v on true
+where i.eliminada_en is null;
 
 -- Control de cada vínculo contra el turno VIVO: diferencia de fecha y cambios del
 -- turno desde que se vinculó. Detecta, no bloquea: el Turnero se sigue corrigiendo
@@ -347,12 +388,14 @@ select
   t.metodo_pago as turno_metodo_pago,
   public.interacciones_pago_contradictorio(t.total, t.metodo_pago) as pago_contradictorio
 from public.interaccion_turnos it
-join public.interacciones_stand i on i.id = it.interaccion_id
+join public.interacciones_stand i on i.id = it.interaccion_id and i.eliminada_en is null
 join public.turnos_stand t on t.id = it.turno_stand_id;
 
 -- Cobertura del registro, por TURNO y por la fecha ACTUAL del turno (no por la de
 -- la interacción: un vínculo que cruza la medianoche no se pierde). Elegible =
--- turno activo. Pago/gratis distinguibles. No es conversión.
+-- turno activo. Pago/gratis distinguibles. No es conversión. Borrar o anular una
+-- interacción libera sus vínculos: el turno sigue elegible (denominador igual) y
+-- deja de contar como vinculado (numerador).
 create or replace view public.interacciones_cobertura_turnos
 with (security_invoker = true) as
 select
@@ -368,12 +411,12 @@ from public.turnos_stand t
 left join (
   select it.turno_stand_id, it.interaccion_id
   from public.interaccion_turnos it
-  join public.interacciones_stand i on i.id = it.interaccion_id and i.anulada_en is null
+  join public.interacciones_stand i on i.id = it.interaccion_id and i.anulada_en is null and i.eliminada_en is null
 ) v on v.turno_stand_id = t.id
 where coalesce(t.estado, 'activo') = 'activo';
 
--- (Bloque 4) Base del análisis: una fila por interacción NO anulada (las
--- anuladas no cuentan en ninguna métrica), con el perfil y el estado del
+-- (Bloque 4) Base del análisis: una fila por interacción NO anulada ni
+-- eliminada (no cuentan en ninguna métrica), con el perfil y el estado del
 -- vínculo. Solo columnas que usan las métricas: sin observaciones ni auditoría.
 create or replace view public.interacciones_analisis
 with (security_invoker = true) as
@@ -401,7 +444,7 @@ select
   e.venta_verificada
 from public.interacciones_stand i
 join public.interacciones_stand_estado e on e.interaccion_id = i.id
-where i.anulada_en is null;
+where i.anulada_en is null and i.eliminada_en is null;
 
 
 -- ── 7. Validación pura ──────────────────────────────────────────────────────
@@ -726,6 +769,9 @@ begin
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
   end if;
+  if v_i.eliminada_en is not null then
+    raise exception 'interaccion_eliminada' using errcode = 'P0002';
+  end if;
   if v_i.anulada_en is not null then
     raise exception 'interaccion_anulada' using errcode = '55000';
   end if;
@@ -851,27 +897,37 @@ create trigger interaccion_turnos_registrar_baja
   for each row execute function public.interaccion_turnos_registrar_baja();
 
 -- Protege la interacción en cualquier camino de escritura:
---   · campos del alta inmutables; una anulada no se modifica;
+--   · campos del alta inmutables;
+--   · una ELIMINADA no se modifica más (no hay restauración);
+--   · una anulada tampoco, salvo para eliminarla (sin tocar ningún otro dato);
 --   · toda modificación sube la versión (una versión vieja no puede pisar);
---   · con vínculos, la fila tiene que seguir siendo 'subio', viva y sin cierre.
+--   · con vínculos, la fila tiene que seguir siendo 'subio', viva, sin cierre y
+--     no eliminada: borrar exige liberar los vínculos en la misma transacción.
 create or replace function public.interacciones_stand_proteger()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $fn$
+declare
+  v_fuera text[] := array['eliminada_en', 'eliminada_por_rol', 'eliminada_motivo', 'version', 'actualizada_en',
+                          'actualizada_por_rol', 'fecha_negocio', 'hora_negocio'];
 begin
   if new.id <> old.id or new.idempotency_key <> old.idempotency_key or new.alta_huella <> old.alta_huella
      or new.registrada_en <> old.registrada_en or new.registrada_por_rol <> old.registrada_por_rol then
     raise exception 'campo_inmutable' using errcode = '55000';
   end if;
-  if old.anulada_en is not null then
+  if old.eliminada_en is not null then
+    raise exception 'interaccion_eliminada' using errcode = '55000';
+  end if;
+  if old.anulada_en is not null
+     and (new.eliminada_en is null or (to_jsonb(new) - v_fuera) is distinct from (to_jsonb(old) - v_fuera)) then
     raise exception 'interaccion_anulada' using errcode = '55000';
   end if;
   if new.version <= old.version then
     raise exception 'version_no_incrementada' using errcode = '55000';
   end if;
-  if (new.resultado <> 'subio' or new.anulada_en is not null or new.cierre_motivo is not null)
+  if (new.resultado <> 'subio' or new.anulada_en is not null or new.cierre_motivo is not null or new.eliminada_en is not null)
      and exists (select 1 from public.interaccion_turnos where interaccion_id = new.id) then
     raise exception 'tiene_turnos_vinculados' using errcode = '55000';
   end if;
@@ -914,7 +970,9 @@ $fn$;
 
 -- ── 9. RPCs (solo service_role; el rol lo pasa la API desde la sesión firmada) ──
 -- Errores comunes: 42501 actor_invalido / solo_admin / fuera_de_ventana;
--- P0002 interaccion_inexistente; 55000 interaccion_anulada / version_desactualizada;
+-- P0002 interaccion_inexistente / interaccion_eliminada (una eliminada no se
+-- edita, vincula, desvincula, anula ni cierra); 55000 interaccion_anulada /
+-- version_desactualizada / altas_pausadas;
 -- 23505 idempotency_key_con_otro_payload / turno_ya_vinculado:<id>.
 -- Todas devuelven interaccion_detalle(id) y, cuando no cambió nada,
 -- 'sin_cambios': true (sin subir la versión).
@@ -924,6 +982,12 @@ $fn$;
 -- aunque llegue en paralelo; misma clave con otro contenido → 23505. La huella es
 -- de los datos normalizados y los turnos pedidos, no del rol. Si un turno ya está
 -- vinculado o es inválido, no se guarda NADA.
+-- Los intentos con la MISMA clave se serializan (lock de transacción por clave):
+-- un reintento que llega mientras el primero sigue en curso espera y recibe la
+-- fila original, nunca un rechazo que la ignore. Así cada rechazo previo al
+-- INSERT (pausa, inicio, ventana) es definitivo: nada quedó guardado con esa clave.
+-- Reintentar la clave de una interacción ya ELIMINADA → interaccion_eliminada
+-- (no se vuelve a crear). Con las altas pausadas → 55000 altas_pausadas.
 create or replace function public.interaccion_registrar(
   p_idempotency_key uuid,
   p_datos           jsonb,
@@ -944,6 +1008,7 @@ declare
   v_id     uuid;
   v_ocu    timestamptz;
   v_emp    uuid;
+  v_pausa  timestamptz;
 begin
   if v_rol not in ('admin', 'staff') then
     raise exception 'actor_invalido' using errcode = '42501';
@@ -955,14 +1020,22 @@ begin
   v_turnos := public.interacciones_normalizar_turnos(p_turnos);
   v_huella := md5(jsonb_build_object('datos', v_norm, 'turnos', to_jsonb(v_turnos))::text);
 
+  perform pg_advisory_xact_lock(hashtext('interacciones_alta'), hashtext(p_idempotency_key::text));
   select * into v_prev from public.interacciones_stand where idempotency_key = p_idempotency_key;
   if found then
     if v_prev.alta_huella <> v_huella then
       raise exception 'idempotency_key_con_otro_payload' using errcode = '23505';
     end if;
+    if v_prev.eliminada_en is not null then
+      raise exception 'interaccion_eliminada' using errcode = 'P0002';
+    end if;
     return public.interaccion_detalle(v_prev.id) || jsonb_build_object('repetida', true);
   end if;
 
+  select c.altas_pausadas_en into v_pausa from public.interacciones_config c where c.id;
+  if v_pausa is not null then
+    raise exception 'altas_pausadas' using errcode = '55000';
+  end if;
   if v_norm ->> 'resultado' <> 'subio' and cardinality(v_turnos) > 0 then
     raise exception 'resultado_no_admite_vinculos' using errcode = '55000';
   end if;
@@ -989,6 +1062,9 @@ begin
     select * into v_prev from public.interacciones_stand where idempotency_key = p_idempotency_key;
     if v_prev.alta_huella <> v_huella then
       raise exception 'idempotency_key_con_otro_payload' using errcode = '23505';
+    end if;
+    if v_prev.eliminada_en is not null then
+      raise exception 'interaccion_eliminada' using errcode = 'P0002';
     end if;
     return public.interaccion_detalle(v_prev.id) || jsonb_build_object('repetida', true);
   end if;
@@ -1048,6 +1124,9 @@ begin
   select * into v_row from public.interacciones_stand where id = p_id for update;
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
+  end if;
+  if v_row.eliminada_en is not null then
+    raise exception 'interaccion_eliminada' using errcode = 'P0002';
   end if;
   if v_row.anulada_en is not null then
     raise exception 'interaccion_anulada' using errcode = '55000';
@@ -1185,6 +1264,9 @@ begin
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
   end if;
+  if v_row.eliminada_en is not null then
+    raise exception 'interaccion_eliminada' using errcode = 'P0002';
+  end if;
   if v_row.anulada_en is not null then
     raise exception 'interaccion_anulada' using errcode = '55000';
   end if;
@@ -1252,6 +1334,9 @@ begin
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
   end if;
+  if v_row.eliminada_en is not null then
+    raise exception 'interaccion_eliminada' using errcode = 'P0002';
+  end if;
   if v_row.anulada_en is not null then
     raise exception 'interaccion_anulada' using errcode = '55000';
   end if;
@@ -1305,6 +1390,9 @@ begin
   select * into v_row from public.interacciones_stand where id = p_id for update;
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
+  end if;
+  if v_row.eliminada_en is not null then
+    raise exception 'interaccion_eliminada' using errcode = 'P0002';
   end if;
   if v_row.anulada_en is not null then
     return public.interaccion_detalle(p_id) || jsonb_build_object('sin_cambios', true);
@@ -1381,6 +1469,9 @@ begin
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
   end if;
+  if v_row.eliminada_en is not null then
+    raise exception 'interaccion_eliminada' using errcode = 'P0002';
+  end if;
   if v_row.anulada_en is not null then
     raise exception 'interaccion_anulada' using errcode = '55000';
   end if;
@@ -1413,9 +1504,84 @@ begin
 end;
 $fn$;
 
--- Inicio del registro: SOLO admin. Se expresa en hora de SIM (Córdoba), p. ej.
--- '2026-10-25 10:00'. No puede quedar después de una interacción viva ya
--- registrada. Se fija al lanzar en Producción; nunca se infiere de la primera fila.
+-- Borrado administrativo: SOLO admin, cualquier estado (viva, pendiente, con
+-- turnos, cerrada, anulada) y cualquier fecha; también con las altas pausadas.
+-- En UNA transacción: libera todos los vínculos (los turnos siguen en el
+-- Turnero, intactos), marca la fila como eliminada y deja el evento
+-- 'eliminacion' (rol, instante, turnos liberados, motivo opcional). Control
+-- optimista por p_version: si cambió desde que se abrió la confirmación →
+-- version_desactualizada y no borra nada. Repetirla sobre una ya eliminada
+-- devuelve lo mismo con 'sin_cambios': true, sin otro evento. No devuelve la
+-- interacción: ya no existe para las vistas operativas.
+create or replace function public.interaccion_eliminar(
+  p_id      uuid,
+  p_version integer,
+  p_motivo  text,
+  p_rol     text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_rol       text := btrim(coalesce(p_rol, ''));
+  v_row       public.interacciones_stand;
+  v_motivo    text := nullif(btrim(coalesce(p_motivo, ''), E' \t\r\n'), '');
+  v_liberados jsonb;
+begin
+  if v_rol not in ('admin', 'staff') then
+    raise exception 'actor_invalido' using errcode = '42501';
+  end if;
+  if v_rol <> 'admin' then
+    raise exception 'solo_admin' using errcode = '42501';
+  end if;
+  if v_motivo is not null and char_length(v_motivo) > (public.interacciones_limites() ->> 'motivo_eliminacion_max')::int then
+    raise exception 'campo_invalido:motivo_eliminacion' using errcode = '22023';
+  end if;
+  select * into v_row from public.interacciones_stand where id = p_id for update;
+  if not found then
+    raise exception 'interaccion_inexistente' using errcode = 'P0002';
+  end if;
+  if v_row.eliminada_en is not null then
+    return jsonb_build_object('interaccion_id', p_id, 'eliminada', true, 'sin_cambios', true, 'turnos_liberados', '[]'::jsonb);
+  end if;
+  if p_version is null or v_row.version <> p_version then
+    raise exception 'version_desactualizada' using errcode = '55000';
+  end if;
+
+  select coalesce(jsonb_agg(it.turno_stand_id order by it.turno_stand_id), '[]'::jsonb) into v_liberados
+    from public.interaccion_turnos it where it.interaccion_id = p_id;
+
+  perform set_config('sim.interacciones_rol', v_rol, true);
+  perform set_config('sim.interacciones_causa', 'eliminacion', true);
+  delete from public.interaccion_turnos where interaccion_id = p_id;
+  perform set_config('sim.interacciones_rol', '', true);
+  perform set_config('sim.interacciones_causa', '', true);
+
+  update public.interacciones_stand set
+    eliminada_en = now(), eliminada_por_rol = 'admin', eliminada_motivo = v_motivo,
+    version = version + 1, actualizada_en = now(), actualizada_por_rol = v_rol
+  where id = p_id;
+
+  insert into public.interacciones_stand_eventos (interaccion_id, tipo, rol, datos)
+  values (p_id, 'eliminacion', v_rol,
+          jsonb_build_object('motivo', v_motivo, 'turnos_liberados', v_liberados,
+                             'estaba_anulada', v_row.anulada_en is not null, 'version', v_row.version));
+
+  return jsonb_build_object(
+    'interaccion_id', p_id, 'eliminada', true, 'sin_cambios', false,
+    'turnos_liberados', (select coalesce(jsonb_agg(e.valor order by e.n), '[]'::jsonb)
+                           from jsonb_array_elements_text(v_liberados) with ordinality as e(valor, n)));
+end;
+$fn$;
+
+-- Inicio del registro (primera activación): SOLO admin. Se expresa en hora de
+-- SIM (Córdoba), p. ej. '2026-10-25 10:00'. Es un dato HISTÓRICO: una vez que
+-- existe alguna interacción (en cualquier estado) ya no se cambia
+-- (inicio_ya_definido); antes de la primera carga se puede corregir. No puede
+-- quedar después de una interacción viva ya registrada. Se fija al lanzar en
+-- Producción; nunca se infiere de la primera fila. No toca la pausa de altas.
 create or replace function public.interacciones_definir_inicio(
   p_inicio_local timestamp,
   p_rol          text
@@ -1428,6 +1594,7 @@ as $fn$
 declare
   v_rol    text := btrim(coalesce(p_rol, ''));
   v_inicio timestamptz;
+  v_actual timestamptz;
 begin
   if v_rol <> 'admin' then
     raise exception 'solo_admin' using errcode = '42501';
@@ -1436,13 +1603,76 @@ begin
     raise exception 'campo_invalido:inicio' using errcode = '22023';
   end if;
   v_inicio := p_inicio_local at time zone 'America/Argentina/Cordoba';
-  if exists (select 1 from public.interacciones_stand where anulada_en is null and ocurrida_en < v_inicio) then
+  select c.inicio_registro into v_actual from public.interacciones_config c where c.id for update;
+  if v_actual is not null and exists (select 1 from public.interacciones_stand) then
+    raise exception 'inicio_ya_definido' using errcode = '55000';
+  end if;
+  if exists (select 1 from public.interacciones_stand
+              where anulada_en is null and eliminada_en is null and ocurrida_en < v_inicio) then
     raise exception 'inicio_posterior_a_registros' using errcode = '55000';
   end if;
   update public.interacciones_config
      set inicio_registro = v_inicio, actualizado_en = now(), actualizado_por_rol = 'admin'
    where id;
   return v_inicio;
+end;
+$fn$;
+
+-- Pausa y reanudación de ALTAS: SOLO admin. No tocan inicio_registro ni ningún
+-- registro: durante la pausa siguen las consultas, el análisis, las correcciones,
+-- los vínculos, las anulaciones y el borrado administrativo. Sin inicio no hay
+-- nada que pausar (registro_no_iniciado). Repetirlas no cambia nada (la pausa
+-- conserva su instante original). Devuelven el estado resultante.
+create or replace function public.interacciones_pausar_altas(p_rol text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_c public.interacciones_config;
+begin
+  if btrim(coalesce(p_rol, '')) <> 'admin' then
+    raise exception 'solo_admin' using errcode = '42501';
+  end if;
+  select * into v_c from public.interacciones_config where id for update;
+  if v_c.inicio_registro is null then
+    raise exception 'registro_no_iniciado' using errcode = '55000';
+  end if;
+  if v_c.altas_pausadas_en is null then
+    update public.interacciones_config
+       set altas_pausadas_en = now(), actualizado_en = now(), actualizado_por_rol = 'admin'
+     where id
+    returning * into v_c;
+  end if;
+  return jsonb_build_object('inicio_registro', v_c.inicio_registro, 'altas_pausadas', true,
+                            'altas_pausadas_en', v_c.altas_pausadas_en);
+end;
+$fn$;
+
+create or replace function public.interacciones_reanudar_altas(p_rol text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_c public.interacciones_config;
+begin
+  if btrim(coalesce(p_rol, '')) <> 'admin' then
+    raise exception 'solo_admin' using errcode = '42501';
+  end if;
+  select * into v_c from public.interacciones_config where id for update;
+  if v_c.inicio_registro is null then
+    raise exception 'registro_no_iniciado' using errcode = '55000';
+  end if;
+  if v_c.altas_pausadas_en is not null then
+    update public.interacciones_config
+       set altas_pausadas_en = null, actualizado_en = now(), actualizado_por_rol = 'admin'
+     where id
+    returning * into v_c;
+  end if;
+  return jsonb_build_object('inicio_registro', v_c.inicio_registro, 'altas_pausadas', false, 'altas_pausadas_en', null);
 end;
 $fn$;
 
@@ -1500,7 +1730,10 @@ revoke all on function public.interaccion_vincular(uuid, integer, bigint[], text
 revoke all on function public.interaccion_desvincular(uuid, integer, bigint, text) from public, anon, authenticated;
 revoke all on function public.interaccion_anular(uuid, integer, text, text) from public, anon, authenticated;
 revoke all on function public.interaccion_cerrar_sin_vinculo(uuid, integer, text, text, text) from public, anon, authenticated;
+revoke all on function public.interaccion_eliminar(uuid, integer, text, text) from public, anon, authenticated;
 revoke all on function public.interacciones_definir_inicio(timestamp, text) from public, anon, authenticated;
+revoke all on function public.interacciones_pausar_altas(text) from public, anon, authenticated;
+revoke all on function public.interacciones_reanudar_altas(text) from public, anon, authenticated;
 
 grant execute on function public.interacciones_limites() to service_role;
 grant execute on function public.interaccion_detalle(uuid) to service_role;
@@ -1510,4 +1743,7 @@ grant execute on function public.interaccion_vincular(uuid, integer, bigint[], t
 grant execute on function public.interaccion_desvincular(uuid, integer, bigint, text) to service_role;
 grant execute on function public.interaccion_anular(uuid, integer, text, text) to service_role;
 grant execute on function public.interaccion_cerrar_sin_vinculo(uuid, integer, text, text, text) to service_role;
+grant execute on function public.interaccion_eliminar(uuid, integer, text, text) to service_role;
 grant execute on function public.interacciones_definir_inicio(timestamp, text) to service_role;
+grant execute on function public.interacciones_pausar_altas(text) to service_role;
+grant execute on function public.interacciones_reanudar_altas(text) to service_role;

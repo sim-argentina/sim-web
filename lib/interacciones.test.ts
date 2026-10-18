@@ -3,7 +3,7 @@ import {
   CAMPOS_PROHIBIDOS, LIMITES, cambiosDeEdicion, coincideBusqueda, codificarCursor, decodificarCursor, dtoInteraccion, errorDeRpc,
   instanteDeParedSim, minimoDeclarableStaff, paredSim,
   fechaSim, horaSim, instanteValido, minutoLocal, normalizarIdTurno, pagoContradictorio, permisosPara,
-  staffPuedeCorregir, staffPuedeDeclarar, esFuturo, validarCuerpoAlta, validarCuerpoAnulacion, validarCuerpoCierre,
+  staffPuedeCorregir, staffPuedeDeclarar, esFuturo, validarCuerpoAlta, validarCuerpoAnulacion, validarCuerpoCierre, validarCuerpoEliminacion,
   validarCuerpoEdicion, validarCuerpoVinculo, validarDatos, validarDesvinculo, validarFiltrosListado,
   validarParamsVinculables, ventanaVinculables, type DetalleBase,
 } from "@/lib/interacciones";
@@ -269,10 +269,20 @@ async function main() {
     assert.deepEqual(dto.advertencias.map((a) => `${a.codigo}${a.turno_stand_id ? `#${a.turno_stand_id}` : ""}`),
       ["turno_modificado#9007199254740993", "pago_contradictorio#-3", "cierre_retirado"]);
     assert.ok(!("idempotency_key" in dto) && !("alta_huella" in dto));
-    assert.deepEqual(dto.permisos, { editar: true, anular: true, vincular: true, desvincular: true, cerrar_sin_vinculo: false });
+    assert.deepEqual(dto.permisos, { editar: true, anular: true, vincular: true, desvincular: true, cerrar_sin_vinculo: false, eliminar: false },
+      "staff nunca borra");
     const tarde = dtoInteraccion(det, { rol: "staff", ahora: new Date("2026-10-21T00:00:00Z") });
-    assert.deepEqual(tarde.permisos, { editar: false, anular: false, vincular: true, desvincular: false, cerrar_sin_vinculo: false },
+    assert.deepEqual(tarde.permisos, { editar: false, anular: false, vincular: true, desvincular: false, cerrar_sin_vinculo: false, eliminar: false },
       "staff fuera de las 48 h: solo puede seguir vinculando");
+    // Admin borra en cualquier estado y fecha: con turnos, anulada, años después.
+    const lejos = new Date("2030-01-01T00:00:00Z");
+    assert.equal(dtoInteraccion(det, { rol: "admin", ahora: lejos }).permisos.eliminar, true, "admin borra una con turnos, fuera de toda ventana");
+    const anuladaDet = { ...det, interaccion: { ...det.interaccion, anulada_en: "2026-10-18T23:00:00+00:00", anulada_por_rol: "staff" },
+      estado: { ...det.estado, vinculo_estado: "anulada" }, turnos: [] };
+    const anuladaAdmin = dtoInteraccion(anuladaDet, { rol: "admin", ahora: lejos });
+    assert.deepEqual([anuladaAdmin.permisos.eliminar, anuladaAdmin.permisos.editar, anuladaAdmin.permisos.anular], [true, false, false],
+      "una anulada solo se puede borrar (admin)");
+    assert.equal(dtoInteraccion(anuladaDet, { rol: "staff", ahora: dentro }).permisos.eliminar, false);
     const pend = dtoInteraccion({ ...det, estado: { ...det.estado, vinculo_estado: "pendiente", turnos_vinculados: 0 }, turnos: [] }, { rol: "admin", ahora: dentro });
     assert.equal(pend.advertencias[0].codigo, "pendiente_de_vinculo");
     assert.equal(pend.permisos.cerrar_sin_vinculo, true);
@@ -311,6 +321,51 @@ async function main() {
     assert.deepEqual(C.rebaseEdicion(dto, { observaciones: null }).observaciones, "");
   }
 
+  // ── 13. Borrado administrativo y pausa de altas (contrato) ───────────────
+  {
+    assert.deepEqual(validarCuerpoEliminacion({ version: 3 }), { ok: true, valor: { version: 3, motivo: null } }, "el motivo es opcional");
+    assert.deepEqual(validarCuerpoEliminacion({ version: 3, motivo: "  carga de prueba  " }), { ok: true, valor: { version: 3, motivo: "carga de prueba" } });
+    assert.equal(err(validarCuerpoEliminacion({ version: 3, motivo: "x".repeat(LIMITES.motivo_eliminacion_max + 1) })), "400:campo_invalido:motivo");
+    assert.equal(err(validarCuerpoEliminacion({ motivo: "sin versión" })), "400:campo_invalido:version");
+    for (const autoridad of ["rol", "eliminada_por_rol", "eliminada_en"]) {
+      assert.equal(err(validarCuerpoEliminacion({ version: 1, [autoridad]: "admin" })).startsWith("400:"), true, `${autoridad} nunca viene del cliente`);
+    }
+    for (const k of ["eliminada_en", "eliminada_por_rol", "eliminada_motivo"]) {
+      assert.ok((CAMPOS_PROHIBIDOS as readonly string[]).includes(k), `${k} es auditoría: el cliente no la manda`);
+      assert.equal(err(validarCuerpoAlta({ idempotency_key: K, datos: { resultado: "miro", personas_grupo: 1, [k]: "x" } })).startsWith("400:"), true);
+    }
+    assert.deepEqual(errorDeRpc({ code: "P0002", message: "interaccion_eliminada" }), { status: 404, codigo: "interaccion_eliminada", error: "Esta interacción fue borrada por un administrador." });
+    assert.equal(errorDeRpc({ code: "55000", message: "interaccion_eliminada" })?.status, 404, "también por el trigger");
+    const pausa = errorDeRpc({ code: "55000", message: "altas_pausadas" });
+    assert.deepEqual([pausa?.status, pausa?.codigo], [503, "altas_pausadas"], "pausa ≠ módulo no habilitado");
+    assert.ok(!/sql|infra|config/i.test(pausa?.error ?? ""), "el mensaje al personal no habla de SQL ni de infraestructura");
+    assert.equal(errorDeRpc({ code: "55000", message: "registro_no_iniciado" })?.codigo, "modulo_no_habilitado");
+  }
+
+  // ── 14. Borrador de carga nueva: sin datos no se recuerda; incierto, siempre ──
+  {
+    const C = await import("@/app/admin/(panel)/interacciones/cliente");
+    const vacio = C.formularioVacio("subio");
+    assert.equal(C.altaSinDatos(vacio, []), true, "recién abierta");
+    assert.equal(C.altaSinDatos({ ...vacio, resultado: "miro" }, []), true, "el resultado del acceso no cuenta como dato");
+    assert.equal(C.conservarBorradorAlta({ form: vacio, turnos: [], estado: "editando" }), false, "abrir y cerrar sin cambios: no hay borrador");
+    const turno = { id: "-1", fecha: "2026-10-18", hora: "19:30", personas: 2, minutos: 10, total: 20000 };
+    for (const [motivo, form, turnos] of [
+      ["personas", { ...vacio, personas: 2 }, []],
+      ["rango", { ...vacio, rango_etario: "18_24" }, []],
+      ["observación", { ...vacio, observaciones: "volvía mañana" }, []],
+      ["hora elegida", { ...vacio, ocurrida: { modo: "manual", valor: "2026-10-18T19:00" } }, []],
+      ["turno elegido", vacio, [turno]],
+    ] as const) {
+      assert.equal(C.conservarBorradorAlta({ form: form as typeof vacio, turnos: [...turnos], estado: "editando" }), true, `${motivo} se recuerda`);
+    }
+    assert.equal(C.altaSinDatos({ ...vacio, observaciones: "   " }, []), true, "espacios no son un dato");
+    const ida = { ...vacio, personas: 2, rango_etario: "18_24" as const };
+    assert.equal(C.altaSinDatos({ ...ida, personas: 1, rango_etario: null }, []), true, "volver todo al valor inicial = sin datos");
+    assert.equal(C.conservarBorradorAlta({ form: vacio, turnos: [], estado: "incierto" }), true,
+      "un envío incierto se conserva aunque los datos sean los iniciales (misma clave para reintentar)");
+  }
+
   // ── 11. Validación de datos sueltos ──────────────────────────────────────
   {
     assert.equal(err(validarDatos([], "alta")), "400:datos_invalidos");
@@ -319,7 +374,7 @@ async function main() {
       "\"No sabe\" es una respuesta válida");
   }
 
-  console.log("OK — Interacciones (Bloque 2, puro): IDs bigint como cadena sin pérdida, alta/edición/anulación/cierre/desvínculo validados sin aceptar autoridad del cliente, edición parcial sin borrados silenciosos, medianoche y día anterior de Córdoba en cualquier TZ, ventana de vinculables (2 h, día, tolerancia, cruce de medianoche), pago contradictorio señalado, listados con cursor y ventana de staff, errores → HTTP sin SQL, respuesta con versión, estado, permisos y advertencias.");
+  console.log("OK — Interacciones (puro): IDs bigint como cadena sin pérdida, alta/edición/anulación/cierre/desvínculo/borrado validados sin aceptar autoridad del cliente, edición parcial sin borrados silenciosos, medianoche y día anterior de Córdoba en cualquier TZ, ventana de vinculables (2 h, día, tolerancia, cruce de medianoche), pago contradictorio señalado, listados con cursor y ventana de staff, errores → HTTP sin SQL (pausa ≠ no habilitado; eliminada → 404), permisos con borrado solo admin, borrador vacío que no se recuerda e incierto que sí.");
 }
 
 main().catch((e) => {

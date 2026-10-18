@@ -111,6 +111,8 @@ async function huella() {
 
 let inicioOriginal = null;
 let inicioTocado = false;
+let pausaOriginal = null;
+let pausaTocada = false;
 
 async function limpiar() {
   await q(`
@@ -121,6 +123,9 @@ async function limpiar() {
      where interaccion_id in (select id from public.interacciones_stand where observaciones = '${MARCA}');
     delete from public.interacciones_stand where observaciones = '${MARCA}';
     delete from public.turnos_stand where id between ${T_MIN} and ${T_MAX};`);
+  if (pausaTocada) {
+    await q(`update public.interacciones_config set altas_pausadas_en = ${pausaOriginal ? `'${pausaOriginal}'::timestamptz` : "null"} where id;`);
+  }
   if (inicioTocado) {
     await q(`update public.interacciones_config set inicio_registro = ${inicioOriginal ? `'${inicioOriginal}'::timestamptz` : "null"} where id;`);
   }
@@ -147,6 +152,11 @@ async function main() {
 
   // Fixtures (commiteados: la concurrencia necesita dos conexiones).
   inicioOriginal = (await q("select coalesce(inicio_registro::text, '') from public.interacciones_config where id;")) || null;
+  pausaOriginal = (await q("select coalesce(altas_pausadas_en::text, '') from public.interacciones_config where id;")) || null;
+  if (pausaOriginal) {
+    await q("update public.interacciones_config set altas_pausadas_en = null where id;");
+    pausaTocada = true;
+  }
   if (!inicioOriginal) {
     await q("update public.interacciones_config set inicio_registro = now() - interval '30 days' where id;");
     inicioTocado = true;
@@ -266,6 +276,74 @@ async function main() {
       `el borrado esperó ${r.b.ms} ms; estado = ${estado}; eventos turno_eliminado = ${ev}`);
   }
 
+  // Borrado administrativo frente a escrituras simultáneas.
+  {
+    const id = await registrar(datos("subio"), [-920018]);
+    const r = await carrera(
+      `${comoServicio}select public.interaccion_eliminar('${id}', 1, null, 'admin') is not null`,
+      `${comoServicio}select public.interaccion_vincular('${id}', 1, ${arr([-920019])}, 'staff');`);
+    const n = await q(`select count(*) from public.interaccion_turnos where interaccion_id = '${id}' or turno_stand_id in (-920018, -920019);`);
+    comprobar("borrar y vincular a la vez (gana el borrado): ningún turno queda en una eliminada",
+      r.a.code === 0 && r.b.error === "interaccion_eliminada" && r.b.ms >= 1200 && n === "0",
+      `B esperó ${r.b.ms} ms y recibió "${r.b.error}"; vínculos = ${n}`);
+  }
+
+  {
+    const id = await registrar(datos("subio"), [-920020]);
+    const r = await carrera(
+      `${comoServicio}select public.interaccion_vincular('${id}', 1, ${arr([-920021])}, 'staff') is not null`,
+      `${comoServicio}select public.interaccion_eliminar('${id}', 1, null, 'admin');`);
+    const fila = await q(`select (eliminada_en is null) || '|' || (select count(*) from public.interaccion_turnos where interaccion_id = '${id}')
+      || '|' || (select count(*) from public.interacciones_stand_eventos where interaccion_id = '${id}' and tipo = 'eliminacion')
+      from public.interacciones_stand where id = '${id}';`);
+    comprobar("vincular y borrar a la vez (gana el vínculo): el borrado con la versión vieja recibe conflicto y no borra nada",
+      r.a.code === 0 && r.b.error === "version_desactualizada" && fila === "true|2|0",
+      `B recibió "${r.b.error}"; viva|vínculos|eventos = ${fila}`);
+  }
+
+  {
+    const id = await registrar(datos("subio"), [-920022]);
+    const r = await carrera(
+      `${comoServicio}select public.interaccion_eliminar('${id}', 1, null, 'admin') is not null`,
+      `${comoServicio}select public.interaccion_eliminar('${id}', 1, null, 'admin') ->> 'sin_cambios';`);
+    const ev = await q(`select count(*) from public.interacciones_stand_eventos where interaccion_id = '${id}' and tipo = 'eliminacion';`);
+    comprobar("el mismo borrado dos veces a la vez: uno borra, el otro no cambia nada; una sola auditoría",
+      r.a.code === 0 && r.b.code === 0 && r.b.out === "true" && ev === "1",
+      `B: sin_cambios = ${r.b.out}; eventos de eliminación = ${ev}`);
+  }
+
+  {
+    const id = await registrar(datos("subio"), [-920023]);
+    const r = await carrera(
+      `${comoServicio}select public.interaccion_eliminar('${id}', 1, null, 'admin') is not null`,
+      `${comoServicio}delete from public.turnos_stand where id = -920023;`);
+    const fila = await q(`select (eliminada_en is not null) || '|' || (select count(*) from public.turnos_stand where id = -920023)
+      from public.interacciones_stand where id = '${id}';`);
+    comprobar("el Turnero borra un turno mientras se borra su interacción: espera y borra igual",
+      r.a.code === 0 && r.b.code === 0 && r.b.ms >= 1200 && fila === "true|0",
+      `el borrado del turno esperó ${r.b.ms} ms; eliminada|turno = ${fila}`);
+  }
+
+  // Pausa en el medio de un alta: el reintento de la MISMA clave espera al primer
+  // intento y recibe la fila original (no un rechazo que la ignore ni otra fila).
+  {
+    const k = randomUUID();
+    const d = datos("miro", { rango_etario: "35_49" });
+    const a = psql(`begin;\n${comoServicio}select public.interaccion_registrar('${k}'::uuid, ${jsonb(d)}, null, 'staff') -> 'interaccion' ->> 'id';\nselect pg_sleep(${RETENCION_S});\ncommit;`);
+    await espera(500);
+    await q("select public.interacciones_pausar_altas('admin');");
+    pausaTocada = true;
+    const b = await psql(`${comoServicio}select (r ->> 'repetida') || '|' || (r -> 'interaccion' ->> 'id') from (select public.interaccion_registrar('${k}'::uuid, ${jsonb(d)}, null, 'staff') as r) s;`);
+    const ra = await a;
+    const otra = await psql(`${comoServicio}select public.interaccion_registrar('${randomUUID()}'::uuid, ${jsonb(datos("miro"))}, null, 'staff');`);
+    await q("select public.interacciones_reanudar_altas('admin');");
+    const idA = ra.out.split("\n")[0];
+    const n = await q(`select count(*) from public.interacciones_stand where idempotency_key = '${k}';`);
+    comprobar("pausa durante un alta: el reintento de la misma clave recibe la original y una clave nueva se rechaza",
+      ra.code === 0 && b.code === 0 && b.out === `true|${idA}` && b.ms >= 1000 && n === "1" && otra.error === "altas_pausadas",
+      `reintento esperó ${b.ms} ms y recibió "${b.out}"; clave nueva: "${otra.error}"`);
+  }
+
   // 3 · Ráfagas por la API REST local (PostgREST), como las mandará el Bloque 2.
   console.log("\n· Ráfagas simultáneas por REST");
   {
@@ -322,6 +400,13 @@ async function main() {
       `insert ${ins.status}/${ins.json?.code}, patch ${upd.status}/${upd.json?.code}, delete ${del.status}/${del.json?.code}, lectura ${lee.status}`);
     comprobar("anon no ejecuta RPCs ni lee",
       anonRpc.status >= 400 && anonLee.status >= 400, `rpc ${anonRpc.status}, lectura ${anonLee.status}`);
+    const borraStaff = await rest("POST", "rpc/interaccion_eliminar", { p_id: id, p_version: 1, p_motivo: null, p_rol: "staff" });
+    const borraAnon = await rest("POST", "rpc/interaccion_eliminar", { p_id: id, p_version: 1, p_motivo: null, p_rol: "admin" }, ANON);
+    const pausaAnon = await rest("POST", "rpc/interacciones_pausar_altas", { p_rol: "admin" }, ANON);
+    const viva = await q(`select (eliminada_en is null) || '|' || (select altas_pausadas_en is null from public.interacciones_config where id) from public.interacciones_stand where id = '${id}';`);
+    comprobar("borrar exige rol admin aun llamando directo a la RPC; anon no borra ni pausa",
+      borraStaff.json?.message === "solo_admin" && borraAnon.status >= 400 && pausaAnon.status >= 400 && viva === "true|true",
+      `staff ${borraStaff.status}/${borraStaff.json?.message}, anon borrar ${borraAnon.status}, anon pausar ${pausaAnon.status}`);
   }
 
   {

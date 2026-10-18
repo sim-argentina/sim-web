@@ -238,6 +238,11 @@ function EstadoPeriodo({ datos, hayFiltros }: { datos: RespuestaMetricas; hayFil
   const inicio = datos.modulo.inicio_registro ? new Date(datos.modulo.inicio_registro).toLocaleDateString("es-AR", { timeZone: "America/Argentina/Cordoba" }) : null;
   const avisos: React.ReactNode[] = [];
   if (!datos.modulo.habilitado) avisos.push(<Aviso key="h" tipo="alerta" titulo="El registro todavía no empezó">No hay datos de registro: el módulo no tiene fecha de inicio.</Aviso>);
+  if (datos.modulo.altas_pausadas) avisos.push(
+    <Aviso key="z" tipo="alerta" titulo="Carga de nuevas interacciones pausada">
+      Desde el {datos.modulo.altas_pausadas_en ? new Date(datos.modulo.altas_pausadas_en).toLocaleString("es-AR", { timeZone: "America/Argentina/Cordoba", dateStyle: "short", timeStyle: "short", hourCycle: "h23" }) : "—"}.
+      {" "}Lo registrado se sigue viendo; los días en pausa no tienen cargas nuevas, lo que no significa que no haya habido público.
+    </Aviso>);
   else if (a.periodo.estado === "sin_registro") avisos.push(<Aviso key="s" tipo="alerta" titulo="Sin datos de registro">El período es anterior al inicio del registro ({inicio}). No se reconstruyen visitas con ventas.</Aviso>);
   else if (a.periodo.estado === "parcial" && a.periodo.cubierto) avisos.push(
     <Aviso key="p" tipo="info" titulo="Período parcial">Con registro del {fecha(a.periodo.cubierto.desde)} al {fecha(a.periodo.cubierto.hasta)} ({a.periodo.cubierto.dias} de {a.periodo.dias} días). El registro empezó el {inicio}.</Aviso>);

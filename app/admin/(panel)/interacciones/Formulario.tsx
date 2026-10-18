@@ -5,7 +5,10 @@
 // Alta: una clave de idempotencia por carga. Si el envío queda INCIERTO (sin
 // respuesta o error del servidor), el contenido se bloquea y se reintenta con la
 // misma clave: nunca se convierte en una segunda interacción. Recién cuando el
-// servidor confirma se borra el borrador y se prepara otra clave.
+// servidor confirma se borra el borrador y se prepara otra clave. El borrador
+// solo se recuerda si la carga tiene algo propio o quedó incierta (cliente.ts).
+// Con las altas pausadas no se guarda una carga nueva, pero un envío incierto
+// se puede reintentar: si ya había llegado, el servidor devuelve la original.
 // Edición: solo viajan los campos cambiados (cambiosDeEdicion). Si el servidor
 // pide confirmar_liberacion, se explica y se pide confirmación explícita. Si la
 // versión cambió en otro dispositivo, se conservan los cambios y se recarga para
@@ -22,13 +25,16 @@ import {
 import { sumarDias } from "@/lib/agenda";
 import {
   api, borradores, datosDesdeDto, datosDesdeFormulario, desgloseCompleto, esIncierto, formularioDesdeDto, instanteDeOcurrida, rebaseEdicion,
-  moduloNoDisponible, type BorradorAlta, type Empleados, type EstadoFormulario, type FalloApi, type TurnoElegido,
+  interaccionYaNoExiste, moduloNoDisponible, type BorradorAlta, type Empleados, type EstadoFormulario, type FalloApi, type TurnoElegido,
 } from "./cliente";
 import SelectorTurnos from "./SelectorTurnos";
 import { Aviso, Boton, Campo, Chips, Contador, Dialogo, Panel, Plegable, cx } from "./ui";
 
 type Props =
-  | { modo: "alta"; rol: Rol; borrador: BorradorAlta; onGuardado: (i: InteraccionDto, info: { repetida: boolean }) => void; onCerrar: () => void; onDescartar: () => void }
+  | {
+    modo: "alta"; rol: Rol; borrador: BorradorAlta; pausado?: boolean; onPausado?: () => void;
+    onGuardado: (i: InteraccionDto, info: { repetida: boolean }) => void; onCerrar: () => void; onDescartar: () => void;
+  }
   | { modo: "edicion"; rol: Rol; base: InteraccionDto; onGuardado: (i: InteraccionDto, info: { repetida: boolean }) => void; onCerrar: () => void };
 
 const tieneSecundarios = (f: EstadoFormulario) =>
@@ -67,20 +73,23 @@ export default function Formulario(props: Props) {
   const [abiertoPerfil, setAbiertoPerfil] = useState(() => !esAlta || tieneSecundarios(form));
   const [abiertoMas, setAbiertoMas] = useState(() => !esAlta || tieneSecundarios(form));
   const [restaurado] = useState(() => props.modo === "edicion" && borradores.edicion(props.base.id)?.version === props.base.version);
+  // La interacción ya no existe (borrada por un admin) o la carga ya se resolvió: no se guarda más desde acá.
+  const [terminado, setTerminado] = useState(false);
   const enVuelo = useRef(false);
-  const bloqueado = enviando || incierto !== null;
+  const bloqueado = enviando || incierto !== null || terminado;
+  const pausado = props.modo === "alta" && props.pausado === true && incierto === null;
 
   // ── Borrador: cada cambio queda en sessionStorage (ir al Turnero no pierde nada) ──
   useEffect(() => {
     if (props.modo === "alta") {
-      borradores.guardarAlta({ clave: props.borrador.clave, form, turnos, estado: incierto ? "incierto" : "editando" });
-    } else if (base) {
+      if (!terminado) borradores.sincronizarAlta({ clave: props.borrador.clave, form, turnos, estado: incierto ? "incierto" : "editando" });
+    } else if (base && !terminado) {
       const hay = Object.keys(cambiosDeEdicion(datosDesdeDto(base), datosDesdeFormulario(form))).length > 0;
       if (hay) borradores.guardarEdicion({ id: base.id, version: base.version, form });
       else borradores.borrarEdicion(base.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, turnos, incierto, base]);
+  }, [form, turnos, incierto, base, terminado]);
 
   // ── Opciones de "Atendió" (activos + sugerencia del cronograma a esa hora) ──
   const instante = instanteDeOcurrida(form.ocurrida);
@@ -113,11 +122,12 @@ export default function Formulario(props: Props) {
   const valida = validarDatos(datos, "alta");
   const cambios = base ? cambiosDeEdicion(datosDesdeDto(base), datos) : {};
   const sinCambios = !esAlta && Object.keys(cambios).length === 0;
-  const puedeGuardar = !bloqueado && valida.ok && desglose !== "incompleto" && desglose !== "no_suma" && !fechaInvalida;
+  const puedeGuardar = !bloqueado && !pausado && valida.ok && desglose !== "incompleto" && desglose !== "no_suma" && !fechaInvalida;
   const motivoQuitado = form.resultado === "subio" && form.motivo !== null;
 
   function falloComun(r: FalloApi) {
     if (moduloNoDisponible(r)) return "La carga de Interacciones todavía no está habilitada.";
+    if (r.codigo === "altas_pausadas") return r.error;
     if (r.codigo === "turno_ya_vinculado" && r.turno_stand_id) {
       const t = turnos.find((x) => x.id === r.turno_stand_id);
       // Nada se guardó: se quita ese turno de la selección y se actualiza la lista.
@@ -156,8 +166,18 @@ export default function Formulario(props: Props) {
       setIncierto(envio);
       return;
     }
+    if (r.codigo === "interaccion_eliminada") {
+      // Ya se había guardado y un admin la borró después: no se vuelve a crear.
+      borradores.borrarAlta();
+      setIncierto(null);
+      setTerminado(true);
+      setError("Esta carga ya se había guardado y después un administrador la borró: no se volvió a crear. Podés cerrar este formulario.");
+      return;
+    }
+    // Respuesta definitiva: nada se guardó con esta clave (el servidor lo comprobó).
     setIncierto(null);
-    borradores.guardarAlta({ clave: props.borrador.clave, form, turnos, estado: "editando" });
+    borradores.sincronizarAlta({ clave: props.borrador.clave, form, turnos, estado: "editando" });
+    if (r.codigo === "altas_pausadas") props.onPausado?.();
     if (r.codigo === "idempotency_key_con_otro_payload") {
       setError("Esta carga ya se había guardado con otros datos. Revisá la lista de recientes antes de cargarla de nuevo.");
       return;
@@ -191,6 +211,12 @@ export default function Formulario(props: Props) {
       setConflicto("incierto");
       return;
     }
+    if (interaccionYaNoExiste(r)) {
+      borradores.borrarEdicion(base.id);
+      setTerminado(true);
+      setError(`${r.error} Tus cambios no se guardaron.`);
+      return;
+    }
     setError(falloComun(r));
   }
 
@@ -198,6 +224,13 @@ export default function Formulario(props: Props) {
     if (!base) return;
     const r = await api.obtener(base.id);
     if (!r.ok) {
+      if (interaccionYaNoExiste(r)) {
+        borradores.borrarEdicion(base.id);
+        setTerminado(true);
+        setConflicto(null);
+        setError("Esta interacción ya no existe: un administrador la borró. Tus cambios no se guardaron.");
+        return;
+      }
       setError(r.error);
       return;
     }
@@ -318,6 +351,11 @@ export default function Formulario(props: Props) {
             Reintentá: se envía la misma carga y, si ya había llegado, no se duplica. Mientras tanto los datos quedan bloqueados.
           </Aviso>
         ) : null}
+        {pausado ? (
+          <Aviso tipo="alerta" titulo="La carga de nuevas interacciones está pausada">
+            Por ahora no se pueden guardar cargas nuevas. Lo que completaste queda como borrador en este dispositivo.
+          </Aviso>
+        ) : null}
         {restaurado ? <Aviso>Recuperamos cambios sin guardar de esta interacción.</Aviso> : null}
         {conflicto === "version" ? (
           <Aviso tipo="alerta" titulo="Esta interacción cambió en otro dispositivo"
@@ -408,7 +446,7 @@ export default function Formulario(props: Props) {
           </Plegable>
         )}
 
-        {props.modo === "alta" && !incierto ? (
+        {props.modo === "alta" && !incierto && !terminado ? (
           <div className="pt-2">
             <Boton variante="fantasma" onClick={props.onDescartar} disabled={enviando}>Descartar esta carga</Boton>
           </div>

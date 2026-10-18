@@ -155,7 +155,10 @@ export async function metricas(params: ParamsMetricas, ahora: Date, opciones: { 
     ok: true,
     valor: {
       hoy,
-      modulo: { habilitado: modulo.valor.habilitado, inicio_registro: inicio },
+      modulo: {
+        habilitado: modulo.valor.habilitado, inicio_registro: inicio,
+        altas_pausadas: modulo.valor.altas_pausadas, altas_pausadas_en: modulo.valor.altas_pausadas_en,
+      },
       filtros: params.filtros,
       actual: a,
       comparacion: c && deltas ? { ...c, deltas } : null,

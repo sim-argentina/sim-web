@@ -44,19 +44,32 @@ const COLS_CONTROL =
   "dias_diferencia, fuera_de_tolerancia, turno_modificado, turno_metodo_pago, pago_contradictorio";
 
 // ── Estado del módulo ─────────────────────────────────────────────────────
-export type EstadoModulo = { instalado: boolean; habilitado: boolean; inicio_registro: string | null };
+export type EstadoModulo = {
+  instalado: boolean;
+  habilitado: boolean;
+  inicio_registro: string | null;
+  altas_pausadas: boolean;
+  altas_pausadas_en: string | null;
+};
 
-/** instalado = la migración existe; habilitado = hay inicio_registro (lanzamiento). */
+/**
+ * instalado = la migración existe; habilitado = hay inicio_registro (primera
+ * activación, histórica); altas_pausadas = no se aceptan altas nuevas por ahora
+ * (inicio, historial, consultas y correcciones siguen).
+ */
 export async function estadoModulo(): Promise<R<EstadoModulo>> {
   const { data, error } = await supabaseAdmin
-    .from("interacciones_config").select("inicio_registro").eq("id", true).maybeSingle();
+    .from("interacciones_config").select("inicio_registro, altas_pausadas_en").eq("id", true).maybeSingle();
   if (error) {
     const e = errorDeRpc(error);
-    if (e?.codigo === "modulo_no_instalado") return { ok: true, valor: { instalado: false, habilitado: false, inicio_registro: null } };
+    if (e?.codigo === "modulo_no_instalado") {
+      return { ok: true, valor: { instalado: false, habilitado: false, inicio_registro: null, altas_pausadas: false, altas_pausadas_en: null } };
+    }
     return fallo(error);
   }
   const inicio = (data?.inicio_registro as string | null | undefined) ?? null;
-  return { ok: true, valor: { instalado: true, habilitado: inicio !== null, inicio_registro: inicio } };
+  const pausa = (data?.altas_pausadas_en as string | null | undefined) ?? null;
+  return { ok: true, valor: { instalado: true, habilitado: inicio !== null, inicio_registro: inicio, altas_pausadas: pausa !== null, altas_pausadas_en: pausa } };
 }
 
 // ── Empleados ─────────────────────────────────────────────────────────────
@@ -160,6 +173,29 @@ export async function cerrarSinVinculo(
   return { ok: true, valor: { interaccion: await aDto(r.valor, rol, ahora), sin_cambios: r.valor.sin_cambios === true } };
 }
 
+/**
+ * Borrado administrativo (solo admin; la ruta usa requireAdmin y la RPC lo vuelve
+ * a exigir). Libera todos los vínculos y la interacción deja de existir para las
+ * vistas operativas: la respuesta no la devuelve, solo qué turnos quedaron libres.
+ */
+export async function eliminar(
+  id: string, c: { version: number; motivo: string | null }, rol: Rol,
+): Promise<R<{ interaccion_id: string; eliminada: true; sin_cambios: boolean; turnos_liberados: string[] }>> {
+  const { data, error } = await supabaseAdmin.rpc("interaccion_eliminar", { p_id: id, p_version: c.version, p_motivo: c.motivo, p_rol: rol });
+  if (error) return fallo(error);
+  const d = (data ?? null) as { interaccion_id?: unknown; sin_cambios?: unknown; turnos_liberados?: unknown } | null;
+  if (!d) return { ok: false, e: null, causa: "interaccion_eliminar sin respuesta" };
+  return {
+    ok: true,
+    valor: {
+      interaccion_id: String(d.interaccion_id),
+      eliminada: true,
+      sin_cambios: d.sin_cambios === true,
+      turnos_liberados: Array.isArray(d.turnos_liberados) ? d.turnos_liberados.map(String) : [],
+    },
+  };
+}
+
 // ── Listado ───────────────────────────────────────────────────────────────
 /**
  * Página de interacciones: orden ocurrida_en desc, id desc (estable), cursor
@@ -230,7 +266,8 @@ export async function turnosVinculables(
 ): Promise<R<{ ventana: VentanaVinculables; interaccion: string | null; turnos: TurnoVinculableDto[] }>> {
   let ancla = ahora;
   if (p.interaccion) {
-    const { data, error } = await supabaseAdmin.from("interacciones_stand").select("id, ocurrida_en").eq("id", p.interaccion).maybeSingle();
+    const { data, error } = await supabaseAdmin.from("interacciones_stand").select("id, ocurrida_en")
+      .eq("id", p.interaccion).is("eliminada_en", null).maybeSingle();
     if (error) return fallo(error);
     if (!data) return { ok: false, e: errorApi("interaccion_inexistente") };
     ancla = new Date(String(data.ocurrida_en));

@@ -3,13 +3,15 @@
 // Detalle de una interacción y sus correcciones (Bloque 3). Las acciones se
 // habilitan con `permisos` de la API, que igual vuelve a exigirlos al escribir.
 // No hay "restaurar anulación" ni "reabrir cierre": no son parte del módulo.
+// "Borrar interacción" es solo de admin (permisos.eliminar) y distinto de anular:
+// la interacción deja de existir para el panel y las métricas; no se restaura.
 
 import { useCallback, useEffect, useState } from "react";
-import { Link2, Pencil, TriangleAlert, Unlink } from "lucide-react";
+import { Link2, Pencil, Trash2, TriangleAlert, Unlink } from "lucide-react";
 import {
   ETIQUETAS, LIMITES, MOTIVOS_CIERRE, type Advertencia, type InteraccionDto, type MotivoCierre, type Rol,
 } from "@/lib/interacciones";
-import { api, etiquetaFecha, formatoMonto, moduloNoDisponible, type FalloApi, type TurnoElegido } from "./cliente";
+import { api, esIncierto, etiquetaFecha, formatoMonto, interaccionYaNoExiste, moduloNoDisponible, type FalloApi, type TurnoElegido } from "./cliente";
 import SelectorTurnos from "./SelectorTurnos";
 import { Aviso, Boton, Cargando, Dialogo, Etiqueta, Panel } from "./ui";
 import { hoyEnSim, sumarDias } from "@/lib/agenda";
@@ -39,12 +41,16 @@ export function textoAdvertencia(a: Advertencia, i: InteraccionDto): string {
 
 const etiquetaRol = (r: string | null) => (r === "admin" ? "Admin" : r === "staff" ? "Staff" : r === "sistema" ? "Sistema" : "—");
 
-export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, accionInicial }: {
+type AvisoPagina = { tipo: "exito" | "info"; titulo: string; texto: string };
+
+export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, onDesaparecio, accionInicial }: {
   id: string;
   rol: Rol;
   onCerrar: () => void;
   onEditar: (i: InteraccionDto) => void;
   onCambio: (i: InteraccionDto) => void;
+  /** La interacción se borró (acá o en otro dispositivo): la página cierra el detalle y avisa. */
+  onDesaparecio: (aviso: AvisoPagina) => void;
   accionInicial?: "vincular";
 }) {
   const [i, setI] = useState<InteraccionDto | null>(null);
@@ -52,8 +58,9 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, accionI
   const [aviso, setAviso] = useState<{ tipo: "exito" | "error" | "alerta"; texto: string } | null>(null);
   const [vinculando, setVinculando] = useState(accionInicial === "vincular");
   const [seleccion, setSeleccion] = useState<TurnoElegido[]>([]);
-  const [dialogo, setDialogo] = useState<null | { tipo: "anular" } | { tipo: "cerrar" } | { tipo: "desvincular"; turno: string; hora: string }>(null);
+  const [dialogo, setDialogo] = useState<null | { tipo: "anular" } | { tipo: "cerrar" } | { tipo: "eliminar" } | { tipo: "desvincular"; turno: string; hora: string }>(null);
   const [motivoAnulacion, setMotivoAnulacion] = useState("");
+  const [motivoEliminacion, setMotivoEliminacion] = useState("");
   const [motivoCierre, setMotivoCierre] = useState<MotivoCierre | "">("");
   const [notaCierre, setNotaCierre] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -81,7 +88,16 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, accionI
     setAviso({ tipo: "exito", texto });
   }
 
+  const yaNoExiste = () => onDesaparecio({
+    tipo: "info", titulo: "Esa interacción ya no existe",
+    texto: "Un administrador la borró. Las listas ya están actualizadas.",
+  });
+
   async function manejarFallo(r: FalloApi) {
+    if (interaccionYaNoExiste(r)) {
+      yaNoExiste();
+      return;
+    }
     if (r.codigo === "version_desactualizada") {
       await cargar();
       setAviso({ tipo: "alerta", texto: "La interacción cambió en otro dispositivo. Ya se ve la versión actual: revisala y repetí la acción si sigue haciendo falta." });
@@ -120,8 +136,47 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, accionI
     }
   }
 
+  // Borrado: si la respuesta se pierde, se consulta si la interacción sigue
+  // existiendo antes de decir nada (repetirlo no duplica efectos: la base lo ignora).
+  async function eliminar() {
+    if (!i) return;
+    setEnviando(true);
+    const liberar = i.turnos.length;
+    const r = await api.eliminar(i.id, { version: i.version, motivo: motivoEliminacion.trim() || null });
+    setEnviando(false);
+    setDialogo(null);
+    const listo = (n: number) => onDesaparecio({
+      tipo: "exito", titulo: "Interacción borrada",
+      texto: `Ya no aparece en las listas ni en las métricas.${n > 0 ? ` ${n === 1 ? "Su turno quedó libre" : `Sus ${n} turnos quedaron libres`} para vincular: siguen en el Turnero.` : ""}`,
+    });
+    if (r.ok) {
+      listo(r.data.turnos_liberados.length);
+      return;
+    }
+    if (esIncierto(r)) {
+      const c = await api.obtener(i.id);
+      if (!c.ok && interaccionYaNoExiste(c)) {
+        listo(liberar);
+        return;
+      }
+      if (c.ok) setI(c.data.interaccion);
+      setAviso({ tipo: "alerta", texto: "No pudimos confirmar el borrado y la interacción sigue registrada. Revisala y volvé a intentarlo." });
+      return;
+    }
+    if (r.codigo === "version_desactualizada") {
+      await cargar();
+      setAviso({ tipo: "alerta", texto: "La interacción cambió desde que abriste la confirmación y no se borró. Revisá la versión actual y, si sigue haciendo falta, volvé a borrarla." });
+      return;
+    }
+    await manejarFallo(r);
+  }
+
   async function confirmarDialogo() {
     if (!i || !dialogo) return;
+    if (dialogo.tipo === "eliminar") {
+      await eliminar();
+      return;
+    }
     setEnviando(true);
     const r = dialogo.tipo === "anular"
       ? await api.anular(i.id, { version: i.version, motivo: motivoAnulacion.trim() || null })
@@ -236,6 +291,11 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, accionI
             ) : null}
             {i.permisos.cerrar_sin_vinculo ? <Boton onClick={() => setDialogo({ tipo: "cerrar" })}>Cerrar sin turno</Boton> : null}
             {i.permisos.anular ? <Boton variante="peligro" onClick={() => setDialogo({ tipo: "anular" })}>Anular</Boton> : null}
+            {i.permisos.eliminar ? (
+              <Boton variante="peligro" className="sm:ml-auto" onClick={() => { setMotivoEliminacion(""); setDialogo({ tipo: "eliminar" }); }}>
+                <Trash2 className="h-4 w-4" aria-hidden /> Borrar interacción
+              </Boton>
+            ) : null}
           </div>
           {!i.anulacion && !i.permisos.editar && rol === "staff" ? (
             <p className="text-xs text-white/50">Pasaron más de 48 h desde la carga: para corregirla o anularla, pedíselo a un admin. Vincular un turno sigue disponible.</p>
@@ -245,7 +305,8 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, accionI
 
       {dialogo && i ? (
         <Dialogo
-          titulo={dialogo.tipo === "anular" ? "Anular interacción" : dialogo.tipo === "cerrar" ? "Cerrar sin turno" : `Desvincular el turno de las ${dialogo.hora}`}
+          titulo={dialogo.tipo === "anular" ? "Anular interacción" : dialogo.tipo === "cerrar" ? "Cerrar sin turno"
+            : dialogo.tipo === "eliminar" ? "Borrar interacción" : `Desvincular el turno de las ${dialogo.hora}`}
           onCerrar={() => setDialogo(null)}
           acciones={(
             <>
@@ -253,7 +314,7 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, accionI
               <Boton variante={dialogo.tipo === "cerrar" ? "primario" : "peligro"} cargando={enviando}
                 disabled={dialogo.tipo === "cerrar" && (!motivoCierre || (motivoCierre === "otro" && !notaCierre.trim()))}
                 onClick={() => void confirmarDialogo()}>
-                {dialogo.tipo === "anular" ? "Anular" : dialogo.tipo === "cerrar" ? "Cerrar sin turno" : "Desvincular"}
+                {dialogo.tipo === "anular" ? "Anular" : dialogo.tipo === "cerrar" ? "Cerrar sin turno" : dialogo.tipo === "eliminar" ? "Borrar definitivamente" : "Desvincular"}
               </Boton>
             </>
           )}>
@@ -264,6 +325,30 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, accionI
                 <span className="text-xs text-white/60">Motivo (opcional)</span>
                 <input value={motivoAnulacion} maxLength={LIMITES.motivo_anulacion_max} onChange={(e) => setMotivoAnulacion(e.target.value)}
                   className="min-h-11 w-full rounded-xl border border-white/15 bg-black/40 px-3 text-white outline-none focus:border-red-500" placeholder="Ej.: cargada dos veces" />
+              </label>
+            </>
+          ) : dialogo.tipo === "eliminar" ? (
+            <>
+              <p className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 font-semibold">
+                {etiquetaFecha(i.fecha_negocio, hoy, ayer)} · {i.hora_negocio} · {ETIQUETAS.resultado[i.resultado]} · {i.personas_grupo} {i.personas_grupo === 1 ? "persona" : "personas"}
+                {i.anulacion ? " · anulada" : ""}
+              </p>
+              <ul className="mt-3 list-disc space-y-1 pl-5">
+                <li>Deja de aparecer en las listas (también en “Ver anuladas”), en el detalle y en las métricas.</li>
+                {i.turnos.length > 0 ? (
+                  <li>
+                    {i.turnos.length === 1 ? "Se desvincula el turno de las" : `Se desvinculan los ${i.turnos.length} turnos de las`} {i.turnos.map((t) => t.hora ?? "?").join(", ")}:{" "}
+                    {i.turnos.length === 1 ? "sigue en el Turnero, sin cambios, y queda disponible" : "siguen en el Turnero, sin cambios, y quedan disponibles"} para vincular a otra interacción.
+                  </li>
+                ) : (
+                  <li>No tiene turnos vinculados: nada del Turnero cambia.</li>
+                )}
+                <li>Ventas, pagos y reservas no se tocan. No se puede deshacer desde el panel.</li>
+              </ul>
+              <label className="mt-3 block space-y-1">
+                <span className="text-xs text-white/60">Motivo (opcional)</span>
+                <input value={motivoEliminacion} maxLength={LIMITES.motivo_eliminacion_max} onChange={(e) => setMotivoEliminacion(e.target.value)}
+                  className="min-h-11 w-full rounded-xl border border-white/15 bg-black/40 px-3 text-white outline-none focus:border-red-500" placeholder="Ej.: carga de prueba" />
               </label>
             </>
           ) : dialogo.tipo === "cerrar" ? (

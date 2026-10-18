@@ -384,7 +384,8 @@ export type Deltas = {
 };
 export type RespuestaMetricas = {
   hoy: string;
-  modulo: { habilitado: boolean; inicio_registro: string | null };
+  /** altas_pausadas: la carga de nuevas está pausada desde altas_pausadas_en (el inicio no cambia). */
+  modulo: { habilitado: boolean; inicio_registro: string | null; altas_pausadas: boolean; altas_pausadas_en: string | null };
   filtros: Filtros;
   actual: BloqueMetricas;
   comparacion: (BloqueMetricas & { deltas: Deltas }) | null;

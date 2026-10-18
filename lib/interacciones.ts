@@ -25,6 +25,7 @@ export const LIMITES = {
   observaciones_max: 500,
   nota_cierre_max: 300,
   motivo_anulacion_max: 200,
+  motivo_eliminacion_max: 200,
 } as const;
 
 // Solo de la API (no existen en la base).
@@ -90,6 +91,7 @@ export const CAMPOS_PROHIBIDOS = [
   "rol", "role", "actor", "registrada_por_rol", "registrada_en", "actualizada_por_rol", "actualizada_en",
   "anulada_en", "anulada_por_rol", "cerrada_en", "cerrada_por_rol", "vinculado_por_rol", "vinculado_en",
   "alta_huella", "id", "fecha_negocio", "hora_negocio", "cierre_motivo", "cierre_nota", "anulada_motivo",
+  "eliminada_en", "eliminada_por_rol", "eliminada_motivo",
   "nombre", "telefono",
 ] as const;
 
@@ -125,6 +127,7 @@ const MENSAJES: Record<string, { status: ErrorApi["status"]; error: string }> = 
   actor_invalido: { status: 403, error: "No autorizado." },
   // 404
   interaccion_inexistente: { status: 404, error: "La interacción no existe." },
+  interaccion_eliminada: { status: 404, error: "Esta interacción fue borrada por un administrador." },
   turno_inexistente: { status: 404, error: "El turno no existe (¿se borró en el Turnero?)." },
   vinculo_inexistente: { status: 404, error: "Ese turno no está vinculado a esta interacción." },
   // 409 · conflicto de estado
@@ -141,6 +144,7 @@ const MENSAJES: Record<string, { status: ErrorApi["status"]; error: string }> = 
   confirmar_liberacion: { status: 409, error: "Este cambio libera los turnos vinculados o retira el cierre: confirmalo para seguir." },
   // 503 · módulo
   modulo_no_habilitado: { status: 503, error: "El registro de interacciones todavía no está habilitado." },
+  altas_pausadas: { status: 503, error: "La carga de nuevas interacciones está pausada. Las ya registradas se pueden consultar y corregir." },
   modulo_no_instalado: { status: 503, error: "El módulo de interacciones no está disponible." },
 };
 
@@ -409,6 +413,18 @@ export function validarCuerpoAnulacion(body: unknown): Resultado400<{ version: n
   const v = version(body.version);
   if (!v.ok) return v;
   const m = textoOpcional(body.motivo, LIMITES.motivo_anulacion_max, "motivo");
+  if (!m.ok) return m;
+  return { ok: true, valor: { version: v.valor, motivo: m.valor } };
+}
+
+/** POST /api/admin/interacciones/[id]/eliminar → { version, motivo? } (solo admin; el motivo es opcional). */
+export function validarCuerpoEliminacion(body: unknown): Resultado400<{ version: number; motivo: string | null }> {
+  if (!esObjeto(body)) return falla("datos_invalidos");
+  const c = soloClaves(body, ["version", "motivo"]);
+  if (!c.ok) return c;
+  const v = version(body.version);
+  if (!v.ok) return v;
+  const m = textoOpcional(body.motivo, LIMITES.motivo_eliminacion_max, "motivo");
   if (!m.ok) return m;
   return { ok: true, valor: { version: v.valor, motivo: m.valor } };
 }
@@ -753,14 +769,18 @@ export type InteraccionDto = {
     venta_verificada: boolean;
   };
   turnos: TurnoVinculadoDto[];
-  permisos: { editar: boolean; anular: boolean; vincular: boolean; desvincular: boolean; cerrar_sin_vinculo: boolean };
+  permisos: { editar: boolean; anular: boolean; vincular: boolean; desvincular: boolean; cerrar_sin_vinculo: boolean; eliminar: boolean };
   advertencias: Advertencia[];
 };
 
 const txt = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
 const num = (v: unknown): number | null => (v === null || v === undefined || v === "" ? null : Number(v));
 
-/** Qué puede hacer este rol ahora (la base lo vuelve a exigir al escribir). */
+/**
+ * Qué puede hacer este rol ahora (la base lo vuelve a exigir al escribir).
+ * eliminar: solo admin, en cualquier estado y fecha (también una anulada). Una
+ * eliminada nunca llega acá: no aparece en ninguna vista operativa.
+ */
 export function permisosPara(rol: Rol, i: { registrada_en: string; resultado: string; anulada: boolean; estado: EstadoVinculo; turnos: number }, ahora: Date) {
   const corregir = rol === "admin" || staffPuedeCorregir(new Date(i.registrada_en), ahora);
   const viva = !i.anulada;
@@ -771,6 +791,7 @@ export function permisosPara(rol: Rol, i: { registrada_en: string; resultado: st
     vincular: viva && subio && i.turnos < LIMITES.max_turnos_por_interaccion,
     desvincular: viva && subio && i.turnos > 0 && corregir,
     cerrar_sin_vinculo: viva && rol === "admin" && subio && i.turnos === 0,
+    eliminar: rol === "admin",
   };
 }
 

@@ -40,6 +40,16 @@ declare
   v_h1        text;
   v_ok        boolean;
   v_antes     integer;
+  v_d1        uuid;
+  v_d2        uuid;
+  v_d3        uuid;
+  v_d4        uuid;
+  v_d5        uuid;
+  v_d6        uuid;
+  v_key       uuid;
+  v_inicio    timestamptz;
+  v_pausa     timestamptz;
+  v_ht        text;
 begin
   begin
     -- ── Utilidades temporales (se van con el ROLLBACK) ─────────────────────
@@ -101,6 +111,14 @@ begin
       return sqlstate || ':' || sqlerrm;
     end $f$;
 
+    create function pg_temp.t_eliminar(p_id uuid, p_v integer, p_m text, p_rol text) returns text language plpgsql as $f$
+    begin
+      perform public.interaccion_eliminar(p_id, p_v, p_m, p_rol);
+      return 'ok';
+    exception when others then
+      return sqlstate || ':' || sqlerrm;
+    end $f$;
+
     create function pg_temp.ver(p_id uuid) returns integer language sql as $f$
       select version from public.interacciones_stand where id = p_id
     $f$;
@@ -133,7 +151,7 @@ begin
     end $f$;
 
     -- ── Fixtures ──────────────────────────────────────────────────────────
-    update public.interacciones_config set inicio_registro = null, actualizado_por_rol = null where id;
+    update public.interacciones_config set inicio_registro = null, altas_pausadas_en = null, actualizado_por_rol = null where id;
     v_hoy := public.interacciones_fecha_sim(now());
     v_ayer0 := ((v_hoy - 1)::timestamp at time zone 'America/Argentina/Cordoba');
 
@@ -154,7 +172,11 @@ begin
       (-910019, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:10', 1, 10, 1, 0, 'qr', 'activo', 'v2_10'),
       (-910020, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:20', 2, 10, 2, 20000, 'qr', 'activo', 'v2_10'),
       (-910021, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:30', 2, 10, 2, 20000, 'qr', 'activo', 'v2_10'),
-      (-910022, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:40', 2, 10, 2, 20000, 'qr', 'activo', 'v2_10');
+      (-910022, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '14:40', 2, 10, 2, 20000, 'qr', 'activo', 'v2_10'),
+      (-910023, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '15:00', 2, 10, 2, 20000, 'qr', 'activo', 'v2_10'),
+      (-910024, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '15:10', 2, 20, 4, 34000, 'qr', 'activo', 'v2_10'),
+      (-910025, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '15:20', 2, 10, 2, 0, 'gratis', 'activo', 'v2_10'),
+      (-910026, 'NOMBRE SECRETO B1', '000-SECRETO', v_hoy, '15:30', 1, 10, 1, 10000, 'efectivo', 'activo', 'v2_10');
 
     insert into public.empleados (nombre_formal) values ('__TEST_INTERACCIONES_B1') returning id into v_emp;
 
@@ -186,7 +208,9 @@ begin
                'public.interaccion_registrar(uuid, jsonb, bigint[], text)', 'public.interaccion_editar(uuid, integer, jsonb, text)',
                'public.interaccion_vincular(uuid, integer, bigint[], text)', 'public.interaccion_desvincular(uuid, integer, bigint, text)',
                'public.interaccion_anular(uuid, integer, text, text)', 'public.interaccion_cerrar_sin_vinculo(uuid, integer, text, text, text)',
-               'public.interacciones_definir_inicio(timestamp without time zone, text)']) f)
+               'public.interacciones_definir_inicio(timestamp without time zone, text)',
+               'public.interaccion_eliminar(uuid, integer, text, text)', 'public.interacciones_pausar_altas(text)',
+               'public.interacciones_reanudar_altas(text)']) f)
       and (select bool_and(not has_function_privilege(r, f, 'execute'))
              from unnest(array['service_role', 'anon', 'authenticated']) r,
                   unnest(array['public.interaccion_normalizar(jsonb)', 'public.interacciones_insertar_vinculos(uuid, bigint[], text)',
@@ -195,6 +219,7 @@ begin
              from pg_proc p where p.pronamespace = 'public'::regnamespace
               and p.proname in ('interaccion_registrar', 'interaccion_editar', 'interaccion_vincular', 'interaccion_desvincular',
                                 'interaccion_anular', 'interaccion_cerrar_sin_vinculo', 'interacciones_definir_inicio',
+                                'interaccion_eliminar', 'interacciones_pausar_altas', 'interacciones_reanudar_altas',
                                 'interaccion_turnos_validar', 'interaccion_turnos_registrar_alta', 'interaccion_turnos_registrar_baja',
                                 'interacciones_stand_proteger', 'interaccion_turnos_inmutable'))
       and exists (select 1 from pg_constraint where conrelid = 'public.interaccion_turnos'::regclass and contype = 'f'
@@ -551,9 +576,18 @@ begin
                             like '23503:%' then '' else 'f' end;
     v_log := v_log || case when v_e = '' then 'T24 ' else 'FALLA:T24(' || v_e || ') ' end;
 
-    -- T25 · el inicio no puede quedar después de interacciones ya registradas.
+    -- T25 · el inicio es HISTÓRICO: con interacciones registradas ya no se cambia
+    -- (ni hacia atrás ni hacia adelante). Si faltara (NULL por una intervención
+    -- manual), tampoco puede quedar después de una interacción viva.
+    select inicio_registro into v_inicio from public.interacciones_config where id;
     v_e := pg_temp.intentar('select public.interacciones_definir_inicio((now() at time zone ''America/Argentina/Cordoba'')::timestamp, ''admin'')');
-    v_log := v_log || case when v_e = '55000:inicio_posterior_a_registros' then 'T25 ' else 'FALLA:T25(' || v_e || ') ' end;
+    v_e2 := pg_temp.intentar('select public.interacciones_definir_inicio(''2020-01-01 00:00''::timestamp, ''admin'')');
+    update public.interacciones_config set inicio_registro = null where id;
+    v_e := v_e || '|' || v_e2 || '|' || pg_temp.intentar('select public.interacciones_definir_inicio((now() at time zone ''America/Argentina/Cordoba'')::timestamp, ''admin'')');
+    update public.interacciones_config set inicio_registro = v_inicio where id;
+    v_log := v_log || case when v_e = '55000:inicio_ya_definido|55000:inicio_ya_definido|55000:inicio_posterior_a_registros'
+                              and (select inicio_registro from public.interacciones_config where id) = v_inicio
+                           then 'T25 ' else 'FALLA:T25(' || v_e || ') ' end;
 
     -- T32 · editar la FECHA de una 'subio' con turnos: si un turno vinculado quedaría
     -- fuera de la tolerancia, se rechaza; dentro de la tolerancia, se acepta.
@@ -602,7 +636,7 @@ begin
     v_log := v_log || case when
           not exists (select 1 from public.interacciones_analisis where interaccion_id = v_z)
       and exists (select 1 from public.interacciones_analisis where interaccion_id = v_x)
-      and (select count(*) from public.interacciones_analisis) = (select count(*) from public.interacciones_stand where anulada_en is null)
+      and (select count(*) from public.interacciones_analisis) = (select count(*) from public.interacciones_stand where anulada_en is null and eliminada_en is null)
       and not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'interacciones_analisis'
                         and column_name in ('observaciones', 'idempotency_key', 'alta_huella', 'registrada_por_rol', 'anulada_motivo'))
       and has_table_privilege('service_role', 'public.interacciones_analisis', 'select')
@@ -611,6 +645,142 @@ begin
       and not has_table_privilege('authenticated', 'public.interacciones_analisis', 'select')
       and (select reloptions @> array['security_invoker=true'] from pg_class where oid = 'public.interacciones_analisis'::regclass)
       then 'T35 ' else 'FALLA:T35 ' end;
+
+    -- T36 · pausa de ALTAS separada del inicio histórico: solo admin; rechaza
+    -- altas nuevas sin guardar nada; el reintento de una carga YA guardada
+    -- devuelve la original; correcciones y vínculos siguen; pausar dos veces
+    -- conserva el instante; no se puede quitar el inicio mientras está pausado ni
+    -- cambiarlo; reanudar no toca el inicio; sin inicio no hay pausa.
+    select inicio_registro into v_inicio from public.interacciones_config where id;
+    v_key := gen_random_uuid();
+    v_e := pg_temp.t_alta('{"resultado":"subio","personas_grupo":2}', null, 'staff', v_key);
+    v_d1 := case when v_e like 'ok:%' then substr(v_e, 4)::uuid end;
+    v_e := '';
+    v_e := v_e || case when pg_temp.intentar('select public.interacciones_pausar_altas(''staff'')') = '42501:solo_admin'
+                            and (select altas_pausadas_en is null from public.interacciones_config where id) then '' else 'a' end;
+    v_j := public.interacciones_pausar_altas('admin');
+    select altas_pausadas_en into v_pausa from public.interacciones_config where id;
+    v_e := v_e || case when (v_j ->> 'altas_pausadas')::boolean and v_pausa is not null
+                            and (select inicio_registro from public.interacciones_config where id) = v_inicio then '' else 'b' end;
+    v_k := gen_random_uuid();
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":1}', null, 'admin', v_k) = '55000:altas_pausadas'
+                            and not exists (select 1 from public.interacciones_stand where idempotency_key = v_k) then '' else 'c' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"subio","personas_grupo":2}', null, 'staff', v_key) = 'ok:' || v_d1
+                            and (select count(*) from public.interacciones_stand where idempotency_key = v_key) = 1 then '' else 'd' end;
+    v_e := v_e || case when pg_temp.t_editar(v_d1, 1, '{"personas_grupo":3}', 'staff') = 'ok'
+                            and pg_temp.t_vincular(v_d1, 2, array[-910023]::bigint[], 'staff') = 'ok'
+                            and pg_temp.est(v_d1) = 'con_turno'
+                            and exists (select 1 from public.interacciones_analisis where interaccion_id = v_d1) then '' else 'e' end;
+    perform public.interacciones_pausar_altas('admin');
+    v_e := v_e || case when (select altas_pausadas_en from public.interacciones_config where id) = v_pausa then '' else 'f' end;
+    v_e := v_e || case when pg_temp.intentar('update public.interacciones_config set inicio_registro = null where id') like '23514:%' then '' else 'g' end;
+    v_e := v_e || case when pg_temp.intentar('select public.interacciones_definir_inicio(''2020-01-01 00:00''::timestamp, ''admin'')') = '55000:inicio_ya_definido'
+                            and (select inicio_registro = v_inicio and altas_pausadas_en = v_pausa from public.interacciones_config where id) then '' else 'h' end;
+    v_j := public.interacciones_reanudar_altas('admin');
+    v_e := v_e || case when not (v_j ->> 'altas_pausadas')::boolean
+                            and (select inicio_registro = v_inicio and altas_pausadas_en is null from public.interacciones_config where id)
+                            and pg_temp.t_alta('{"resultado":"miro","personas_grupo":1}', null, 'admin', v_k) like 'ok:%' then '' else 'i' end;
+    update public.interacciones_config set inicio_registro = null where id;
+    v_e := v_e || case when pg_temp.intentar('select public.interacciones_pausar_altas(''admin'')') = '55000:registro_no_iniciado' then '' else 'j' end;
+    update public.interacciones_config set inicio_registro = v_inicio where id;
+    v_log := v_log || case when v_e = '' then 'T36 ' else 'FALLA:T36(' || v_e || ') ' end;
+
+    -- T37 · borrado administrativo: solo admin, en cualquier estado (con turnos,
+    -- pendiente, cerrada, viva, anulada) y fecha (49 h, fuera de toda ventana de
+    -- staff), con control de versión. En una sola operación libera TODOS los
+    -- vínculos sin tocar los turnos, conserva la fila y una sola auditoría, y la
+    -- interacción desaparece de las vistas operativas y del análisis. La
+    -- cobertura conserva su denominador. Repetirlo no duplica nada; una eliminada
+    -- no se edita, vincula, desvincula, anula, cierra ni reactiva; el reintento de
+    -- su alta no la recrea; sus turnos se pueden vincular a otra; también se borra
+    -- con las altas pausadas.
+    v_j := public.interaccion_registrar(gen_random_uuid(), '{"resultado":"subio","personas_grupo":4}', array[-910024, -910025]::bigint[], 'staff');
+    v_d2 := (v_j -> 'interaccion' ->> 'id')::uuid;
+    v_j := public.interaccion_registrar(gen_random_uuid(), '{"resultado":"subio","personas_grupo":1}', null, 'staff');
+    v_d3 := (v_j -> 'interaccion' ->> 'id')::uuid;
+    v_j := public.interaccion_registrar(gen_random_uuid(), '{"resultado":"subio","personas_grupo":2}', null, 'staff');
+    v_d4 := (v_j -> 'interaccion' ->> 'id')::uuid;
+    perform public.interaccion_cerrar_sin_vinculo(v_d4, 1, 'turno_no_identificable', null, 'admin');
+    v_j := public.interaccion_registrar(gen_random_uuid(), '{"resultado":"miro","personas_grupo":3}', null, 'staff');
+    v_d5 := (v_j -> 'interaccion' ->> 'id')::uuid;
+    select count(*), count(*) filter (where vinculado) into v_n, v_n2
+      from public.interacciones_cobertura_turnos where turno_stand_id in (-910024, -910025);
+    select md5(string_agg(md5(t::text), '' order by t.id)) into v_ht from public.turnos_stand t where t.id in (-910024, -910025);
+    v_e := '';
+    v_e := v_e || case when pg_temp.t_eliminar(v_d2, 1, null, 'staff') = '42501:solo_admin' and pg_temp.nvinc(v_d2) = 2 then '' else 'a' end;
+    v_e := v_e || case when pg_temp.t_eliminar(v_d2, 9, null, 'admin') = '55000:version_desactualizada' and pg_temp.nvinc(v_d2) = 2
+                            and pg_temp.est(v_d2) = 'con_turno' then '' else 'b' end;
+    v_e := v_e || case when pg_temp.t_eliminar(v_d2, 1, repeat('x', 201), 'admin') = '22023:campo_invalido:motivo_eliminacion' then '' else 'c' end;
+    v_j := public.interaccion_eliminar(v_d2, 1, '  cargada por error  ', 'admin');
+    v_e := v_e || case when v_j -> 'turnos_liberados' = '["-910025", "-910024"]'::jsonb and not (v_j ->> 'sin_cambios')::boolean then '' else 'd' end;
+    v_e := v_e || case when pg_temp.t_eliminar(v_d3, 1, null, 'admin') = 'ok'
+                            and pg_temp.t_eliminar(v_d4, 2, null, 'admin') = 'ok'
+                            and pg_temp.t_eliminar(v_d5, 1, null, 'admin') = 'ok'
+                            and pg_temp.t_eliminar(v_z, 2, null, 'admin') = 'ok'
+                            and pg_temp.t_eliminar(v_vieja, pg_temp.ver(v_vieja), null, 'admin') = 'ok' then '' else 'e' end;
+    v_e := v_e || case when not exists (select 1 from public.interacciones_stand_estado where interaccion_id in (v_d2, v_d3, v_d4, v_d5, v_z, v_vieja))
+                            and not exists (select 1 from public.interacciones_analisis where interaccion_id in (v_d2, v_d3, v_d4, v_d5, v_z, v_vieja))
+                            and not exists (select 1 from public.interacciones_vinculos_control where interaccion_id in (v_d2, v_d3, v_d4, v_d5, v_z, v_vieja))
+                            and not exists (select 1 from public.interaccion_turnos where interaccion_id in (v_d2, v_d3, v_d4, v_d5, v_z, v_vieja))
+                            and public.interaccion_detalle(v_d2) is null and public.interaccion_detalle(v_z) is null then '' else 'f' end;
+    v_e := v_e || case when (select md5(string_agg(md5(t::text), '' order by t.id)) from public.turnos_stand t where t.id in (-910024, -910025)) = v_ht
+                            and v_n = 2 and v_n2 = 2
+                            and (select count(*) from public.interacciones_cobertura_turnos where turno_stand_id in (-910024, -910025)) = 2
+                            and (select count(*) filter (where vinculado) from public.interacciones_cobertura_turnos where turno_stand_id in (-910024, -910025)) = 0
+                         then '' else 'g' end;
+    v_e := v_e || case when (select eliminada_en is not null and eliminada_por_rol = 'admin' and eliminada_motivo = 'cargada por error'
+                                   and version = 2 and resultado = 'subio' and personas_grupo = 4
+                              from public.interacciones_stand where id = v_d2)
+                            and (select count(*) from public.interacciones_stand_eventos where interaccion_id = v_d2 and tipo = 'eliminacion'
+                                   and rol = 'admin' and datos -> 'turnos_liberados' = '[-910025, -910024]'::jsonb) = 1
+                            and (select count(*) from public.interacciones_stand_eventos where interaccion_id = v_d2 and tipo = 'desvinculo'
+                                   and datos ->> 'causa' = 'eliminacion') = 2
+                            and (select count(*) from public.interacciones_stand_eventos where tipo = 'eliminacion'
+                                   and interaccion_id in (v_d2, v_d3, v_d4, v_d5, v_z, v_vieja)) = 6
+                            and (select (datos ->> 'estaba_anulada')::boolean from public.interacciones_stand_eventos
+                                  where interaccion_id = v_z and tipo = 'eliminacion') then '' else 'h' end;
+    v_j := public.interaccion_eliminar(v_d2, 1, null, 'admin');
+    v_e := v_e || case when (v_j ->> 'sin_cambios')::boolean and pg_temp.ver(v_d2) = 2
+                            and (select count(*) from public.interacciones_stand_eventos where interaccion_id = v_d2 and tipo = 'eliminacion') = 1
+                         then '' else 'i' end;
+    v_e := v_e || case when pg_temp.t_editar(v_d3, 2, '{"personas_grupo":2}', 'admin') = 'P0002:interaccion_eliminada'
+                            and pg_temp.t_vincular(v_d3, 2, array[-910026]::bigint[], 'admin') = 'P0002:interaccion_eliminada'
+                            and pg_temp.t_desvincular(v_d3, 2, -910026, 'admin') = 'P0002:interaccion_eliminada'
+                            and pg_temp.t_anular(v_d3, 2, null, 'admin') = 'P0002:interaccion_eliminada'
+                            and pg_temp.t_cerrar(v_d3, 2, 'otro', 'x', 'admin') = 'P0002:interaccion_eliminada'
+                            and pg_temp.intentar(format('insert into public.interaccion_turnos (interaccion_id, turno_stand_id, vinculado_por_rol) values (%L, -910026, ''admin'')', v_d3))
+                                = 'P0002:interaccion_eliminada'
+                            and pg_temp.intentar(format('update public.interacciones_stand set eliminada_en = null, eliminada_por_rol = null, version = version + 1 where id = %L', v_d3))
+                                = '55000:interaccion_eliminada'
+                         then '' else 'j' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":3}', null, 'staff',
+                                           (select idempotency_key from public.interacciones_stand where id = v_d5)) = 'P0002:interaccion_eliminada'
+                            and (select count(*) from public.interacciones_stand
+                                  where idempotency_key = (select idempotency_key from public.interacciones_stand where id = v_d5)) = 1
+                         then '' else 'k' end;
+    v_e2 := pg_temp.t_alta('{"resultado":"subio","personas_grupo":2}', array[-910024, -910025]::bigint[], 'staff');
+    v_e := v_e || case when v_e2 like 'ok:%'
+                            and (select count(*) filter (where vinculado) from public.interacciones_cobertura_turnos where turno_stand_id in (-910024, -910025)) = 2
+                         then '' else 'l' end;
+    perform public.interacciones_pausar_altas('admin');
+    -- (cada escritura va en su propia sentencia: una subconsulta de la MISMA
+    -- sentencia no vería sus efectos)
+    v_e2 := pg_temp.t_eliminar(v_d1, pg_temp.ver(v_d1), null, 'admin');
+    v_e := v_e || case when v_e2 = 'ok' and pg_temp.nvinc(v_d1) = 0
+                            and not exists (select 1 from public.interacciones_cobertura_turnos where turno_stand_id = -910023 and vinculado)
+                         then '' else 'm' end;
+    perform public.interacciones_reanudar_altas('admin');
+    v_j := public.interaccion_registrar(gen_random_uuid(), '{"resultado":"miro","personas_grupo":1}', null, 'staff');
+    v_d6 := (v_j -> 'interaccion' ->> 'id')::uuid;
+    perform public.interaccion_anular(v_d6, 1, null, 'staff');
+    v_e := v_e || case when pg_temp.intentar(format('update public.interacciones_stand set eliminada_en = now(), eliminada_por_rol = ''admin'', observaciones = ''x'', version = version + 1 where id = %L', v_d6))
+                                = '55000:interaccion_anulada'
+                            and pg_temp.intentar(format('update public.interacciones_stand set eliminada_en = now(), eliminada_por_rol = ''admin'', version = version + 1 where id = %L', v_y))
+                                = '55000:tiene_turnos_vinculados'
+                            and pg_temp.intentar(format('update public.interacciones_stand set eliminada_en = now(), eliminada_por_rol = ''staff'', version = version + 1 where id = %L', v_d6))
+                                like '23514:%'
+                         then '' else 'n' end;
+    v_log := v_log || case when v_e = '' then 'T37 ' else 'FALLA:T37(' || v_e || '|' || coalesce(v_e2, '') || ') ' end;
 
     -- T26 · las RPCs de Interacciones no modificaron turnos, reservas, Finanzas,
     -- Mensualidades, Gift Cards, Colectivo ni empleados (huella idéntica), y su
