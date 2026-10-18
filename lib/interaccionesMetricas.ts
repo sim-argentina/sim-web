@@ -358,6 +358,38 @@ export function cobertura(turnos: FilaCobertura[]) {
   };
 }
 
+// ── Respuesta de /api/admin/interacciones/metricas ─────────────────────────
+export type ResumenCobertura = ReturnType<typeof cobertura>;
+export type CargaInfo = { filas: number; paginas: number; esperadas: number; consistente: boolean };
+export type BloqueMetricas = {
+  periodo: Periodo;
+  metricas: ResultadoMetricas;
+  cobertura: ResumenCobertura;
+  carga: { interacciones: CargaInfo | null; turnos: CargaInfo | null };
+};
+type DeltaCantidad = ReturnType<typeof compararCantidad>;
+type DeltaTasa = ReturnType<typeof compararTasa>;
+export type Deltas = {
+  interacciones: DeltaCantidad;
+  personas: DeltaCantidad;
+  miraron: DeltaCantidad;
+  preguntaron: DeltaCantidad;
+  subieron: DeltaCantidad;
+  miro_pregunto: DeltaTasa;
+  pregunto_subio: DeltaTasa;
+  miro_subio: DeltaTasa;
+  cobertura: DeltaTasa;
+  /** false = los períodos cubren distinta cantidad de días: comparar cantidades directamente engaña. */
+  mismos_dias: boolean;
+};
+export type RespuestaMetricas = {
+  hoy: string;
+  modulo: { habilitado: boolean; inicio_registro: string | null };
+  filtros: Filtros;
+  actual: BloqueMetricas;
+  comparacion: (BloqueMetricas & { deltas: Deltas }) | null;
+};
+
 // ── Parámetros de la consulta ──────────────────────────────────────────────
 export const MAX_DIAS_PERIODO = 366;
 

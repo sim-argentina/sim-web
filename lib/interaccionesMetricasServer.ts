@@ -12,7 +12,8 @@ import { errorDeRpc, fechaSim } from "@/lib/interacciones";
 import { estadoModulo, type R } from "@/lib/interaccionesServer";
 import {
   aplicarFiltros, calcularMetricas, cobertura, compararCantidad, compararTasa, periodo,
-  type EmpleadoRef, type FilaAnalisis, type FilaCobertura, type ParamsMetricas, type Periodo,
+  type BloqueMetricas, type CargaInfo, type Deltas, type EmpleadoRef, type FilaAnalisis, type FilaCobertura, type ParamsMetricas,
+  type Periodo, type RespuestaMetricas,
 } from "@/lib/interaccionesMetricas";
 
 export const MAX_FILAS_POSTGREST = 1000;
@@ -23,7 +24,7 @@ const COLS_ANALISIS =
   "turnos_gratis, turnos_pago_contradictorio, participaciones, venta_verificada";
 const COLS_COBERTURA = "turno_stand_id:turno_stand_id::text, fecha, es_pago, pago_contradictorio, vinculado";
 
-export type Carga = { filas: number; paginas: number; esperadas: number; consistente: boolean };
+export type Carga = CargaInfo;
 type ErrorPg = { code?: string | null; message?: string | null };
 
 function falla<T>(e: ErrorPg): R<T> {
@@ -110,18 +111,16 @@ async function cargarPeriodo(p: Periodo, tamPagina: number): Promise<R<Bloque>> 
   return { ok: true, valor: { periodo: p, filas, turnos: c.valor.filas, carga: { interacciones: a.valor.carga, turnos: c.valor.carga } } };
 }
 
-export type RespuestaMetricas = Awaited<ReturnType<typeof metricas>> extends R<infer T> ? T : never;
-
 /**
  * Análisis de un período y, opcional, de otro para comparar. Los filtros se
  * aplican a las interacciones de los DOS períodos; la cobertura general solo
  * sigue al período (fecha del turno), nunca a los filtros.
  */
-export async function metricas(params: ParamsMetricas, ahora: Date, opciones: { tamPagina?: number } = {}) {
+export async function metricas(params: ParamsMetricas, ahora: Date, opciones: { tamPagina?: number } = {}): Promise<R<RespuestaMetricas>> {
   const tam = opciones.tamPagina ?? MAX_FILAS_POSTGREST;
   const modulo = await estadoModulo();
   if (!modulo.ok) return modulo;
-  if (!modulo.valor.instalado) return { ok: false as const, e: errorDeRpc({ code: "42P01" }) };
+  if (!modulo.valor.instalado) return { ok: false, e: errorDeRpc({ code: "42P01" }) };
   const hoy = fechaSim(ahora);
   const inicio = modulo.valor.inicio_registro;
   const actual = await cargarPeriodo(periodo(params.desde, params.hasta, inicio, hoy), tam);
@@ -132,7 +131,7 @@ export async function metricas(params: ParamsMetricas, ahora: Date, opciones: { 
     .map((x) => x.atendio_empleado_id).filter((x): x is string => x !== null));
   if (!emp.ok) return emp;
 
-  const armar = (b: Bloque) => ({
+  const armar = (b: Bloque): BloqueMetricas => ({
     periodo: b.periodo,
     metricas: calcularMetricas(aplicarFiltros(b.filas, params.filtros), b.periodo.cubierto, emp.valor),
     cobertura: cobertura(b.turnos),
@@ -140,7 +139,7 @@ export async function metricas(params: ParamsMetricas, ahora: Date, opciones: { 
   });
   const a = armar(actual.valor);
   const c = comp?.ok ? armar(comp.valor) : null;
-  const deltas = c ? {
+  const deltas: Deltas | null = c ? {
     interacciones: compararCantidad(a.metricas.embudo.interacciones, c.metricas.embudo.interacciones),
     personas: compararCantidad(a.metricas.embudo.personas, c.metricas.embudo.personas),
     miraron: compararCantidad(a.metricas.embudo.miraron, c.metricas.embudo.miraron),
@@ -153,13 +152,13 @@ export async function metricas(params: ParamsMetricas, ahora: Date, opciones: { 
     mismos_dias: (a.periodo.cubierto?.dias ?? 0) === (c.periodo.cubierto?.dias ?? 0),
   } : null;
   return {
-    ok: true as const,
+    ok: true,
     valor: {
       hoy,
       modulo: { habilitado: modulo.valor.habilitado, inicio_registro: inicio },
       filtros: params.filtros,
       actual: a,
-      comparacion: c ? { ...c, deltas } : null,
+      comparacion: c && deltas ? { ...c, deltas } : null,
     },
   };
 }
