@@ -319,9 +319,9 @@ export function trackMensualidadReservaConfirmada(params: {
   });
 }
 
-// ── Reservas: experiencia post-pago (EXPERIMENTAL) ───────────────────────────
-// /reservas/confirmacion reemplaza a /reservas/exito SOLO para quien entra al
-// experimento; en ese flujo /reservas/exito no se visita, así que el purchase
+// ── Reservas: experiencia post-pago (kill switch EXPERIMENTAL_RESERVA_POSTPAY) ──
+// Con la variable prendida /reservas/confirmacion reemplaza a /reservas/exito;
+// en ese flujo /reservas/exito no se visita, así que el purchase
 // se dispara acá, con el mismo transaction_id (reserva_<id>) y el mismo dedupe,
 // y recién cuando la BASE confirmó el pago. Sin PII ni fecha/hora concretas.
 

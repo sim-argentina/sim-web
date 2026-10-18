@@ -208,26 +208,25 @@ async function main() {
     });
   }
 
-  // ── 5. Feature flag + sesión del panel (dos llaves) ────────────────────────
+  // ── 5. Kill switch: prendido → cualquier cliente; apagado → flujo histórico ─
   {
-    delete process.env.EXPERIMENTAL_RESERVA_POSTPAY;
-    cookie = tokenAdmin;
     lecturasDeCookie = 0;
-    assert.equal(await P.experimentoPostpayActivo(), false, "variable ausente → apagado");
-    assert.equal(lecturasDeCookie, 0, "apagado: ni siquiera se lee la cookie");
+    delete process.env.EXPERIMENTAL_RESERVA_POSTPAY;
+    for (const c of [undefined, tokenAdmin]) {
+      cookie = c;
+      assert.equal(await P.experimentoPostpayActivo(), false, "variable ausente → flujo histórico (con o sin sesión)");
+    }
     for (const v of ["TRUE", "1", "yes", " true", "false"]) {
       process.env.EXPERIMENTAL_RESERVA_POSTPAY = v;
       assert.equal(await P.experimentoPostpayActivo(), false, `"${v}" no activa`);
     }
     process.env.EXPERIMENTAL_RESERVA_POSTPAY = "true";
+    for (const [c, quien] of [[undefined, "cliente sin sesión"], ["falsa.firma", "cookie inventada"], [tokenStaff, "staff"], [tokenAdmin, "admin"]] as const) {
+      cookie = c;
+      assert.equal(await P.experimentoPostpayActivo(), true, `${quien} → post-pago nuevo`);
+    }
+    assert.equal(lecturasDeCookie, 0, "la decisión no depende de la sesión: la cookie ni se lee");
     cookie = undefined;
-    assert.equal(await P.experimentoPostpayActivo(), false, "cliente común (sin sesión) → retorno de siempre");
-    cookie = "falsa.firma";
-    assert.equal(await P.experimentoPostpayActivo(), false, "cookie inventada → no");
-    cookie = tokenStaff;
-    assert.equal(await P.experimentoPostpayActivo(), true, "staff del panel → experimento");
-    cookie = tokenAdmin;
-    assert.equal(await P.experimentoPostpayActivo(), true, "admin del panel → experimento");
   }
 
   // ── 6. Estado público: sale de la base, la vuelta solo cambia el mensaje ───
@@ -324,6 +323,7 @@ async function main() {
     assert.ok(await noEncontrado(pagina({ searchParams: Promise.resolve({ t: tk(9001), vuelta: "exito" }) })), "apagada: la página da 404");
 
     process.env.EXPERIMENTAL_RESERVA_POSTPAY = "true";
+    cookie = undefined; // un cliente común: el enlace firmado alcanza, sin sesión del panel
     // Comprobante
     let res = await rutaComp.GET(req(`/api/reservas/comprobante?t=${tk(9001)}&vuelta=error&status=approved&collection_status=approved`));
     assert.equal(res.status, 200);
@@ -371,7 +371,8 @@ async function main() {
     assert.equal(res.status, 307);
     assert.equal(res.headers.get("location"), `https://simexperience.com.ar/reservas/confirmacion?t=${tk(9002)}&vuelta=pendiente`);
 
-    // Página
+    // Página: un cliente sin sesión abre SU comprobante con el enlace firmado.
+    cookie = undefined;
     const el = await pagina({ searchParams: Promise.resolve({ t: tk(9001), vuelta: "exito" }) }) as { props: { inicial: { estado: string }; token: string } };
     assert.equal(el.props.inicial.estado, "confirmada");
     assert.ok(await noEncontrado(pagina({ searchParams: Promise.resolve({ t: `${(9002).toString(36)}.${tk(9001).split(".")[1]}` }) })), "URL manipulada → 404");
@@ -426,6 +427,12 @@ async function main() {
     assert.ok(pref.includes("success: `${baseUrl}/reservas/exito`") && pref.includes("failure: `${baseUrl}/reservas/error`") && pref.includes("pending: `${baseUrl}/reservas/pendiente`"),
       "el retorno de siempre sigue intacto");
     assert.ok(!leer("app/api/mercadopago/webhook/route.ts").includes("reservaPostpay"), "el webhook no cambia");
+    // Público: la decisión del retorno no mira la sesión; la vista previa sigue solo admin.
+    const libPostpay = sinComentarios(leer("lib/reservaPostpay.ts"));
+    assert.ok(!/adminGuards|getCurrentAdminRole|cookies[(]/.test(libPostpay), "el retorno público no depende de la sesión");
+    const previa = sinComentarios(leer("app/api/reservas/comprobante/vista-previa/route.ts"));
+    assert.ok(previa.includes("await requireAdmin()") && previa.indexOf("reservaPostpayHabilitada()") < previa.indexOf("await requireAdmin()"),
+      "vista previa: kill switch y después solo admin");
     for (const f of ["app/reservas/exito/page.tsx", "app/reservas/pendiente/page.tsx", "app/reservas/error/page.tsx"]) {
       assert.ok(!leer(f).includes("reservaPostpay") && !leer(f).includes("confirmacion"), `${f} sigue igual`);
     }

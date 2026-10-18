@@ -974,9 +974,10 @@ async function main() {
     assert.equal(fila.total, 34000);
     assert.equal(preferencias[1].body.items[0].unit_price, 34000);
 
-    // f2) Retorno de Mercado Pago. Variable apagada: el de siempre, sin auto_return,
-    // mismo cuerpo y mismo orden. Prendida sin sesión (cliente común): idéntico.
-    // Prendida + sesión del panel: experiencia post-pago firmada + auto_return.
+    // f2) Retorno de Mercado Pago (kill switch EXPERIMENTAL_RESERVA_POSTPAY).
+    // Apagada: el de siempre, sin auto_return, mismo cuerpo y mismo orden.
+    // Prendida: post-pago nuevo firmado + auto_return para CUALQUIER cliente, sin
+    // sesión del panel (público desde el 18/10/2026).
     const RETORNO = {
       success: "https://b3.invalid/reservas/exito",
       failure: "https://b3.invalid/reservas/error",
@@ -992,31 +993,31 @@ async function main() {
     process.env.EXPERIMENTAL_RESERVA_POSTPAY = "true";
     reiniciar();
     override("legacy");
-    cookiePanel = undefined;
-    res = await pedirPref();
-    assert.equal(res.status, 200);
-    assert.deepEqual(cuerpoPref(preferencias.length - 1).back_urls, RETORNO, "cliente común: retorno de siempre");
-    assert.equal("auto_return" in cuerpoPref(preferencias.length - 1), false);
-    assert.deepEqual(Object.keys(cuerpoPref(preferencias.length - 1)), Object.keys(cuerpoPref(0)), "cuerpo idéntico");
     const { createSessionToken } = await import("@/lib/adminSession");
     const { firmarComprobante } = await import("@/lib/reservaPostpay");
-    cookiePanel = await createSessionToken("admin");
-    reiniciar();
-    override("legacy");
-    res = await pedirPref();
-    assert.equal(res.status, 200);
-    fila = tabla("reservas")[0];
-    const exp = cuerpoPref(preferencias.length - 1);
-    const firma = firmarComprobante(Number(fila.id));
-    assert.deepEqual(exp.back_urls, {
-      success: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=exito`,
-      pending: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=pendiente`,
-      failure: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=error`,
-    });
-    assert.equal(exp.auto_return, "approved");
-    assert.equal(exp.external_reference, `reserva_${fila.id}`, "la relación con el webhook no cambia");
-    assert.equal(exp.notification_url, "https://b3.invalid/api/mercadopago/webhook");
-    assert.equal(fila.estado, "pendiente_pago", "la reserva se crea igual que siempre");
+    // Cliente común (sin sesión) y también con sesión del panel: el mismo retorno nuevo.
+    for (const sesion of [undefined, await createSessionToken("admin")]) {
+      cookiePanel = sesion;
+      reiniciar();
+      override("legacy");
+      res = await pedirPref();
+      assert.equal(res.status, 200);
+      fila = tabla("reservas")[0];
+      const exp = cuerpoPref(preferencias.length - 1);
+      const firma = firmarComprobante(Number(fila.id));
+      const quien = sesion ? "con sesión" : "cliente sin sesión";
+      assert.deepEqual(exp.back_urls, {
+        success: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=exito`,
+        pending: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=pendiente`,
+        failure: `https://b3.invalid/reservas/confirmacion?t=${firma}&vuelta=error`,
+      }, `${quien}: post-pago nuevo`);
+      assert.equal(exp.auto_return, "approved", quien);
+      assert.equal(exp.external_reference, `reserva_${fila.id}`, "la relación con el webhook no cambia");
+      assert.equal(exp.notification_url, "https://b3.invalid/api/mercadopago/webhook");
+      assert.deepEqual(Object.keys(exp), ["items", "external_reference", "back_urls", "auto_return", "notification_url"]);
+      assert.deepEqual((exp.items as unknown[]), (cuerpoPref(0).items as unknown[]).map((it) => ({ ...(it as object), id: `reserva-sim-${fila.id}` })), "mismos items y precio");
+      assert.equal(fila.estado, "pendiente_pago", "la reserva se crea igual que siempre");
+    }
     // Apagada otra vez, aun con sesión: el retorno de siempre.
     delete process.env.EXPERIMENTAL_RESERVA_POSTPAY;
     reiniciar();

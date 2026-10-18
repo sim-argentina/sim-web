@@ -1,16 +1,15 @@
 // ============================================================================
-// Experiencia post-pago de Reservas (EXPERIMENTAL, todavía no pública).
-// SOLO SERVIDOR.
+// Experiencia post-pago de Reservas (pública desde el 18/10/2026, con kill
+// switch). SOLO SERVIDOR.
 // ----------------------------------------------------------------------------
 // Después de pagar una Reserva con Mercado Pago, el cliente vuelve a
 // /reservas/confirmacion, que muestra el comprobante y permite agendar el turno
 // (Google Calendar o .ics). Reglas:
 //
-//   · Dos llaves. EXPERIMENTAL_RESERVA_POSTPAY=true habilita las rutas nuevas,
-//     pero la preferencia SOLO vuelve ahí si quien reserva tiene una sesión del
-//     panel (admin o staff) verificada en el servidor. Un cliente común sigue
-//     con el retorno de siempre aunque la variable esté prendida; con la
-//     variable apagada todo es exactamente como antes y las rutas dan 404.
+//   · Kill switch: EXPERIMENTAL_RESERVA_POSTPAY. Prendida ("true"), TODAS las
+//     Reservas web vuelven acá, sin pedir sesión. Apagada o ausente: el retorno
+//     de siempre, idéntico, y las rutas nuevas dan 404. La vista previa interna
+//     (/api/reservas/comprobante/vista-previa) sigue siendo solo admin.
 //   · La pantalla NO decide nada con lo que trae la URL de Mercado Pago
 //     (status, collection_status, payment_id…). "Pagada" sale solo de lo que
 //     persistió el webhook: estado 'activa' + mercado_pago_payment_id.
@@ -27,7 +26,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { reservaPostpayHabilitada } from "@/lib/featureFlags";
-import { getCurrentAdminRole } from "@/lib/adminGuards";
 import { enlaceGoogleCalendar, sumarMinutos, type EventoReserva } from "@/lib/reservaPostpayCalendario";
 
 export const RUTA_CONFIRMACION = "/reservas/confirmacion";
@@ -84,17 +82,12 @@ function uidEvento(k: Buffer, id: number): string {
 }
 
 /**
- * ¿Esta preferencia vuelve a la experiencia nueva? Variable prendida Y sesión
- * del panel verificada (firma HMAC de la cookie). Con la variable apagada ni
- * siquiera se lee la cookie.
+ * ¿Esta preferencia vuelve a la experiencia nueva? Depende SOLO del kill switch:
+ * prendido → cualquier cliente, sin sesión; apagado → el retorno de siempre.
+ * (Hasta el 18/10/2026 además exigía sesión del panel: era la prueba interna.)
  */
 export async function experimentoPostpayActivo(): Promise<boolean> {
-  if (!reservaPostpayHabilitada()) return false;
-  try {
-    return (await getCurrentAdminRole()) !== null;
-  } catch {
-    return false;
-  }
+  return reservaPostpayHabilitada();
 }
 
 /**

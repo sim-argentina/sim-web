@@ -124,9 +124,9 @@ export async function POST(req: Request) {
     }
     reservaPendienteId = reservaPendiente.id;
 
-    // (Experimental, oculto) Experiencia post-pago nueva: solo con
-    // EXPERIMENTAL_RESERVA_POSTPAY=true Y una sesión del panel verificada en el
-    // servidor. Si no, el retorno de siempre, idéntico (ver lib/reservaPostpay.ts).
+    // Experiencia post-pago nueva, con kill switch: con
+    // EXPERIMENTAL_RESERVA_POSTPAY=true vuelve a /reservas/confirmacion (cualquier
+    // cliente); si no, el retorno de siempre, idéntico (ver lib/reservaPostpay.ts).
     const experimental = (await experimentoPostpayActivo())
       ? retornoExperimental(baseUrl, reservaPendiente.id)
       : null;
