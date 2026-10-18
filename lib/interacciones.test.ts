@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import {
-  CAMPOS_PROHIBIDOS, LIMITES, coincideBusqueda, codificarCursor, decodificarCursor, dtoInteraccion, errorDeRpc,
+  CAMPOS_PROHIBIDOS, LIMITES, cambiosDeEdicion, coincideBusqueda, codificarCursor, decodificarCursor, dtoInteraccion, errorDeRpc,
+  instanteDeParedSim, minimoDeclarableStaff, paredSim,
   fechaSim, horaSim, instanteValido, minutoLocal, normalizarIdTurno, pagoContradictorio, permisosPara,
   staffPuedeCorregir, staffPuedeDeclarar, esFuturo, validarCuerpoAlta, validarCuerpoAnulacion, validarCuerpoCierre,
   validarCuerpoEdicion, validarCuerpoVinculo, validarDatos, validarDesvinculo, validarFiltrosListado,
@@ -276,6 +277,38 @@ async function main() {
     assert.equal(pend.advertencias[0].codigo, "pendiente_de_vinculo");
     assert.equal(pend.permisos.cerrar_sin_vinculo, true);
     assert.equal(permisosPara("staff", { registrada_en: det.interaccion.registrada_en as string, resultado: "subio", anulada: false, estado: "pendiente", turnos: 0 }, dentro).cerrar_sin_vinculo, false);
+  }
+
+  // ── 12. Pantalla del personal: instante de Córdoba, edición y rebase ─────
+  {
+    assert.equal(instanteDeParedSim("2026-10-18", "00:00"), "2026-10-18T03:00:00.000Z", "00:00 de Córdoba = 03:00Z");
+    assert.equal(instanteDeParedSim("2026-10-17", "23:59"), "2026-10-18T02:59:00.000Z", "cruza el día en UTC");
+    assert.equal(instanteDeParedSim("2026-02-30", "10:00"), null);
+    assert.deepEqual(paredSim(new Date("2026-10-18T02:30:00Z")), { fecha: "2026-10-17", hora: "23:30", valor: "2026-10-17T23:30" });
+    assert.equal(minimoDeclarableStaff(new Date("2026-10-19T03:05:00Z")), "2026-10-18T00:00");
+    // Edición: solo lo que cambió; vaciar = null; lo no tocado no viaja.
+    const base = { ocurrida_en: "2026-10-18T22:30:00.123456+00:00", resultado: "pregunto" as const, personas_grupo: 3, hombres: 2, mujeres: 1,
+      rango_etario: "18_24" as const, conocia_sim: "no_sabe" as const, se_subio_antes: null, iniciador: "cliente" as const,
+      atendio_empleado_id: null, motivo: "espera" as const, observaciones: "volvería" };
+    assert.deepEqual(cambiosDeEdicion(base, { ...base, rango_etario: "25_34" }), { rango_etario: "25_34" });
+    assert.deepEqual(cambiosDeEdicion(base, { ...base, observaciones: null }), { observaciones: null }, "vaciar viaja como null");
+    assert.deepEqual(cambiosDeEdicion(base, { ...base, ocurrida_en: "2026-10-18T19:30:00.123456-03:00" }), {}, "mismo instante en otro formato = sin cambio");
+    assert.deepEqual(cambiosDeEdicion(base, { ...base, mujeres: 2, personas_grupo: 4 }), { personas_grupo: 4, hombres: 2, mujeres: 2 }, "el desglose viaja de a par");
+    assert.deepEqual(cambiosDeEdicion(base, { ...base, resultado: "subio", motivo: null }), { resultado: "subio", motivo: null });
+    assert.deepEqual(cambiosDeEdicion(base, { ...base, resultado: "subio" }), { resultado: "subio", motivo: null }, "pasar a subio declara el motivo null");
+    const C = await import("@/app/admin/(panel)/interacciones/cliente");
+    const dto = {
+      id: K, version: 4, ocurrida_en: "2026-10-18T22:30:00.123456+00:00", resultado: "pregunto", personas_grupo: 3, hombres: 2, mujeres: 1,
+      rango_etario: "18_24", conocia_sim: "si", se_subio_antes: null, iniciador: "empleado", atendio: null, motivo: "espera", observaciones: "volvería",
+    } as unknown as Parameters<typeof C.formularioDesdeDto>[0];
+    const f = C.formularioDesdeDto(dto);
+    assert.equal(C.instanteDeOcurrida(f.ocurrida), dto.ocurrida_en, "sin tocar la hora se conserva el instante exacto (microsegundos)");
+    assert.equal(C.datosDesdeFormulario({ ...f, resultado: "subio" }).motivo, null, "\"Se subió\" nunca manda motivo");
+    assert.equal(C.datosDesdeFormulario({ ...f, observaciones: "   " }).observaciones, null);
+    // Rebase tras un conflicto: lo que el usuario no tocó toma el valor nuevo.
+    const r = C.rebaseEdicion(dto, { rango_etario: "35_49" });
+    assert.deepEqual([r.rango_etario, r.conocia_sim, r.iniciador], ["35_49", "si", "empleado"]);
+    assert.deepEqual(C.rebaseEdicion(dto, { observaciones: null }).observaciones, "");
   }
 
   // ── 11. Validación de datos sueltos ──────────────────────────────────────

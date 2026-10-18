@@ -25,6 +25,13 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin", "staff"],
     },
     {
+      // Se carga después de atender; el análisis (/admin/interacciones/analisis)
+      // es solo admin y lo protegen middleware.ts y su API.
+      label: "Interacciones",
+      href: "/admin/interacciones",
+      roles: ["admin", "staff"],
+    },
+    {
       label: "Cronograma",
       href: "/admin/cronograma",
       roles: ["admin", "staff"],

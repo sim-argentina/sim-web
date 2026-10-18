@@ -469,6 +469,63 @@ export function esFuturo(ocurrida: Date, ahora: Date): boolean {
   return ocurrida.getTime() > ahora.getTime() + LIMITES.margen_futuro_minutos * 60_000;
 }
 
+/** Fecha y hora de pared de SIM de un instante (para un <input type="datetime-local">). */
+export function paredSim(instante: Date): { fecha: string; hora: string; valor: string } {
+  const fecha = fechaSim(instante);
+  const hora = horaSim(instante);
+  return { fecha, hora, valor: `${fecha}T${hora}` };
+}
+
+/**
+ * Instante (ISO UTC) cuya hora de pared en SIM es fecha+hora. No supone el
+ * huso: lo deduce con la misma zona que usa todo el módulo. Null si es inválida.
+ */
+export function instanteDeParedSim(fecha: string, hora: string): string | null {
+  const objetivo = minutoLocal(fecha, hora);
+  if (objetivo === null) return null;
+  const [y, mo, d] = fecha.split("-").map(Number);
+  const [h, mi] = hora.split(":").map(Number);
+  let t = Date.UTC(y, mo - 1, d, h, mi);
+  for (let i = 0; i < 3; i++) {
+    const p = paredSim(new Date(t));
+    const actual = minutoLocal(p.fecha, p.hora)!;
+    if (actual === objetivo) return new Date(t).toISOString();
+    t += (objetivo - actual) * 60_000;
+  }
+  return null;
+}
+
+/** Primer instante que staff puede declarar hoy: 00:00 del día calendario anterior (SIM). */
+export function minimoDeclarableStaff(ahora: Date): string {
+  return `${sumarDias(fechaSim(ahora), -LIMITES.staff_dias_retro)}T00:00`;
+}
+
+/**
+ * Cambios de una edición: SOLO las claves que cambiaron respecto de la versión
+ * cargada (`base`). Una clave vaciada viaja como null; una que no se tocó no
+ * viaja (el servidor la conserva). El desglose viaja de a par. Pasar a "subio"
+ * con un motivo cargado incluye motivo: null, que la pantalla muestra antes.
+ */
+export function cambiosDeEdicion(base: DatosInteraccion, nuevo: DatosInteraccion): DatosInteraccion {
+  const c: DatosInteraccion = {};
+  const mismoInstante = (a?: string | null, b?: string | null) =>
+    (a ?? null) === (b ?? null) || (a != null && b != null && Date.parse(a.replace(" ", "T")) === Date.parse(b.replace(" ", "T")));
+  if (nuevo.ocurrida_en !== undefined && !mismoInstante(base.ocurrida_en, nuevo.ocurrida_en)) c.ocurrida_en = nuevo.ocurrida_en;
+  for (const k of ["resultado", "personas_grupo", "rango_etario", "conocia_sim", "se_subio_antes", "iniciador", "atendio_empleado_id", "motivo", "observaciones"] as const) {
+    if (nuevo[k] === undefined) continue;
+    const a = base[k] ?? null;
+    const b = nuevo[k] ?? null;
+    if (a !== b) (c as Record<string, unknown>)[k] = b;
+  }
+  if ((nuevo.hombres !== undefined || nuevo.mujeres !== undefined)
+      && ((base.hombres ?? null) !== (nuevo.hombres ?? null) || (base.mujeres ?? null) !== (nuevo.mujeres ?? null))) {
+    c.hombres = nuevo.hombres ?? null;
+    c.mujeres = nuevo.mujeres ?? null;
+  }
+  if (c.resultado === "subio" && (base.motivo ?? null) !== null) c.motivo = null;
+  return c;
+}
+
 export type VentanaVinculables = {
   alcance: AlcanceVinculables;
   ancla: { instante: string; fecha: string; hora: string };
