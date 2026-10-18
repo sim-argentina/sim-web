@@ -65,8 +65,9 @@ sql(`insert into public.interacciones_stand (idempotency_key, alta_huella, ocurr
 const alta = (datos, turnosIds = null, rol = "staff") => sql(`select public.interaccion_registrar('${randomUUID()}', $j$${JSON.stringify({ observaciones: MARCA, ...datos })}$j$::jsonb, ${turnosIds ? `'{${turnosIds.join(",")}}'::bigint[]` : "null"}, '${rol}') is not null;`);
 const hace = (min) => new Date(Date.now() - min * 60_000).toISOString();
 alta({ resultado: "miro", personas_grupo: 2, ocurrida_en: hace(15) });
-alta({ resultado: "pregunto", personas_grupo: 3, hombres: 2, mujeres: 1, rango_etario: "18_24", conocia_sim: "no", motivo: "precio", ocurrida_en: hace(40) });
-alta({ resultado: "subio", personas_grupo: 3, rango_etario: "25_34", conocia_sim: "si", se_subio_antes: "no", iniciador: "cliente", ocurrida_en: hace(30) }, [-950002]);
+alta({ resultado: "miro", personas_grupo: 3, hombres: 1, mujeres: 2, rangos_etarios: ["menos_14", "35_49"], motivo: "paseando", ocurrida_en: hace(20) });
+alta({ resultado: "pregunto", personas_grupo: 3, hombres: 2, mujeres: 1, rangos_etarios: ["18_24"], tipo_grupo: "amigos", conocia_sim: "no", motivo: "precio", ocurrida_en: hace(40) });
+alta({ resultado: "subio", personas_grupo: 3, rangos_etarios: ["menos_14", "25_34"], tipo_grupo: "familia", conocia_sim: "si", se_subio_antes: "no", iniciador: "cliente", ocurrida_en: hace(30) }, [-950002]);
 alta({ resultado: "subio", personas_grupo: 2, ocurrida_en: hace(60) });
 
 console.log(sql(`select 'interacciones demo: ' || count(*) from public.interacciones_stand where observaciones = '${MARCA}'

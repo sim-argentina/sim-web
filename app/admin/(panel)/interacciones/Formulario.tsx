@@ -13,22 +13,27 @@
 // pide confirmar_liberacion, se explica y se pide confirmación explícita. Si la
 // versión cambió en otro dispositivo, se conservan los cambios y se recarga para
 // revisar: nunca se reenvía solo con la versión nueva.
+// "Solo miró" muestra únicamente personas, hombres/mujeres, rangos etarios,
+// motivo y observaciones (la hora es la del guardado). Lo demás sigue en el
+// formulario de "Miró y preguntó" y "Se subió", con el tipo de grupo primero.
+// En una edición, lo que "Solo miró" no muestra conserva su valor histórico.
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import {
-  ETIQUETAS, INICIADORES, LIMITES, MOTIVOS, RANGOS_ETARIOS, RESPUESTAS, RESULTADOS, cambiosDeEdicion, fechaSim,
+  ETIQUETAS, INICIADORES, LIMITES, MOTIVOS, RANGOS_ETARIOS, RESPUESTAS, RESULTADOS, TIPOS_GRUPO, cambiosDeEdicion, fechaSim,
   minimoDeclarableStaff, paredSim, validarDatos,
   type InteraccionDto, type Resultado, type Rol,
 } from "@/lib/interacciones";
 import { sumarDias } from "@/lib/agenda";
 import {
   api, borradores, datosDesdeDto, datosDesdeFormulario, desgloseCompleto, esIncierto, formularioDesdeDto, instanteDeOcurrida, rebaseEdicion,
-  interaccionYaNoExiste, moduloNoDisponible, type BorradorAlta, type Empleados, type EstadoFormulario, type FalloApi, type TurnoElegido,
+  interaccionYaNoExiste, moduloNoDisponible, type BorradorAlta, type Empleados, type EnvioAlta, type EstadoFormulario, type FalloApi,
+  type TurnoElegido,
 } from "./cliente";
 import SelectorTurnos from "./SelectorTurnos";
-import { Aviso, Boton, Campo, Chips, Contador, Dialogo, Panel, Plegable, cx } from "./ui";
+import { Aviso, Boton, Campo, Chips, ChipsMultiples, Contador, Dialogo, Panel, Plegable, cx } from "./ui";
 
 type Props =
   | {
@@ -38,13 +43,13 @@ type Props =
   | { modo: "edicion"; rol: Rol; base: InteraccionDto; onGuardado: (i: InteraccionDto, info: { repetida: boolean }) => void; onCerrar: () => void };
 
 const tieneSecundarios = (f: EstadoFormulario) =>
-  f.hombres !== null || f.mujeres !== null || f.rango_etario !== null || f.conocia_sim !== null || f.se_subio_antes !== null
-  || f.iniciador !== null || f.atendio_empleado_id !== null || f.motivo !== null || f.observaciones.trim() !== "";
+  f.hombres !== null || f.mujeres !== null || f.rangos_etarios.length > 0 || f.tipo_grupo !== null || f.conocia_sim !== null
+  || f.se_subio_antes !== null || f.iniciador !== null || f.atendio_empleado_id !== null || f.motivo !== null || f.observaciones.trim() !== "";
 
 const opciones = <T extends string>(lista: readonly T[], textos: Record<T, string>) => lista.map((v) => ({ valor: v, texto: textos[v] }));
 const NOMBRE_CAMPO: Record<string, string> = {
   ocurrida_en: "fecha y hora", resultado: "resultado", personas_grupo: "personas", hombres: "hombres", mujeres: "mujeres",
-  rango_etario: "rango", conocia_sim: "si conocían SIM", se_subio_antes: "si se habían subido", iniciador: "quién inició",
+  rangos_etarios: "edades", tipo_grupo: "tipo de grupo", conocia_sim: "si conocían SIM", se_subio_antes: "si se habían subido", iniciador: "quién inició",
   atendio_empleado_id: "quién atendió", motivo: "motivo", observaciones: "observaciones",
 };
 
@@ -60,6 +65,9 @@ export default function Formulario(props: Props) {
   const [incierto, setIncierto] = useState<{ conTurnos: boolean } | null>(
     props.modo === "alta" && props.borrador.estado === "incierto" ? { conTurnos: props.borrador.turnos.length > 0 } : null,
   );
+  // Lo que se mandó en un envío incierto: el reintento manda EXACTAMENTE eso (también
+  // si lo había mandado la pantalla anterior), así la base reconoce la carga original.
+  const [envio, setEnvio] = useState<EnvioAlta | null>(props.modo === "alta" ? props.borrador.envio ?? null : null);
   const [enviando, setEnviando] = useState(false);
   const [enviandoCon, setEnviandoCon] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +79,6 @@ export default function Formulario(props: Props) {
   const [empleados, setEmpleados] = useState<Empleados | null>(null);
   // Un borrador restaurado con datos secundarios los muestra abiertos: nada cargado queda oculto.
   const [abiertoPerfil, setAbiertoPerfil] = useState(() => !esAlta || tieneSecundarios(form));
-  const [abiertoMas, setAbiertoMas] = useState(() => !esAlta || tieneSecundarios(form));
   const [restaurado] = useState(() => props.modo === "edicion" && borradores.edicion(props.base.id)?.version === props.base.version);
   // La interacción ya no existe (borrada por un admin) o la carga ya se resolvió: no se guarda más desde acá.
   const [terminado, setTerminado] = useState(false);
@@ -82,14 +89,18 @@ export default function Formulario(props: Props) {
   // ── Borrador: cada cambio queda en sessionStorage (ir al Turnero no pierde nada) ──
   useEffect(() => {
     if (props.modo === "alta") {
-      if (!terminado) borradores.sincronizarAlta({ clave: props.borrador.clave, form, turnos, estado: incierto ? "incierto" : "editando" });
+      if (!terminado) {
+        borradores.sincronizarAlta({
+          clave: props.borrador.clave, form, turnos, estado: incierto ? "incierto" : "editando", ...(incierto && envio ? { envio } : {}),
+        });
+      }
     } else if (base && !terminado) {
       const hay = Object.keys(cambiosDeEdicion(datosDesdeDto(base), datosDesdeFormulario(form))).length > 0;
       if (hay) borradores.guardarEdicion({ id: base.id, version: base.version, form });
       else borradores.borrarEdicion(base.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, turnos, incierto, base, terminado]);
+  }, [form, turnos, incierto, base, terminado, envio]);
 
   // ── Opciones de "Atendió" (activos + sugerencia del cronograma a esa hora) ──
   const instante = instanteDeOcurrida(form.ocurrida);
@@ -117,12 +128,17 @@ export default function Formulario(props: Props) {
     ? (esAlta ? minimoDeclarableStaff(ahora) : `${sumarDias(fechaSim(new Date(base!.registrada_en)), -LIMITES.staff_dias_retro)}T00:00`)
     : undefined;
   const maximoFecha = paredSim(new Date(ahora.getTime() + LIMITES.margen_futuro_minutos * 60_000)).valor;
-  const fechaInvalida = form.ocurrida.modo === "manual" && (instante === null || (minimoFecha !== undefined && form.ocurrida.valor < minimoFecha) || form.ocurrida.valor > maximoFecha);
-  const datos = datosDesdeFormulario(form);
+  // "Solo miró" no muestra la fecha: en el alta es la del guardado; en una edición queda la que tenía.
+  const soloMiro = form.resultado === "miro";
+  const fechaInvalida = !soloMiro && form.ocurrida.modo === "manual"
+    && (instante === null || (minimoFecha !== undefined && form.ocurrida.valor < minimoFecha) || form.ocurrida.valor > maximoFecha);
+  // Más rangos que personas: se avisa y no se guarda, pero no se desmarca nada en silencio.
+  const rangosExcedidos = form.rangos_etarios.length > form.personas;
+  const datos = datosDesdeFormulario(form, { alta: esAlta });
   const valida = validarDatos(datos, "alta");
   const cambios = base ? cambiosDeEdicion(datosDesdeDto(base), datos) : {};
   const sinCambios = !esAlta && Object.keys(cambios).length === 0;
-  const puedeGuardar = !bloqueado && !pausado && valida.ok && desglose !== "incompleto" && desglose !== "no_suma" && !fechaInvalida;
+  const puedeGuardar = !bloqueado && !pausado && valida.ok && !rangosExcedidos && desglose !== "incompleto" && desglose !== "no_suma" && !fechaInvalida;
   const motivoQuitado = form.resultado === "subio" && form.motivo !== null;
 
   function falloComun(r: FalloApi) {
@@ -144,17 +160,17 @@ export default function Formulario(props: Props) {
     enVuelo.current = true;
     setEnviando(true);
     setError(null);
-    // Antes de enviar, el borrador queda INCIERTO: si se corta acá, al volver se
-    // reintenta con la misma clave y el mismo contenido.
-    const envio = { conTurnos: conTurnos && turnos.length > 0 };
-    setEnviandoCon(envio.conTurnos);
-    borradores.guardarAlta({ clave: props.borrador.clave, form, turnos: envio.conTurnos ? turnos : [], estado: "incierto" });
-    if (!envio.conTurnos && turnos.length > 0) setTurnos([]);
-    const r = await api.registrar({
-      idempotency_key: props.borrador.clave,
-      datos: datosDesdeFormulario(form),
-      ...(envio.conTurnos ? { turnos: turnos.map((t) => t.id) } : {}),
-    });
+    // Antes de enviar, el borrador queda INCIERTO con lo que se manda: si se corta
+    // acá, al volver se reintenta con la misma clave y EXACTAMENTE el mismo contenido.
+    const pedido: EnvioAlta = incierto !== null && envio !== null
+      ? envio
+      : { datos: datosDesdeFormulario(form, { alta: true }), ...(conTurnos && turnos.length > 0 ? { turnos: turnos.map((t) => t.id) } : {}) };
+    const enviado = { conTurnos: (pedido.turnos?.length ?? 0) > 0 };
+    setEnviandoCon(enviado.conTurnos);
+    setEnvio(pedido);
+    borradores.guardarAlta({ clave: props.borrador.clave, form, turnos: enviado.conTurnos ? turnos : [], estado: "incierto", envio: pedido });
+    if (!enviado.conTurnos && turnos.length > 0) setTurnos([]);
+    const r = await api.registrar({ idempotency_key: props.borrador.clave, ...pedido });
     enVuelo.current = false;
     setEnviando(false);
     if (r.ok) {
@@ -163,19 +179,21 @@ export default function Formulario(props: Props) {
       return;
     }
     if (esIncierto(r)) {
-      setIncierto(envio);
+      setIncierto(enviado);
       return;
     }
     if (r.codigo === "interaccion_eliminada") {
       // Ya se había guardado y un admin la borró después: no se vuelve a crear.
       borradores.borrarAlta();
       setIncierto(null);
+      setEnvio(null);
       setTerminado(true);
       setError("Esta carga ya se había guardado y después un administrador la borró: no se volvió a crear. Podés cerrar este formulario.");
       return;
     }
     // Respuesta definitiva: nada se guardó con esta clave (el servidor lo comprobó).
     setIncierto(null);
+    setEnvio(null);
     borradores.sincronizarAlta({ clave: props.borrador.clave, form, turnos, estado: "editando" });
     if (r.codigo === "altas_pausadas") props.onPausado?.();
     if (r.codigo === "idempotency_key_con_otro_payload") {
@@ -265,7 +283,7 @@ export default function Formulario(props: Props) {
   const titulo = esAlta ? `Nueva · ${ETIQUETAS.resultado[form.resultado]}` : `Editar · ${ETIQUETAS.resultado[form.resultado]}`;
 
   // ── Bloques del formulario ──
-  const bloquePerfil = (
+  const bloqueDesglose = (
     <>
       <div className="grid gap-4 sm:grid-cols-2">
         <Contador etiqueta="Hombres" valor={form.hombres} min={0} max={LIMITES.personas_grupo_max} permitirVacio deshabilitado={bloqueado}
@@ -284,9 +302,29 @@ export default function Formulario(props: Props) {
           <Boton variante="fantasma" disabled={bloqueado} onClick={() => setForm((f) => ({ ...f, hombres: null, mujeres: null }))}>Limpiar desglose</Boton>
         ) : null}
       </div>
-      <Chips etiqueta="Rango aproximado del grupo" opciones={opciones(RANGOS_ETARIOS, ETIQUETAS.rango_etario)} valor={form.rango_etario}
-        onCambio={(v) => cambiar("rango_etario", v)} deshabilitado={bloqueado}
-        ayuda="Describe al grupo en general, no la edad de cada persona." />
+    </>
+  );
+
+  const bloqueRangos = (
+    <div className="space-y-2">
+      <ChipsMultiples etiqueta="Rangos etarios presentes" opciones={opciones(RANGOS_ETARIOS, ETIQUETAS.rango_etario)} valor={form.rangos_etarios}
+        onCambio={(v) => cambiar("rangos_etarios", v)} deshabilitado={bloqueado}
+        ayuda="Podés marcar más de uno. Indica qué edades hay en el grupo, no cuántas personas de cada una." />
+      {rangosExcedidos ? (
+        <p className="text-sm text-amber-200" aria-live="polite">
+          Marcaste {form.rangos_etarios.length} rangos y el grupo tiene {form.personas} {form.personas === 1 ? "persona" : "personas"}: quitá rangos o sumá personas.
+        </p>
+      ) : null}
+    </div>
+  );
+
+  const bloquePerfil = (
+    <>
+      <Chips etiqueta="Tipo de grupo" opciones={opciones(TIPOS_GRUPO, ETIQUETAS.tipo_grupo)} valor={form.tipo_grupo}
+        onCambio={(v) => cambiar("tipo_grupo", v)} deshabilitado={bloqueado}
+        ayuda="Opcional. “Compañeros” es de trabajo o estudio. Sin marcar queda “Sin dato”." />
+      {bloqueDesglose}
+      {bloqueRangos}
       <Chips etiqueta="¿Ya conocían SIM?" opciones={opciones(RESPUESTAS, ETIQUETAS.respuesta)} valor={form.conocia_sim}
         onCambio={(v) => cambiar("conocia_sim", v)} deshabilitado={bloqueado} />
       <Chips etiqueta="¿Ya se habían subido antes?" opciones={opciones(RESPUESTAS, ETIQUETAS.respuesta)} valor={form.se_subio_antes}
@@ -395,6 +433,7 @@ export default function Formulario(props: Props) {
         <div className="grid gap-5 sm:grid-cols-2">
           <Contador etiqueta="Personas del grupo" valor={form.personas} min={1} max={LIMITES.personas_grupo_max} deshabilitado={bloqueado}
             onCambio={(v) => cambiar("personas", v ?? 1)} />
+          {soloMiro ? null : (
           <Campo etiqueta="Cuándo pasó" ayuda={props.rol === "staff" ? "Staff puede cargar desde ayer a las 00:00." : undefined}>
             {form.ocurrida.modo === "ahora" ? (
               <div className="flex flex-wrap items-center gap-2">
@@ -413,7 +452,11 @@ export default function Formulario(props: Props) {
               </div>
             )}
           </Campo>
+          )}
         </div>
+        {rangosExcedidos ? (
+          <Aviso tipo="alerta">Hay {form.rangos_etarios.length} rangos de edad marcados y {form.personas} {form.personas === 1 ? "persona" : "personas"} en el grupo. No se desmarcó nada: quitá rangos o sumá personas para guardar.</Aviso>
+        ) : null}
         {fechaInvalida ? <Aviso tipo="alerta">Esa fecha y hora no se puede usar: tiene que ser pasada{props.rol === "staff" ? " y desde ayer a las 00:00" : ""}.</Aviso> : null}
 
         {esAlta && form.resultado === "subio" ? (
@@ -439,11 +482,12 @@ export default function Formulario(props: Props) {
             {bloqueObservaciones}
           </Plegable>
         ) : (
-          <Plegable titulo="Más datos" resumen="(opcional: perfil, motivo, observación)" abierto={abiertoMas} onAlternar={() => setAbiertoMas((a) => !a)}>
-            {bloquePerfil}
+          <div className="space-y-5">
+            {bloqueDesglose}
+            {bloqueRangos}
             {bloqueMotivo}
             {bloqueObservaciones}
-          </Plegable>
+          </div>
         )}
 
         {props.modo === "alta" && !incierto && !terminado ? (

@@ -43,13 +43,16 @@ export const RESULTADOS = ["miro", "pregunto", "subio"] as const;
 export const RANGOS_ETARIOS = ["menos_14", "14_17", "18_24", "25_34", "35_49", "50_mas"] as const;
 export const RESPUESTAS = ["si", "no", "no_sabe"] as const;
 export const INICIADORES = ["cliente", "empleado"] as const;
-export const MOTIVOS = ["precio", "tiempo", "espera", "vuelve_despues", "no_interesa", "requisitos", "acompanantes", "otro"] as const;
+export const MOTIVOS = ["precio", "tiempo", "espera", "vuelve_despues", "no_interesa", "requisitos", "acompanantes", "paseando", "otro"] as const;
+// Tipo de grupo: categoría principal, opcional (sin dato ≠ "otro"). No se carga en "Solo miró".
+export const TIPOS_GRUPO = ["familia", "amigos", "pareja", "solo", "companeros", "otro"] as const;
 export const MOTIVOS_CIERRE = ["sin_turno_en_turnero", "turno_no_identificable", "otro"] as const;
 export const ESTADOS_VINCULO = ["no_aplica", "con_turno", "turno_no_activo", "cerrada_sin_turno", "pendiente", "anulada"] as const;
 export const ALCANCES_VINCULABLES = ["2h", "dia", "tolerancia"] as const;
 
 export type Resultado = (typeof RESULTADOS)[number];
 export type RangoEtario = (typeof RANGOS_ETARIOS)[number];
+export type TipoGrupo = (typeof TIPOS_GRUPO)[number];
 export type Respuesta = (typeof RESPUESTAS)[number];
 export type Iniciador = (typeof INICIADORES)[number];
 export type Motivo = (typeof MOTIVOS)[number];
@@ -60,12 +63,13 @@ export type Rol = "admin" | "staff";
 
 export const ETIQUETAS = {
   resultado: { miro: "Solo miró", pregunto: "Miró y preguntó", subio: "Se subió" },
-  rango_etario: { menos_14: "< 14", "14_17": "14–17", "18_24": "18–24", "25_34": "25–34", "35_49": "35–49", "50_mas": "50+" },
+  rango_etario: { menos_14: "Menos de 14", "14_17": "14–17", "18_24": "18–24", "25_34": "25–34", "35_49": "35–49", "50_mas": "50+" },
+  tipo_grupo: { familia: "Familia", amigos: "Amigos", pareja: "Pareja/s", solo: "Solo/a", companeros: "Compañeros", otro: "Otro" },
   respuesta: { si: "Sí", no: "No", no_sabe: "No sabe" },
   iniciador: { cliente: "Cliente", empleado: "Empleado" },
   motivo: {
     precio: "Precio", tiempo: "Falta de tiempo", espera: "Espera", vuelve_despues: "Volvía después",
-    no_interesa: "No le interesó", requisitos: "Requisitos/altura", acompanantes: "Acompañantes", otro: "Otro",
+    no_interesa: "No le interesó", requisitos: "Requisitos/altura", acompanantes: "Acompañantes", paseando: "Paseando", otro: "Otro",
   },
   motivo_cierre: {
     sin_turno_en_turnero: "Se subió pero el turno no está en el Turnero",
@@ -79,8 +83,12 @@ export const ETIQUETAS = {
 } as const;
 
 // Campos de datos que acepta el alta y la edición (los mismos que la RPC).
+// rango_etario (un solo valor) es la forma de la pantalla ANTERIOR: se acepta
+// para que una pestaña vieja o un borrador viejo sigan funcionando; la base lo
+// convierte en una lista de uno y rechaza (cliente_desactualizado) la edición
+// que truncaría varios rangos. La forma nueva es rangos_etarios.
 export const CAMPOS_DATOS = [
-  "ocurrida_en", "resultado", "personas_grupo", "hombres", "mujeres", "rango_etario",
+  "ocurrida_en", "resultado", "personas_grupo", "hombres", "mujeres", "rango_etario", "rangos_etarios", "tipo_grupo",
   "conocia_sim", "se_subio_antes", "iniciador", "atendio_empleado_id", "motivo", "observaciones",
 ] as const;
 export type CampoDatos = (typeof CAMPOS_DATOS)[number];
@@ -115,6 +123,8 @@ const MENSAJES: Record<string, { status: ErrorApi["status"]; error: string }> = 
   desglose_incompleto: { status: 400, error: "Completá hombres y mujeres, o dejá los dos vacíos." },
   desglose_no_suma: { status: 400, error: "Hombres y mujeres tienen que sumar la cantidad de personas." },
   motivo_no_aplica: { status: 400, error: "Si se subió no corresponde un motivo de no compra: quitá el motivo." },
+  rangos_repetidos: { status: 400, error: "Hay rangos de edad repetidos." },
+  rangos_superan_personas: { status: 400, error: "Hay más rangos de edad marcados que personas en el grupo: quitá rangos o sumá personas." },
   turnos_repetidos: { status: 400, error: "Hay turnos repetidos." },
   ocurrida_en_futura: { status: 400, error: "La hora de la interacción no puede ser futura." },
   ocurrida_en_antes_del_inicio: { status: 400, error: "La fecha es anterior al inicio del registro de interacciones." },
@@ -142,6 +152,7 @@ const MENSAJES: Record<string, { status: ErrorApi["status"]; error: string }> = 
   cierre_vigente: { status: 409, error: "La interacción está cerrada sin turno." },
   turno_no_activo: { status: 409, error: "Ese turno no está activo." },
   confirmar_liberacion: { status: 409, error: "Este cambio libera los turnos vinculados o retira el cierre: confirmalo para seguir." },
+  cliente_desactualizado: { status: 409, error: "Esta pantalla quedó desactualizada y no puede cambiar las edades sin perder rangos: recargá la página y volvé a intentar." },
   // 503 · módulo
   modulo_no_habilitado: { status: 503, error: "El registro de interacciones todavía no está habilitado." },
   altas_pausadas: { status: 503, error: "La carga de nuevas interacciones está pausada. Las ya registradas se pueden consultar y corregir." },
@@ -221,6 +232,10 @@ export type DatosInteraccion = {
   personas_grupo?: number;
   hombres?: number | null;
   mujeres?: number | null;
+  /** Rangos presentes (orden canónico). [] = sin dato; omitido = no cambia. */
+  rangos_etarios?: RangoEtario[];
+  tipo_grupo?: TipoGrupo | null;
+  /** Solo de la pantalla anterior (un valor); nunca junto con rangos_etarios. */
   rango_etario?: RangoEtario | null;
   conocia_sim?: Respuesta | null;
   se_subio_antes?: Respuesta | null;
@@ -253,6 +268,11 @@ function enumOpcional<T extends string>(v: unknown, lista: readonly T[]): v is T
 
 function enteroEn(v: unknown, min: number, max: number): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+}
+
+/** Rangos sin repetidos y en el orden fijo de las opciones (el orden de los clics no cambia el dato). */
+export function rangosCanonicos(lista: readonly RangoEtario[]): RangoEtario[] {
+  return RANGOS_ETARIOS.filter((r) => lista.includes(r));
 }
 
 /**
@@ -302,8 +322,19 @@ export function validarDatos(input: unknown, modo: "alta" | "cambios"): Resultad
     d.hombres = h as number | null;
     d.mujeres = m as number | null;
   }
+  if (tiene("rangos_etarios")) {
+    if (tiene("rango_etario")) return falla("campo_invalido", { campo: "rangos_etarios" });
+    const v = input.rangos_etarios ?? [];
+    if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !(RANGOS_ETARIOS as readonly string[]).includes(x))) {
+      return falla("campo_invalido", { campo: "rangos_etarios" });
+    }
+    if (new Set(v).size !== v.length) return falla("rangos_repetidos");
+    const rangos = rangosCanonicos(v as RangoEtario[]);
+    if (d.personas_grupo !== undefined && rangos.length > d.personas_grupo) return falla("rangos_superan_personas");
+    d.rangos_etarios = rangos;
+  }
   for (const [campo, lista] of [
-    ["rango_etario", RANGOS_ETARIOS], ["conocia_sim", RESPUESTAS], ["se_subio_antes", RESPUESTAS], ["iniciador", INICIADORES],
+    ["rango_etario", RANGOS_ETARIOS], ["tipo_grupo", TIPOS_GRUPO], ["conocia_sim", RESPUESTAS], ["se_subio_antes", RESPUESTAS], ["iniciador", INICIADORES],
   ] as const) {
     if (!tiene(campo)) continue;
     if (!enumOpcional(input[campo], lista)) return falla("campo_invalido", { campo });
@@ -527,11 +558,16 @@ export function cambiosDeEdicion(base: DatosInteraccion, nuevo: DatosInteraccion
   const mismoInstante = (a?: string | null, b?: string | null) =>
     (a ?? null) === (b ?? null) || (a != null && b != null && Date.parse(a.replace(" ", "T")) === Date.parse(b.replace(" ", "T")));
   if (nuevo.ocurrida_en !== undefined && !mismoInstante(base.ocurrida_en, nuevo.ocurrida_en)) c.ocurrida_en = nuevo.ocurrida_en;
-  for (const k of ["resultado", "personas_grupo", "rango_etario", "conocia_sim", "se_subio_antes", "iniciador", "atendio_empleado_id", "motivo", "observaciones"] as const) {
+  for (const k of ["resultado", "personas_grupo", "tipo_grupo", "conocia_sim", "se_subio_antes", "iniciador", "atendio_empleado_id", "motivo", "observaciones"] as const) {
     if (nuevo[k] === undefined) continue;
     const a = base[k] ?? null;
     const b = nuevo[k] ?? null;
     if (a !== b) (c as Record<string, unknown>)[k] = b;
+  }
+  if (nuevo.rangos_etarios !== undefined) {
+    const a = rangosCanonicos(base.rangos_etarios ?? []);
+    const b = rangosCanonicos(nuevo.rangos_etarios);
+    if (a.join(",") !== b.join(",")) c.rangos_etarios = b;
   }
   if ((nuevo.hombres !== undefined || nuevo.mujeres !== undefined)
       && ((base.hombres ?? null) !== (nuevo.hombres ?? null) || (base.mujeres ?? null) !== (nuevo.mujeres ?? null))) {
@@ -749,6 +785,10 @@ export type InteraccionDto = {
   personas_grupo: number;
   hombres: number | null;
   mujeres: number | null;
+  /** Rangos presentes (orden canónico); [] = sin dato. */
+  rangos_etarios: RangoEtario[];
+  tipo_grupo: TipoGrupo | null;
+  /** Forma anterior (un valor, o null si hay 0 o varios): solo para pantallas viejas. */
   rango_etario: RangoEtario | null;
   conocia_sim: Respuesta | null;
   se_subio_antes: Respuesta | null;
@@ -851,6 +891,8 @@ export function dtoInteraccion(
     personas_grupo: Number(i.personas_grupo),
     hombres: num(i.hombres),
     mujeres: num(i.mujeres),
+    rangos_etarios: rangosCanonicos(Array.isArray(i.rangos_etarios) ? (i.rangos_etarios as RangoEtario[]) : []),
+    tipo_grupo: (i.tipo_grupo ?? null) as TipoGrupo | null,
     rango_etario: (i.rango_etario ?? null) as RangoEtario | null,
     conocia_sim: (i.conocia_sim ?? null) as Respuesta | null,
     se_subio_antes: (i.se_subio_antes ?? null) as Respuesta | null,

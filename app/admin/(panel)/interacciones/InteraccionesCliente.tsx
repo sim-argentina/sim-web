@@ -329,7 +329,8 @@ function Tarjeta({ i, hoy, ayer, onAbrir, onVincular }: {
   onVincular?: () => void;
 }) {
   const perfil = [
-    i.rango_etario ? ETIQUETAS.rango_etario[i.rango_etario] : null,
+    i.tipo_grupo ? ETIQUETAS.tipo_grupo[i.tipo_grupo] : null,
+    i.rangos_etarios.length ? i.rangos_etarios.map((r) => ETIQUETAS.rango_etario[r]).join(", ") : null,
     i.hombres !== null ? `${i.hombres} H · ${i.mujeres} M` : null,
   ].filter(Boolean).join(" · ");
   const alertas = i.advertencias.filter((a) => a.codigo !== "pendiente_de_vinculo" && a.codigo !== "subida_declarada_sin_turno").length;

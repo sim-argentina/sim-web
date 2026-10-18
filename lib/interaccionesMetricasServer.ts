@@ -19,7 +19,7 @@ import {
 export const MAX_FILAS_POSTGREST = 1000;
 
 const COLS_ANALISIS =
-  "interaccion_id, fecha_negocio, hora_negocio, resultado, personas_grupo, hombres, mujeres, rango_etario, conocia_sim, " +
+  "interaccion_id, fecha_negocio, hora_negocio, resultado, personas_grupo, hombres, mujeres, rangos_etarios, tipo_grupo, conocia_sim, " +
   "se_subio_antes, iniciador, atendio_empleado_id, motivo, vinculo_estado, turnos_vinculados, turnos_activos, turnos_pagos, " +
   "turnos_gratis, turnos_pago_contradictorio, participaciones, venta_verificada";
 const COLS_COBERTURA = "turno_stand_id:turno_stand_id::text, fecha, es_pago, pago_contradictorio, vinculado";
@@ -100,6 +100,7 @@ async function cargarPeriodo(p: Periodo, tamPagina: number): Promise<R<Bloque>> 
     ...x,
     personas_grupo: Number(x.personas_grupo),
     hombres: x.hombres === null ? null : Number(x.hombres),
+    rangos_etarios: Array.isArray(x.rangos_etarios) ? x.rangos_etarios : [],
     mujeres: x.mujeres === null ? null : Number(x.mujeres),
     turnos_vinculados: Number(x.turnos_vinculados),
     turnos_activos: Number(x.turnos_activos),

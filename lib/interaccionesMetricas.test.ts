@@ -14,7 +14,7 @@ function fila(p: Partial<FilaAnalisis>): FilaAnalisis {
   return {
     interaccion_id: `00000000-0000-4000-8000-${String(seq).padStart(12, "0")}`,
     fecha_negocio: "2026-10-05", hora_negocio: "15:00:00", resultado: "miro", personas_grupo: 1,
-    hombres: null, mujeres: null, rango_etario: null, conocia_sim: null, se_subio_antes: null, iniciador: null,
+    hombres: null, mujeres: null, rangos_etarios: [], tipo_grupo: null, conocia_sim: null, se_subio_antes: null, iniciador: null,
     atendio_empleado_id: null, motivo: null, vinculo_estado: "no_aplica", turnos_vinculados: 0, turnos_activos: 0,
     turnos_pagos: 0, turnos_gratis: 0, turnos_pago_contradictorio: 0, participaciones: 0, venta_verificada: false,
     ...p,
@@ -110,10 +110,10 @@ async function main() {
   // ── 6. Perfil: "No sabe" ≠ sin dato, perfiles parciales, género con cobertura ──
   {
     const filas = [
-      fila({ conocia_sim: "no_sabe", personas_grupo: 2, hombres: 1, mujeres: 1, rango_etario: "18_24", resultado: "subio" }),
+      fila({ conocia_sim: "no_sabe", personas_grupo: 2, hombres: 1, mujeres: 1, rangos_etarios: ["18_24"], resultado: "subio" }),
       fila({ conocia_sim: "no", personas_grupo: 3, hombres: 3, mujeres: 0 }),
       fila({ conocia_sim: null, personas_grupo: 4 }),
-      fila({ conocia_sim: "si", personas_grupo: 1, rango_etario: "50_mas", resultado: "subio" }),
+      fila({ conocia_sim: "si", personas_grupo: 1, rangos_etarios: ["50_mas"], resultado: "subio" }),
     ];
     const p = calcularMetricas(filas, null, new Map()).perfil;
     const c = Object.fromEntries(p.conocia_sim.valores.map((x) => [x.valor, x.n]));
@@ -124,7 +124,7 @@ async function main() {
       registros_con_desglose: 2, personas_con_desglose: 5, hombres: 4, mujeres: 1,
       cobertura: { num: 5, den: 10, valor: 0.5 }, hombres_pct: { num: 4, den: 5, valor: 0.8 }, mujeres_pct: { num: 1, den: 5, valor: 0.2 },
     }, "género solo entre registros con desglose, con su cobertura");
-    assert.deepEqual([p.rango_etario.con_dato, p.rango_etario.sin_dato], [2, 2], "rango: grupos por rango aproximado + sin dato");
+    assert.deepEqual([p.rangos_etarios.con_dato, p.rangos_etarios.sin_dato], [2, 2], "rangos: grupos con al menos un rango + sin dato");
     assert.deepEqual(p.conocia_sim.valores.find((x) => x.valor === "si")!.miro_subio, { num: 1, den: 1, valor: 1 });
     assert.deepEqual(p.tamano.map((t) => t.n), [1, 1, 1, 1, 0]);
     assert.equal(tamanoDe(7), "5+");
@@ -138,13 +138,17 @@ async function main() {
       ...varias(2, { resultado: "pregunto" }),
       fila({ resultado: "miro", motivo: "espera" }),
       fila({ resultado: "miro" }),
+      fila({ resultado: "pregunto", motivo: "paseando" }),
+      ...varias(2, { resultado: "miro", motivo: "paseando" }),
     ];
     const m = calcularMetricas(filas, null, new Map()).motivos;
-    assert.deepEqual([m.base, m.con_motivo, m.sin_motivo], [5, 3, 2]);
-    assert.deepEqual(m.cobertura, { num: 3, den: 5, valor: 0.6 });
-    assert.deepEqual(m.valores.find((x) => x.motivo === "precio")!.pct, { num: 2, den: 3, valor: 2 / 3 }, "% sobre las que tienen motivo");
-    assert.deepEqual([m.solo_miro.base, m.solo_miro.con_motivo, m.solo_miro.valores.find((x) => x.motivo === "espera")!.n], [2, 1, 1]);
-    assert.equal(m.valores.reduce((a, x) => a + x.n, 0), 3, "los de solo miró no se suman acá");
+    assert.deepEqual([m.base, m.con_motivo, m.sin_motivo], [6, 4, 2]);
+    assert.deepEqual(m.cobertura, { num: 4, den: 6, valor: 4 / 6 });
+    assert.deepEqual(m.valores.find((x) => x.motivo === "precio")!.pct, { num: 2, den: 4, valor: 0.5 }, "% sobre las que tienen motivo");
+    assert.equal(m.valores.find((x) => x.motivo === "paseando")!.n, 1, "Paseando entre quienes preguntaron y no subieron");
+    assert.deepEqual([m.solo_miro.base, m.solo_miro.con_motivo, m.solo_miro.valores.find((x) => x.motivo === "espera")!.n,
+      m.solo_miro.valores.find((x) => x.motivo === "paseando")!.n], [4, 3, 1, 2], "y por separado en Solo miró");
+    assert.equal(m.valores.reduce((a, x) => a + x.n, 0), 4, "los de solo miró no se suman acá");
   }
 
   // ── 8. Atendió declarado: inactivo histórico y "Sin asignar" ────────────
@@ -175,15 +179,15 @@ async function main() {
     assert.deepEqual([c.turnos, c.vinculados, v(c.tasa)], [4, 2, 0.5]);
     assert.deepEqual([c.pagos.total, c.pagos.vinculados, c.gratis.total, c.gratis.vinculados, c.contradictorios.total], [3, 1, 1, 1, 1]);
     // La cobertura se calcula aparte: filtrar interacciones no la cambia.
-    const filas = [fila({ rango_etario: "18_24" }), fila({ rango_etario: "25_34" })];
-    assert.equal(aplicarFiltros(filas, { rango_etario: "18_24" }).length, 1);
+    const filas = [fila({ rangos_etarios: ["18_24"] }), fila({ rangos_etarios: ["25_34"] })];
+    assert.equal(aplicarFiltros(filas, { rango_etario: ["18_24"] }).length, 1);
     assert.deepEqual(cobertura(turnos), c, "independiente de los filtros de perfil");
   }
 
   // ── 10. Filtros (incluido sin dato / sin motivo / sin asignar) y serie diaria con ceros ──
   {
     const filas = [
-      fila({ resultado: "subio", hora_negocio: "10:30:00", rango_etario: "18_24", atendio_empleado_id: "e1", personas_grupo: 6 }),
+      fila({ resultado: "subio", hora_negocio: "10:30:00", rangos_etarios: ["18_24"], atendio_empleado_id: "e1", personas_grupo: 6 }),
       fila({ resultado: "pregunto", hora_negocio: "12:00:00", motivo: "precio" }),
       fila({ resultado: "pregunto", hora_negocio: "22:10:00" }),
       fila({ resultado: "miro", fecha_negocio: "2026-10-07" }),
@@ -191,7 +195,7 @@ async function main() {
     assert.equal(aplicarFiltros(filas, { franja: "10-12" }).length, 1);
     assert.equal(aplicarFiltros(filas, { franja: "otros" }).length, 1);
     assert.equal(aplicarFiltros(filas, { motivo: "sin_motivo" }).length, 3);
-    assert.equal(aplicarFiltros(filas, { rango_etario: "sin_dato" }).length, 3);
+    assert.equal(aplicarFiltros(filas, { rango_etario: ["sin_dato"] }).length, 3);
     assert.equal(aplicarFiltros(filas, { atendio: "sin_asignar" }).length, 3);
     assert.equal(aplicarFiltros(filas, { tamano: "5+" }).length, 1);
     assert.equal(aplicarFiltros(filas, { resultado: "pregunto", franja: "12-14" }).length, 1);
@@ -204,14 +208,75 @@ async function main() {
   // ── 11. Parámetros de la API de métricas ─────────────────────────────────
   {
     const ok = validarParamsMetricas(new URLSearchParams("desde=2026-11-01&hasta=2026-11-18&comp_desde=2026-10-14&comp_hasta=2026-10-31&rango_etario=sin_dato&franja=otros"));
-    assert.ok(ok.ok && ok.valor.comparar?.desde === "2026-10-14" && ok.valor.filtros.rango_etario === "sin_dato" && ok.valor.filtros.franja === "otros");
+    assert.ok(ok.ok && ok.valor.comparar?.desde === "2026-10-14" && ok.valor.filtros.rango_etario?.join() === "sin_dato" && ok.valor.filtros.franja === "otros");
+    const varios = validarParamsMetricas(new URLSearchParams("desde=2026-11-01&hasta=2026-11-02&rango_etario=50_mas,menos_14&tipo_grupo=familia"));
+    assert.ok(varios.ok && varios.valor.filtros.rango_etario?.join() === "menos_14,50_mas" && varios.valor.filtros.tipo_grupo === "familia", "orden canónico");
+    const sinTipo = validarParamsMetricas(new URLSearchParams("desde=2026-11-01&hasta=2026-11-02&tipo_grupo=sin_dato"));
+    assert.ok(sinTipo.ok && sinTipo.valor.filtros.tipo_grupo === "sin_dato");
     for (const malo of ["desde=2026-11-18&hasta=2026-11-01", "desde=2025-01-01&hasta=2026-10-18", "desde=2026-11-01", "desde=2026-11-01&hasta=2026-11-02&rol=admin",
-      "desde=2026-11-01&hasta=2026-11-02&resultado=compro", "desde=2026-11-01&hasta=2026-11-02&comp_desde=2026-09-01", "desde=2026-11-01&hasta=2026-11-02&atendio=Juan"]) {
+      "desde=2026-11-01&hasta=2026-11-02&resultado=compro", "desde=2026-11-01&hasta=2026-11-02&comp_desde=2026-09-01", "desde=2026-11-01&hasta=2026-11-02&atendio=Juan",
+      "desde=2026-11-01&hasta=2026-11-02&rango_etario=mixto", "desde=2026-11-01&hasta=2026-11-02&rango_etario=18_24,18_24",
+      "desde=2026-11-01&hasta=2026-11-02&rango_etario=18_24&rango_etario=25_34", "desde=2026-11-01&hasta=2026-11-02&rango_etario=",
+      "desde=2026-11-01&hasta=2026-11-02&rango_etario=18_24,", "desde=2026-11-01&hasta=2026-11-02&tipo_grupo=grupo",
+      "desde=2026-11-01&hasta=2026-11-02&tipo_grupo=familia,amigos"]) {
       assert.equal(validarParamsMetricas(new URLSearchParams(malo)).ok, false, malo);
     }
   }
 
-  console.log("OK — Interacciones · métricas puras (Bloque 4): 10/5/3 → 18/8/3 con 8/18, 3/8, 3/18; denominador 0 = Sin datos; % y pp; participaciones ≠ personas; pago, gratis y contradicciones; pendientes y cierres; períodos anterior/parcial/posterior al inicio; franjas sin duplicar con \"otros\"; No sabe ≠ sin dato; perfiles parciales; atendió inactivo y Sin asignar; cobertura independiente de filtros; serie con días en cero; parámetros validados.");
+  // ── 12. Rangos múltiples: grupos que incluyen cada rango, sin duplicar el total ──
+  {
+    const filas = [
+      fila({ resultado: "subio", personas_grupo: 3, rangos_etarios: ["menos_14", "35_49"] }),
+      fila({ resultado: "pregunto", personas_grupo: 2, rangos_etarios: ["35_49"] }),
+      fila({ resultado: "miro", personas_grupo: 4, rangos_etarios: ["menos_14", "14_17", "35_49"] }),
+      fila({ resultado: "miro", personas_grupo: 1 }),
+    ];
+    const m = calcularMetricas(filas, null, new Map());
+    const r = m.perfil.rangos_etarios;
+    const n = Object.fromEntries(r.valores.map((x) => [x.valor, x.n]));
+    assert.deepEqual(n, { menos_14: 2, "14_17": 1, "18_24": 0, "25_34": 0, "35_49": 3, "50_mas": 0 }, "cada interacción cuenta una vez por rango");
+    assert.deepEqual([r.total, r.con_dato, r.sin_dato, r.con_varios], [4, 3, 1, 2], "pero UNA vez en el total");
+    assert.deepEqual(r.valores.find((x) => x.valor === "35_49")!.pct, { num: 3, den: 3, valor: 1 }, "base = interacciones con al menos un rango");
+    assert.ok(r.valores.reduce((a, x) => a + (x.pct.valor ?? 0), 0) > 1, "los % pueden sumar más de 100 % (se superponen)");
+    assert.deepEqual(r.cobertura, { num: 3, den: 4, valor: 0.75 });
+    assert.deepEqual(r.valores.find((x) => x.valor === "menos_14")!.miro_subio, { num: 1, den: 2, valor: 0.5 });
+    assert.equal(m.embudo.interacciones, 4, "el embudo no se infla por los rangos");
+    // Filtro "incluye al menos uno": cada interacción una sola vez aunque coincidan varios.
+    assert.equal(aplicarFiltros(filas, { rango_etario: ["menos_14", "35_49"] }).length, 3, "sin duplicar");
+    assert.equal(aplicarFiltros(filas, { rango_etario: ["14_17"] }).length, 1);
+    assert.equal(aplicarFiltros(filas, { rango_etario: ["50_mas"] }).length, 0);
+    assert.equal(aplicarFiltros(filas, { rango_etario: ["50_mas", "sin_dato"] }).length, 1, "sin dato combinable con rangos");
+    assert.equal(aplicarFiltros(filas, { rango_etario: [] }).length, 4, "lista vacía = sin filtro");
+    const cmp = calcularMetricas(aplicarFiltros(filas, { rango_etario: ["35_49"] }), null, new Map());
+    assert.equal(cmp.embudo.interacciones, 3);
+  }
+
+  // ── 13. Tipo de grupo: base = preguntaron o se subieron; Preguntó → Se subió por tipo ──
+  {
+    const filas = [
+      ...varias(2, { resultado: "subio", tipo_grupo: "familia" }),
+      fila({ resultado: "pregunto", tipo_grupo: "familia" }),
+      fila({ resultado: "pregunto", tipo_grupo: "amigos" }),
+      fila({ resultado: "subio" }),
+      fila({ resultado: "pregunto" }),
+      ...varias(3, { resultado: "miro" }),
+      fila({ resultado: "miro", tipo_grupo: "pareja" }),
+    ];
+    const t = calcularMetricas(filas, null, new Map()).perfil.tipo_grupo;
+    assert.deepEqual([t.base, t.con_dato, t.sin_dato, t.solo_miro_con_dato], [6, 4, 2, 1], "Solo miró queda fuera de la base");
+    assert.deepEqual(t.cobertura, { num: 4, den: 6, valor: 4 / 6 });
+    const fam = t.valores.find((x) => x.valor === "familia")!;
+    assert.deepEqual([fam.n, fam.pct, fam.pregunto_subio], [3, { num: 3, den: 4, valor: 0.75 }, { num: 2, den: 3, valor: 2 / 3 }], "con numerador y denominador");
+    assert.deepEqual(t.valores.find((x) => x.valor === "amigos")!.pregunto_subio, { num: 0, den: 1, valor: 0 });
+    assert.deepEqual(t.valores.find((x) => x.valor === "otro")!.pregunto_subio, { num: 0, den: 0, valor: null }, "sin casos = Sin datos, no 0 %");
+    assert.deepEqual(t.sin_dato_pregunto_subio, { num: 1, den: 2, valor: 0.5 }, "Sin dato aparte (no es Otro)");
+    // Filtro por tipo: solo deja consultas/subidas → Miró→Preguntó sería 100 % por construcción.
+    const fam2 = aplicarFiltros(filas, { tipo_grupo: "familia" });
+    assert.ok(fam2.every((x) => x.resultado !== "miro") && fam2.length === 3);
+    assert.equal(aplicarFiltros(filas, { tipo_grupo: "sin_dato" }).length, 5, "sin dato incluye los Solo miró");
+  }
+
+  console.log("OK — Interacciones · métricas puras (Bloque 4): 10/5/3 → 18/8/3 con 8/18, 3/8, 3/18; denominador 0 = Sin datos; % y pp; participaciones ≠ personas; pago, gratis y contradicciones; pendientes y cierres; períodos anterior/parcial/posterior al inicio; franjas sin duplicar con \"otros\"; No sabe ≠ sin dato; perfiles parciales; atendió inactivo y Sin asignar; cobertura independiente de filtros; serie con días en cero; parámetros validados; rangos múltiples (una vez por rango, una vez en el total, % > 100 % explicado, filtro incluye-alguno sin duplicar); tipo de grupo con base preguntaron/subieron y Sin dato aparte; Paseando en ambos grupos de motivos.");
 }
 
 main().catch((e) => {

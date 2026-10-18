@@ -11,11 +11,17 @@
 // Embudo acumulativo por interacción: Miraron = miro + pregunto + subio;
 // Preguntaron = pregunto + subio; Se subieron = subio. 10/5/3 → 18/8/3.
 // Toda tasa lleva numerador y denominador; denominador 0 → valor null ("Sin datos").
+// Rangos etarios: selección MÚLTIPLE por interacción. Se cuentan "grupos que
+// incluyen cada rango": una interacción con 18–24 y 50+ suma uno en cada barra
+// pero sigue siendo UNA interacción en el total y en el embudo; los % pueden
+// sumar más de 100 % y no son personas por edad.
+// Tipo de grupo: no se releva en "Solo miró". Su base son las interacciones que
+// preguntaron o se subieron, y se compara con Preguntó → Se subió.
 
 import { diasEntre, fechaValida, sumarDias } from "@/lib/agenda";
 import {
-  INICIADORES, MOTIVOS, RANGOS_ETARIOS, RESPUESTAS, RESULTADOS, fechaSim,
-  type EstadoVinculo, type Iniciador, type Motivo, type RangoEtario, type Respuesta, type Resultado,
+  INICIADORES, MOTIVOS, RANGOS_ETARIOS, RESPUESTAS, RESULTADOS, TIPOS_GRUPO, fechaSim,
+  type EstadoVinculo, type Iniciador, type Motivo, type RangoEtario, type Respuesta, type Resultado, type TipoGrupo,
 } from "@/lib/interacciones";
 
 // ── Tipos de entrada (columnas de las vistas, IDs bigint como texto) ──────
@@ -27,7 +33,9 @@ export type FilaAnalisis = {
   personas_grupo: number;
   hombres: number | null;
   mujeres: number | null;
-  rango_etario: RangoEtario | null;
+  /** Rangos presentes (orden canónico); [] = sin dato. */
+  rangos_etarios: RangoEtario[];
+  tipo_grupo: TipoGrupo | null;
   conocia_sim: Respuesta | null;
   se_subio_antes: Respuesta | null;
   iniciador: Iniciador | null;
@@ -139,7 +147,9 @@ export function rangoAnterior(desde: string, hasta: string): { desde: string; ha
 export type Filtros = {
   resultado?: Resultado;
   franja?: ClaveFranja;
-  rango_etario?: RangoEtario | "sin_dato";
+  /** Varios valores = "incluye AL MENOS UNO" (y "sin_dato" = ningún rango cargado). */
+  rango_etario?: Array<RangoEtario | "sin_dato">;
+  tipo_grupo?: TipoGrupo | "sin_dato";
   conocia_sim?: Respuesta | "sin_dato";
   se_subio_antes?: Respuesta | "sin_dato";
   iniciador?: Iniciador | "sin_dato";
@@ -147,7 +157,13 @@ export type Filtros = {
   atendio?: string | "sin_asignar";
   tamano?: Tamano;
 };
-export const CLAVES_FILTRO = ["resultado", "franja", "rango_etario", "conocia_sim", "se_subio_antes", "iniciador", "motivo", "atendio", "tamano"] as const;
+export const CLAVES_FILTRO = ["resultado", "franja", "rango_etario", "tipo_grupo", "conocia_sim", "se_subio_antes", "iniciador", "motivo", "atendio", "tamano"] as const;
+
+/** ¿Incluye al menos uno de los rangos del filtro? Una fila coincide una sola vez, por más rangos que coincidan. */
+export function coincideRango(x: Pick<FilaAnalisis, "rangos_etarios">, filtro: Filtros["rango_etario"]): boolean {
+  if (!filtro || filtro.length === 0) return true;
+  return filtro.some((r) => (r === "sin_dato" ? x.rangos_etarios.length === 0 : x.rangos_etarios.includes(r)));
+}
 
 export function aplicarFiltros(filas: FilaAnalisis[], f: Filtros): FilaAnalisis[] {
   const igual = <T>(valor: T | null, filtro: T | "sin_dato" | "sin_motivo" | "sin_asignar" | undefined) =>
@@ -155,7 +171,8 @@ export function aplicarFiltros(filas: FilaAnalisis[], f: Filtros): FilaAnalisis[
   return filas.filter((x) =>
     (f.resultado === undefined || x.resultado === f.resultado)
     && (f.franja === undefined || franjaDe(x.hora_negocio) === f.franja)
-    && igual(x.rango_etario, f.rango_etario)
+    && coincideRango(x, f.rango_etario)
+    && igual(x.tipo_grupo, f.tipo_grupo)
     && igual(x.conocia_sim, f.conocia_sim)
     && igual(x.se_subio_antes, f.se_subio_antes)
     && igual(x.iniciador, f.iniciador)
@@ -225,6 +242,62 @@ function distribucion<T extends string>(filas: FilaAnalisis[], lista: readonly T
   };
 }
 
+/**
+ * Valores de selección MÚLTIPLE: n = interacciones que incluyen cada valor. La
+ * base de los % son las interacciones con al menos un valor (pueden sumar más de
+ * 100 %, porque se superponen); el total de interacciones no cambia.
+ */
+export type DistribucionMultiple<T extends string> = Distribucion<T> & { con_varios: number };
+
+function distribucionMultiple<T extends string>(filas: FilaAnalisis[], lista: readonly T[], de: (x: FilaAnalisis) => readonly T[]): DistribucionMultiple<T> {
+  const conDato = filas.filter((x) => de(x).length > 0);
+  const sinDato = filas.filter((x) => de(x).length === 0);
+  return {
+    total: filas.length,
+    con_dato: conDato.length,
+    sin_dato: sinDato.length,
+    cobertura: tasa(conDato.length, filas.length),
+    valores: lista.map((valor) => {
+      const grupo = conDato.filter((x) => de(x).includes(valor));
+      return { valor, n: grupo.length, pct: tasa(grupo.length, conDato.length), miro_subio: tasa(grupo.filter((x) => x.resultado === "subio").length, grupo.length) };
+    }),
+    sin_dato_miro_subio: tasa(sinDato.filter((x) => x.resultado === "subio").length, sinDato.length),
+    con_varios: conDato.filter((x) => de(x).length > 1).length,
+  };
+}
+
+/** Tipo de grupo: base = las que preguntaron o se subieron (no se releva en "Solo miró"). */
+export type DistribucionTipoGrupo = {
+  base: number;
+  con_dato: number;
+  sin_dato: number;
+  cobertura: Tasa;
+  /** pregunto_subio = Preguntó → Se subió dentro de ese tipo (Se subieron / Preguntaron). */
+  valores: Array<{ valor: TipoGrupo; n: number; pct: Tasa; pregunto_subio: Tasa }>;
+  sin_dato_pregunto_subio: Tasa;
+  /** "Solo miró" con un tipo cargado antes de un cambio de resultado: quedan fuera de la base. */
+  solo_miro_con_dato: number;
+};
+
+function distribucionTipoGrupo(filas: FilaAnalisis[]): DistribucionTipoGrupo {
+  const base = filas.filter((x) => x.resultado !== "miro");
+  const conDato = base.filter((x) => x.tipo_grupo !== null);
+  const sinDato = base.filter((x) => x.tipo_grupo === null);
+  const subio = (g: FilaAnalisis[]) => g.filter((x) => x.resultado === "subio").length;
+  return {
+    base: base.length,
+    con_dato: conDato.length,
+    sin_dato: sinDato.length,
+    cobertura: tasa(conDato.length, base.length),
+    valores: TIPOS_GRUPO.map((valor) => {
+      const grupo = conDato.filter((x) => x.tipo_grupo === valor);
+      return { valor, n: grupo.length, pct: tasa(grupo.length, conDato.length), pregunto_subio: tasa(subio(grupo), grupo.length) };
+    }),
+    sin_dato_pregunto_subio: tasa(subio(sinDato), sinDato.length),
+    solo_miro_con_dato: filas.filter((x) => x.resultado === "miro" && x.tipo_grupo !== null).length,
+  };
+}
+
 // ── Resultado completo ─────────────────────────────────────────────────────
 export type ResultadoMetricas = {
   embudo: Embudo;
@@ -253,7 +326,8 @@ export type ResultadoMetricas = {
   perfil: {
     tamano: Array<{ valor: Tamano; n: number; pct: Tasa; miro_subio: Tasa }>;
     genero: { registros_con_desglose: number; personas_con_desglose: number; hombres: number; mujeres: number; cobertura: Tasa; hombres_pct: Tasa; mujeres_pct: Tasa };
-    rango_etario: Distribucion<RangoEtario>;
+    rangos_etarios: DistribucionMultiple<RangoEtario>;
+    tipo_grupo: DistribucionTipoGrupo;
     conocia_sim: Distribucion<Respuesta>;
     se_subio_antes: Distribucion<Respuesta>;
     iniciador: Distribucion<Iniciador>;
@@ -333,7 +407,8 @@ export function calcularMetricas(filas: FilaAnalisis[], fechas: { desde: string;
         hombres_pct: tasa(hombres, hombres + mujeres),
         mujeres_pct: tasa(mujeres, hombres + mujeres),
       },
-      rango_etario: distribucion(filas, RANGOS_ETARIOS, (x) => x.rango_etario),
+      rangos_etarios: distribucionMultiple(filas, RANGOS_ETARIOS, (x) => x.rangos_etarios),
+      tipo_grupo: distribucionTipoGrupo(filas),
       conocia_sim: distribucion(filas, RESPUESTAS, (x) => x.conocia_sim),
       se_subio_antes: distribucion(filas, RESPUESTAS, (x) => x.se_subio_antes),
       iniciador: distribucion(filas, INICIADORES, (x) => x.iniciador),
@@ -426,8 +501,17 @@ export function validarParamsMetricas(p: URLSearchParams): { ok: true; valor: Pa
     (filtros as Record<string, string>)[k] = v;
     return true;
   };
+  // rango_etario: uno o varios separados por coma ("incluye al menos uno"); sin repetidos.
+  const rangoCrudo = p.getAll("rango_etario");
+  let okRango = rangoCrudo.length <= 1;
+  if (okRango && rangoCrudo.length === 1) {
+    const validos = [...RANGOS_ETARIOS, "sin_dato"] as const;
+    const lista = rangoCrudo[0].split(",");
+    okRango = lista.length > 0 && lista.every((r) => (validos as readonly string[]).includes(r)) && new Set(lista).size === lista.length;
+    if (okRango) filtros.rango_etario = validos.filter((v) => lista.includes(v));
+  }
   const okFiltros =
-    en("resultado", RESULTADOS) && en("franja", CLAVES_FRANJA) && en("rango_etario", RANGOS_ETARIOS, ["sin_dato"])
+    okRango && en("resultado", RESULTADOS) && en("franja", CLAVES_FRANJA) && en("tipo_grupo", TIPOS_GRUPO, ["sin_dato"])
     && en("conocia_sim", RESPUESTAS, ["sin_dato"]) && en("se_subio_antes", RESPUESTAS, ["sin_dato"])
     && en("iniciador", INICIADORES, ["sin_dato"]) && en("motivo", MOTIVOS, ["sin_motivo"]) && en("tamano", TAMANOS);
   if (!okFiltros) return { ok: false, campo: "filtros" };

@@ -782,6 +782,85 @@ begin
                          then '' else 'n' end;
     v_log := v_log || case when v_e = '' then 'T37 ' else 'FALLA:T37(' || v_e || '|' || coalesce(v_e2, '') || ') ' end;
 
+    -- T38 · edades MÚLTIPLES, tipo de grupo y "Paseando". Conjunto canónico sin
+    -- repetidos ni más rangos que personas; la columna anterior (un rango) queda
+    -- sincronizada: valor con 1 rango, NULL con 0 o varios. La pantalla anterior
+    -- sigue registrando un rango (= conjunto de uno, MISMA huella que antes) y no
+    -- puede truncar varios rangos al editar (cliente_desactualizado). Reducir
+    -- personas por debajo de los rangos se rechaza sin borrar nada. El trigger
+    -- solo deja pasar el backfill exacto (rango anterior → conjunto de uno, nada
+    -- más), sin deshabilitarse.
+    v_e := '';
+    v_j := public.interaccion_registrar(gen_random_uuid(),
+             '{"resultado":"pregunto","personas_grupo":3,"rangos_etarios":["50_mas","menos_14"],"tipo_grupo":"familia","motivo":"paseando"}', null, 'staff');
+    v_k := (v_j -> 'interaccion' ->> 'id')::uuid;
+    v_e := v_e || case when (select rangos_etarios = array['menos_14', '50_mas'] and rango_etario is null and tipo_grupo = 'familia' and motivo = 'paseando'
+                               from public.interacciones_stand where id = v_k)
+                        and (select datos -> 'datos' -> 'rangos_etarios' = '["menos_14","50_mas"]'::jsonb
+                               from public.interacciones_stand_eventos where interaccion_id = v_k and tipo = 'alta')
+                       then '' else 'a' end;
+    select count(*) into v_antes from public.interacciones_stand;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":3,"rangos_etarios":["18_24","18_24"]}', null, 'staff') = '22023:rangos_repetidos' then '' else 'b1' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":1,"rangos_etarios":["18_24","50_mas"]}', null, 'staff') = '22023:rangos_superan_personas' then '' else 'b2' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":2,"rangos_etarios":["mixto"]}', null, 'staff') = '22023:campo_invalido:rangos_etarios' then '' else 'b3' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":2,"rangos_etarios":[null]}', null, 'staff') = '22023:campo_invalido:rangos_etarios' then '' else 'b4' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":2,"rangos_etarios":"18_24"}', null, 'staff') = '22023:campo_invalido:rangos_etarios' then '' else 'b5' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":2,"rangos_etarios":["18_24"],"rango_etario":"18_24"}', null, 'staff') = '22023:campo_invalido:rangos_etarios' then '' else 'b6' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"miro","personas_grupo":2,"tipo_grupo":"grupo"}', null, 'staff') = '22023:campo_invalido:tipo_grupo' then '' else 'b7' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"subio","personas_grupo":2,"motivo":"paseando"}', null, 'staff') = '22023:motivo_no_aplica' then '' else 'b8' end;
+    v_e := v_e || case when (select count(*) from public.interacciones_stand) = v_antes then '' else 'b9' end;
+    -- Huella compatible: un rango con la forma anterior y con la nueva = el mismo envío.
+    v_key := gen_random_uuid();
+    v_j := public.interaccion_registrar(v_key, '{"resultado":"pregunto","personas_grupo":2,"rango_etario":"25_34"}', null, 'staff');
+    v_y := (v_j -> 'interaccion' ->> 'id')::uuid;
+    v_j := public.interaccion_registrar(v_key, '{"resultado":"pregunto","personas_grupo":2,"rangos_etarios":["25_34"],"tipo_grupo":null}', null, 'staff');
+    v_e := v_e || case when (v_j ->> 'repetida')::boolean and (v_j -> 'interaccion' ->> 'id')::uuid = v_y
+                        and (select rangos_etarios = array['25_34'] and rango_etario = '25_34' from public.interacciones_stand where id = v_y)
+                       then '' else 'c' end;
+    v_e := v_e || case when pg_temp.t_alta('{"resultado":"pregunto","personas_grupo":2,"rangos_etarios":["25_34","50_mas"]}', null, 'staff', v_key)
+                            = '23505:idempotency_key_con_otro_payload' then '' else 'c2' end;
+    -- Edición: la forma anterior sobre UN rango funciona; sobre varios, 409 sin tocar.
+    -- (Cada edición en su propia sentencia: una subconsulta de la misma no vería lo escrito.)
+    v_e2 := pg_temp.t_editar(v_y, 1, '{"rango_etario":"35_49"}', 'staff');
+    v_e := v_e || case when v_e2 = 'ok'
+                        and (select rangos_etarios = array['35_49'] and rango_etario = '35_49' from public.interacciones_stand where id = v_y)
+                       then '' else 'd1(' || v_e2 || ')' end;
+    v_e := v_e || case when pg_temp.t_editar(v_k, 1, '{"rango_etario":"18_24"}', 'staff') = '55000:cliente_desactualizado'
+                        and pg_temp.t_editar(v_k, 1, '{"rango_etario":null}', 'staff') = '55000:cliente_desactualizado'
+                        and pg_temp.ver(v_k) = 1
+                       then '' else 'd2' end;
+    v_e := v_e || case when pg_temp.t_editar(v_k, 1, '{"personas_grupo":1}', 'staff') = '22023:rangos_superan_personas'
+                        and (select rangos_etarios = array['menos_14', '50_mas'] and personas_grupo = 3 from public.interacciones_stand where id = v_k)
+                       then '' else 'd3' end;
+    v_e2 := pg_temp.t_editar(v_k, 1, '{"observaciones":"sin tocar edades"}', 'staff');
+    v_e := v_e || case when v_e2 = 'ok' and pg_temp.ver(v_k) = 2
+                        and (select rangos_etarios = array['menos_14', '50_mas'] and tipo_grupo = 'familia' from public.interacciones_stand where id = v_k)
+                       then '' else 'd4(' || v_e2 || ')' end;
+    v_e2 := pg_temp.t_editar(v_k, 2, '{"rangos_etarios":[],"tipo_grupo":null}', 'staff');
+    v_e := v_e || case when v_e2 = 'ok'
+                        and (select rangos_etarios = '{}' and rango_etario is null and tipo_grupo is null from public.interacciones_stand where id = v_k)
+                        and (select datos -> 'antes' -> 'rangos_etarios' = '["menos_14","50_mas"]'::jsonb and datos -> 'despues' -> 'rangos_etarios' = '[]'::jsonb
+                               from public.interacciones_stand_eventos where interaccion_id = v_k and tipo = 'edicion' order by en desc limit 1)
+                       then '' else 'd5(' || v_e2 || ')' end;
+    -- La tabla no acepta rangos fuera de orden, repetidos ni desincronizados, ni por update directo.
+    v_e := v_e || case when pg_temp.intentar(format('update public.interacciones_stand set rangos_etarios = array[''50_mas'', ''18_24''], version = version + 1 where id = %L', v_y)) like '23514:%'
+                        and pg_temp.intentar(format('update public.interacciones_stand set rango_etario = ''18_24'', version = version + 1 where id = %L', v_y)) like '23514:%'
+                       then '' else 'e' end;
+    -- Backfill: solo pasa la copia exacta del rango anterior; otro cambio en la misma fila, no.
+    -- (Se simula una fila previa a la migración: columna nueva vacía y la anterior con valor;
+    -- todo dentro de este bloque que se revierte. El trigger sigue activo.)
+    alter table public.interacciones_stand drop constraint interacciones_stand_rango_sincronizado_chk;
+    update public.interacciones_stand set rangos_etarios = '{}', version = version + 1 where id = v_y;
+    v_v := pg_temp.ver(v_y);
+    v_e2 := pg_temp.intentar(format('update public.interacciones_stand set rangos_etarios = array[rango_etario], observaciones = ''x'' where id = %L', v_y));
+    update public.interacciones_stand set rangos_etarios = array[rango_etario] where id = v_y and rango_etario is not null and rangos_etarios = '{}';
+    v_e := v_e || case when v_e2 like '55000:%'
+                        and (select rangos_etarios = array['35_49'] and version = v_v from public.interacciones_stand where id = v_y)
+                       then '' else 'f(' || v_e2 || ')' end;
+    alter table public.interacciones_stand add constraint interacciones_stand_rango_sincronizado_chk check (
+      rango_etario is not distinct from (case when cardinality(rangos_etarios) = 1 then rangos_etarios[1] end));
+    v_log := v_log || case when v_e = '' then 'T38 ' else 'FALLA:T38(' || v_e || ') ' end;
+
     -- T26 · las RPCs de Interacciones no modificaron turnos, reservas, Finanzas,
     -- Mensualidades, Gift Cards, Colectivo ni empleados (huella idéntica), y su
     -- código no tiene ninguna escritura sobre esas tablas.

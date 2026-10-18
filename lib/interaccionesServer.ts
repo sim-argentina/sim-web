@@ -32,7 +32,7 @@ function fallo<T>(error: ErrorPg): R<T> {
 
 const COLS_INTERACCION =
   "id, version, ocurrida_en, fecha_negocio, hora_negocio, registrada_en, registrada_por_rol, actualizada_en, " +
-  "actualizada_por_rol, resultado, personas_grupo, hombres, mujeres, rango_etario, conocia_sim, se_subio_antes, " +
+  "actualizada_por_rol, resultado, personas_grupo, hombres, mujeres, rango_etario, rangos_etarios, tipo_grupo, conocia_sim, se_subio_antes, " +
   "iniciador, atendio_empleado_id, motivo, observaciones, cierre_motivo, cierre_nota, cerrada_en, cerrada_por_rol, " +
   "anulada_en, anulada_por_rol, anulada_motivo";
 const COLS_ESTADO =

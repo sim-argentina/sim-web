@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  LIMITES, MOTIVOS, MOTIVOS_CIERRE, RANGOS_ETARIOS, RESPUESTAS, RESULTADOS, INICIADORES, fechaSim, horaSim,
+  LIMITES, MOTIVOS, MOTIVOS_CIERRE, RANGOS_ETARIOS, TIPOS_GRUPO, RESPUESTAS, RESULTADOS, INICIADORES, fechaSim, horaSim,
   minutoLocal, ventanaVinculables,
 } from "@/lib/interacciones";
 import { sumarDias } from "@/lib/agenda";
@@ -189,6 +189,15 @@ async function main() {
       assert.deepEqual(valores(con, columna), [...esperado].sort(), `2 · ${con}`);
     igual("interacciones_stand_resultado_chk", "resultado", RESULTADOS);
     igual("interacciones_stand_rango_chk", "rango_etario", RANGOS_ETARIOS);
+    igual("interacciones_stand_tipo_grupo_chk", "tipo_grupo", TIPOS_GRUPO);
+    {
+      const def = sql("select pg_get_constraintdef(oid) from pg_constraint where conname = 'interacciones_stand_rangos_chk';");
+      const m = /rangos_etarios <@ ARRAY\[([^\]]+)\]/.exec(def);
+      assert.ok(m, "2 · interacciones_stand_rangos_chk enumera rangos_etarios");
+      assert.deepEqual([...m[1].matchAll(/'([^']+)'::text/g)].map((x) => x[1]), [...RANGOS_ETARIOS], "2 · mismos rangos y mismo orden canónico");
+      assert.ok(def.includes("cardinality(rangos_etarios) <= personas_grupo"), "2 · no más rangos que personas");
+      assert.ok(sql("select count(*) from pg_constraint where conname = 'interacciones_stand_rango_sincronizado_chk';") === "1", "2 · columna anterior sincronizada");
+    }
     igual("interacciones_stand_conocia_chk", "conocia_sim", RESPUESTAS);
     igual("interacciones_stand_subio_antes_chk", "se_subio_antes", RESPUESTAS);
     igual("interacciones_stand_iniciador_chk", "iniciador", INICIADORES);
@@ -258,12 +267,16 @@ async function main() {
   // ── 5. Alta idempotente ──────────────────────────────────────────────────
   {
     const k = randomUUID();
-    const d = { resultado: "pregunto", personas_grupo: 3, hombres: 2, mujeres: 1, rango_etario: "18_24", conocia_sim: "no", motivo: "precio" };
+    const d = { resultado: "pregunto", personas_grupo: 3, hombres: 2, mujeres: 1, rangos_etarios: ["50_mas", "18_24"], tipo_grupo: "familia", conocia_sim: "no", motivo: "precio" };
     const r1 = await alta(staff, d, undefined, k);
     assert.equal(r1.status, 201);
     assert.equal(r1.json.repetida, false);
     const r2 = await alta(staff, d, undefined, k);
     assert.deepEqual([r2.status, r2.json.repetida, inter(r2).id, inter(r2).version], [200, true, inter(r1).id, 1], "5 · reintento = la original");
+    const r2b = await alta(staff, { ...d, rangos_etarios: ["18_24", "50_mas"] }, undefined, k);
+    assert.deepEqual([r2b.status, r2b.json.repetida, inter(r2b).id], [200, true, inter(r1).id], "5 · el mismo conjunto en otro orden es el mismo envío");
+    const r2c = await alta(staff, { ...d, rangos_etarios: ["18_24"] }, undefined, k);
+    assert.deepEqual([r2c.status, r2c.json.codigo], [409, "idempotency_key_con_otro_payload"], "5 · un rango menos es otro contenido: nunca se trunca en silencio");
     const r3 = await alta(staff, { ...d, personas_grupo: 4, hombres: 3 }, undefined, k);
     assert.deepEqual([r3.status, r3.json.codigo], [409, "idempotency_key_con_otro_payload"]);
     assert.equal(sql(`select count(*) || '|' || max(personas_grupo) from public.interacciones_stand where idempotency_key = '${k}';`), "1|3");
@@ -289,17 +302,17 @@ async function main() {
 
   // ── 7. Edición parcial, versión y liberación explícita ───────────────────
   {
-    const r = await alta(staff, { resultado: "pregunto", personas_grupo: 2, rango_etario: "18_24", conocia_sim: "no", motivo: "precio" });
+    const r = await alta(staff, { resultado: "pregunto", personas_grupo: 2, rangos_etarios: ["18_24"], conocia_sim: "no", motivo: "precio" });
     const id = inter(r).id;
     const p = (body: unknown, token = staff) => http(UNA.PATCH, "PATCH", `/api/admin/interacciones/${id}`, { token, id, body });
-    const p1 = await p({ version: 1, cambios: { rango_etario: "25_34" } });
+    const p1 = await p({ version: 1, cambios: { rangos_etarios: ["50_mas", "25_34"] } });
     assert.equal(p1.status, 200);
-    assert.deepEqual([inter(p1).rango_etario, inter(p1).conocia_sim, inter(p1).motivo, inter(p1).observaciones, inter(p1).version],
-      ["25_34", "no", "precio", MARCA, 2], "7 · lo omitido no cambia");
-    const p2 = await p({ version: 1, cambios: { rango_etario: "50_mas" } }, admin);
+    assert.deepEqual([inter(p1).rangos_etarios, inter(p1).conocia_sim, inter(p1).motivo, inter(p1).observaciones, inter(p1).version],
+      [["25_34", "50_mas"], "no", "precio", MARCA, 2], "7 · lo omitido no cambia");
+    const p2 = await p({ version: 1, cambios: { rangos_etarios: ["50_mas"] } }, admin);
     assert.deepEqual([p2.status, p2.json.codigo], [409, "version_desactualizada"], "7 · versión vieja → 409");
     const p3 = await p({ version: 2, cambios: { conocia_sim: null } });
-    assert.deepEqual([inter(p3).conocia_sim, inter(p3).rango_etario], [null, "25_34"], "7 · null vacía solo esa clave");
+    assert.deepEqual([inter(p3).conocia_sim, inter(p3).rangos_etarios], [null, ["25_34", "50_mas"]], "7 · null vacía solo esa clave");
     const p4 = await p({ version: 3, cambios: { resultado: "subio" } });
     assert.deepEqual([p4.status, p4.json.codigo], [400, "motivo_no_aplica"], "7 · el motivo no se borra solo");
     const p5 = await p({ version: 3, cambios: { resultado: "subio", motivo: null } });
@@ -333,7 +346,7 @@ async function main() {
     assert.deepEqual(inter(r).atendio, { empleado_id: empleadoId, nombre: `__TEST_EMP_${MARCA}`, activo: true, declarado: true });
     await supabaseAdmin.from("empleados").update({ activo: false }).eq("id", empleadoId);
     const id = inter(r).id;
-    const p = await http(UNA.PATCH, "PATCH", `/api/admin/interacciones/${id}`, { token: staff, id, body: { version: 1, cambios: { rango_etario: "35_49" } } });
+    const p = await http(UNA.PATCH, "PATCH", `/api/admin/interacciones/${id}`, { token: staff, id, body: { version: 1, cambios: { rangos_etarios: ["35_49"] } } });
     assert.deepEqual([p.status, (inter(p).atendio as Record<string, unknown>).activo], [200, false], "8 · conservar un archivado no falla");
     const n = await alta(staff, { resultado: "miro", personas_grupo: 1, atendio_empleado_id: empleadoId });
     assert.deepEqual([n.status, n.json.codigo], [400, "empleado_no_disponible"], "8 · asignarlo de nuevo, sí");
@@ -676,10 +689,125 @@ async function main() {
     }
   }
 
+  // ── 18. Rangos múltiples, tipo de grupo, Paseando y pantallas anteriores ──
+  {
+    const fila = (id: string) => sql(`select rangos_etarios::text || '|' || coalesce(rango_etario, '-') || '|' || coalesce(tipo_grupo, '-') || '|' || version
+      from public.interacciones_stand where id = '${id}';`);
+    const patch = (id: string, body: unknown, token = staff) => http(UNA.PATCH, "PATCH", `/api/admin/interacciones/${id}`, { token, id, body });
+
+    // Alta nueva: varios rangos, tipo y Paseando.
+    const a = await alta(staff, { resultado: "pregunto", personas_grupo: 3, rangos_etarios: ["50_mas", "menos_14"], tipo_grupo: "familia", motivo: "paseando" });
+    assert.equal(a.status, 201);
+    const id = inter(a).id;
+    assert.deepEqual([inter(a).rangos_etarios, inter(a).tipo_grupo, inter(a).motivo], [["menos_14", "50_mas"], "familia", "paseando"]);
+    assert.equal(fila(id), "{menos_14,50_mas}|-|familia|1", "18 · la columna anterior queda vacía con más de un rango");
+    const evAlta = sql(`select datos->'datos'->>'rangos_etarios' || '|' || (datos->'datos'->>'tipo_grupo') from public.interacciones_stand_eventos where interaccion_id = '${id}' and tipo = 'alta';`);
+    assert.equal(evAlta, '["menos_14", "50_mas"]|familia', "18 · auditoría del alta con todos los rangos");
+
+    // Validaciones (cliente y base): nada se guarda.
+    const antes = sql(`select count(*) from public.interacciones_stand where observaciones = ${lit(MARCA)};`);
+    for (const [datos, esperado] of [
+      [{ resultado: "pregunto", personas_grupo: 3, rangos_etarios: ["18_24", "18_24"] }, "rangos_repetidos"],
+      [{ resultado: "pregunto", personas_grupo: 3, rangos_etarios: ["mixto"] }, "campo_invalido"],
+      [{ resultado: "pregunto", personas_grupo: 1, rangos_etarios: ["18_24", "50_mas"] }, "rangos_superan_personas"],
+      [{ resultado: "pregunto", personas_grupo: 1, tipo_grupo: "sin_dato" }, "campo_invalido"],
+      [{ resultado: "subio", personas_grupo: 1, motivo: "paseando" }, "motivo_no_aplica"],
+      [{ resultado: "pregunto", personas_grupo: 2, rango_etario: "18_24", rangos_etarios: ["18_24"] }, "campo_invalido"],
+    ] as const) {
+      const r = await alta(staff, datos);
+      assert.deepEqual([r.status, r.json.codigo], [400, esperado], `18 · ${JSON.stringify(datos)}`);
+    }
+    // La base también lo rechaza (si alguien saltea la API); cada intento se revierte solo.
+    const errorBase = (datos: string) => sql(`do $$ begin
+        perform public.interaccion_registrar(gen_random_uuid(), ${lit(datos)}::jsonb, null, 'staff');
+        raise exception 'NO_FALLO';
+      exception when others then perform set_config('zz.err', sqlerrm, false); end $$;
+      select current_setting('zz.err');`);
+    for (const [datos, error] of [
+      ['{"resultado":"pregunto","personas_grupo":2,"rangos_etarios":["18_24","18_24"]}', "rangos_repetidos"],
+      ['{"resultado":"pregunto","personas_grupo":1,"rangos_etarios":["18_24","50_mas"]}', "rangos_superan_personas"],
+      ['{"resultado":"pregunto","personas_grupo":2,"rangos_etarios":["mixto"]}', "campo_invalido:rangos_etarios"],
+      ['{"resultado":"pregunto","personas_grupo":2,"rangos_etarios":"18_24"}', "campo_invalido:rangos_etarios"],
+      ['{"resultado":"pregunto","personas_grupo":2,"rangos_etarios":[null]}', "campo_invalido:rangos_etarios"],
+      ['{"resultado":"pregunto","personas_grupo":2,"tipo_grupo":"grupo"}', "campo_invalido:tipo_grupo"],
+      ['{"resultado":"subio","personas_grupo":2,"motivo":"paseando"}', "motivo_no_aplica"],
+    ]) {
+      assert.equal(errorBase(datos), error, `18 · la base rechaza ${datos}`);
+    }
+    assert.equal(sql(`select count(*) from public.interacciones_stand where observaciones = ${lit(MARCA)};`), antes, "18 · ningún rechazo escribió");
+
+    // Edición: omitido conserva; reducir personas por debajo de los rangos se rechaza sin borrar nada.
+    const e1 = await patch(id, { version: 1, cambios: { observaciones: "otra" } });
+    assert.deepEqual([e1.status, inter(e1).rangos_etarios, inter(e1).tipo_grupo], [200, ["menos_14", "50_mas"], "familia"], "18 · omitido no vacía");
+    const e2 = await patch(id, { version: 2, cambios: { personas_grupo: 1 } });
+    assert.deepEqual([e2.status, e2.json.codigo], [400, "rangos_superan_personas"], "18 · bajar personas no borra rangos en silencio");
+    assert.equal(fila(id), "{menos_14,50_mas}|-|familia|2", "18 · intacta");
+    const e3 = await patch(id, { version: 2, cambios: { personas_grupo: 2 } });
+    assert.equal(e3.status, 200, "18 · 2 rangos con 2 personas está bien");
+    // Pantalla ANTERIOR sobre una con varios rangos: cambiar la edad truncaría → 409 y nada cambia.
+    const e4 = await patch(id, { version: 3, cambios: { rango_etario: "18_24" } });
+    assert.deepEqual([e4.status, e4.json.codigo], [409, "cliente_desactualizado"], "18 · la versión anterior no puede truncar");
+    const e4b = await patch(id, { version: 3, cambios: { rango_etario: null } });
+    assert.deepEqual([e4b.status, e4b.json.codigo], [409, "cliente_desactualizado"], "18 · ni vaciar");
+    assert.equal(fila(id), "{menos_14,50_mas}|-|familia|3");
+    // …pero otros campos sí: no manda la edad si no la tocó.
+    const e5 = await patch(id, { version: 3, cambios: { conocia_sim: "si" } });
+    assert.deepEqual([e5.status, inter(e5).rangos_etarios], [200, ["menos_14", "50_mas"]]);
+    // Limpieza explícita.
+    const e6 = await patch(id, { version: 4, cambios: { rangos_etarios: [], tipo_grupo: null } });
+    assert.deepEqual([e6.status, inter(e6).rangos_etarios, inter(e6).tipo_grupo], [200, [], null]);
+    assert.equal(fila(id), "{}|-|-|5");
+    const ev = sql(`select (datos->'antes'->>'rangos_etarios') || '→' || (datos->'despues'->>'rangos_etarios') || '|' || coalesce(datos->'antes'->>'tipo_grupo', '-') || '→' || coalesce(datos->'despues'->>'tipo_grupo', 'null')
+      from public.interacciones_stand_eventos where interaccion_id = '${id}' and tipo = 'edicion' order by en desc limit 1;`);
+    assert.equal(ev, '["menos_14", "50_mas"]→[]|familia→null', "18 · auditoría de la edición con antes y después");
+
+    // Pantalla ANTERIOR: alta con un rango (conjunto de uno) y edición de un rango.
+    const kOld = randomUUID();
+    const viejo = { resultado: "pregunto", personas_grupo: 2, rango_etario: "25_34", conocia_sim: "no" };
+    const o1 = await alta(staff, viejo, undefined, kOld);
+    assert.equal(o1.status, 201);
+    const oid = inter(o1).id;
+    assert.equal(fila(oid), "{25_34}|25_34|-|1", "18 · el rango único llega como conjunto de uno");
+    const o2 = await alta(staff, viejo, undefined, kOld);
+    assert.deepEqual([o2.status, o2.json.repetida, inter(o2).id], [200, true, oid], "18 · el reintento de la pantalla anterior devuelve la original");
+    const o3 = await alta(staff, { resultado: "pregunto", personas_grupo: 2, rangos_etarios: ["25_34"], conocia_sim: "no" }, undefined, kOld);
+    assert.deepEqual([o3.status, o3.json.repetida], [200, true], "18 · la misma carga en la forma nueva tiene la misma huella");
+    const o4 = await patch(oid, { version: 1, cambios: { rango_etario: "35_49" } });
+    assert.deepEqual([o4.status, inter(o4).rangos_etarios, inter(o4).rango_etario], [200, ["35_49"], "35_49"], "18 · editar con la forma anterior (un rango) sigue funcionando");
+    const o5 = await patch(oid, { version: 2, cambios: { rango_etario: null } });
+    assert.deepEqual([o5.status, inter(o5).rangos_etarios], [200, []]);
+    const o6 = await patch(oid, { version: 3, cambios: { rango_etario: "35_49", rangos_etarios: ["35_49"] } });
+    assert.deepEqual([o6.status, o6.json.codigo], [400, "campo_invalido"], "18 · las dos formas juntas: ambiguo");
+
+    // "Solo miró": al pasar a miro y editar, lo oculto se conserva (no se vacía por omisión).
+    const m1 = await alta(staff, { resultado: "pregunto", personas_grupo: 2, tipo_grupo: "pareja", conocia_sim: "si", iniciador: "cliente", rangos_etarios: ["18_24"] });
+    const mid = inter(m1).id;
+    const m2 = await patch(mid, { version: 1, cambios: { resultado: "miro" } });
+    const m3 = await patch(mid, { version: 2, cambios: { motivo: "paseando" } });
+    assert.deepEqual([m2.status, m3.status], [200, 200]);
+    assert.equal(sql(`select concat_ws('|', resultado, tipo_grupo, conocia_sim, iniciador, motivo, rangos_etarios::text) from public.interacciones_stand where id = '${mid}';`),
+      "miro|pareja|si|cliente|paseando|{18_24}", "18 · el dato oculto sigue guardado");
+    // Alta "Solo miró" como la manda la pantalla nueva: sin hora, solo lo visible.
+    const s1 = await alta(staff, { ocurrida_en: null, resultado: "miro", personas_grupo: 3, hombres: 2, mujeres: 1, rangos_etarios: ["menos_14", "35_49"],
+      tipo_grupo: null, conocia_sim: null, se_subio_antes: null, iniciador: null, atendio_empleado_id: null, motivo: "paseando" });
+    assert.equal(s1.status, 201);
+    assert.ok(Math.abs(Date.parse(String(inter(s1).ocurrida_en)) - Date.now()) < 120_000, "18 · la hora es la del guardado");
+
+    // Métricas por la ruta real con los filtros nuevos.
+    cookie = admin;
+    const hoy = sql("select to_char((now() at time zone 'America/Argentina/Cordoba')::date, 'YYYY-MM-DD');");
+    const mr = await METR.GET(new Request(`${ORIGEN}/api/admin/interacciones/metricas?desde=${hoy}&hasta=${hoy}&rango_etario=menos_14,50_mas&tipo_grupo=sin_dato`));
+    assert.equal(mr.status, 200, "18 · filtro de varios rangos y Sin dato de tipo");
+    const mj = (await mr.json()) as { actual: { metricas: { perfil: { rangos_etarios: { con_dato: number }; tipo_grupo: { base: number } } } } };
+    assert.ok(mj.actual.metricas.perfil.rangos_etarios.con_dato >= 1 && typeof mj.actual.metricas.perfil.tipo_grupo.base === "number");
+    const mm = await METR.GET(new Request(`${ORIGEN}/api/admin/interacciones/metricas?desde=${hoy}&hasta=${hoy}&rango_etario=mixto`));
+    assert.equal(mm.status, 400);
+  }
+
   // ── 14. Nada ajeno cambió ────────────────────────────────────────────────
   assert.equal(huellaAjena(), huella0, "14 · turnos, reservas, históricos y Finanzas idénticos");
 
-  console.log("interacciones.integration.ts OK — rutas reales contra el stack local: 401/403/origen, autoridad solo de la sesión, alta idempotente, vínculos atómicos, edición parcial con versión y liberación confirmada, atendió declarado, ventanas de Córdoba, pendiente vieja con tolerancia contra ocurrida_en, cierre solo admin, IDs bigint exactos, vinculables sin datos personales ni reservas/históricos, listados con cursor, módulo sin inicio, contrato de límites, pausa de altas que conserva el inicio, borrado solo admin que libera turnos y sale de listas y métricas, y Turnero ↔ anulación/borrado a la vez sin deadlock por las rutas reales.");
+  console.log("interacciones.integration.ts OK — rutas reales contra el stack local: 401/403/origen, autoridad solo de la sesión, alta idempotente, vínculos atómicos, edición parcial con versión y liberación confirmada, atendió declarado, ventanas de Córdoba, pendiente vieja con tolerancia contra ocurrida_en, cierre solo admin, IDs bigint exactos, vinculables sin datos personales ni reservas/históricos, listados con cursor, módulo sin inicio, contrato de límites, pausa de altas que conserva el inicio, borrado solo admin que libera turnos y sale de listas y métricas, Turnero ↔ anulación/borrado a la vez sin deadlock por las rutas reales, y rangos múltiples/tipo de grupo/Paseando con la pantalla anterior compatible (conjunto de uno, misma huella, 409 antes de truncar).");
 }
 
 function limpiar() {

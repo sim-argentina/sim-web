@@ -4,9 +4,9 @@
 // Sin secretos: la sesión viaja en la cookie httpOnly del panel, nunca acá.
 
 import {
-  instanteDeParedSim, paredSim,
+  instanteDeParedSim, paredSim, rangosCanonicos,
   type DatosInteraccion, type Iniciador, type InteraccionDto, type Motivo, type RangoEtario,
-  type Respuesta, type Resultado, type TurnoVinculableDto,
+  type Respuesta, type Resultado, type TipoGrupo, type TurnoVinculableDto,
 } from "@/lib/interacciones";
 
 // ── Llamadas ───────────────────────────────────────────────────────────────
@@ -141,7 +141,9 @@ export type EstadoFormulario = {
   personas: number;
   hombres: number | null;
   mujeres: number | null;
-  rango_etario: RangoEtario | null;
+  /** Rangos presentes (selección múltiple, orden canónico); [] = sin dato. */
+  rangos_etarios: RangoEtario[];
+  tipo_grupo: TipoGrupo | null;
   conocia_sim: Respuesta | null;
   se_subio_antes: Respuesta | null;
   iniciador: Iniciador | null;
@@ -156,7 +158,7 @@ export type TurnoElegido = { id: string; fecha: string; hora: string; personas: 
 
 export function formularioVacio(resultado: Resultado): EstadoFormulario {
   return {
-    resultado, personas: 1, hombres: null, mujeres: null, rango_etario: null, conocia_sim: null,
+    resultado, personas: 1, hombres: null, mujeres: null, rangos_etarios: [], tipo_grupo: null, conocia_sim: null,
     se_subio_antes: null, iniciador: null, atendio_empleado_id: null, motivo: null, observaciones: "",
     ocurrida: { modo: "ahora" },
   };
@@ -165,7 +167,7 @@ export function formularioVacio(resultado: Resultado): EstadoFormulario {
 export function formularioDesdeDto(i: InteraccionDto): EstadoFormulario {
   return {
     resultado: i.resultado, personas: i.personas_grupo, hombres: i.hombres, mujeres: i.mujeres,
-    rango_etario: i.rango_etario, conocia_sim: i.conocia_sim, se_subio_antes: i.se_subio_antes, iniciador: i.iniciador,
+    rangos_etarios: [...i.rangos_etarios], tipo_grupo: i.tipo_grupo, conocia_sim: i.conocia_sim, se_subio_antes: i.se_subio_antes, iniciador: i.iniciador,
     atendio_empleado_id: i.atendio?.empleado_id ?? null, motivo: i.motivo, observaciones: i.observaciones ?? "",
     ocurrida: { modo: "manual", valor: paredSim(new Date(i.ocurrida_en)).valor, original: i.ocurrida_en },
   };
@@ -184,20 +186,29 @@ export function desgloseCompleto(f: EstadoFormulario): boolean {
   return (f.hombres === null) === (f.mujeres === null);
 }
 
-/** Datos para la API. "Se subió" nunca lleva motivo; el desglose va de a par. */
-export function datosDesdeFormulario(f: EstadoFormulario): DatosInteraccion {
+/**
+ * Datos para la API. "Se subió" nunca lleva motivo; el desglose va de a par.
+ * Alta de "Solo miró": solo personas, desglose, edades, motivo y observaciones;
+ * la hora es la del guardado y lo que se haya completado en otro resultado antes
+ * de cambiar (tipo de grupo, conocían, iniciador, atendió…) no viaja. En una
+ * EDICIÓN viaja todo tal cual, así lo oculto conserva su valor histórico (y como
+ * no cambió, cambiosDeEdicion no lo manda).
+ */
+export function datosDesdeFormulario(f: EstadoFormulario, opciones: { alta?: boolean } = {}): DatosInteraccion {
   const obs = f.observaciones.trim();
+  const soloMiro = opciones.alta === true && f.resultado === "miro";
   return {
-    ocurrida_en: instanteDeOcurrida(f.ocurrida),
+    ocurrida_en: soloMiro ? null : instanteDeOcurrida(f.ocurrida),
     resultado: f.resultado,
     personas_grupo: f.personas,
     hombres: f.hombres,
     mujeres: f.mujeres,
-    rango_etario: f.rango_etario,
-    conocia_sim: f.conocia_sim,
-    se_subio_antes: f.se_subio_antes,
-    iniciador: f.iniciador,
-    atendio_empleado_id: f.atendio_empleado_id,
+    rangos_etarios: rangosCanonicos(f.rangos_etarios),
+    tipo_grupo: soloMiro ? null : f.tipo_grupo,
+    conocia_sim: soloMiro ? null : f.conocia_sim,
+    se_subio_antes: soloMiro ? null : f.se_subio_antes,
+    iniciador: soloMiro ? null : f.iniciador,
+    atendio_empleado_id: soloMiro ? null : f.atendio_empleado_id,
     motivo: f.resultado === "subio" ? null : f.motivo,
     observaciones: obs === "" ? null : obs,
   };
@@ -222,7 +233,8 @@ export function rebaseEdicion(nueva: InteraccionDto, cambiosDelUsuario: DatosInt
   if (c.personas_grupo !== undefined) f.personas = c.personas_grupo;
   if (c.hombres !== undefined) f.hombres = c.hombres ?? null;
   if (c.mujeres !== undefined) f.mujeres = c.mujeres ?? null;
-  if (c.rango_etario !== undefined) f.rango_etario = c.rango_etario ?? null;
+  if (c.rangos_etarios !== undefined) f.rangos_etarios = rangosCanonicos(c.rangos_etarios);
+  if (c.tipo_grupo !== undefined) f.tipo_grupo = c.tipo_grupo ?? null;
   if (c.conocia_sim !== undefined) f.conocia_sim = c.conocia_sim ?? null;
   if (c.se_subio_antes !== undefined) f.se_subio_antes = c.se_subio_antes ?? null;
   if (c.iniciador !== undefined) f.iniciador = c.iniciador ?? null;
@@ -243,12 +255,49 @@ export function rebaseEdicion(nueva: InteraccionDto, cambiosDelUsuario: DatosInt
 // que poder reintentarse hasta que el servidor diga qué pasó.
 // Edición: solo se recuerda si difiere de la versión cargada (ver Formulario).
 
-const OPCIONALES = ["hombres", "mujeres", "rango_etario", "conocia_sim", "se_subio_antes", "iniciador", "atendio_empleado_id", "motivo"] as const;
+const OPCIONALES = ["hombres", "mujeres", "tipo_grupo", "conocia_sim", "se_subio_antes", "iniciador", "atendio_empleado_id", "motivo"] as const;
 
 /** ¿La carga nueva está como recién abierta? El resultado elegido con el acceso no cuenta como dato. */
 export function altaSinDatos(form: EstadoFormulario, turnos: TurnoElegido[]): boolean {
   return turnos.length === 0 && form.ocurrida.modo === "ahora" && form.personas === formularioVacio(form.resultado).personas
-    && form.observaciones.trim() === "" && OPCIONALES.every((k) => form[k] === null);
+    && form.observaciones.trim() === "" && form.rangos_etarios.length === 0 && OPCIONALES.every((k) => form[k] === null);
+}
+
+// ── Borradores de la pantalla ANTERIOR (un solo rango, sin tipo de grupo) ──
+// Un borrador guardado por la versión anterior tiene rango_etario en vez de
+// rangos_etarios. Se convierte sin perder el rango elegido. Si quedó INCIERTO,
+// el reintento usa EXACTAMENTE lo que había mandado esa pantalla (envioAnterior):
+// mismo contenido, misma huella, así la base devuelve la fila original si ya
+// había llegado, en vez de un conflicto o una segunda interacción.
+type FormularioGuardado = Omit<EstadoFormulario, "rangos_etarios" | "tipo_grupo"> & {
+  rangos_etarios?: RangoEtario[];
+  tipo_grupo?: TipoGrupo | null;
+  rango_etario?: RangoEtario | null;
+};
+
+/** Lo que manda un alta: idéntico en cada reintento con la misma clave. */
+export type EnvioAlta = { datos: DatosInteraccion; turnos?: string[] };
+
+export function formularioDeBorrador(f: FormularioGuardado): EstadoFormulario {
+  const { rango_etario, rangos_etarios, tipo_grupo, ...resto } = f;
+  return {
+    ...resto,
+    rangos_etarios: Array.isArray(rangos_etarios) ? rangosCanonicos(rangos_etarios) : rango_etario ? [rango_etario] : [],
+    tipo_grupo: tipo_grupo ?? null,
+  };
+}
+
+export function envioAnterior(f: FormularioGuardado, turnos: TurnoElegido[]): EnvioAlta {
+  const obs = f.observaciones.trim();
+  return {
+    datos: {
+      ocurrida_en: instanteDeOcurrida(f.ocurrida), resultado: f.resultado, personas_grupo: f.personas, hombres: f.hombres,
+      mujeres: f.mujeres, rango_etario: f.rango_etario ?? null, conocia_sim: f.conocia_sim, se_subio_antes: f.se_subio_antes,
+      iniciador: f.iniciador, atendio_empleado_id: f.atendio_empleado_id, motivo: f.resultado === "subio" ? null : f.motivo,
+      observaciones: obs === "" ? null : obs,
+    },
+    ...(turnos.length > 0 ? { turnos: turnos.map((t) => t.id) } : {}),
+  };
 }
 
 /** ¿Hay que recordar este borrador de carga nueva? */
@@ -264,6 +313,8 @@ export type BorradorAlta = {
   turnos: TurnoElegido[];
   /** incierto = se envió y no se sabe si se guardó: misma clave y mismo contenido hasta resolverlo. */
   estado: "editando" | "incierto";
+  /** Con estado incierto: lo que se mandó, para reintentar exactamente lo mismo. */
+  envio?: EnvioAlta;
   actualizado: string;
 };
 export type BorradorEdicion = { id: string; version: number; form: EstadoFormulario; actualizado: string };
@@ -300,13 +351,20 @@ function esFormulario(f: unknown): f is EstadoFormulario {
 export const borradores = {
   /** El borrador de carga nueva, si vale la pena recordarlo (uno vacío de antes se descarta). */
   alta(): BorradorAlta | null {
-    const b = leer<BorradorAlta>(CLAVE_ALTA);
+    const b = leer<Omit<BorradorAlta, "form"> & { form: FormularioGuardado }>(CLAVE_ALTA);
     if (!(b && typeof b.clave === "string" && esFormulario(b.form) && Array.isArray(b.turnos))) return null;
-    if (!conservarBorradorAlta(b)) {
+    const anterior = !Array.isArray(b.form.rangos_etarios);
+    const convertido: BorradorAlta = {
+      ...b,
+      form: formularioDeBorrador(b.form),
+      envio: b.envio ?? (anterior && b.estado === "incierto" ? envioAnterior(b.form, b.turnos) : undefined),
+    };
+    if (!conservarBorradorAlta(convertido)) {
       borrar(CLAVE_ALTA);
       return null;
     }
-    return b;
+    if (anterior) escribir(CLAVE_ALTA, convertido);
+    return convertido;
   },
   /** Guarda tal cual (antes de enviar: el envío queda INCIERTO aunque los datos sean los iniciales). */
   guardarAlta(b: Omit<BorradorAlta, "actualizado">) {
@@ -325,8 +383,8 @@ export const borradores = {
     borrar(CLAVE_ALTA);
   },
   edicion(id: string): BorradorEdicion | null {
-    const b = leer<BorradorEdicion>(PREFIJO_EDICION + id);
-    return b && b.id === id && typeof b.version === "number" && esFormulario(b.form) ? b : null;
+    const b = leer<Omit<BorradorEdicion, "form"> & { form: FormularioGuardado }>(PREFIJO_EDICION + id);
+    return b && b.id === id && typeof b.version === "number" && esFormulario(b.form) ? { ...b, form: formularioDeBorrador(b.form) } : null;
   },
   guardarEdicion(b: Omit<BorradorEdicion, "actualizado">) {
     escribir(PREFIJO_EDICION + b.id, { ...b, actualizado: new Date().toISOString() });

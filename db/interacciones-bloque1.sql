@@ -100,6 +100,19 @@ as $fn$
 $fn$;
 
 
+-- Rangos etarios PRESENTES en un grupo: conjunto sin repetidos en el orden fijo
+-- de las opciones (el mismo dato no cambia por el orden de los clics). Solo
+-- ordena y quita repetidos: validar valores y repetidos le toca a quien llama.
+create or replace function public.interacciones_rangos_canonicos(p_rangos text[])
+returns text[]
+language sql
+immutable
+set search_path = public
+as $fn$
+  select coalesce(array_agg(s.r order by array_position(array['menos_14', '14_17', '18_24', '25_34', '35_49', '50_mas'], s.r)), '{}'::text[])
+    from (select distinct unnest(p_rangos) as r) s
+$fn$;
+
 -- Datos de pago CONTRADICTORIOS en un turno: total positivo con método 'gratis', o
 -- total cero/nulo con un método que no es 'gratis'. Solo se SEÑALAN: la regla de
 -- pago (total > 0) no cambia por esto.
@@ -185,11 +198,6 @@ create table if not exists public.interacciones_stand (
   constraint interacciones_stand_conocia_chk check (conocia_sim is null or conocia_sim in ('si', 'no', 'no_sabe')),
   constraint interacciones_stand_subio_antes_chk check (se_subio_antes is null or se_subio_antes in ('si', 'no', 'no_sabe')),
   constraint interacciones_stand_iniciador_chk check (iniciador is null or iniciador in ('cliente', 'empleado')),
-  constraint interacciones_stand_motivo_chk check (
-    motivo is null
-    or (resultado <> 'subio'
-        and motivo in ('precio', 'tiempo', 'espera', 'vuelve_despues', 'no_interesa', 'requisitos', 'acompanantes', 'otro'))
-  ),
   constraint interacciones_stand_observaciones_chk check (
     observaciones is null or (char_length(observaciones) between 1 and 500 and observaciones !~ '^\s|\s$')
   ),
@@ -237,6 +245,45 @@ alter table public.interacciones_stand add constraint interacciones_stand_elimin
 );
 comment on column public.interacciones_stand.eliminada_en is
   'Borrado administrativo (solo admin). La fila se conserva como auditoría mínima; no cuenta ni se muestra en ningún lado.';
+
+-- Perfil (cambio del 18/10/2026, con el módulo ya en Producción):
+--   · rangos_etarios: los rangos PRESENTES en el grupo (selección múltiple), en
+--     orden canónico, sin repetidos y nunca más rangos que personas. No dice
+--     cuántas personas hay en cada uno. '{}' = sin dato.
+--   · rango_etario (columna anterior, un solo rango): se CONSERVA durante la
+--     transición y queda sincronizada: tiene valor solo si hay exactamente un
+--     rango (con varios queda NULL, nunca "el primero"). La lee la versión
+--     anterior de la aplicación mientras se despliega la nueva.
+--   · tipo_grupo: categoría principal opcional (sin dato ≠ 'otro').
+--   · motivo: se suma 'paseando'.
+-- Con ALTER para que el archivo siga siendo idempotente sobre una base que ya
+-- tenía el módulo. El backfill de rangos_etarios desde rango_etario y el CHECK
+-- de sincronización van después de los triggers (sección 8b).
+alter table public.interacciones_stand add column if not exists rangos_etarios text[] not null default '{}'::text[];
+alter table public.interacciones_stand add column if not exists tipo_grupo text;
+alter table public.interacciones_stand drop constraint if exists interacciones_stand_rangos_chk;
+alter table public.interacciones_stand add constraint interacciones_stand_rangos_chk check (
+  rangos_etarios <@ array['menos_14', '14_17', '18_24', '25_34', '35_49', '50_mas']::text[]
+  and array_position(rangos_etarios, null) is null
+  and rangos_etarios = public.interacciones_rangos_canonicos(rangos_etarios)
+  and cardinality(rangos_etarios) <= personas_grupo
+);
+alter table public.interacciones_stand drop constraint if exists interacciones_stand_tipo_grupo_chk;
+alter table public.interacciones_stand add constraint interacciones_stand_tipo_grupo_chk check (
+  tipo_grupo is null or tipo_grupo in ('familia', 'amigos', 'pareja', 'solo', 'companeros', 'otro')
+);
+alter table public.interacciones_stand drop constraint if exists interacciones_stand_motivo_chk;
+alter table public.interacciones_stand add constraint interacciones_stand_motivo_chk check (
+  motivo is null
+  or (resultado <> 'subio'
+      and motivo in ('precio', 'tiempo', 'espera', 'vuelve_despues', 'no_interesa', 'requisitos', 'acompanantes', 'paseando', 'otro'))
+);
+comment on column public.interacciones_stand.rangos_etarios is
+  'Rangos etarios PRESENTES en el grupo (aproximados, selección múltiple, orden canónico). No es un desglose por edad: no dice cuántas personas hay en cada rango.';
+comment on column public.interacciones_stand.rango_etario is
+  'Anterior (un solo rango). Se mantiene sincronizada con rangos_etarios durante la transición: valor solo si hay exactamente un rango.';
+comment on column public.interacciones_stand.tipo_grupo is
+  'Tipo de grupo (opcional): familia, amigos, pareja, solo, companeros, otro. NULL = sin dato (no es "otro").';
 
 create index if not exists interacciones_stand_fecha_idx
   on public.interacciones_stand (fecha_negocio) where anulada_en is null;
@@ -418,6 +465,8 @@ where coalesce(t.estado, 'activo') = 'activo';
 -- (Bloque 4) Base del análisis: una fila por interacción NO anulada ni
 -- eliminada (no cuentan en ninguna métrica), con el perfil y el estado del
 -- vínculo. Solo columnas que usan las métricas: sin observaciones ni auditoría.
+-- rangos_etarios y tipo_grupo van al final (una vista solo suma columnas al
+-- final); rango_etario queda para la versión anterior durante la transición.
 create or replace view public.interacciones_analisis
 with (security_invoker = true) as
 select
@@ -441,7 +490,9 @@ select
   e.turnos_gratis,
   e.turnos_pago_contradictorio,
   e.participaciones,
-  e.venta_verificada
+  e.venta_verificada,
+  i.rangos_etarios,
+  i.tipo_grupo
 from public.interacciones_stand i
 join public.interacciones_stand_estado e on e.interaccion_id = i.id
 where i.anulada_en is null and i.eliminada_en is null;
@@ -452,8 +503,13 @@ where i.anulada_en is null and i.eliminada_en is null;
 -- (nombre, teléfono o cualquier otro): no se ignora nada en silencio. Todo es
 -- opcional salvo resultado y personas_grupo. ocurrida_en: ISO con zona explícita
 -- (Z u offset) o null (= ahora); se devuelve en UTC canónico para la huella.
+-- Rangos etarios: rangos_etarios (lista; null o [] = sin dato), o rango_etario
+-- (valor único de la versión anterior de la pantalla, que se convierte en una
+-- lista de un elemento); nunca los dos juntos. Sin valores desconocidos ni
+-- repetidos, y nunca más rangos que personas. Sale como lista canónica.
 -- Errores: 22023 'campo_invalido:<campo>', 'desglose_incompleto',
--- 'desglose_no_suma', 'motivo_no_aplica', 'datos_invalidos', 'campo_desconocido:<campo>'.
+-- 'desglose_no_suma', 'motivo_no_aplica', 'rangos_repetidos',
+-- 'rangos_superan_personas', 'datos_invalidos', 'campo_desconocido:<campo>'.
 create or replace function public.interaccion_normalizar(p_datos jsonb)
 returns jsonb
 language plpgsql
@@ -471,17 +527,19 @@ declare
   v_obs  text;
   v_ocu  timestamptz;
   v_emp  uuid;
+  v_rangos text[];
 begin
   if p_datos is null or jsonb_typeof(p_datos) <> 'object' then
     raise exception 'datos_invalidos' using errcode = '22023';
   end if;
   for v_k in select jsonb_object_keys(p_datos) loop
     if v_k not in ('ocurrida_en', 'resultado', 'personas_grupo', 'hombres', 'mujeres', 'rango_etario',
-                   'conocia_sim', 'se_subio_antes', 'iniciador', 'atendio_empleado_id', 'motivo', 'observaciones') then
+                   'rangos_etarios', 'tipo_grupo', 'conocia_sim', 'se_subio_antes', 'iniciador',
+                   'atendio_empleado_id', 'motivo', 'observaciones') then
       raise exception 'campo_desconocido:%', v_k using errcode = '22023';
     end if;
   end loop;
-  foreach v_k in array array['ocurrida_en', 'resultado', 'rango_etario', 'conocia_sim', 'se_subio_antes',
+  foreach v_k in array array['ocurrida_en', 'resultado', 'rango_etario', 'tipo_grupo', 'conocia_sim', 'se_subio_antes',
                              'iniciador', 'atendio_empleado_id', 'motivo', 'observaciones'] loop
     if jsonb_typeof(p_datos -> v_k) not in ('string', 'null') then
       raise exception 'campo_invalido:%', v_k using errcode = '22023';
@@ -527,6 +585,33 @@ begin
      and (p_datos ->> 'rango_etario') not in ('menos_14', '14_17', '18_24', '25_34', '35_49', '50_mas') then
     raise exception 'campo_invalido:rango_etario' using errcode = '22023';
   end if;
+  if p_datos ? 'rango_etario' and p_datos ? 'rangos_etarios' then
+    raise exception 'campo_invalido:rangos_etarios' using errcode = '22023';
+  end if;
+  if jsonb_typeof(p_datos -> 'rangos_etarios') not in ('array', 'null') then
+    raise exception 'campo_invalido:rangos_etarios' using errcode = '22023';
+  end if;
+  if jsonb_typeof(p_datos -> 'rangos_etarios') = 'array' then
+    if exists (select 1 from jsonb_array_elements(p_datos -> 'rangos_etarios') as e(v)
+                where jsonb_typeof(e.v) <> 'string'
+                   or (e.v #>> '{}') not in ('menos_14', '14_17', '18_24', '25_34', '35_49', '50_mas')) then
+      raise exception 'campo_invalido:rangos_etarios' using errcode = '22023';
+    end if;
+    select array_agg(e.v #>> '{}') into v_rangos from jsonb_array_elements(p_datos -> 'rangos_etarios') as e(v);
+    if cardinality(coalesce(v_rangos, '{}')) <> cardinality(public.interacciones_rangos_canonicos(coalesce(v_rangos, '{}'))) then
+      raise exception 'rangos_repetidos' using errcode = '22023';
+    end if;
+  elsif (p_datos ->> 'rango_etario') is not null then
+    v_rangos := array[p_datos ->> 'rango_etario'];
+  end if;
+  v_rangos := public.interacciones_rangos_canonicos(coalesce(v_rangos, '{}'));
+  if cardinality(v_rangos) > v_pers then
+    raise exception 'rangos_superan_personas' using errcode = '22023';
+  end if;
+  if (p_datos ->> 'tipo_grupo') is not null
+     and (p_datos ->> 'tipo_grupo') not in ('familia', 'amigos', 'pareja', 'solo', 'companeros', 'otro') then
+    raise exception 'campo_invalido:tipo_grupo' using errcode = '22023';
+  end if;
   if (p_datos ->> 'conocia_sim') is not null and (p_datos ->> 'conocia_sim') not in ('si', 'no', 'no_sabe') then
     raise exception 'campo_invalido:conocia_sim' using errcode = '22023';
   end if;
@@ -539,7 +624,7 @@ begin
 
   v_txt := p_datos ->> 'motivo';
   if v_txt is not null then
-    if v_txt not in ('precio', 'tiempo', 'espera', 'vuelve_despues', 'no_interesa', 'requisitos', 'acompanantes', 'otro') then
+    if v_txt not in ('precio', 'tiempo', 'espera', 'vuelve_despues', 'no_interesa', 'requisitos', 'acompanantes', 'paseando', 'otro') then
       raise exception 'campo_invalido:motivo' using errcode = '22023';
     end if;
     if v_res = 'subio' then
@@ -579,7 +664,8 @@ begin
     'personas_grupo', v_pers::int,
     'hombres', v_h::int,
     'mujeres', v_m::int,
-    'rango_etario', p_datos ->> 'rango_etario',
+    'rangos_etarios', to_jsonb(v_rangos),
+    'tipo_grupo', p_datos ->> 'tipo_grupo',
     'conocia_sim', p_datos ->> 'conocia_sim',
     'se_subio_antes', p_datos ->> 'se_subio_antes',
     'iniciador', p_datos ->> 'iniciador',
@@ -911,6 +997,9 @@ create trigger interaccion_turnos_registrar_baja
 --   · campos del alta inmutables;
 --   · una ELIMINADA no se modifica más (no hay restauración);
 --   · una anulada tampoco, salvo para eliminarla (sin tocar ningún otro dato);
+--   · única excepción sin versión: el backfill de rangos_etarios (de vacío a
+--     [rango_etario], sin cambiar NADA más). Vale también para anuladas y
+--     eliminadas: es el mismo dato con otra forma, no una edición;
 --   · toda modificación sube la versión (una versión vieja no puede pisar);
 --   · con vínculos, la fila tiene que seguir siendo 'subio', viva, sin cierre y
 --     no eliminada: borrar exige liberar los vínculos en la misma transacción.
@@ -927,6 +1016,12 @@ begin
   if new.id <> old.id or new.idempotency_key <> old.idempotency_key or new.alta_huella <> old.alta_huella
      or new.registrada_en <> old.registrada_en or new.registrada_por_rol <> old.registrada_por_rol then
     raise exception 'campo_inmutable' using errcode = '55000';
+  end if;
+  if old.rangos_etarios = '{}'::text[] and old.rango_etario is not null
+     and new.rangos_etarios = array[old.rango_etario]
+     and (to_jsonb(new) - array['rangos_etarios', 'fecha_negocio', 'hora_negocio'])
+         = (to_jsonb(old) - array['rangos_etarios', 'fecha_negocio', 'hora_negocio']) then
+    return new;
   end if;
   if old.eliminada_en is not null then
     raise exception 'interaccion_eliminada' using errcode = '55000';
@@ -950,6 +1045,21 @@ drop trigger if exists interacciones_stand_proteger on public.interacciones_stan
 create trigger interacciones_stand_proteger
   before update on public.interacciones_stand
   for each row execute function public.interacciones_stand_proteger();
+
+-- ── 8b. Migración de datos del perfil (idempotente) ─────────────────────────
+-- Un rango único previo pasa a ser una lista de un elemento; uno vacío sigue sin
+-- dato. No se inventan rangos ni cantidades. Pasa por el trigger de protección
+-- (su única excepción sin versión): no cambia versión, tiempos, anulación,
+-- eliminación ni auditoría, y no se deshabilita ningún trigger ni permiso.
+update public.interacciones_stand
+   set rangos_etarios = array[rango_etario]
+ where rango_etario is not null and rangos_etarios = '{}'::text[];
+
+-- Desde acá la columna anterior queda atada a la nueva: valor solo con un rango.
+alter table public.interacciones_stand drop constraint if exists interacciones_stand_rango_sincronizado_chk;
+alter table public.interacciones_stand add constraint interacciones_stand_rango_sincronizado_chk check (
+  rango_etario is not distinct from (case when cardinality(rangos_etarios) = 1 then rangos_etarios[1] end)
+);
 
 -- Inserta vínculos traduciendo los choques a errores con el ID del turno.
 create or replace function public.interacciones_insertar_vinculos(
@@ -983,7 +1093,8 @@ $fn$;
 -- Errores comunes: 42501 actor_invalido / solo_admin / fuera_de_ventana;
 -- P0002 interaccion_inexistente / interaccion_eliminada (una eliminada no se
 -- edita, vincula, desvincula, anula ni cierra); 55000 interaccion_anulada /
--- version_desactualizada / altas_pausadas;
+-- version_desactualizada / altas_pausadas / cliente_desactualizado; 22023
+-- rangos_repetidos / rangos_superan_personas;
 -- 23505 idempotency_key_con_otro_payload / turno_ya_vinculado:<id>.
 -- Todas devuelven interaccion_detalle(id) y, cuando no cambió nada,
 -- 'sin_cambios': true (sin subir la versión).
@@ -999,6 +1110,11 @@ $fn$;
 -- INSERT (pausa, inicio, ventana) es definitivo: nada quedó guardado con esa clave.
 -- Reintentar la clave de una interacción ya ELIMINADA → interaccion_eliminada
 -- (no se vuelve a crear). Con las altas pausadas → 55000 altas_pausadas.
+-- Huella compatible con la versión anterior: si el contenido se puede expresar
+-- como antes (a lo sumo un rango y sin tipo de grupo), se firma con la forma
+-- anterior (rango_etario en vez de rangos_etarios/tipo_grupo). Así el reintento
+-- de un envío incierto hecho por la pantalla anterior (o el mismo contenido con
+-- la forma nueva) recibe la fila original en vez de un conflicto o una segunda fila.
 create or replace function public.interaccion_registrar(
   p_idempotency_key uuid,
   p_datos           jsonb,
@@ -1020,6 +1136,8 @@ declare
   v_ocu    timestamptz;
   v_emp    uuid;
   v_pausa  timestamptz;
+  v_firma  jsonb;
+  v_rangos text[];
 begin
   if v_rol not in ('admin', 'staff') then
     raise exception 'actor_invalido' using errcode = '42501';
@@ -1029,7 +1147,13 @@ begin
   end if;
   v_norm := public.interaccion_normalizar(p_datos);
   v_turnos := public.interacciones_normalizar_turnos(p_turnos);
-  v_huella := md5(jsonb_build_object('datos', v_norm, 'turnos', to_jsonb(v_turnos))::text);
+  select coalesce(array_agg(r.x order by r.n), '{}'::text[]) into v_rangos
+    from jsonb_array_elements_text(v_norm -> 'rangos_etarios') with ordinality as r(x, n);
+  v_firma := case
+    when cardinality(v_rangos) <= 1 and v_norm ->> 'tipo_grupo' is null
+      then (v_norm - 'rangos_etarios' - 'tipo_grupo') || jsonb_build_object('rango_etario', v_rangos[1])
+    else v_norm end;
+  v_huella := md5(jsonb_build_object('datos', v_firma, 'turnos', to_jsonb(v_turnos))::text);
 
   perform pg_advisory_xact_lock(hashtext('interacciones_alta'), hashtext(p_idempotency_key::text));
   select * into v_prev from public.interacciones_stand where idempotency_key = p_idempotency_key;
@@ -1059,13 +1183,14 @@ begin
 
   insert into public.interacciones_stand as s (
     idempotency_key, alta_huella, ocurrida_en, registrada_por_rol, resultado, personas_grupo,
-    hombres, mujeres, rango_etario, conocia_sim, se_subio_antes, iniciador, atendio_empleado_id,
-    motivo, observaciones)
+    hombres, mujeres, rango_etario, rangos_etarios, tipo_grupo, conocia_sim, se_subio_antes, iniciador,
+    atendio_empleado_id, motivo, observaciones)
   values (
     p_idempotency_key, v_huella, v_ocu, v_rol, v_norm ->> 'resultado', (v_norm ->> 'personas_grupo')::smallint,
-    (v_norm ->> 'hombres')::smallint, (v_norm ->> 'mujeres')::smallint, v_norm ->> 'rango_etario',
-    v_norm ->> 'conocia_sim', v_norm ->> 'se_subio_antes', v_norm ->> 'iniciador', v_emp,
-    v_norm ->> 'motivo', v_norm ->> 'observaciones')
+    (v_norm ->> 'hombres')::smallint, (v_norm ->> 'mujeres')::smallint,
+    case when cardinality(v_rangos) = 1 then v_rangos[1] end, v_rangos, v_norm ->> 'tipo_grupo',
+    v_norm ->> 'conocia_sim', v_norm ->> 'se_subio_antes', v_norm ->> 'iniciador',
+    v_emp, v_norm ->> 'motivo', v_norm ->> 'observaciones')
   on conflict (idempotency_key) do nothing
   returning s.id into v_id;
 
@@ -1104,6 +1229,10 @@ $fn$;
 -- Si cambia la FECHA de una 'subio' con turnos, todos tienen que seguir dentro
 -- de la tolerancia (si no: turno_fuera_de_tolerancia:<id>). La respuesta agrega
 -- 'turnos_liberados' (IDs como texto) y 'cierre_retirado'.
+-- rangos_etarios: omitido no cambia; [] o null lo vacía. Una pantalla anterior
+-- manda rango_etario (un valor): se traduce a una lista de uno, salvo que la
+-- interacción ya tenga VARIOS rangos, porque reemplazarlos por uno los truncaría:
+-- 55000 cliente_desactualizado (hay que actualizar la pantalla).
 create or replace function public.interaccion_editar(
   p_id      uuid,
   p_version integer,
@@ -1128,6 +1257,8 @@ declare
   v_liberados jsonb := '[]'::jsonb;
   v_cierre   jsonb;
   v_fuera    bigint;
+  v_cambios  jsonb;
+  v_rangos   text[];
 begin
   if v_rol not in ('admin', 'staff') then
     raise exception 'actor_invalido' using errcode = '42501';
@@ -1154,15 +1285,30 @@ begin
   if p_cambios is null or jsonb_typeof(p_cambios) <> 'object' then
     raise exception 'datos_invalidos' using errcode = '22023';
   end if;
+  v_cambios := p_cambios;
+  if v_cambios ? 'rango_etario' then
+    if v_cambios ? 'rangos_etarios' or jsonb_typeof(v_cambios -> 'rango_etario') not in ('string', 'null') then
+      raise exception 'campo_invalido:rangos_etarios' using errcode = '22023';
+    end if;
+    if cardinality(v_row.rangos_etarios) > 1 then
+      raise exception 'cliente_desactualizado' using errcode = '55000';
+    end if;
+    v_cambios := (v_cambios - 'rango_etario') || jsonb_build_object('rangos_etarios',
+      case when jsonb_typeof(v_cambios -> 'rango_etario') = 'string'
+           then jsonb_build_array(v_cambios -> 'rango_etario') else '[]'::jsonb end);
+  end if;
 
   v_actual := jsonb_build_object(
     'ocurrida_en', to_char(v_row.ocurrida_en at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
     'resultado', v_row.resultado, 'personas_grupo', v_row.personas_grupo,
-    'hombres', v_row.hombres, 'mujeres', v_row.mujeres, 'rango_etario', v_row.rango_etario,
+    'hombres', v_row.hombres, 'mujeres', v_row.mujeres, 'rangos_etarios', to_jsonb(v_row.rangos_etarios),
+    'tipo_grupo', v_row.tipo_grupo,
     'conocia_sim', v_row.conocia_sim, 'se_subio_antes', v_row.se_subio_antes, 'iniciador', v_row.iniciador,
     'atendio_empleado_id', v_row.atendio_empleado_id, 'motivo', v_row.motivo, 'observaciones', v_row.observaciones);
   v_base := public.interaccion_normalizar(v_actual);
-  v_norm := public.interaccion_normalizar(v_actual || p_cambios);
+  v_norm := public.interaccion_normalizar(v_actual || v_cambios);
+  select coalesce(array_agg(r.x order by r.n), '{}'::text[]) into v_rangos
+    from jsonb_array_elements_text(v_norm -> 'rangos_etarios') with ordinality as r(x, n);
 
   if v_norm ->> 'ocurrida_en' is null then
     raise exception 'campo_invalido:ocurrida_en' using errcode = '22023';
@@ -1219,7 +1365,9 @@ begin
     personas_grupo      = (v_norm ->> 'personas_grupo')::smallint,
     hombres             = (v_norm ->> 'hombres')::smallint,
     mujeres             = (v_norm ->> 'mujeres')::smallint,
-    rango_etario        = v_norm ->> 'rango_etario',
+    rango_etario        = case when cardinality(v_rangos) = 1 then v_rangos[1] end,
+    rangos_etarios      = v_rangos,
+    tipo_grupo          = v_norm ->> 'tipo_grupo',
     conocia_sim         = v_norm ->> 'conocia_sim',
     se_subio_antes      = v_norm ->> 'se_subio_antes',
     iniciador           = v_norm ->> 'iniciador',
@@ -1722,6 +1870,7 @@ grant select on table public.interacciones_analisis to service_role;
 
 -- Funciones internas: nadie más que el dueño.
 revoke all on function public.interacciones_fecha_sim(timestamptz) from public, anon, authenticated, service_role;
+revoke all on function public.interacciones_rangos_canonicos(text[]) from public, anon, authenticated, service_role;
 revoke all on function public.interaccion_normalizar(jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.interacciones_normalizar_turnos(bigint[]) from public, anon, authenticated, service_role;
 revoke all on function public.interacciones_validar_ocurrida(text, timestamptz, timestamptz, timestamptz, timestamptz) from public, anon, authenticated, service_role;

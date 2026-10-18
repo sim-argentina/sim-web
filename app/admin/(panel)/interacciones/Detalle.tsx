@@ -198,6 +198,7 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, onDesap
   const hoy = hoyEnSim();
   const ayer = sumarDias(hoy, -1);
   const libres = i ? LIMITES.max_turnos_por_interaccion - i.turnos.length : 0;
+  const conPerfil = i ? i.resultado !== "miro" : false;
 
   return (
     <Panel titulo="Interacción" onCerrar={onCerrar}>
@@ -219,11 +220,13 @@ export default function Detalle({ id, rol, onCerrar, onEditar, onCambio, onDesap
             <Dato t="Cuándo">{etiquetaFecha(i.fecha_negocio, hoy, ayer)} · {i.hora_negocio}</Dato>
             <Dato t="Personas del grupo">{i.personas_grupo}</Dato>
             <Dato t="Hombres / mujeres">{i.hombres === null ? "Sin dato" : `${i.hombres} / ${i.mujeres}`}</Dato>
-            <Dato t="Rango aproximado">{i.rango_etario ? ETIQUETAS.rango_etario[i.rango_etario] : "Sin dato"}</Dato>
-            <Dato t="¿Conocían SIM?">{i.conocia_sim ? ETIQUETAS.respuesta[i.conocia_sim] : "Sin dato"}</Dato>
-            <Dato t="¿Se habían subido?">{i.se_subio_antes ? ETIQUETAS.respuesta[i.se_subio_antes] : "Sin dato"}</Dato>
-            <Dato t="Inició">{i.iniciador ? ETIQUETAS.iniciador[i.iniciador] : "Sin dato"}</Dato>
-            <Dato t="Atendió (declarado)">{i.atendio ? `${i.atendio.nombre ?? "Integrante"}${i.atendio.activo ? "" : " (inactivo)"}` : "Sin asignar"}</Dato>
+            <Dato t="Rangos etarios presentes">{i.rangos_etarios.length ? i.rangos_etarios.map((r) => ETIQUETAS.rango_etario[r]).join(", ") : "Sin dato"}</Dato>
+            {/* "Solo miró" no pregunta estos datos: se muestran solo si ya estaban cargados (registros anteriores). */}
+            {conPerfil || i.tipo_grupo ? <Dato t="Tipo de grupo">{i.tipo_grupo ? ETIQUETAS.tipo_grupo[i.tipo_grupo] : "Sin dato"}</Dato> : null}
+            {conPerfil || i.conocia_sim ? <Dato t="¿Conocían SIM?">{i.conocia_sim ? ETIQUETAS.respuesta[i.conocia_sim] : "Sin dato"}</Dato> : null}
+            {conPerfil || i.se_subio_antes ? <Dato t="¿Se habían subido?">{i.se_subio_antes ? ETIQUETAS.respuesta[i.se_subio_antes] : "Sin dato"}</Dato> : null}
+            {conPerfil || i.iniciador ? <Dato t="Inició">{i.iniciador ? ETIQUETAS.iniciador[i.iniciador] : "Sin dato"}</Dato> : null}
+            {conPerfil || i.atendio ? <Dato t="Atendió (declarado)">{i.atendio ? `${i.atendio.nombre ?? "Integrante"}${i.atendio.activo ? "" : " (inactivo)"}` : "Sin asignar"}</Dato> : null}
             {i.resultado !== "subio" ? <Dato t="Motivo">{i.motivo ? ETIQUETAS.motivo[i.motivo] : "Sin motivo"}</Dato> : null}
             <Dato t="Registró">{etiquetaRol(i.registrada_por_rol)} · {new Date(i.registrada_en).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "America/Argentina/Cordoba" })}</Dato>
           </dl>

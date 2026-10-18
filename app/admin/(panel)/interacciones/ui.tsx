@@ -235,6 +235,54 @@ export function Chips<T extends string>({ etiqueta, opciones, valor, onCambio, d
   );
 }
 
+/**
+ * Selección MÚLTIPLE: cada opción se marca y desmarca por separado; varias
+ * pueden quedar activas. Ninguna marcada = sin dato. El valor sale en el orden
+ * de las opciones (no en el de los clics).
+ */
+export function ChipsMultiples<T extends string>({ etiqueta, opciones, valor, onCambio, deshabilitado, ayuda }: {
+  etiqueta: string;
+  opciones: ReadonlyArray<{ valor: T; texto: string }>;
+  valor: readonly T[];
+  onCambio: (v: T[]) => void;
+  deshabilitado?: boolean;
+  ayuda?: ReactNode;
+}) {
+  const id = useId();
+  const alternar = (v: T) => {
+    const marcado = valor.includes(v);
+    onCambio(opciones.map((o) => o.valor).filter((o) => (o === v ? !marcado : valor.includes(o))));
+  };
+  return (
+    <Campo etiqueta={etiqueta} ayuda={ayuda} id={id}>
+      <div role="group" aria-labelledby={id} className="flex flex-wrap gap-2">
+        {opciones.map((o) => {
+          const activo = valor.includes(o.valor);
+          return (
+            <button
+              key={o.valor}
+              type="button"
+              disabled={deshabilitado}
+              aria-pressed={activo}
+              onClick={() => alternar(o.valor)}
+              className={cx(
+                "inline-flex min-h-11 items-center gap-1.5 rounded-xl border px-3.5 py-2 text-sm font-semibold transition",
+                "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+                activo ? "border-red-500 bg-red-600 text-white" : "border-white/15 bg-black/40 text-white/80 hover:border-white/40",
+              )}
+            >
+              <span aria-hidden className={cx("inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] leading-none",
+                activo ? "border-white bg-white text-red-600" : "border-white/40")}>{activo ? "✓" : ""}</span>
+              {o.texto}
+            </button>
+          );
+        })}
+      </div>
+    </Campo>
+  );
+}
+
 /** Contador con −/+. Con permitirVacio arranca en "—" (sin dato). */
 export function Contador({ etiqueta, valor, min, max, onCambio, permitirVacio, deshabilitado }: {
   etiqueta: string;

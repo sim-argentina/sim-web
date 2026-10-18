@@ -234,11 +234,25 @@ async function main() {
   {
     const id = await registrar(datos("pregunto"));
     const r = await carrera(
-      `${comoServicio}select public.interaccion_editar('${id}', 1, ${jsonb({ rango_etario: "25_34" })}, 'staff') is not null`,
-      `${comoServicio}select public.interaccion_editar('${id}', 1, ${jsonb({ rango_etario: "50_mas" })}, 'admin');`);
-    const fila = await q(`select rango_etario || '|' || version from public.interacciones_stand where id = '${id}';`);
+      `${comoServicio}select public.interaccion_editar('${id}', 1, ${jsonb({ rangos_etarios: ["25_34", "50_mas"] })}, 'staff') is not null`,
+      `${comoServicio}select public.interaccion_editar('${id}', 1, ${jsonb({ rangos_etarios: ["18_24"] })}, 'admin');`);
+    const fila = await q(`select rangos_etarios::text || '|' || version from public.interacciones_stand where id = '${id}';`);
     comprobar("dos ediciones simultáneas con la misma versión: la vieja no pisa a la nueva",
-      r.a.code === 0 && r.b.error === "version_desactualizada" && fila === "25_34|2",
+      r.a.code === 0 && r.b.error === "version_desactualizada" && fila === "{25_34,50_mas}|2",
+      `B recibió "${r.b.error}"; queda ${fila}`);
+  }
+
+  {
+    // Pantalla ANTERIOR (un rango) contra la nueva (varios) sobre la misma versión:
+    // gana la primera; la anterior nunca trunca lo que guardó la nueva.
+    const id = await registrar(datos("pregunto", { rangos_etarios: ["18_24"] }));
+    const r = await carrera(
+      `${comoServicio}select public.interaccion_editar('${id}', 1, ${jsonb({ rangos_etarios: ["18_24", "50_mas"] })}, 'staff') is not null`,
+      `${comoServicio}select public.interaccion_editar('${id}', 1, ${jsonb({ rango_etario: "25_34" })}, 'staff');`);
+    const fila = await q(`select rangos_etarios::text || '|' || coalesce(rango_etario, '-') || '|' || version from public.interacciones_stand where id = '${id}';`);
+    const reintento = await psql(`${comoServicio}select public.interaccion_editar('${id}', 2, ${jsonb({ rango_etario: "25_34" })}, 'staff');`);
+    comprobar("pantalla anterior contra la nueva a la vez: conflicto y, al reintentar, 409 sin truncar",
+      r.a.code === 0 && r.b.error === "version_desactualizada" && fila === "{18_24,50_mas}|-|2" && /cliente_desactualizado/.test(reintento.stderr),
       `B recibió "${r.b.error}"; queda ${fila}`);
   }
 
@@ -328,7 +342,7 @@ async function main() {
   // intento y recibe la fila original (no un rechazo que la ignore ni otra fila).
   {
     const k = randomUUID();
-    const d = datos("miro", { rango_etario: "35_49" });
+    const d = datos("miro", { rangos_etarios: ["35_49", "menos_14"] });
     const a = psql(`begin;\n${comoServicio}select public.interaccion_registrar('${k}'::uuid, ${jsonb(d)}, null, 'staff') -> 'interaccion' ->> 'id';\nselect pg_sleep(${RETENCION_S});\ncommit;`);
     await espera(500);
     await q("select public.interacciones_pausar_altas('admin');");
@@ -396,7 +410,7 @@ async function main() {
   console.log("\n· Ráfagas simultáneas por REST");
   {
     const k = randomUUID();
-    const cuerpo = { p_idempotency_key: k, p_datos: datos("miro", { rango_etario: "18_24" }), p_turnos: null, p_rol: "staff" };
+    const cuerpo = { p_idempotency_key: k, p_datos: datos("miro", { rangos_etarios: ["50_mas", "18_24"] }), p_turnos: null, p_rol: "staff" };
     const rs = await Promise.all(Array.from({ length: 8 }, () => rest("POST", "rpc/interaccion_registrar", cuerpo)));
     const ids = new Set(rs.map((x) => x.json?.interaccion?.id));
     const nuevas = rs.filter((x) => x.json?.repetida === false).length;
@@ -421,8 +435,8 @@ async function main() {
 
   {
     const id = await registrar(datos("pregunto"));
-    const rs = await Promise.all(["menos_14", "14_17", "18_24", "25_34", "35_49"].map((rango) =>
-      rest("POST", "rpc/interaccion_editar", { p_id: id, p_version: 1, p_cambios: { rango_etario: rango }, p_rol: "staff" })));
+    const rs = await Promise.all([["menos_14"], ["14_17", "50_mas"], ["18_24"], ["25_34", "35_49"], []].map((rangos) =>
+      rest("POST", "rpc/interaccion_editar", { p_id: id, p_version: 1, p_cambios: { rangos_etarios: rangos }, p_rol: "staff" })));
     const ok = rs.filter((x) => x.status === 200).length;
     const conflictos = rs.filter((x) => x.json?.message === "version_desactualizada").length;
     const v = await q(`select version from public.interacciones_stand where id = '${id}';`);

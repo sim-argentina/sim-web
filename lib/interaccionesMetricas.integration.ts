@@ -8,7 +8,8 @@ import { execFileSync } from "node:child_process";
 // Interacciones · métricas (Bloque 4) contra el stack LOCAL, con un escenario
 // determinista en marzo de 2025 (lejos de cualquier dato de demo):
 //
-//   lun 10/03  10 "miró" 11:00 · 5 "preguntó" 12:00 (precio×2, tiempo, sin motivo×2) ·
+//   lun 10/03  10 "miró" 11:00 (4 con un rango por la forma ANTERIOR, 2 con dos rangos) ·
+//              5 "preguntó" 12:00 (precio×2, tiempo, sin motivo×2; tipo familia×2, amigos) ·
 //              3 "se subió" 21:59: S1 con 2 turnos pagos (2 personas → 4 participaciones),
 //              S2 con un turno gratis, S3 pendiente
 //   mar 11/03  "se subió" 09:30 cerrada sin turno · "se subió" 15:00 ANULADA (no cuenta) ·
@@ -70,14 +71,14 @@ declare
 begin
   for i in 1..10 loop
     f := jsonb_build_object('resultado', 'miro', 'personas_grupo', 2, 'ocurrida_en', '2025-03-10T14:00:00Z', 'observaciones', '${MARCA}');
-    if i <= 4 then f := f || '{"rango_etario":"18_24"}'; end if;
+    if i <= 4 then f := f || '{"rango_etario":"18_24"}'; elsif i <= 6 then f := f || '{"rangos_etarios":["50_mas","25_34"]}'; end if;
     if i <= 3 then f := f || '{"conocia_sim":"no_sabe"}'; elsif i <= 5 then f := f || '{"conocia_sim":"no"}'; end if;
     if i = 1 then f := f || '{"hombres":1,"mujeres":1}'; end if;
     perform public.interaccion_registrar(gen_random_uuid(), f, null, 'admin');
   end loop;
   for i in 1..5 loop
     f := jsonb_build_object('resultado', 'pregunto', 'personas_grupo', 1, 'ocurrida_en', '2025-03-10T15:00:00Z', 'observaciones', '${MARCA}');
-    if i <= 2 then f := f || '{"motivo":"precio"}' || jsonb_build_object('atendio_empleado_id', e); elsif i = 3 then f := f || '{"motivo":"tiempo"}'; end if;
+    if i <= 2 then f := f || '{"motivo":"precio","tipo_grupo":"familia"}' || jsonb_build_object('atendio_empleado_id', e); elsif i = 3 then f := f || '{"motivo":"tiempo","tipo_grupo":"amigos"}'; end if;
     perform public.interaccion_registrar(gen_random_uuid(), f, null, 'admin');
   end loop;
   perform public.interaccion_registrar(gen_random_uuid(), '{"resultado":"subio","personas_grupo":2,"ocurrida_en":"2025-03-11T00:59:00Z","observaciones":"${MARCA}"}', '{-960001,-960002}', 'admin');
@@ -145,6 +146,13 @@ async function main() {
     assert.deepEqual(m.dias_semana.map((d) => d.embudo.interacciones), [18, 3, 2, 230, 0, 0, 0], "2 · 23:30 del martes es martes");
     assert.deepEqual(Object.fromEntries(m.perfil.conocia_sim.valores.map((x) => [x.valor, x.n])), { si: 1, no: 2, no_sabe: 3 });
     assert.equal(m.perfil.conocia_sim.sin_dato, 247);
+    const re = m.perfil.rangos_etarios;
+    assert.deepEqual(Object.fromEntries(re.valores.filter((x) => x.n > 0).map((x) => [x.valor, x.n])), { "18_24": 4, "25_34": 2, "50_mas": 2 },
+      "2 · grupos que incluyen cada rango (el rango único de la forma anterior es un conjunto de uno)");
+    assert.deepEqual([re.total, re.con_dato, re.sin_dato, re.con_varios], [253, 6, 247, 2]);
+    const tg = m.perfil.tipo_grupo;
+    assert.deepEqual([tg.base, tg.con_dato, tg.sin_dato, tg.solo_miro_con_dato], [m.embudo.preguntaron, 3, m.embudo.preguntaron - 3, 0], "2 · tipo: base = preguntaron o se subieron");
+    assert.deepEqual(tg.valores.find((x) => x.valor === "familia")!.pregunto_subio, { num: 0, den: 2, valor: 0 });
     assert.deepEqual([m.perfil.genero.registros_con_desglose, m.perfil.genero.hombres, m.perfil.genero.mujeres, m.perfil.genero.cobertura.den], [1, 1, 1, 269]);
     const emp = m.atendio.find((a) => a.empleado_id !== null)!;
     assert.deepEqual([emp.nombre, emp.activo, emp.embudo.interacciones, emp.embudo.preguntaron], [`__TEST_EMP_${MARCA}`, false, 2, 2], "2 · atribución histórica a un inactivo");
@@ -157,10 +165,17 @@ async function main() {
     const c = grande.valor.actual.cobertura;
     assert.deepEqual([c.turnos, c.vinculados, c.pagos.total, c.pagos.vinculados, c.gratis.total, c.gratis.vinculados, c.contradictorios.total, c.contradictorios.vinculados],
       [8, 5, 6, 3, 2, 2, 1, 0], "3 · el borrado no es elegible; el corregido cuenta como gratis");
-    const filtrada = await metricas({ ...semana, filtros: { rango_etario: "18_24" } }, ahora);
+    const filtrada = await metricas({ ...semana, filtros: { rango_etario: ["18_24"] } }, ahora);
     assert.ok(filtrada.ok);
     assert.equal(filtrada.valor.actual.metricas.embudo.interacciones, 4, "3 · el filtro aplica a las interacciones…");
     assert.deepEqual(filtrada.valor.actual.cobertura, c, "3 · …y NO a la cobertura general");
+    const alguno = await metricas({ ...semana, filtros: { rango_etario: ["18_24", "25_34", "50_mas"] } }, ahora);
+    assert.ok(alguno.ok);
+    assert.equal(alguno.valor.actual.metricas.embudo.interacciones, 6, "3 · incluye al menos uno: cada interacción UNA vez aunque coincidan dos rangos");
+    assert.deepEqual(alguno.valor.actual.cobertura, c);
+    const familia = await metricas({ ...semana, filtros: { tipo_grupo: "familia" } }, ahora);
+    assert.ok(familia.ok && familia.valor.actual.metricas.embudo.interacciones === 2 && familia.valor.actual.metricas.embudo.exclusivos.miro === 0,
+      "3 · filtrar por tipo deja solo consultas/subidas");
     const miercoles = await metricas({ desde: "2025-03-12", hasta: "2025-03-12", comparar: null, filtros: {} }, ahora);
     assert.ok(miercoles.ok);
     assert.deepEqual([miercoles.valor.actual.cobertura.turnos, miercoles.valor.actual.cobertura.vinculados], [4, 2], "3 · el turno de las 00:05 cuenta aunque la interacción sea del martes");
@@ -205,7 +220,7 @@ async function main() {
     assert.deepEqual([malo.status, malo.json.codigo], [400, "campo_invalido"]);
 
     dejar = process.env.INTERACCIONES_DEJAR_FIXTURES === "1";
-    console.log("interaccionesMetricas.integration.ts OK — 253 filas paginadas sin truncar (6×50 = 1×1000), embudo 253/12/7, personas 269, vínculos (pendiente por turno borrado, gratis por turno corregido), participaciones 8, franjas y días de Córdoba, cobertura 5/8 por fecha del turno e independiente de filtros, período parcial y comparación sin registro, ruta solo admin y sin datos personales.");
+    console.log("interaccionesMetricas.integration.ts OK — 253 filas paginadas sin truncar (6×50 = 1×1000), embudo 253/12/7, personas 269, vínculos (pendiente por turno borrado, gratis por turno corregido), participaciones 8, franjas y días de Córdoba, cobertura 5/8 por fecha del turno e independiente de filtros, rangos múltiples (legado = conjunto de uno; filtro incluye-alguno sin duplicar), tipo de grupo con base preguntaron/subieron, período parcial y comparación sin registro, ruta solo admin y sin datos personales.");
   } finally {
     if (dejar) console.log("Fixtures de métricas CONSERVADOS (INTERACCIONES_DEJAR_FIXTURES=1). Borrarlos: INTERACCIONES_SOLO_LIMPIAR=1.");
     else limpiar(inicioPrevio);

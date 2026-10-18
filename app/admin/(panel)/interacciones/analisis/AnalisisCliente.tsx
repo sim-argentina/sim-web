@@ -9,10 +9,10 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { hoyEnSim } from "@/lib/agenda";
-import { ETIQUETAS, INICIADORES, MOTIVOS, RANGOS_ETARIOS, RESPUESTAS, RESULTADOS } from "@/lib/interacciones";
+import { ETIQUETAS, INICIADORES, MOTIVOS, RANGOS_ETARIOS, RESPUESTAS, RESULTADOS, TIPOS_GRUPO, type RangoEtario } from "@/lib/interacciones";
 import {
   CLAVES_FRANJA, FRANJAS, TAMANOS, rangoAnterior, rangoRapido, tasa,
-  type ClaveRango, type Distribucion, type Filtros, type RespuestaMetricas, type Tasa,
+  type ClaveRango, type Distribucion, type DistribucionMultiple, type DistribucionTipoGrupo, type Filtros, type RespuestaMetricas, type Tasa,
 } from "@/lib/interaccionesMetricas";
 import { pedir } from "../cliente";
 import { Aviso, Boton, Cargando, cx } from "../ui";
@@ -24,7 +24,8 @@ type ModoComparar = "ninguno" | "anterior" | "otro";
 const fecha = (f: string) => f.split("-").reverse().join("/");
 const etiquetaFranja = (c: string) => (c === "otros" ? "Otros horarios" : FRANJAS.find((f) => f.clave === c)?.etiqueta ?? c);
 const ETQ_FILTRO: Record<keyof Filtros, string> = {
-  resultado: "Resultado", franja: "Franja", rango_etario: "Rango", conocia_sim: "Conocían SIM", se_subio_antes: "Ya se habían subido",
+  resultado: "Resultado", franja: "Franja", rango_etario: "Rangos etarios (incluye alguno)", tipo_grupo: "Tipo de grupo",
+  conocia_sim: "Conocían SIM", se_subio_antes: "Ya se habían subido",
   iniciador: "Inició", motivo: "Motivo", atendio: "Atendió", tamano: "Tamaño del grupo",
 };
 
@@ -52,7 +53,8 @@ export default function AnalisisCliente() {
     q.set("comp_desde", comparar.desde);
     q.set("comp_hasta", comparar.hasta);
   }
-  for (const [k, v] of Object.entries(filtros)) if (v) q.set(k, String(v));
+  // Los rangos viajan separados por coma ("incluye al menos uno").
+  for (const [k, v] of Object.entries(filtros)) if (Array.isArray(v) ? v.length > 0 : v) q.set(k, Array.isArray(v) ? v.join(",") : String(v));
   const consulta = q.toString();
   const clave = `${consulta}#${recarga}`;
   const conAtendio = Boolean(filtros.atendio);
@@ -87,7 +89,7 @@ export default function AnalisisCliente() {
   const filtro = <K extends keyof Filtros>(k: K, v: Filtros[K] | "") =>
     setFiltros((f) => {
       const n = { ...f };
-      if (v === "" || v === undefined) delete n[k];
+      if (v === "" || v === undefined || (Array.isArray(v) && v.length === 0)) delete n[k];
       else n[k] = v as Filtros[K];
       return n;
     });
@@ -145,8 +147,8 @@ export default function AnalisisCliente() {
                 opciones={RESULTADOS.map((r) => [r, ETIQUETAS.resultado[r]])} />
               <Selector etiqueta="Franja horaria" valor={filtros.franja} onCambio={(v) => filtro("franja", v as Filtros["franja"])}
                 opciones={CLAVES_FRANJA.map((c) => [c, etiquetaFranja(c)])} />
-              <Selector etiqueta="Rango aproximado" valor={filtros.rango_etario} onCambio={(v) => filtro("rango_etario", v as Filtros["rango_etario"])}
-                opciones={[...RANGOS_ETARIOS.map((r) => [r, ETIQUETAS.rango_etario[r]] as [string, string]), ["sin_dato", "Sin dato"]]} />
+              <Selector etiqueta="Tipo de grupo" valor={filtros.tipo_grupo} onCambio={(v) => filtro("tipo_grupo", v as Filtros["tipo_grupo"])}
+                opciones={[...TIPOS_GRUPO.map((r) => [r, ETIQUETAS.tipo_grupo[r]] as [string, string]), ["sin_dato", "Sin dato"]]} />
               <Selector etiqueta="Tamaño del grupo" valor={filtros.tamano} onCambio={(v) => filtro("tamano", v as Filtros["tamano"])}
                 opciones={TAMANOS.map((t) => [t, t === "5+" ? "5 o más" : `${t}`])} />
               <Selector etiqueta="¿Conocían SIM?" valor={filtros.conocia_sim} onCambio={(v) => filtro("conocia_sim", v as Filtros["conocia_sim"])}
@@ -159,6 +161,7 @@ export default function AnalisisCliente() {
                 opciones={[...MOTIVOS.map((r) => [r, ETIQUETAS.motivo[r]] as [string, string]), ["sin_motivo", "Sin motivo"]]} />
               <Selector etiqueta="Atendió (declarado)" valor={filtros.atendio} onCambio={(v) => filtro("atendio", v)}
                 opciones={[...opcionesAtendio.map((o) => [o.id, o.nombre] as [string, string]), ["sin_asignar", "Sin asignar"]]} />
+              <FiltroRangos valor={filtros.rango_etario ?? []} onCambio={(v) => filtro("rango_etario", v)} />
               {hayFiltros ? <div className="flex items-end"><Boton variante="fantasma" onClick={() => setFiltros({})}>Limpiar filtros</Boton></div> : null}
             </div>
           ) : null}
@@ -167,7 +170,7 @@ export default function AnalisisCliente() {
             <p>Período: <strong className="text-white">{fecha(rango.desde)} al {fecha(rango.hasta)}</strong> (inclusive, hora de Córdoba)
               {comparar ? <> · comparado con <strong className="text-white">{fecha(comparar.desde)} al {fecha(comparar.hasta)}</strong></> : null}</p>
             {hayFiltros ? (
-              <p>Filtros: {Object.entries(filtros).map(([k, v]) => `${ETQ_FILTRO[k as keyof Filtros]}: ${textoFiltro(k as keyof Filtros, String(v), opcionesAtendio)}`).join(" · ")}. Se aplican a los dos períodos; la cobertura general no cambia con ellos.</p>
+              <p>Filtros: {Object.entries(filtros).map(([k, v]) => `${ETQ_FILTRO[k as keyof Filtros]}: ${(Array.isArray(v) ? v : [String(v)]).map((x) => textoFiltro(k as keyof Filtros, x, opcionesAtendio)).join(" o ")}`).join(" · ")}. Se aplican a los dos períodos; la cobertura general no cambia con ellos.</p>
             ) : null}
             {!rangoValido ? <p className="text-amber-200">La fecha inicial tiene que ser anterior o igual a la final.</p> : null}
           </div>
@@ -198,6 +201,7 @@ function textoFiltro(k: keyof Filtros, v: string, atendio: Array<{ id: string; n
   if (k === "resultado") return ETIQUETAS.resultado[v as keyof typeof ETIQUETAS.resultado];
   if (k === "franja") return etiquetaFranja(v);
   if (k === "rango_etario") return ETIQUETAS.rango_etario[v as keyof typeof ETIQUETAS.rango_etario];
+  if (k === "tipo_grupo") return ETIQUETAS.tipo_grupo[v as keyof typeof ETIQUETAS.tipo_grupo];
   if (k === "conocia_sim" || k === "se_subio_antes") return ETIQUETAS.respuesta[v as keyof typeof ETIQUETAS.respuesta];
   if (k === "iniciador") return ETIQUETAS.iniciador[v as keyof typeof ETIQUETAS.iniciador];
   if (k === "motivo") return ETIQUETAS.motivo[v as keyof typeof ETIQUETAS.motivo];
@@ -220,6 +224,29 @@ function RangoFechas({ valor, onCambio, max, etiqueta }: { valor: Rango; onCambi
   );
 }
 
+/** Rangos etarios: varios a la vez = interacciones que incluyen AL MENOS UNO (cada una cuenta una sola vez). */
+function FiltroRangos({ valor, onCambio }: { valor: Array<RangoEtario | "sin_dato">; onCambio: (v: Array<RangoEtario | "sin_dato">) => void }) {
+  const opciones = [...RANGOS_ETARIOS.map((r) => [r, ETIQUETAS.rango_etario[r]] as const), ["sin_dato", "Sin dato"] as const];
+  return (
+    <fieldset className="sm:col-span-2 lg:col-span-3">
+      <legend className="mb-1 text-xs text-white/60">Rangos etarios: incluye al menos uno de los marcados</legend>
+      <div className="flex flex-wrap gap-2">
+        {opciones.map(([v, t]) => {
+          const activo = valor.includes(v);
+          return (
+            <button key={v} type="button" aria-pressed={activo}
+              onClick={() => onCambio(opciones.map(([o]) => o).filter((o) => (o === v ? !activo : valor.includes(o))))}
+              className={cx("min-h-11 rounded-xl border px-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-400",
+                activo ? "border-red-500 bg-red-600 text-white" : "border-white/15 bg-black/40 text-white/75 hover:border-white/40")}>
+              {t}
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
 function Selector({ etiqueta, valor, opciones, onCambio }: { etiqueta: string; valor: string | undefined; opciones: Array<[string, string]>; onCambio: (v: string) => void }) {
   return (
     <label className="flex flex-col gap-1 text-xs text-white/60">{etiqueta}
@@ -238,6 +265,11 @@ function EstadoPeriodo({ datos, hayFiltros }: { datos: RespuestaMetricas; hayFil
   const inicio = datos.modulo.inicio_registro ? new Date(datos.modulo.inicio_registro).toLocaleDateString("es-AR", { timeZone: "America/Argentina/Cordoba" }) : null;
   const avisos: React.ReactNode[] = [];
   if (!datos.modulo.habilitado) avisos.push(<Aviso key="h" tipo="alerta" titulo="El registro todavía no empezó">No hay datos de registro: el módulo no tiene fecha de inicio.</Aviso>);
+  if (soloConsultas(datos)) avisos.push(
+    <Aviso key="t" tipo="info" titulo="Base: solo consultas y subidas">
+      El tipo de grupo no se releva en “Solo miró”, así que con este filtro solo quedan interacciones que preguntaron o se subieron.
+      Las tasas desde “Miró” no aplican; usá Preguntó → Se subió.
+    </Aviso>);
   if (datos.modulo.altas_pausadas) avisos.push(
     <Aviso key="z" tipo="alerta" titulo="Carga de nuevas interacciones pausada">
       Desde el {datos.modulo.altas_pausadas_en ? new Date(datos.modulo.altas_pausadas_en).toLocaleString("es-AR", { timeZone: "America/Argentina/Cordoba", dateStyle: "short", timeStyle: "short", hourCycle: "h23" }) : "—"}.
@@ -260,6 +292,9 @@ function EstadoPeriodo({ datos, hayFiltros }: { datos: RespuestaMetricas; hayFil
   return avisos.length ? <div className="space-y-3">{avisos}</div> : null;
 }
 
+/** Con un tipo de grupo concreto filtrado, la vista no tiene "Solo miró": las tasas desde "Miró" no son reales. */
+const soloConsultas = (datos: RespuestaMetricas) => datos.filtros.tipo_grupo !== undefined && datos.filtros.tipo_grupo !== "sin_dato";
+
 function Delta({ v, tipo }: { v: { diferencia?: number; variacion?: number | null; diferencia_pp?: number | null } | undefined; tipo: "cantidad" | "tasa" }) {
   if (!v) return null;
   if (tipo === "tasa") return <span>vs. comparación: {fmtPp(v.diferencia_pp ?? null)}</span>;
@@ -267,6 +302,7 @@ function Delta({ v, tipo }: { v: { diferencia?: number; variacion?: number | nul
 }
 
 function Tablero({ datos }: { datos: RespuestaMetricas }) {
+  const sinMiradas = soloConsultas(datos);
   const a = datos.actual;
   const m = a.metricas;
   const e = m.embudo;
@@ -280,9 +316,13 @@ function Tablero({ datos }: { datos: RespuestaMetricas }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Tarjeta titulo="Interacciones" valor={fmtN(e.interacciones)} detalle="Visitas o grupos registrados" delta={<Delta v={d?.interacciones} tipo="cantidad" />} />
         <Tarjeta titulo="Personas observadas" valor={fmtN(e.personas)} detalle={`En esos grupos · ${e.tamano_promedio === null ? "sin promedio" : `${e.tamano_promedio.toLocaleString("es-AR", { maximumFractionDigits: 1 })} personas por grupo`}`} delta={<Delta v={d?.personas} tipo="cantidad" />} />
-        <Tarjeta titulo="Preguntaron" valor={fmtN(e.preguntaron)} detalle={`${fmtPct(e.tasas.miro_pregunto)} de las que miraron`} delta={<Delta v={d?.preguntaron} tipo="cantidad" />} />
+        <Tarjeta titulo="Preguntaron" valor={fmtN(e.preguntaron)} detalle={sinMiradas ? "Base del filtro (sin “Solo miró”)" : `${fmtPct(e.tasas.miro_pregunto)} de las que miraron`} delta={<Delta v={d?.preguntaron} tipo="cantidad" />} />
         <Tarjeta titulo="Se subieron" valor={fmtN(e.subieron)} detalle={`${fmtPct(e.tasas.pregunto_subio)} de las que preguntaron`} delta={<Delta v={d?.subieron} tipo="cantidad" />} />
-        <Tarjeta tono="rojo" titulo="Miró → Se subió" valor={fmtPct(e.tasas.miro_subio)} detalle={e.tasas.miro_subio.den ? `${fmtBase(e.tasas.miro_subio)} interacciones` : "Sin denominador"} delta={<Delta v={d?.miro_subio} tipo="tasa" />} />
+        {sinMiradas ? (
+          <Tarjeta tono="rojo" titulo="Preguntó → Se subió" valor={fmtPct(e.tasas.pregunto_subio)} detalle={e.tasas.pregunto_subio.den ? `${fmtBase(e.tasas.pregunto_subio)} interacciones` : "Sin denominador"} delta={<Delta v={d?.pregunto_subio} tipo="tasa" />} />
+        ) : (
+          <Tarjeta tono="rojo" titulo="Miró → Se subió" valor={fmtPct(e.tasas.miro_subio)} detalle={e.tasas.miro_subio.den ? `${fmtBase(e.tasas.miro_subio)} interacciones` : "Sin denominador"} delta={<Delta v={d?.miro_subio} tipo="tasa" />} />
+        )}
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -296,9 +336,9 @@ function Tablero({ datos }: { datos: RespuestaMetricas }) {
               </div>
             ))}
             <div className="grid gap-3 border-t border-white/10 pt-3 sm:grid-cols-3">
-              <BarraTasa etiqueta="Miró → Preguntó" tasa={e.tasas.miro_pregunto} color={COLORES.preguntaron} />
+              <BarraTasa etiqueta="Miró → Preguntó" tasa={e.tasas.miro_pregunto} color={COLORES.preguntaron} noAplica={sinMiradas} />
               <BarraTasa etiqueta="Preguntó → Se subió" tasa={e.tasas.pregunto_subio} color={COLORES.subieron} />
-              <BarraTasa etiqueta="Miró → Se subió" tasa={e.tasas.miro_subio} color={COLORES.subieron} />
+              <BarraTasa etiqueta="Miró → Se subió" tasa={e.tasas.miro_subio} color={COLORES.subieron} noAplica={sinMiradas} />
             </div>
             {d ? (
               <p className="text-xs text-white/55">Vs. comparación: Miró → Preguntó {fmtPp(d.miro_pregunto.diferencia_pp)} · Preguntó → Se subió {fmtPp(d.pregunto_subio.diferencia_pp)} · Miró → Se subió {fmtPp(d.miro_subio.diferencia_pp)}</p>
@@ -325,10 +365,10 @@ function Tablero({ datos }: { datos: RespuestaMetricas }) {
       {/* 4. Día y franja */}
       <div className="grid gap-5 lg:grid-cols-2">
         <Seccion titulo="Conversión por día de la semana" descripcion="Tasas dentro de cada día; n = interacciones de ese día.">
-          <TablaTasas filas={m.dias_semana.map((x) => ({ etiqueta: x.etiqueta, embudo: x.embudo }))} />
+          <TablaTasas sinMiradas={sinMiradas} filas={m.dias_semana.map((x) => ({ etiqueta: x.etiqueta, embudo: x.embudo }))} />
         </Seccion>
         <Seccion titulo="Conversión por franja horaria" descripcion="Franjas [desde, hasta): las 12:00 son de 12–14. Lo que cae fuera de 10–22 va a “Otros horarios”.">
-          <TablaTasas filas={m.franjas.map((x) => ({ etiqueta: x.etiqueta, embudo: x.embudo }))} />
+          <TablaTasas sinMiradas={sinMiradas} filas={m.franjas.map((x) => ({ etiqueta: x.etiqueta, embudo: x.embudo }))} />
         </Seccion>
       </div>
 
@@ -347,7 +387,7 @@ function Tablero({ datos }: { datos: RespuestaMetricas }) {
         </Seccion>
 
         {/* 8. Perfil */}
-        <Seccion titulo="Perfil aproximado de los grupos" descripcion="Datos opcionales y aproximados. El rango describe al grupo, no la edad de cada persona.">
+        <Seccion titulo="Perfil aproximado de los grupos" descripcion="Datos opcionales y aproximados. Los rangos dicen qué edades hay en el grupo, no cuántas personas de cada una.">
           <div className="space-y-5">
             <div>
               <p className="mb-2 text-xs uppercase tracking-wide text-white/50">Tamaño del grupo (interacciones)</p>
@@ -366,8 +406,8 @@ function Tablero({ datos }: { datos: RespuestaMetricas }) {
               ) : <p className="text-sm text-white/55">Ningún grupo con desglose cargado.</p>}
             </div>
             <div>
-              <p className="mb-2 text-xs uppercase tracking-wide text-white/50">Rango aproximado (grupos)</p>
-              <DistribucionLista dist={m.perfil.rango_etario} etiqueta={(x) => ETIQUETAS.rango_etario[x]} />
+              <p className="mb-2 text-xs uppercase tracking-wide text-white/50">Grupos que incluyen cada rango etario</p>
+              <RangosLista dist={m.perfil.rangos_etarios} />
             </div>
           </div>
         </Seccion>
@@ -405,6 +445,12 @@ function Tablero({ datos }: { datos: RespuestaMetricas }) {
           </div>
         </Seccion>
       </div>
+
+      {/* 10b. Tipo de grupo */}
+      <Seccion titulo="Tipo de grupo"
+        descripcion="Se releva entre quienes preguntaron o se subieron (no en “Solo miró”): la base son esas interacciones y la conversión es Preguntó → Se subió.">
+        <TipoGrupoLista dist={m.perfil.tipo_grupo} />
+      </Seccion>
 
       {/* 11. Cobertura, pendientes e inconsistencias */}
       <Seccion titulo="Cobertura del registro, vínculos y advertencias"
@@ -444,19 +490,52 @@ function Tablero({ datos }: { datos: RespuestaMetricas }) {
   );
 }
 
-function TablaTasas({ filas }: { filas: Array<{ etiqueta: string; embudo: { interacciones: number; tasas: { miro_pregunto: Tasa; pregunto_subio: Tasa } } }> }) {
+function TablaTasas({ filas, sinMiradas }: { filas: Array<{ etiqueta: string; embudo: { interacciones: number; tasas: { miro_pregunto: Tasa; pregunto_subio: Tasa } } }>; sinMiradas?: boolean }) {
   return (
     <ul className="space-y-3">
       {filas.map((f) => (
         <li key={f.etiqueta} className="grid grid-cols-[5.5rem_1fr] items-center gap-3">
           <span className="text-sm text-white/80">{f.etiqueta}<span className="block text-xs text-white/45">n = {fmtN(f.embudo.interacciones)}</span></span>
           <div className="space-y-1.5">
-            <BarraTasa etiqueta="Miró → Preguntó" tasa={f.embudo.tasas.miro_pregunto} color={COLORES.preguntaron} />
+            <BarraTasa etiqueta="Miró → Preguntó" tasa={f.embudo.tasas.miro_pregunto} color={COLORES.preguntaron} noAplica={sinMiradas} />
             <BarraTasa etiqueta="Preguntó → Se subió" tasa={f.embudo.tasas.pregunto_subio} color={COLORES.subieron} />
           </div>
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Rangos: barras que se superponen (no es una distribución exclusiva ni personas por edad). */
+function RangosLista({ dist }: { dist: DistribucionMultiple<RangoEtario> }) {
+  if (dist.total === 0) return <p className="text-sm text-white/55">Sin interacciones.</p>;
+  return (
+    <div>
+      <Barras filas={[
+        ...dist.valores.map((x) => ({ etiqueta: ETIQUETAS.rango_etario[x.valor], n: x.n, detalle: `${fmtPct(x.pct)} de los grupos con dato · Miró→Se subió ${fmtPct(x.miro_subio)}` })),
+        { etiqueta: "Sin dato", n: dist.sin_dato, detalle: `Miró→Se subió ${fmtPct(dist.sin_dato_miro_subio)}`, color: "#52525b" },
+      ]} />
+      <p className="mt-2 text-xs text-white/50">
+        Base: {fmtN(dist.con_dato)} de {fmtN(dist.total)} interacciones con al menos un rango ({fmtPct(dist.cobertura)}).
+        Un grupo con varios rangos cuenta en cada uno ({fmtN(dist.con_varios)} tienen más de uno), así que los % pueden sumar más de 100 %. No son personas por edad.
+      </p>
+    </div>
+  );
+}
+
+function TipoGrupoLista({ dist }: { dist: DistribucionTipoGrupo }) {
+  if (dist.base === 0) return <p className="text-sm text-white/55">Ninguna consulta ni subida en este período.</p>;
+  return (
+    <div>
+      <Barras filas={[
+        ...dist.valores.map((x) => ({ etiqueta: ETIQUETAS.tipo_grupo[x.valor], n: x.n, detalle: `${fmtPct(x.pct)} · Preguntó→Se subió ${fmtPct(x.pregunto_subio)}${x.pregunto_subio.den ? ` (${fmtBase(x.pregunto_subio)})` : ""}` })),
+        { etiqueta: "Sin dato", n: dist.sin_dato, detalle: `Preguntó→Se subió ${fmtPct(dist.sin_dato_pregunto_subio)}${dist.sin_dato_pregunto_subio.den ? ` (${fmtBase(dist.sin_dato_pregunto_subio)})` : ""}`, color: "#52525b" },
+      ]} />
+      <p className="mt-2 text-xs text-white/50">
+        Base: {fmtN(dist.base)} interacciones que preguntaron o se subieron; con tipo cargado {fmtN(dist.con_dato)} ({fmtPct(dist.cobertura)}). Los % son sobre las que tienen tipo.
+        {dist.solo_miro_con_dato ? ` Aparte: ${fmtN(dist.solo_miro_con_dato)} “Solo miró” con un tipo cargado antes de cambiar el resultado (no entran en la base).` : ""}
+      </p>
+    </div>
   );
 }
 

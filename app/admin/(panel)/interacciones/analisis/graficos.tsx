@@ -71,16 +71,22 @@ export function Barras({ filas, vacio = "Sin datos para este período." }: {
   );
 }
 
-/** Tasa como barra 0–100 % con su base; sin denominador → "Sin datos" (sin barra). */
-export function BarraTasa({ etiqueta, tasa, color }: { etiqueta: string; tasa: Tasa; color: string }) {
+/**
+ * Tasa como barra 0–100 % con su base; sin denominador → "Sin datos" (sin barra).
+ * noAplica: la base de la vista no permite esa tasa (p. ej. filtrar por un dato que
+ * "Solo miró" no releva): se dice "No aplica" en vez de mostrar un 100 % engañoso.
+ */
+export function BarraTasa({ etiqueta, tasa, color, noAplica }: { etiqueta: string; tasa: Tasa; color: string; noAplica?: boolean }) {
   return (
     <div>
       <div className="mb-1 flex flex-wrap justify-between gap-x-2 gap-y-0.5 text-xs">
         <span className="text-white/70">{etiqueta}</span>
-        <span className="tabular-nums text-white">{fmtPct(tasa)}{tasa.valor !== null ? <span className="ml-1 text-white/50">({fmtBase(tasa)})</span> : null}</span>
+        {noAplica
+          ? <span className="text-white/50">No aplica con este filtro</span>
+          : <span className="tabular-nums text-white">{fmtPct(tasa)}{tasa.valor !== null ? <span className="ml-1 text-white/50">({fmtBase(tasa)})</span> : null}</span>}
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-white/10" aria-hidden>
-        {tasa.valor !== null ? <div className="h-full rounded-full" style={{ width: `${tasa.valor * 100}%`, backgroundColor: color }} /> : null}
+        {tasa.valor !== null && !noAplica ? <div className="h-full rounded-full" style={{ width: `${tasa.valor * 100}%`, backgroundColor: color }} /> : null}
       </div>
     </div>
   );
