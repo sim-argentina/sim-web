@@ -3,7 +3,7 @@
 import "@/lib/guardiaPruebas.activar";
 import { strict as assert } from "node:assert";
 import { randomBytes, randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   LIMITES, MOTIVOS, MOTIVOS_CIERRE, RANGOS_ETARIOS, RESPUESTAS, RESULTADOS, INICIADORES, fechaSim, horaSim,
@@ -43,6 +43,18 @@ function sql(q: string): string {
     { input: q, encoding: "utf8" }).trim();
 }
 const lit = (s: string) => `'${s.replace(/'/g, "''")}'`;
+// Sesión psql ASÍNCRONA que retiene un bloqueo unos segundos (para forzar el cruce
+// de dos rutas reales en un orden determinado). Solo contra el contenedor local.
+function retener(q: string, segundos: number): Promise<{ code: number | null; err: string }> {
+  return new Promise((res) => {
+    const p = spawn("docker", ["exec", "-i", CONTENEDOR, "psql", "-U", "postgres", "-d", "postgres", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", "-"]);
+    let err = "";
+    p.stderr.on("data", (d) => (err += d));
+    p.on("close", (code) => res({ code, err }));
+    p.stdin.end(`begin;\n${q};\nselect pg_sleep(${segundos});\ncommit;`);
+  });
+}
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── Registro de lo creado, para limpiar ────────────────────────────────────
 const claves: string[] = [];
@@ -73,6 +85,7 @@ async function main() {
   const VINC = await import("@/app/api/admin/interacciones/turnos-vinculables/route");
   const ELIM = await import("@/app/api/admin/interacciones/[id]/eliminar/route");
   const METR = await import("@/app/api/admin/interacciones/metricas/route");
+  const TURNERO = await import("@/app/api/turnos-stand/[id]/route");
   const EMPS = await import("@/app/api/admin/interacciones/empleados/route");
 
   type Resp = { status: number; json: Record<string, unknown> & { interaccion?: Record<string, unknown> } };
@@ -601,10 +614,72 @@ async function main() {
     assert.equal(otraInter.status, 201, "16 · el turno liberado se vincula a otra interacción");
   }
 
+  // ── 17. El Turnero borra un turno mientras se libera su interacción (rutas reales) ──
+  // Orden de bloqueo: turno → vínculo → interacción en los dos caminos. Una sesión
+  // local retiene un bloqueo para forzar el cruce en cada orden; con el orden viejo
+  // de las RPCs (interacción primero) los dos casos terminaban en deadlock 40P01.
+  {
+    const nuevoTurno = () => {
+      const id = sql(`insert into public.turnos_stand (nombre, telefono, fecha, hora, cantidad_personas, cantidad_minutos, cantidad_turnos, total, metodo_pago, estado, modalidad)
+        values (${lit(`NOMBRE SECRETO ${MARCA}`)}, '000', ${lit(fechaSim(new Date(Date.now() - 20 * 60_000)))}, ${lit(horaSim(new Date(Date.now() - 20 * 60_000)))}, 2, 20, 4, 34000, 'qr', 'activo', 'v2_10')
+        returning id;`).split("\n").pop()!;
+      turnosFixture.push(id);
+      return id;
+    };
+    const borrarTurno = (t: string) => http(TURNERO.DELETE, "DELETE", `/api/turnos-stand/${t}`, { token: admin, id: t });
+    const eliminarInter = (i: string, version: number) =>
+      http(ELIM.POST, "POST", `/api/admin/interacciones/${i}/eliminar`, { token: admin, id: i, body: { version } });
+    const anularInter = (i: string, version: number) =>
+      http(ANULAR.POST, "POST", `/api/admin/interacciones/${i}/anular`, { token: admin, id: i, body: { version } });
+
+    for (const [nombre, liberar] of [["eliminar", eliminarInter], ["anular", anularInter]] as const) {
+      // a · El Turnero llega primero al vínculo: termina bien; la ruta de
+      //     Interacciones responde 409 sin escribir y el reintento funciona.
+      {
+        const t = nuevoTurno();
+        const i = inter(await alta(staff, { resultado: "subio", personas_grupo: 2 }, [t])).id;
+        const h = retener(`select 1 from public.interaccion_turnos where interaccion_id = '${i}' for update`, 2);
+        await esperar(400);
+        const turnero = borrarTurno(t);
+        await esperar(300);
+        const libera = liberar(i, 1);
+        const [rt, rl, rh] = [await turnero, await libera, await h];
+        assert.equal(rh.code, 0, rh.err);
+        assert.deepEqual([rt.status, rt.json.ok], [200, true], `17 · ${nombre}: el Turnero borra el turno`);
+        assert.deepEqual([rl.status, rl.json.codigo], [409, "version_desactualizada"], `17 · ${nombre}: conflicto controlado, no un 500`);
+        const fila = sql(`select s.version || '|' || e.vinculo_estado || '|' || (s.anulada_en is null) || '|' || (s.eliminada_en is null)
+          || '|' || (select count(*) from public.interacciones_stand_eventos where interaccion_id = s.id and tipo = 'turno_eliminado')
+          || '|' || (select count(*) from public.turnos_stand where id = ${t})
+          from public.interacciones_stand s join public.interacciones_stand_estado e on e.interaccion_id = s.id where s.id = '${i}';`);
+        assert.equal(fila, "2|pendiente|true|true|1|0", `17 · ${nombre}: sin escrituras parciales y con la auditoría del turno borrado`);
+        const otraVez = await liberar(i, 2);
+        assert.equal(otraVez.status, 200, `17 · ${nombre}: el reintento con la versión nueva funciona`);
+      }
+      // b · Interacciones llega primero a los vínculos: las dos rutas terminan bien.
+      {
+        const t = nuevoTurno();
+        const i = inter(await alta(staff, { resultado: "subio", personas_grupo: 2 }, [t])).id;
+        const h = retener(`select 1 from public.interacciones_stand where id = '${i}' for update`, 2);
+        await esperar(400);
+        const libera = liberar(i, 1);
+        await esperar(300);
+        const turnero = borrarTurno(t);
+        const [rl, rt, rh] = [await libera, await turnero, await h];
+        assert.equal(rh.code, 0, rh.err);
+        assert.equal(rl.status, 200, `17 · ${nombre}: Interacciones primero → aplicada`);
+        assert.deepEqual([rt.status, rt.json.ok], [200, true], `17 · ${nombre}: y el Turnero borra igual (esperó, no abortó)`);
+        const fila = sql(`select (select count(*) from public.interaccion_turnos where interaccion_id = '${i}' or turno_stand_id = ${t})
+          || '|' || (select count(*) from public.turnos_stand where id = ${t})
+          || '|' || (select count(*) from public.interacciones_stand_eventos where interaccion_id = '${i}' and tipo in ('anulacion', 'eliminacion'));`);
+        assert.equal(fila, "0|0|1", `17 · ${nombre}: ningún vínculo inválido, turno borrado y una sola auditoría`);
+      }
+    }
+  }
+
   // ── 14. Nada ajeno cambió ────────────────────────────────────────────────
   assert.equal(huellaAjena(), huella0, "14 · turnos, reservas, históricos y Finanzas idénticos");
 
-  console.log("interacciones.integration.ts OK — rutas reales contra el stack local: 401/403/origen, autoridad solo de la sesión, alta idempotente, vínculos atómicos, edición parcial con versión y liberación confirmada, atendió declarado, ventanas de Córdoba, pendiente vieja con tolerancia contra ocurrida_en, cierre solo admin, IDs bigint exactos, vinculables sin datos personales ni reservas/históricos, listados con cursor, módulo sin inicio, contrato de límites, pausa de altas que conserva el inicio y borrado solo admin que libera turnos y sale de listas y métricas.");
+  console.log("interacciones.integration.ts OK — rutas reales contra el stack local: 401/403/origen, autoridad solo de la sesión, alta idempotente, vínculos atómicos, edición parcial con versión y liberación confirmada, atendió declarado, ventanas de Córdoba, pendiente vieja con tolerancia contra ocurrida_en, cierre solo admin, IDs bigint exactos, vinculables sin datos personales ni reservas/históricos, listados con cursor, módulo sin inicio, contrato de límites, pausa de altas que conserva el inicio, borrado solo admin que libera turnos y sale de listas y métricas, y Turnero ↔ anulación/borrado a la vez sin deadlock por las rutas reales.");
 }
 
 function limpiar() {

@@ -747,6 +747,17 @@ $fn$;
 -- Si un vínculo se agrega o se borra SIN esas marcas (el CASCADE de un turno
 -- borrado en el Turnero), el trigger lo registra como obra del sistema y sube la
 -- versión de la interacción.
+--
+-- ORDEN DE BLOQUEO (evita deadlocks con el Turnero): el borrado de un turno
+-- bloquea turno → vínculo (CASCADE) → interacción (este trigger sube la versión).
+-- Toda RPC que LIBERA vínculos (editar cuando cambia el resultado, desvincular,
+-- anular, eliminar) bloquea en el mismo orden: primero los vínculos de la
+-- interacción y recién después la fila de la interacción. Así, si coinciden con un
+-- borrado del Turnero, una espera a la otra (milisegundos) y nunca se cruzan: el
+-- Turnero termina siempre, y la RPC, si el turno ya se borró, recibe
+-- version_desactualizada (conflicto controlado, sin escrituras). Las RPCs que no
+-- liberan vínculos (vincular, cerrar) solo bloquean la interacción: nunca esperan
+-- un vínculo existente, así que tampoco forman ciclo.
 
 -- Antes de vincular: la interacción tiene que estar viva, con resultado 'subio',
 -- sin cierre vigente y por debajo del máximo; el turno tiene que existir, estar
@@ -1121,6 +1132,9 @@ begin
   if v_rol not in ('admin', 'staff') then
     raise exception 'actor_invalido' using errcode = '42501';
   end if;
+  if p_cambios ? 'resultado' and p_cambios ->> 'resultado' is distinct from 'subio' then
+    perform 1 from public.interaccion_turnos where interaccion_id = p_id for update;
+  end if;
   select * into v_row from public.interacciones_stand where id = p_id for update;
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
@@ -1330,6 +1344,7 @@ begin
   if v_rol not in ('admin', 'staff') then
     raise exception 'actor_invalido' using errcode = '42501';
   end if;
+  perform 1 from public.interaccion_turnos where interaccion_id = p_id for update;
   select * into v_row from public.interacciones_stand where id = p_id for update;
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
@@ -1387,6 +1402,7 @@ begin
   if v_rol not in ('admin', 'staff') then
     raise exception 'actor_invalido' using errcode = '42501';
   end if;
+  perform 1 from public.interaccion_turnos where interaccion_id = p_id for update;
   select * into v_row from public.interacciones_stand where id = p_id for update;
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';
@@ -1539,6 +1555,7 @@ begin
   if v_motivo is not null and char_length(v_motivo) > (public.interacciones_limites() ->> 'motivo_eliminacion_max')::int then
     raise exception 'campo_invalido:motivo_eliminacion' using errcode = '22023';
   end if;
+  perform 1 from public.interaccion_turnos where interaccion_id = p_id for update;
   select * into v_row from public.interacciones_stand where id = p_id for update;
   if not found then
     raise exception 'interaccion_inexistente' using errcode = 'P0002';

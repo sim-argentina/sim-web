@@ -344,6 +344,54 @@ async function main() {
       `reintento esperó ${b.ms} ms y recibió "${b.out}"; clave nueva: "${otra.error}"`);
   }
 
+  // Orden de bloqueo frente al Turnero. El borrado de un turno bloquea turno →
+  // vínculo → interacción; las RPCs que liberan vínculos tienen que bloquear
+  // vínculo → interacción. Si una RPC bloqueara primero la interacción, un borrado
+  // del Turnero en el medio terminaba en 40P01 (deadlock) y el Turnero era el
+  // abortado (reproducido el 18/10/2026 con las cuatro RPCs).
+  const rpcsQueLiberan = {
+    anular: (id, v) => `select public.interaccion_anular('${id}', ${v}, null, 'staff')`,
+    eliminar: (id, v) => `select public.interaccion_eliminar('${id}', ${v}, null, 'admin')`,
+    editar: (id, v) => `select public.interaccion_editar('${id}', ${v}, ${jsonb({ resultado: "pregunto" })}, 'staff')`,
+    desvincular: (id, v, t) => `select public.interaccion_desvincular('${id}', ${v}, ${t}, 'staff')`,
+  };
+  let turnoCruce = -920024;
+  for (const [nombre, rpc] of Object.entries(rpcsQueLiberan)) {
+    // a · Sonda: con los vínculos tomados por otra sesión, la RPC espera SIN haber
+    //     bloqueado la interacción (con el orden viejo, la sonda NOWAIT chocaba).
+    {
+      const t = turnoCruce--;
+      const id = await registrar(datos("subio"), [t]);
+      const h = psql(`begin;\nselect 1 from public.interaccion_turnos where interaccion_id = '${id}' for update;\nselect pg_sleep(${RETENCION_S});\ncommit;`);
+      await espera(400);
+      const r = psql(`${comoServicio}${rpc(id, 1, t)};`);
+      await espera(500);
+      const sonda = await psql(`begin;\nselect 1 from public.interacciones_stand where id = '${id}' for update nowait;\nrollback;`);
+      const [rh, rr] = [await h, await r];
+      comprobar(`${nombre}: bloquea los vínculos ANTES que la interacción (la sonda NOWAIT no choca)`,
+        rh.code === 0 && rr.code === 0 && sonda.code === 0,
+        `sonda ${sonda.code === 0 ? "libre" : `"${sonda.error}"`}; RPC ${rr.code === 0 ? "aplicada" : `"${rr.error}"`} tras ${rr.ms} ms`);
+    }
+    // b · El Turnero borra primero (y retiene): la RPC espera, recibe un conflicto
+    //     controlado sin escribir nada, y el reintento con la versión nueva funciona.
+    {
+      const t = turnoCruce--;
+      const id = await registrar(datos("subio"), [t]);
+      const b = psql(`begin;\nset local role service_role;\ndelete from public.turnos_stand where id = ${t};\nselect pg_sleep(${RETENCION_S});\ncommit;`);
+      await espera(500);
+      const r = await psql(`${comoServicio}${rpc(id, 1, t)};`);
+      const rb = await b;
+      const fila = await q(`select s.version || '|' || coalesce(e.vinculo_estado, 'oculta') || '|' || (s.anulada_en is null) || '|' || (s.eliminada_en is null)
+        || '|' || (select count(*) from public.interacciones_stand_eventos where interaccion_id = s.id and tipo = 'turno_eliminado')
+        || '|' || (select count(*) from public.turnos_stand where id = ${t})
+        from public.interacciones_stand s left join public.interacciones_stand_estado e on e.interaccion_id = s.id where s.id = '${id}';`);
+      const reintento = nombre === "desvincular" ? { code: 0, error: null, salteado: true } : await psql(`${comoServicio}${rpc(id, 2, t)};`);
+      comprobar(`${nombre}: el Turnero borra primero → termina bien; la RPC espera y recibe version_desactualizada sin escribir; el reintento con la versión nueva funciona`,
+        rb.code === 0 && r.error === "version_desactualizada" && r.ms >= 1200 && fila === "2|pendiente|true|true|1|0" && reintento.code === 0,
+        `Turnero ${rb.code === 0 ? "OK" : `"${rb.error}"`}; RPC "${r.error}" tras ${r.ms} ms; versión|estado|viva|no eliminada|evento|turno = ${fila}; reintento ${reintento.salteado ? "no aplica (ya no hay vínculo)" : reintento.code === 0 ? "OK" : `"${reintento.error}"`}`);
+    }
+  }
+
   // 3 · Ráfagas por la API REST local (PostgREST), como las mandará el Bloque 2.
   console.log("\n· Ráfagas simultáneas por REST");
   {

@@ -197,6 +197,12 @@ del Bloque 2 debe leer o replicar estos valores con una prueba de contrato.
   - toda escritura sube la versión;
   - una anulada no se modifica (salvo para eliminarla, sin cambiar ningún otro dato);
   - una eliminada no se modifica ni recibe vínculos, y para eliminar hay que haber liberado los vínculos en la misma transacción.
+- **Orden de bloqueo con el Turnero:**
+  - Borrar un turno bloquea turno → vínculo (CASCADE) → interacción (el trigger sube la versión).
+  - Las RPCs que liberan vínculos (editar cuando cambia el resultado, desvincular, anular, eliminar) bloquean en el mismo orden: primero los vínculos y después la interacción.
+  - Si coinciden, una espera a la otra durante lo que dura la transacción y no se cruzan. El Turnero termina siempre. Si el turno se borró primero, la RPC responde 409 `version_desactualizada` sin escribir nada; la pantalla recarga la versión actual y se puede repetir la acción.
+  - Antes de este ajuste, con la interacción bloqueada primero, el cruce terminaba en `40P01 deadlock_detected`: el borrado del Turnero se abortaba con un 500 genérico, sin escrituras parciales (reproducido en local el 18/10/2026).
+  - Lo cubren `scripts/pruebas/interacciones-bloque1.mjs` (sonda del orden de bloqueo y cruce Turnero-primero para las cuatro RPCs) y la sección 17 de `lib/interacciones.integration.ts` (rutas reales del Turnero y de Interacciones, en los dos órdenes).
 - **Errores:** `22023 campo_invalido:<campo>`, `42501 fuera_de_ventana | solo_admin`,
   `P0002 interaccion_inexistente | interaccion_eliminada`,
   `55000 version_desactualizada | interaccion_anulada | registro_no_iniciado | altas_pausadas | inicio_ya_definido`,
@@ -461,7 +467,7 @@ Todo lo que escribe datos —fixtures, suites mutantes, concurrencia, navegador�
    npm run pruebas:reset
    ```
 
-2. Suites de escritura del módulo: verificación SQL (T0–T37, se revierte entera), concurrencia real con dos conexiones y permisos por REST.
+2. Suites de escritura del módulo: verificación SQL (T0–T37, se revierte entera), concurrencia real con dos conexiones (incluido el orden de bloqueo frente al Turnero) y permisos por REST.
 
    ```bash
    node scripts/pruebas/interacciones-bloque1.mjs
