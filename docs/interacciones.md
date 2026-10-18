@@ -10,8 +10,7 @@ Estado:
 - Versión local completa: base de datos (Bloque 1), servidor y API (Bloque 2), pantalla del personal (Bloque 3), métricas (Bloque 4) y dashboard de admin (Bloque 5).
 - Cierre previo al lanzamiento: borrador sin avisos falsos, pausa de altas separada del inicio histórico y borrado administrativo de cualquier interacción.
 - Verificada en el stack local de pruebas.
-- **Nada está aplicado en Producción, ni migrado, ni desplegado.**
-- Para lanzarla, ver [Lanzamiento](#lanzamiento-guía-no-ejecutada).
+- **En Producción desde el 18/10/2026:** migración aplicada en SIM WEB, código desplegado (commit `5a7c52d`) y registro activo desde las 12:00:33 de Córdoba (15:00:33 UTC). Detalle y punto de retorno en [Lanzamiento](#lanzamiento).
 
 Archivos y pruebas:
 
@@ -453,7 +452,17 @@ Ese build deja `.next` compilado con las URL públicas del stack local. No se de
 
 Fechas en las pruebas del módulo: ninguna usa el 01/10/2026. La guarda de `lib/modalidadComercial.test.ts` exige que la fecha del corte comercial viva en una sola fuente y falla si aparece en otro archivo de `app`, `lib`, `components`, `data`, `db` o `tests`. Por eso el inicio de demo local es el 02/10 y los casos de períodos usan noviembre.
 
-## Lanzamiento (guía, NO ejecutada)
+## Lanzamiento
+
+### Registro del lanzamiento (18/10/2026)
+
+- **Punto de retorno:** antes del lanzamiento, Producción servía el commit `0ac82cb` (despliegue `dpl_AE78Y7DFyKm1Cdq5R8jUG1wuxFGQ`) y SIM WEB no tenía ningún objeto del módulo.
+- **Concurrencia resuelta antes de migrar:** orden de bloqueo coherente con el Turnero (commit `5a7c52d`, ver [Permisos y RPCs](#permisos-y-rpcs)).
+- **Migración:** `interacciones_stand_modulo`, aplicada en SIM WEB (`bcmoewwhsyxsiyvroarj`) en una sola transacción con `lock_timeout` de 5 s. Es `db/interacciones-bloque1.sql` sin las líneas de comentario. La huella de funciones, columnas, restricciones, vistas, índices y triggers coincide con la del stack local probado. Verificación de solo lectura: RLS sin policies, `service_role` solo SELECT, RPCs `SECURITY DEFINER` sin EXECUTE para `anon`/`authenticated`, FK en cascada hacia `turnos_stand`.
+- **Despliegue:** `main` en `5a7c52d`, despliegue `dpl_DqUC2hARuARJabtdsUtdadEPiE3X` servido por `simexperience.com.ar`. Sin sesión, las APIs del módulo responden 401 y el panel redirige al login; sin errores de runtime.
+- **Activación:** `interacciones_definir_inicio` con el instante efectivo: `2026-10-18 15:00:33.403811 UTC` = `12:00:33` en Córdoba. Sin pausa.
+
+### Guía (A/B/C)
 
 Esta guía prepara acciones; no las ejecuta ni las autoriza. Cada paso de B y C necesita una decisión explícita.
 
