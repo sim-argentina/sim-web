@@ -372,6 +372,37 @@ left join (
 ) v on v.turno_stand_id = t.id
 where coalesce(t.estado, 'activo') = 'activo';
 
+-- (Bloque 4) Base del análisis: una fila por interacción NO anulada (las
+-- anuladas no cuentan en ninguna métrica), con el perfil y el estado del
+-- vínculo. Solo columnas que usan las métricas: sin observaciones ni auditoría.
+create or replace view public.interacciones_analisis
+with (security_invoker = true) as
+select
+  i.id as interaccion_id,
+  i.fecha_negocio,
+  i.hora_negocio,
+  i.resultado,
+  i.personas_grupo,
+  i.hombres,
+  i.mujeres,
+  i.rango_etario,
+  i.conocia_sim,
+  i.se_subio_antes,
+  i.iniciador,
+  i.atendio_empleado_id,
+  i.motivo,
+  e.vinculo_estado,
+  e.turnos_vinculados,
+  e.turnos_activos,
+  e.turnos_pagos,
+  e.turnos_gratis,
+  e.turnos_pago_contradictorio,
+  e.participaciones,
+  e.venta_verificada
+from public.interacciones_stand i
+join public.interacciones_stand_estado e on e.interaccion_id = i.id
+where i.anulada_en is null;
+
 
 -- ── 7. Validación pura ──────────────────────────────────────────────────────
 -- Normaliza y valida los datos de una interacción. Rechaza campos desconocidos
@@ -1431,6 +1462,7 @@ revoke all on table public.interacciones_stand_eventos from public, anon, authen
 revoke all on table public.interacciones_stand_estado from public, anon, authenticated, service_role;
 revoke all on table public.interacciones_vinculos_control from public, anon, authenticated, service_role;
 revoke all on table public.interacciones_cobertura_turnos from public, anon, authenticated, service_role;
+revoke all on table public.interacciones_analisis from public, anon, authenticated, service_role;
 
 grant select on table public.interacciones_config to service_role;
 grant select on table public.interacciones_stand to service_role;
@@ -1439,6 +1471,7 @@ grant select on table public.interacciones_stand_eventos to service_role;
 grant select on table public.interacciones_stand_estado to service_role;
 grant select on table public.interacciones_vinculos_control to service_role;
 grant select on table public.interacciones_cobertura_turnos to service_role;
+grant select on table public.interacciones_analisis to service_role;
 
 -- Funciones internas: nadie más que el dueño.
 revoke all on function public.interacciones_fecha_sim(timestamptz) from public, anon, authenticated, service_role;

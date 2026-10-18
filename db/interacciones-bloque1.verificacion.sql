@@ -597,6 +597,21 @@ begin
     v_log := v_log || case when v_ok and v_j -> 'turnos_liberados' = '["-910022", "-910021"]'::jsonb
                            then 'T34 ' else 'FALLA:T34 ' end;
 
+    -- T35 · (Bloque 4) la base del análisis excluye anuladas, no expone
+    -- observaciones ni auditoría y solo service_role la lee.
+    v_log := v_log || case when
+          not exists (select 1 from public.interacciones_analisis where interaccion_id = v_z)
+      and exists (select 1 from public.interacciones_analisis where interaccion_id = v_x)
+      and (select count(*) from public.interacciones_analisis) = (select count(*) from public.interacciones_stand where anulada_en is null)
+      and not exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'interacciones_analisis'
+                        and column_name in ('observaciones', 'idempotency_key', 'alta_huella', 'registrada_por_rol', 'anulada_motivo'))
+      and has_table_privilege('service_role', 'public.interacciones_analisis', 'select')
+      and not has_table_privilege('service_role', 'public.interacciones_analisis', 'insert')
+      and not has_table_privilege('anon', 'public.interacciones_analisis', 'select')
+      and not has_table_privilege('authenticated', 'public.interacciones_analisis', 'select')
+      and (select reloptions @> array['security_invoker=true'] from pg_class where oid = 'public.interacciones_analisis'::regclass)
+      then 'T35 ' else 'FALLA:T35 ' end;
+
     -- T26 · las RPCs de Interacciones no modificaron turnos, reservas, Finanzas,
     -- Mensualidades, Gift Cards, Colectivo ni empleados (huella idéntica), y su
     -- código no tiene ninguna escritura sobre esas tablas.
