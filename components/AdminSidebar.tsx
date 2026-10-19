@@ -42,6 +42,13 @@ export default function AdminSidebar({ role }: Props) {
   roles: ["admin", "staff"],
 },
     {
+      // Consentimiento y bajas de promociones por WhatsApp. Staff consulta y carga
+      // bajas; altas con evidencia y textos son solo de admin (lo decide la API).
+      label: "Marketing",
+      href: "/admin/marketing",
+      roles: ["admin", "staff"],
+    },
+    {
   label: "Códigos",
   href: "/admin/codigos",
   roles: ["admin"],

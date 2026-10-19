@@ -6,10 +6,12 @@
 //   · insert/update/upsert/delete/rpc del cliente abortan antes de salir;
 //   · no imprime nombres y los teléfonos salen enmascarados.
 // No crea códigos ni envía nada: el proveedor falso solo cuenta en memoria.
-// No existe todavía una fuente de consentimiento ni de bajas (19/10/2026): se
-// simulan VACÍAS, y por eso la audiencia elegible da 0.
+// Consentimientos y bajas salen del registro (db/marketing-consentimiento.sql,
+// vista mkt_consentimiento_estado). Si esa base no lo tiene instalado, se
+// simulan VACÍOS y el informe lo dice: la audiencia elegible da 0.
 //
 //   npx tsx --env-file=.env.local scripts/marketing/simular.ts --ventana 14
+//   npx tsx --env-file=.env.test.local scripts/marketing/simular.ts   # stack local
 //
 // Opciones:
 //   --ventana 14|21            días hacia atrás (hoy excluido). Por defecto 14.
@@ -196,12 +198,23 @@ async function main() {
     }
   }
 
+  // Registro de consentimiento: altas vigentes (con su fuente) y bajas. Se importa
+  // DESPUÉS del guardián, igual que el cliente.
+  const { registroParaAudiencia } = await import("@/lib/marketing/consentimientoServer");
+  const registro = await registroParaAudiencia();
+  if (!registro.ok) throw new Error(`No se pudo leer el registro de consentimiento: ${registro.e?.codigo ?? registro.causa ?? "error"}`);
+
   const r = calcularAudiencia(lectura.filas, o.config, {
     ahora,
-    consentimientos: new Set(), // no existe fuente de consentimiento todavía
-    bajas: new Set(), // ni de bajas
+    consentimientos: new Set(registro.valor.consentimientos.keys()),
+    bajas: registro.valor.bajas,
     otrasExclusiones,
   });
+  const elegiblesPorFuente = new Map<string, number>();
+  for (const d of r.elegibles) {
+    const f = registro.valor.consentimientos.get(d.telefono) ?? "?";
+    elegiblesPorFuente.set(f, (elegiblesPorFuente.get(f) ?? 0) + 1);
+  }
 
   // ── Envío simulado: proveedor falso en memoria, sin códigos reales ────────
   let costo: EstimacionCosto | null = null;
@@ -248,6 +261,11 @@ async function main() {
       ` · excluir retornados: ${o.config.excluirRetornados ? "sí" : "no"} · excluir mensualidades: ${o.excluirMensualidades ? `sí (${otrasExclusiones.size} teléfono${otrasExclusiones.size === 1 ? "" : "s"})` : "no"}`,
   );
   linea(`Lectura: ${lectura.filas.length} filas de turnos_stand · conteo exacto ${lectura.esperado} · ${consistente ? "consistente" : "INCONSISTENTE: no usar estos números"}`);
+  linea(
+    registro.valor.instalado
+      ? `Registro de consentimiento: ${registro.valor.consentimientos.size} con alta vigente · ${registro.valor.bajas.size} con baja (todas las fechas)`
+      : "Registro de consentimiento: NO instalado en esta base (falta db/marketing-consentimiento.sql) → se simula vacío",
+  );
   linea();
   linea(`Filas en la ventana: ${r.filas.enVentana} · válidas ${r.filas.validas}`);
   linea(`  excluidas: ${conteo(r.filas.excluidas, MOTIVOS_FILA)}`);
@@ -255,10 +273,14 @@ async function main() {
   linea(`  fuera de la ventana: de hoy ${r.filas.deHoy} · anteriores ${r.filas.fueraDeVentana} · futuras ${r.filas.futuras} · fecha inválida ${r.filas.fechaInvalida}`);
   linea();
   linea(`Teléfonos únicos: ${r.telefonos.unicos}`);
-  linea(`  ELEGIBLES: ${r.telefonos.elegibles}`);
+  linea(`  ELEGIBLES: ${r.telefonos.elegibles}${r.telefonos.elegibles ? ` (por fuente del consentimiento: ${[...elegiblesPorFuente.entries()].map(([f, n]) => `${f} ${n}`).join(" · ")})` : ""}`);
   linea(`  excluidos: ${conteo(r.telefonos.excluidos, MOTIVOS_TELEFONO)}`);
   linea(`  con varios nombres (sin personalizar): ${r.excluidos.filter((x) => x.destinatario.variosNombres).length + r.elegibles.filter((d) => d.variosNombres).length}`);
   linea(`  volvieron otro día (hoy incluido): ${[...r.elegibles, ...r.excluidos.map((x) => x.destinatario)].filter((d) => d.diasConVisita >= 2).length}`);
+  if (o.muestra > 0 && r.elegibles.length > 0) {
+    linea(`  muestra enmascarada de elegibles (${Math.min(o.muestra, r.elegibles.length)}):`);
+    for (const l of muestra(r.elegibles)) linea(l);
+  }
   linea();
   linea(`Pendientes de consentimiento (pasan todo lo demás; NO se les escribe): ${r.pendientesConsentimiento.length}`);
   linea(`  prefijos (no son localidades): ${prefijos(r.pendientesConsentimiento)}`);

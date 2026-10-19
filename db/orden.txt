@@ -114,5 +114,10 @@ esquema-base-permisos.sql
 # lectura (toda escritura pasa por sus RPCs). Necesita turnos_stand y empleados.
 interacciones-bloque1.sql
 
+# ── 13c. Marketing: consentimiento promocional y bajas ──────────────────────
+# Mismo motivo que 13b: recorta a service_role a lectura (escribe por RPC).
+# Necesita mensualidad_normalizar_telefono (mensualidades-m2-1-telefono.sql).
+marketing-consentimiento.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql

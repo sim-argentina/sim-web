@@ -57,8 +57,10 @@ no órdenes.
 | `colectivo_*` | Eventos del Colectivo, fuera del stand, sin teléfonos útiles | Fuera de alcance. |
 | `gift_cards.comprador_telefono` | Comprador, no visitante | Fuera de la audiencia del stand. |
 
-**No existe** en ninguna tabla: consentimiento promocional, bajas, localidad del cliente
-ni email del Turnero. La Política de Privacidad (`app/legales/privacidad/page.tsx` §4,
+**En Producción no existe** (19/10/2026) consentimiento promocional, bajas, localidad
+del cliente ni email del Turnero. El registro de consentimiento ya está en el repo
+(Etapa 3, más abajo), pero su migración NO está aplicada en Producción: verificalo
+antes de suponer nada. La Política de Privacidad (`app/legales/privacidad/page.tsx` §4,
 actualizada el 3/7/2026) es una cláusula general publicada: no es evidencia individual,
 no se muestra en el Turnero y su §2 no menciona los datos del stand.
 
@@ -173,14 +175,39 @@ seguido; citá URL y fecha):
 - Pruebas: `npx tsx lib/marketing/audiencia.test.ts` y `npx tsx lib/marketing/envio.test.ts`.
 - Simulación de solo lectura: `npx tsx --env-file=.env.local scripts/marketing/simular.ts --ventana 14`
   (opciones en el encabezado del archivo). Guardián de red GET/HEAD con autoverificación
-  en cada corrida. El consentimiento y las bajas se pasan vacíos porque no existen.
+  en cada corrida. Lee consentimientos y bajas del registro; si la base no lo tiene
+  instalado, lo dice y los simula vacíos.
 
-## Diseño de la primera versión (propuesta; nada de esto existe todavía)
+## Etapa 3: consentimiento y bajas (en el repo; migración SIN aplicar en Producción)
 
-- **Consentimiento y bajas** en una tabla de eventos de solo agregado: teléfono canónico,
-  alta/baja, fuente (mensaje entrante de WhatsApp desde QR, formulario web con casilla
-  sin marcar, declaración del personal), versión del texto, evidencia (wamid, id de
-  formulario, turno y rol) y fecha. La baja siempre gana.
+- Esquema: `db/marketing-consentimiento.sql` (en `db/orden.txt`). Tablas
+  `mkt_textos_consentimiento` (borrador → vigente → retirado; publicado = inmutable; uno
+  solo vigente) y `mkt_consentimiento_eventos` (solo de alta: ni update, ni delete, ni
+  truncate), vista `mkt_consentimiento_estado`, RPCs `mkt_consentimiento_registrar`,
+  `mkt_texto_publicar`, `mkt_texto_retirar` y `mkt_consentimiento_resumen`.
+- Reglas: estado = último evento por fecha de origen; empate → baja; después de una baja
+  solo un alta del propio titular (formulario web) la revierte. Fuentes: `formulario_web`
+  (público), `admin_evidencia` (alta, solo admin, con evidencia escrita) y `admin_pedido`
+  (baja, staff o admin). La IP no se guarda: solo una huella HMAC.
+- Dos llaves: `MARKETING_CONSENTIMIENTO_ENABLED` (entorno, estricta "true") y el texto
+  vigente (base). Retirar el texto es la pausa inmediata de las altas; las bajas siguen.
+- Código: `lib/marketing/consentimiento.ts` (contrato puro), `consentimientoServer.ts`,
+  `http.ts`, `huellaIp.ts`; rutas `/api/promos/{texto,alta,baja}` y
+  `/api/admin/marketing/{consentimientos,textos}`; páginas `/promos`, `/promos/baja` y
+  `/admin/marketing`.
+- Pruebas: `npx tsx lib/marketing/consentimiento.test.ts`;
+  `node scripts/pruebas/marketing-consentimiento.mjs` (SQL, se deshace);
+  `node scripts/pruebas/correr-mutantes.mjs lib/marketing/consentimiento.integration.ts`
+  (rutas reales contra el stack local).
+- Pendiente del owner: revisión legal y publicación del texto (`promos-v1` es un
+  BORRADOR), actualizar la Política de Privacidad (§2 no cubre el stand), aplicar la
+  migración y encender la llave. El webhook de WhatsApp todavía no registra bajas por
+  "BAJA" ni por `user_preferences`: eso llega con la conexión a la Cloud API.
+
+## Diseño de la primera versión (propuesta; lo que no está arriba no existe todavía)
+
+- **Consentimiento y bajas:** hecho en la Etapa 3. Falta la fuente "mensaje entrante de
+  WhatsApp" (QR → wa.me al número de la API), que depende de la Cloud API.
 - **Campaña:** audiencia (ventana 14/21, solo pagos, segmento), plantilla y variables,
   descuento porcentual, vencimiento, un uso, límite de destinatarios, presupuesto máximo,
   grupo de control (holdout) y ventana de atribución. Estados: borrador → vista previa
