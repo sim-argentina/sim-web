@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { marketingConsentimientoHabilitado } from "@/lib/featureFlags";
+import { moduloInstalado } from "@/lib/marketing/consentimientoServer";
 import BajaPromos from "./BajaPromos";
 
 // Baja de las promociones por WhatsApp (Ley 25.326 art. 27: se pide cuando se
-// quiere, sin dar explicaciones). Misma llave que el alta.
+// quiere, sin dar explicaciones). A propósito NO depende de la llave de
+// captación ni del texto vigente: con la captación apagada o el texto retirado,
+// la baja sigue disponible. Solo hace falta que el registro esté instalado.
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
@@ -13,8 +15,9 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function BajaPromosPage() {
-  if (!marketingConsentimientoHabilitado()) notFound();
+export default async function BajaPromosPage() {
+  const instalado = await moduloInstalado();
+  if (!instalado.ok || !instalado.valor) notFound();
   return (
     <main className="min-h-screen bg-black text-white">
       <section className="mx-auto max-w-2xl px-4 py-10 md:px-6 md:py-14">

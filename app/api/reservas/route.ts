@@ -12,6 +12,7 @@ import { getCurrentAdminRole } from "@/lib/adminGuards";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
+import { registrarPromosCheckout } from "@/lib/marketing/checkoutPromos";
 
 // GET: disponibilidad. Público requiere ?fecha (evita scraping del calendario
 // completo) y recibe un DTO sin PII. El admin autenticado recibe datos completos.
@@ -215,7 +216,14 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json(data, { status: 201 });
+    // Casilla voluntaria de promociones: aparte de la reserva, nunca la bloquea ni
+    // la cambia (lib/marketing/checkoutPromos.ts). Sin casilla, no hace nada.
+    const promos = await registrarPromosCheckout({
+      body, fuente: "checkout_reserva", telefono: data.telefono, nombre: data.nombre,
+      compra: { reserva_id: String(data.id) }, ip: clientIp(req),
+    });
+
+    return NextResponse.json({ ...data, promos: promos.estado }, { status: 201 });
   } catch (error) {
     if (reservaCreadaId) {
       try {

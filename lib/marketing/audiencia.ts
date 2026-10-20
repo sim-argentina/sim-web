@@ -1,32 +1,37 @@
 // ============================================================================
-// Audiencia de una campaña de recuperación del stand (Marketing · Etapa 1). PURO.
+// Audiencia de una campaña de recuperación del stand (Marketing). PURO.
 // ----------------------------------------------------------------------------
 // Sin base, sin red y sin secretos: recibe filas de `turnos_stand` ya leídas, un
-// reloj y la configuración, y devuelve quién sería destinatario y por qué quedó
-// afuera cada fila y cada teléfono. Sirve para SIMULAR: no crea códigos ni envía.
+// reloj y la configuración, y devuelve quién sería destinatario, por qué quedó
+// afuera cada fila y cada teléfono, y qué efecto tuvo cada filtro. Sirve para
+// SIMULAR: no crea códigos ni envía.
 //
 // Reglas (ver .claude/agents/sim-marketing.md):
 //   · "Hoy" es la fecha de negocio de Argentina (hoyEnSim), nunca la de UTC.
-//   · Visita efectiva: turno no cancelado con fecha en [hoy − N, hoy − 1]. Hoy
-//     queda afuera de la ventana, pero cuenta para saber si alguien ya volvió.
-//     Por defecto, solo turnos pagos.
+//   · Visita: turno no cancelado con fecha en [hoy − N, hoy − 1]. Hoy queda
+//     afuera de la ventana, pero cuenta para saber si alguien ya volvió.
+//   · Filtros COMERCIALES, configurables y nunca obligatorios:
+//       soloPagos (por defecto sí)          deja afuera turnos gratis o sin cobro;
+//       excluirRetornados (por defecto no)  deja afuera a quien vino 2+ días.
+//     Apagados, esas personas participan como cualquier otra.
 //   · Teléfono canónico = normalizarTelefonoDetallado (espejo exacto de
 //     public.mensualidad_normalizar_telefono). Lo que no normaliza se excluye
 //     con su motivo: nunca se adivina.
+//   · Segmento geográfico: indicativo OFICIAL completo (lib/marketing/indicativo.ts),
+//     comparado por igualdad, nunca por prefijo. Un número cuyo indicativo no se
+//     puede determinar queda afuera del segmento con su motivo y sin área.
 //   · Un destinatario por teléfono. Con más de un nombre no se personaliza.
 //   · Sin consentimiento con evidencia no hay destinatario: dar el teléfono para
 //     gestionar un turno no es aceptar promociones. La baja siempre gana.
-//   · El código de área dice dónde se dio de alta la línea, no dónde vive la
-//     persona. La segmentación es por una lista EXPLÍCITA de códigos completos.
 // ============================================================================
 
 import { hoyEnSim, sumarDias } from "@/lib/agenda";
 import {
-  AREAS_3_DIGITOS,
   normalizarTelefono,
   normalizarTelefonoDetallado,
   type TelefonoRechazo,
 } from "@/lib/mensualidades";
+import { esIndicativoOficial, indicativoDe } from "@/lib/marketing/indicativo";
 
 export const VENTANAS_AUDIENCIA = [14, 21] as const;
 export type VentanaAudiencia = (typeof VENTANAS_AUDIENCIA)[number];
@@ -44,12 +49,12 @@ export type TurnoAudiencia = {
 
 export type ConfigAudiencia = {
   ventanaDias: VentanaAudiencia;
-  /** Incluir turnos gratis o sin cobro. Por defecto, solo pagos. */
-  incluirGratis?: boolean;
-  /** Códigos de área completos del plan ENACOM. Vacío o ausente = sin filtro. */
-  codigosArea?: readonly string[];
-  /** Excluir a quien ya volvió: visitas en 2 o más días entre hoy − N y hoy. */
+  /** Solo turnos pagos. Por defecto sí; en false entran también gratis o sin cobro. */
+  soloPagos?: boolean;
+  /** Excluir a quien ya volvió: visitas en 2 o más días entre hoy − N y hoy. Por defecto no. */
   excluirRetornados?: boolean;
+  /** Indicativos oficiales completos (ENACOM). Vacío o ausente = sin segmento. */
+  indicativos?: readonly string[];
 };
 
 export type MotivoExterno = "titular_mensualidad" | "en_otra_campania";
@@ -73,6 +78,7 @@ export const MOTIVOS_TELEFONO = [
   "con_baja",
   "titular_mensualidad",
   "en_otra_campania",
+  "indicativo_indeterminado",
   "fuera_de_segmento",
   "ya_volvio",
   "sin_consentimiento",
@@ -84,6 +90,10 @@ export type Destinatario = {
   telefono: string;
   /** Destino para la Cloud API: 549 + canónico. */
   destinoWhatsapp: string;
+  /** Indicativo oficial; null si no se pudo determinar. */
+  indicativo: string | null;
+  /** Área de numeración de ENACOM (no residencia); null si el indicativo no se determinó. */
+  areaNumeracion: string | null;
   /** Nombre para personalizar; null si no hay o si el teléfono tiene varios. */
   nombre: string | null;
   variosNombres: boolean;
@@ -96,11 +106,29 @@ export type Destinatario = {
   diasConVisita: number;
 };
 
+/** Qué hizo cada filtro en esta corrida, y qué haría si se cambiara. */
+export type EfectoFiltros = {
+  ventana: { desde: string; hasta: string; filasEnVentana: number; filasFuera: number };
+  soloPagos: { activo: boolean; filasExcluidas: number; filasAfectables: number };
+  excluirRetornados: { activo: boolean; telefonosExcluidos: number; telefonosAfectables: number };
+  segmento: {
+    activo: boolean;
+    indicativos: string[];
+    telefonosFuera: number;
+    telefonosIndeterminados: number;
+  };
+  bajas: { telefonosExcluidos: number };
+  consentimiento: { telefonosSin: number };
+};
+
 export type ResultadoAudiencia = {
   hoy: string;
   desde: string;
   hasta: string;
   ventanaDias: VentanaAudiencia;
+  /** La configuración efectivamente usada (con los valores por defecto resueltos). */
+  config: { ventanaDias: VentanaAudiencia; soloPagos: boolean; excluirRetornados: boolean; indicativos: string[] };
+  filtros: EfectoFiltros;
   filas: {
     leidas: number;
     fechaInvalida: number;
@@ -118,6 +146,8 @@ export type ResultadoAudiencia = {
     unicos: number;
     elegibles: number;
     excluidos: Record<MotivoTelefono, number>;
+    /** Teléfonos sin indicativo determinable (con o sin segmento activo). */
+    sinIndicativo: number;
   };
   elegibles: Destinatario[];
   /** Pasan todo salvo el consentimiento: la audiencia si se registrara. No se les escribe. */
@@ -161,52 +191,20 @@ export function enmascararDestino(canonico: string): string {
 }
 
 /**
- * Agrupador para REPORTES: "11" o los 3 primeros dígitos. No es un código de
- * área ni una localidad: con áreas de 4 dígitos, 3 dígitos no alcanzan.
+ * Valida una lista de indicativos para segmentar: tienen que ser oficiales
+ * (lib/indicativosArgentina.ts, 300 de ENACOM) y completos. "35" o "354" no lo
+ * son: no hay prefijos de conveniencia.
  */
-export function prefijoReporte(canonico: string): string {
-  return canonico.startsWith("11") ? "11" : canonico.slice(0, 3);
-}
-
-/**
- * Valida una lista de códigos de área completos. El repo conoce el 11 y los 38
- * de 3 dígitos (AREAS_3_DIGITOS); los de 4 dígitos solo se pueden controlar por
- * forma, porque la planilla de ENACOM no está cargada.
- */
-export function validarCodigosArea(codigos: readonly string[]): {
-  codigos: string[];
-  errores: string[];
-  advertencias: string[];
-} {
+export function validarIndicativos(codigos: readonly string[]): { indicativos: string[]; errores: string[] } {
   const errores: string[] = [];
-  const advertencias: string[] = [];
   const validos = new Set<string>();
   for (const crudo of codigos) {
     const c = String(crudo ?? "").trim();
-    if (!/^[0-9]{2,4}$/.test(c)) {
-      errores.push(`"${c}" no es un código de área (2 a 4 dígitos).`);
-    } else if (c.length === 2 && c !== "11") {
-      errores.push(`"${c}": el único código de 2 dígitos es 11. "Empieza con ${c}" no es un código de área.`);
-    } else if (c.length === 3 && !AREAS_3_DIGITOS.has(c)) {
-      errores.push(`"${c}" no es un código de 3 dígitos del plan ENACOM.`);
-    } else if (c.length === 4 && c[0] !== "2" && c[0] !== "3") {
-      errores.push(`"${c}": los códigos de 4 dígitos empiezan con 2 o 3.`);
-    } else {
-      validos.add(c);
-    }
+    if (!/^[0-9]{2,4}$/.test(c)) errores.push(`"${c}" no es un indicativo (2 a 4 dígitos).`);
+    else if (!esIndicativoOficial(c)) errores.push(`"${c}" no es un indicativo oficial de ENACOM: el segmento compara indicativos completos, no prefijos.`);
+    else validos.add(c);
   }
-  const lista = [...validos].sort();
-  const de3 = lista.filter((c) => c.length === 3);
-  const de4 = lista.filter((c) => c.length === 4);
-  if (de3.length > 0) {
-    advertencias.push(
-      `${de3.join(", ")}: un código de 3 dígitos también captura los de 4 que empiezan igual (49 de los 261 lo hacen). Sin la planilla de ENACOM no se pueden separar.`,
-    );
-  }
-  if (de4.length > 0) {
-    advertencias.push(`${de4.join(", ")}: los códigos de 4 dígitos no están en el repo; se controló solo la forma.`);
-  }
-  return { codigos: lista, errores, advertencias };
+  return { indicativos: [...validos].sort(), errores };
 }
 
 /** Errores de configuración. Vacío = válida. */
@@ -215,7 +213,7 @@ export function validarConfigAudiencia(config: ConfigAudiencia): string[] {
   if (!(VENTANAS_AUDIENCIA as readonly number[]).includes(config.ventanaDias)) {
     errores.push(`La ventana tiene que ser de ${VENTANAS_AUDIENCIA.join(" o ")} días.`);
   }
-  if (config.codigosArea) errores.push(...validarCodigosArea(config.codigosArea).errores);
+  if (config.indicativos) errores.push(...validarIndicativos(config.indicativos).errores);
   return errores;
 }
 
@@ -265,7 +263,7 @@ function normalizarClaves(telefonos: Iterable<string>): { canonicos: Set<string>
   return { canonicos, ilegibles };
 }
 
-type Grupo = { telefono: string; visitas: Visita[] };
+type Grupo = { telefono: string; visitas: Visita[]; escritos: Set<string> };
 
 export function calcularAudiencia(
   filas: readonly TurnoAudiencia[],
@@ -275,13 +273,16 @@ export function calcularAudiencia(
   const errores = validarConfigAudiencia(config);
   if (errores.length > 0) throw new Error(`Configuración de audiencia inválida: ${errores.join(" ")}`);
 
+  const soloPagos = config.soloPagos ?? true;
+  const excluirRetornados = config.excluirRetornados ?? false;
+  const segmento = validarIndicativos(config.indicativos ?? []).indicativos;
   const { hoy, desde, hasta } = ventanaAudiencia(contexto.ahora, config.ventanaDias);
-  const segmento = config.codigosArea ? validarCodigosArea(config.codigosArea) : null;
-  const advertencias = [...(segmento?.advertencias ?? [])];
+  const advertencias: string[] = [];
 
   const excluidasFila = Object.fromEntries(MOTIVOS_FILA.map((m) => [m, 0])) as Record<MotivoFila, number>;
   const rechazosTelefono: Partial<Record<TelefonoRechazo, number>> = {};
   const conteo = { leidas: 0, fechaInvalida: 0, futuras: 0, fueraDeVentana: 0, deHoy: 0, enVentana: 0, validas: 0 };
+  let filasNoPago = 0;
   const diasPorTelefono = new Map<string, Set<string>>();
   const grupos = new Map<string, Grupo>();
 
@@ -305,7 +306,10 @@ export function calcularAudiencia(
     conteo.enVentana++;
 
     if (cancelado) { excluidasFila.cancelado++; continue; }
-    if (!config.incluirGratis && !esPago(f)) { excluidasFila.no_pago++; continue; }
+    if (!esPago(f)) {
+      filasNoPago++;
+      if (soloPagos) { excluidasFila.no_pago++; continue; }
+    }
     if (!tel.ok) {
       if (tel.motivo === "vacio") {
         excluidasFila.sin_telefono++;
@@ -317,8 +321,9 @@ export function calcularAudiencia(
     }
 
     conteo.validas++;
-    const grupo = grupos.get(tel.valor) ?? { telefono: tel.valor, visitas: [] };
+    const grupo = grupos.get(tel.valor) ?? { telefono: tel.valor, visitas: [], escritos: new Set<string>() };
     grupo.visitas.push({ id: String(f.id), fecha: f.fecha, nombre: nombreVisible(f.nombre) });
+    if (f.telefono) grupo.escritos.add(f.telefono);
     grupos.set(tel.valor, grupo);
   }
 
@@ -340,6 +345,8 @@ export function calcularAudiencia(
   const elegibles: Destinatario[] = [];
   const pendientes: Destinatario[] = [];
   const excluidos: { motivo: MotivoTelefono; destinatario: Destinatario }[] = [];
+  let sinIndicativo = 0;
+  let retornados = 0;
 
   for (const grupo of grupos.values()) {
     let ultima = grupo.visitas[0];
@@ -349,9 +356,13 @@ export function calcularAudiencia(
       if (v.nombre && (!ultimaConNombre || masReciente(v, ultimaConNombre))) ultimaConNombre = v;
     }
     const nombres = new Set(grupo.visitas.flatMap((v) => (v.nombre ? [claveNombre(v.nombre)] : [])));
+    const ind = indicativoDe(grupo.telefono, [...grupo.escritos]);
+    if (!ind.ok) sinIndicativo++;
     const destinatario: Destinatario = {
       telefono: grupo.telefono,
       destinoWhatsapp: destinoWhatsapp(grupo.telefono),
+      indicativo: ind.ok ? ind.indicativo : null,
+      areaNumeracion: ind.ok ? ind.area : null,
       nombre: nombres.size === 1 ? ultimaConNombre?.nombre ?? null : null,
       variosNombres: nombres.size > 1,
       ultimaVisita: ultima.fecha,
@@ -359,12 +370,14 @@ export function calcularAudiencia(
       visitas: grupo.visitas.length,
       diasConVisita: diasPorTelefono.get(grupo.telefono)?.size ?? 1,
     };
+    if (destinatario.diasConVisita >= 2) retornados++;
 
     let motivo: MotivoTelefono | null = null;
     if (bajas.canonicos.has(grupo.telefono)) motivo = "con_baja";
     else if (otras.has(grupo.telefono)) motivo = otras.get(grupo.telefono)!;
-    else if (segmento && segmento.codigos.length > 0 && !segmento.codigos.some((c) => grupo.telefono.startsWith(c))) motivo = "fuera_de_segmento";
-    else if (config.excluirRetornados && destinatario.diasConVisita >= 2) motivo = "ya_volvio";
+    else if (segmento.length > 0 && !destinatario.indicativo) motivo = "indicativo_indeterminado";
+    else if (segmento.length > 0 && !segmento.includes(destinatario.indicativo!)) motivo = "fuera_de_segmento";
+    else if (excluirRetornados && destinatario.diasConVisita >= 2) motivo = "ya_volvio";
     else if (!consentimientos.canonicos.has(grupo.telefono)) motivo = "sin_consentimiento";
 
     if (motivo === null) {
@@ -374,6 +387,12 @@ export function calcularAudiencia(
       excluidos.push({ motivo, destinatario });
       if (motivo === "sin_consentimiento") pendientes.push(destinatario);
     }
+  }
+
+  if (sinIndicativo > 0) {
+    advertencias.push(
+      `${sinIndicativo} teléfono(s) sin indicativo determinable (fuera de la lista oficial o contradicho por cómo se escribió): no se les atribuye área${segmento.length > 0 ? " y quedan fuera del segmento" : ""}.`,
+    );
   }
 
   // Orden estable, independiente del orden de las filas: visita más reciente primero.
@@ -388,8 +407,22 @@ export function calcularAudiencia(
     desde,
     hasta,
     ventanaDias: config.ventanaDias,
+    config: { ventanaDias: config.ventanaDias, soloPagos, excluirRetornados, indicativos: segmento },
+    filtros: {
+      ventana: { desde, hasta, filasEnVentana: conteo.enVentana, filasFuera: conteo.fueraDeVentana + conteo.deHoy + conteo.futuras },
+      soloPagos: { activo: soloPagos, filasExcluidas: excluidasFila.no_pago, filasAfectables: filasNoPago },
+      excluirRetornados: { activo: excluirRetornados, telefonosExcluidos: excluidosTel.ya_volvio, telefonosAfectables: retornados },
+      segmento: {
+        activo: segmento.length > 0,
+        indicativos: segmento,
+        telefonosFuera: excluidosTel.fuera_de_segmento,
+        telefonosIndeterminados: excluidosTel.indicativo_indeterminado,
+      },
+      bajas: { telefonosExcluidos: excluidosTel.con_baja },
+      consentimiento: { telefonosSin: excluidosTel.sin_consentimiento },
+    },
     filas: { ...conteo, excluidas: excluidasFila, rechazosTelefono },
-    telefonos: { unicos: grupos.size, elegibles: elegibles.length, excluidos: excluidosTel },
+    telefonos: { unicos: grupos.size, elegibles: elegibles.length, excluidos: excluidosTel, sinIndicativo },
     elegibles,
     pendientesConsentimiento: pendientes,
     excluidos,

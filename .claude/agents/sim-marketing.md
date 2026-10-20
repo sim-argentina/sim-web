@@ -70,8 +70,11 @@ no se muestra en el Turnero y su §2 no menciona los datos del stand.
   SQL; `hoyEnSim(ahora)` de `lib/agenda.ts` en TS. Prohibido `CURRENT_DATE` y
   `toISOString().slice(0,10)`.
 - **Visita efectiva (N = 14 o 21):** fila de `turnos_stand` no cancelada con
-  `fecha` entre `hoy − N` y `hoy − 1` (hoy excluido). Por defecto solo turnos pagos
-  (`total > 0` y `metodo_pago <> 'gratis'`); incluir gratis es una opción explícita.
+  `fecha` entre `hoy − N` y `hoy − 1` (hoy excluido).
+- **Filtros comerciales = opciones, nunca exclusiones fijas:** `soloPagos` (por defecto
+  sí) y `excluirRetornados` (por defecto NO: haber vuelto no impide participar). El
+  resultado (`filtros`) informa, por cada uno, si estaba activo, a cuántos excluyó y a
+  cuántos alcanzaría; mostralo siempre junto a los números.
 - **Teléfonos:** reutilizá `normalizarTelefonoDetallado` (`lib/mensualidades.ts`) o su
   espejo SQL `public.mensualidad_normalizar_telefono` (IMMUTABLE). Forma canónica de 10
   dígitos; destino WhatsApp `549` + canónico. Si no normaliza, se excluye con motivo:
@@ -81,14 +84,17 @@ no se muestra en el Turnero y su §2 no menciona los datos del stand.
 - **Exclusiones con motivo:** sin teléfono, no normalizable, sin consentimiento vigente,
   con baja, ya incluido en esta campaña, en enfriamiento de otra campaña, ya volvió
   después de la visita (opcional), titular de mensualidad (opcional).
-- **Segmentación geográfica configurable:** primero por localidad **declarada** con
-  fecha y origen (propuesta: se pide al registrar el consentimiento). Como respaldo, una
-  lista explícita de **códigos de área completos** del plan ENACOM. El repo solo tiene
-  el 11 y los 38 de 3 dígitos (`AREAS_3_DIGITOS` en `lib/mensualidades.ts`); los 261 de
-  4 dígitos hay que cargarlos desde la planilla oficial citada ahí. Límites que siempre se
-  informan: el área indica dónde se dio de alta la línea, no dónde vive la persona;
-  hay portabilidad y turistas; 49 de los 261 códigos de 4 dígitos empiezan con uno de
-  3 válido, así que un prefijo no identifica el código de área por sí solo.
+- **Segmentación geográfica configurable:** primero por localidad **declarada** (el
+  registro la guarda si la persona la da). Como respaldo, **indicativos oficiales
+  completos**: `lib/indicativosArgentina.ts` (los 300 de ENACOM, generados por
+  `scripts/marketing/generar-indicativos.mjs` con el sha256 de la planilla) y
+  `lib/marketing/indicativo.ts` (gana el indicativo oficial más largo; si el número
+  escrito con "15" lo contradice, queda indeterminado). Se compara por IGUALDAD, nunca
+  por prefijo: "353" no incluye 3532/3537. Sin indicativo determinable, el número queda
+  fuera del segmento con su motivo y SIN área. Límites que siempre se informan: el
+  indicativo es el área de numeración donde se dio de alta la línea, no la residencia;
+  hay portabilidad y turistas; ENACOM publica indicativos, no la asignación de cada
+  bloque de abonados.
 
 ## Códigos y pagos (lo que existe y sus brechas)
 
@@ -164,19 +170,21 @@ seguido; citá URL y fecha):
 ## Piezas de marketing que ya existen (Etapa 1: simulación)
 
 - `lib/marketing/audiencia.ts` (puro): `calcularAudiencia(filas, config, contexto)` aplica
-  la ventana, el filtro de pagos, la normalización, la deduplicación, el segmento por
-  códigos completos, las bajas, las exclusiones externas, "ya volvió" y el
-  consentimiento, con un motivo por fila y por teléfono (particiones exactas). También
-  `enmascararTelefono`, `enmascararDestino` y `validarCodigosArea`.
+  la ventana, los filtros opcionales, la normalización, la deduplicación, el segmento por
+  indicativo oficial, las bajas, las exclusiones externas y el consentimiento, con un
+  motivo por fila y por teléfono (particiones exactas) y el efecto de cada filtro.
+  También `enmascararTelefono`, `enmascararDestino` y `validarIndicativos`.
 - `lib/marketing/costo.ts` (puro): `estimarCosto`, con la tarifa siempre como parámetro.
 - `lib/marketing/proveedorWhatsapp.ts`: proveedor falso en memoria (idempotente por
   clave) y `evaluarProveedorWhatsapp` (falla cerrada; el falso solo persiste contra
   loopback o Preview). No hay proveedor real.
-- Pruebas: `npx tsx lib/marketing/audiencia.test.ts` y `npx tsx lib/marketing/envio.test.ts`.
+- Pruebas: `npx tsx lib/marketing/{audiencia,indicativo,envio,soloLectura}.test.ts`.
 - Simulación de solo lectura: `npx tsx --env-file=.env.local scripts/marketing/simular.ts --ventana 14`
-  (opciones en el encabezado del archivo). Guardián de red GET/HEAD con autoverificación
-  en cada corrida. Lee consentimientos y bajas del registro; si la base no lo tiene
-  instalado, lo dice y los simula vacíos.
+  (opciones en el encabezado del archivo). Usa un cliente PROPIO con transporte de solo
+  lectura (`lib/marketing/soloLectura.ts`: GET/HEAD al host y escrituras cortadas en el
+  cliente). NO intenta escrituras ni para comprobar que se rechazan: eso se prueba con un
+  transporte simulado. Lee consentimientos y bajas del registro
+  (`lib/marketing/registroLectura.ts`); si la base no lo tiene, lo dice y los simula vacíos.
 
 ## Etapa 3: consentimiento y bajas (en el repo; migración SIN aplicar en Producción)
 
@@ -186,23 +194,35 @@ seguido; citá URL y fecha):
   truncate), vista `mkt_consentimiento_estado`, RPCs `mkt_consentimiento_registrar`,
   `mkt_texto_publicar`, `mkt_texto_retirar` y `mkt_consentimiento_resumen`.
 - Reglas: estado = último evento por fecha de origen; empate → baja; después de una baja
-  solo un alta del propio titular (formulario web) la revierte. Fuentes: `formulario_web`
-  (público), `admin_evidencia` (alta, solo admin, con evidencia escrita) y `admin_pedido`
-  (baja, staff o admin). La IP no se guarda: solo una huella HMAC.
-- Dos llaves: `MARKETING_CONSENTIMIENTO_ENABLED` (entorno, estricta "true") y el texto
-  vigente (base). Retirar el texto es la pausa inmediata de las altas; las bajas siguen.
+  solo un alta del propio titular (formulario web o casilla del checkout) la revierte.
+  Fuentes: `formulario_web`, `checkout_reserva` y `checkout_gift_card` (públicas),
+  `admin_evidencia` (alta, solo admin, con evidencia escrita) y `admin_pedido` (baja,
+  staff o admin). La IP no se guarda: solo una huella HMAC.
+- Alta pública = autorización NUEVA: `/api/promos/texto` entrega el texto con un token
+  firmado (`lib/marketing/tokenFormulario.ts`, 2 h) del momento en que se mostró; ese
+  momento (`solicitado_en`) es la fecha del alta. Si hubo una baja desde entonces → 409
+  `formulario_vencido` (volver a leer y confirmar). Un reenvío con la misma clave
+  devuelve el original y no reactiva nada.
+- Llaves: `MARKETING_CONSENTIMIENTO_ENABLED` apaga la CAPTACIÓN (formulario, alta y
+  casilla del checkout); el texto vigente es la llave de la base. Las BAJAS no dependen
+  de ninguna de las dos: solo de que el registro esté instalado.
+- Checkout: casilla voluntaria, sin marcar, aparte de Términos y Privacidad
+  (`components/OptInPromos.tsx`) en `/reservas` y `/gift-cards`;
+  `lib/marketing/checkoutPromos.ts` registra DESPUÉS de crear la compra, nunca lanza ni
+  bloquea, tiene tiempo límite y devuelve `promos: no_solicitada | registrada |
+  no_registrada`. Solo "registrada" permite decir "te anotamos".
 - Código: `lib/marketing/consentimiento.ts` (contrato puro), `consentimientoServer.ts`,
   `http.ts`, `huellaIp.ts`; rutas `/api/promos/{texto,alta,baja}` y
   `/api/admin/marketing/{consentimientos,textos}`; páginas `/promos`, `/promos/baja` y
   `/admin/marketing`.
-- Pruebas: `npx tsx lib/marketing/consentimiento.test.ts`;
+- Pruebas: `npx tsx lib/marketing/{consentimiento,tokenFormulario,checkoutPromos}.test.ts`;
   `node scripts/pruebas/marketing-consentimiento.mjs` (SQL, se deshace);
-  `node scripts/pruebas/correr-mutantes.mjs lib/marketing/consentimiento.integration.ts`
-  (rutas reales contra el stack local).
+  `node scripts/pruebas/correr-mutantes.mjs lib/marketing/consentimiento.integration.ts lib/marketing/checkoutPromos.integration.ts`
+  (rutas reales contra el stack local, compras incluidas).
 - Pendiente del owner: revisión legal y publicación del texto (`promos-v1` es un
-  BORRADOR), actualizar la Política de Privacidad (§2 no cubre el stand), aplicar la
-  migración y encender la llave. El webhook de WhatsApp todavía no registra bajas por
-  "BAJA" ni por `user_preferences`: eso llega con la conexión a la Cloud API.
+  BORRADOR) y de los cambios de privacidad (`docs/marketing/privacidad-borrador.md`),
+  aplicar la migración y encender la captación. El webhook de WhatsApp todavía no
+  registra bajas por "BAJA" ni por `user_preferences`: eso llega con la Cloud API.
 
 ## Diseño de la primera versión (propuesta; lo que no está arriba no existe todavía)
 

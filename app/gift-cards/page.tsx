@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Gift, ArrowLeft, ShieldCheck, CircleAlert } from "lucide-react";
 import { GIFT_CARD_CONDICIONES, GIFT_CARD_MAX_CANTIDAD } from "@/lib/giftCards";
+import OptInPromos, { type OptInPromosValor } from "@/components/OptInPromos";
 import {
   gaEvent, setPendingPurchase,
   trackApplyPromotion, trackCheckoutError, trackPaymentRedirect,
@@ -57,6 +58,8 @@ export default function GiftCardsPage() {
   const [compradorTelefono, setCompradorTelefono] = useState("");
   const [destinatario, setDestinatario] = useState("");
   const [acepto, setAcepto] = useState(false);
+  // Casilla VOLUNTARIA de promociones, aparte de las condiciones. null = no marcada.
+  const [promos, setPromos] = useState<OptInPromosValor>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -203,6 +206,8 @@ export default function GiftCardsPage() {
           // El catálogo que la persona VIO. Si el servidor ya ofrece otro,
           // responde 409 sin crear nada ni cobrar.
           modalidad_vista: catalogo.modalidad,
+          // Solo si la persona marcó la casilla de promociones. La compra no depende de esto.
+          ...(promos ? { promos } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -560,6 +565,9 @@ export default function GiftCardsPage() {
                   </span>
                 </span>
               </label>
+
+              {/* Voluntaria y aparte: comprar no exige marcarla. */}
+              <OptInPromos onChange={setPromos} />
 
               {error && (
                 <p className="mt-4 rounded-2xl border border-red-500/30 bg-red-900/30 px-4 py-3 text-sm text-red-400">

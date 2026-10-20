@@ -22,6 +22,14 @@ declare
   v_n         integer;
   v_t         timestamptz;
   v_j         jsonb;
+  v_t0        timestamptz;
+  v_t1        timestamptz;
+  v_k3        uuid;
+  v_a         text;
+  v_b         text;
+  v_c         text;
+  v_d         text;
+  v_h3        text;
 begin
   begin
     -- ── Utilidades temporales (se van con el ROLLBACK) ─────────────────────
@@ -47,10 +55,12 @@ begin
       select coalesce((select estado from public.mkt_consentimiento_estado where telefono = p_tel), 'sin_registro');
     $f$;
 
-    create function pg_temp.web_alta(p_tel text, p_version text, p_huella text, p_extra jsonb default '{}') returns jsonb
+    -- Alta pública: lleva el momento en que se mostró el texto (por defecto, ahora).
+    create function pg_temp.web_alta(p_tel text, p_version text, p_huella text, p_extra jsonb default '{}',
+                                     p_sol timestamptz default clock_timestamp()) returns jsonb
     language sql as $f$
       select jsonb_build_object('tipo', 'alta', 'fuente', 'formulario_web', 'telefono', p_tel,
-                                'texto_version', p_version, 'texto_huella', p_huella) || p_extra;
+                                'texto_version', p_version, 'texto_huella', p_huella, 'solicitado_en', p_sol) || p_extra;
     $f$;
 
     create function pg_temp.web_baja(p_tel text) returns jsonb language sql as $f$
@@ -101,8 +111,9 @@ begin
 
     -- C6 · alta pública con la versión y huella vigentes: normaliza el teléfono y queda en alta.
     v_k := gen_random_uuid();
+    v_t0 := clock_timestamp();
     v_r := pg_temp.reg(v_k, pg_temp.web_alta('+54 9 351 999-0001', 'zz-uno', v_h2,
-                         '{"nombre": "  Ana   Prueba ", "localidad": " Córdoba ", "evidencia": {"pagina": "/promos", "ip_hash": "0123456789abcdef"}}'), 'publico');
+                         '{"nombre": "  Ana   Prueba ", "localidad": " Córdoba ", "evidencia": {"pagina": "/promos", "ip_hash": "0123456789abcdef"}}', v_t0), 'publico');
     v_log := v_log || case when v_r = 'ok|alta|false|3519990001'
                               and (select nombre = 'Ana Prueba' and localidad = 'Córdoba' and alta_fuente = 'formulario_web' and alta_texto_version = 'zz-uno'
                                      from public.mkt_consentimiento_estado where telefono = '3519990001')
@@ -119,11 +130,11 @@ begin
     -- C8 · idempotencia: mismo pedido = mismo evento (aunque el texto cambie después); otra cosa con la misma clave = conflicto.
     select count(*) into v_n from public.mkt_consentimiento_eventos;
     v_r := pg_temp.reg(v_k, pg_temp.web_alta('351 999 0001', 'zz-uno', v_h2,
-                         '{"nombre": "Ana Prueba", "localidad": "Córdoba", "evidencia": {"pagina": "/promos", "ip_hash": "0123456789abcdef"}}'), 'publico');
-    v_r2 := pg_temp.reg(v_k, pg_temp.web_alta('3519990003', 'zz-uno', v_h2), 'publico');
+                         '{"nombre": "Ana Prueba", "localidad": "Córdoba", "evidencia": {"pagina": "/promos", "ip_hash": "0123456789abcdef"}}', v_t0), 'publico');
+    v_r2 := pg_temp.reg(v_k, pg_temp.web_alta('3519990003', 'zz-uno', v_h2, '{}', v_t0), 'publico');
     -- El mismo pedido desde otra red (otra huella de IP) sigue siendo el mismo pedido.
     v_h1 := pg_temp.reg(v_k, pg_temp.web_alta('3519990001', 'zz-uno', v_h2,
-                         '{"nombre": "Ana Prueba", "localidad": "Córdoba", "evidencia": {"pagina": "/promos", "ip_hash": "fedcba9876543210"}}'), 'publico');
+                         '{"nombre": "Ana Prueba", "localidad": "Córdoba", "evidencia": {"pagina": "/promos", "ip_hash": "fedcba9876543210"}}', v_t0), 'publico');
     v_log := v_log || case when v_r = 'ok|alta|true|3519990001' and v_r2 like '23505:idempotency_key_con_otro_payload%'
                               and v_h1 = 'ok|alta|true|3519990001'
                               and (select count(*) from public.mkt_consentimiento_eventos) = v_n
@@ -203,7 +214,7 @@ begin
     v_log := v_log || case when v_j ->> 'retirado' = 'zz-uno'
                               and (select estado from public.mkt_textos_consentimiento where version = 'zz-uno') = 'retirado'
                               and pg_temp.reg(v_k, pg_temp.web_alta('3519990001', 'zz-uno', v_h2,
-                                    '{"nombre": "Ana Prueba", "localidad": "Córdoba", "evidencia": {"pagina": "/promos", "ip_hash": "0123456789abcdef"}}'), 'publico') like 'ok|%|true|3519990001'
+                                    '{"nombre": "Ana Prueba", "localidad": "Córdoba", "evidencia": {"pagina": "/promos", "ip_hash": "0123456789abcdef"}}', v_t0), 'publico') like 'ok|%|true|3519990001'
                               and pg_temp.reg(gen_random_uuid(), pg_temp.web_alta('3519990007', 'zz-uno', v_h2), 'publico') like '%texto_desactualizado%'
                               and pg_temp.reg(gen_random_uuid(), '{"tipo":"alta","fuente":"admin_evidencia","telefono":"3519990007","texto_version":"zz-uno","evidencia":{"tipo":"mensaje_del_titular","referencia":"WhatsApp 17/10"}}', 'admin') = 'ok|alta|false|3519990007'
                            then 'C14 ' else 'FALLA:C14 ' end;
@@ -255,6 +266,74 @@ begin
     v_log := v_log || case when v_r like '42501:%' and v_r2 like '42501:%' and v_h1 like '42501:%' and v_h2 like '42501:%'
                               and pg_temp.estado('3519990012') = 'sin_registro'
                            then 'C18b ' else 'FALLA:C18b ' end;
+
+    -- C20 · un alta vieja, duplicada o que llega fuera de orden no reactiva una baja;
+    --       volver a suscribirse exige una autorización NUEVA (texto mostrado después de la baja).
+    insert into public.mkt_textos_consentimiento (version, titulo, texto, huella)
+    values ('zz-tres', 'Prueba tres', 'Acepto recibir promociones de prueba de SIM Argentina por WhatsApp. Versión tres.', '');
+    perform public.mkt_texto_publicar('zz-tres', 'admin');
+    select huella into v_h3 from public.mkt_textos_consentimiento where version = 'zz-tres';
+    v_t0 := clock_timestamp();                                   -- se le muestra el texto
+    v_k3 := gen_random_uuid();
+    v_r := pg_temp.reg(v_k3, pg_temp.web_alta('3519990020', 'zz-tres', v_h3, '{}', v_t0), 'publico');
+    v_r2 := pg_temp.reg(gen_random_uuid(), pg_temp.web_baja('3519990020'), 'publico');
+    select count(*) into v_n from public.mkt_consentimiento_eventos where telefono = '3519990020';
+    -- (a) el mismo pedido reenviado: devuelve el original y no agrega nada.
+    v_a := pg_temp.reg(v_k3, pg_temp.web_alta('3519990020', 'zz-tres', v_h3, '{}', v_t0), 'publico');
+    -- (b) el mismo formulario (texto mostrado ANTES de la baja) enviado de nuevo con otra clave: rechazado.
+    v_b := pg_temp.reg(gen_random_uuid(), pg_temp.web_alta('3519990020', 'zz-tres', v_h3, '{}', v_t0), 'publico');
+    -- (c) una baja que llega tarde con fecha de origen posterior al alta la tapa igual.
+    v_t1 := clock_timestamp();
+    v_c := pg_temp.reg(gen_random_uuid(), pg_temp.web_alta('3519990022', 'zz-tres', v_h3, '{}', v_t1), 'publico');
+    v_d := pg_temp.reg(gen_random_uuid(), jsonb_build_object('tipo', 'baja', 'fuente', 'admin_pedido', 'telefono', '3519990022',
+             'evidencia', jsonb_build_object('canal', 'presencial'),
+             'ocurrido_en', to_char((v_t1 + interval '1 millisecond') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')), 'staff');
+    v_log := v_log || case when v_r = 'ok|alta|false|3519990020' and v_r2 = 'ok|baja|false|3519990020'
+                              and v_a = 'ok|baja|true|3519990020' and v_b like '55000:formulario_vencido%'
+                              and (select count(*) from public.mkt_consentimiento_eventos where telefono = '3519990020') = v_n
+                              and v_c = 'ok|alta|false|3519990022' and v_d = 'ok|baja|false|3519990022'
+                           then 'C20a ' else 'FALLA:C20a ' end;
+    -- (d) autorización nueva: el texto se muestra DESPUÉS de la baja → vuelve a alta.
+    v_a := pg_temp.reg(gen_random_uuid(), pg_temp.web_alta('3519990020', 'zz-tres', v_h3), 'publico');
+    v_log := v_log || case when v_a = 'ok|alta|false|3519990020' and pg_temp.estado('3519990020') = 'alta'
+                              and (select solicitado_en is not null and ocurrido_en = solicitado_en and registrado_en >= solicitado_en
+                                     from public.mkt_consentimiento_eventos where telefono = '3519990020' and tipo = 'alta'
+                                     order by registrado_en desc limit 1)
+                           then 'C20b ' else 'FALLA:C20b ' end;
+
+    -- C21 · la casilla voluntaria del checkout: solo altas públicas, con su evidencia, y revierte una baja como el formulario.
+    v_t0 := clock_timestamp();
+    v_j := jsonb_build_object('tipo', 'alta', 'fuente', 'checkout_reserva', 'telefono', '3519990021', 'texto_version', 'zz-tres',
+                              'texto_huella', v_h3, 'solicitado_en', v_t0,
+                              'evidencia', jsonb_build_object('pagina', '/reservas', 'reserva_id', '12345'));
+    v_a := pg_temp.reg(gen_random_uuid(), v_j, 'publico');
+    v_b := pg_temp.reg(gen_random_uuid(), jsonb_build_object('tipo', 'alta', 'fuente', 'checkout_gift_card', 'telefono', '3519990023',
+             'texto_version', 'zz-tres', 'texto_huella', v_h3, 'solicitado_en', v_t0,
+             'evidencia', jsonb_build_object('pagina', '/gift-cards', 'grupo_compra_id', gen_random_uuid()::text)), 'publico');
+    v_log := v_log || case when v_a = 'ok|alta|false|3519990021' and v_b = 'ok|alta|false|3519990023'
+                              and (select alta_fuente from public.mkt_consentimiento_estado where telefono = '3519990021') = 'checkout_reserva'
+                              and (select evidencia ->> 'reserva_id' from public.mkt_consentimiento_eventos where telefono = '3519990021') = '12345'
+                              and pg_temp.reg(gen_random_uuid(), '{"tipo":"baja","fuente":"checkout_reserva","telefono":"3519990021"}', 'publico') like '42501:fuente_no_permitida%'
+                              and pg_temp.reg(gen_random_uuid(), v_j, 'staff') like '42501:fuente_no_permitida%'
+                              and pg_temp.reg(gen_random_uuid(), v_j || jsonb_build_object('evidencia', jsonb_build_object('reserva_id', 'abc')), 'publico') like '%campo_invalido:evidencia.reserva_id%'
+                              and pg_temp.reg(gen_random_uuid(), v_j || '{"fuente": "checkout_gift_card"}', 'publico') like '%campo_desconocido:evidencia.reserva_id%'
+                           then 'C21a ' else 'FALLA:C21a ' end;
+    v_a := pg_temp.reg(gen_random_uuid(), pg_temp.web_baja('3519990021'), 'publico');
+    v_b := pg_temp.reg(gen_random_uuid(), v_j || jsonb_build_object('solicitado_en', clock_timestamp()), 'publico');
+    v_log := v_log || case when v_a = 'ok|baja|false|3519990021' and v_b = 'ok|alta|false|3519990021'
+                           then 'C21b ' else 'FALLA:C21b ' end;
+
+    -- C22 · solicitado_en: obligatorio y reciente en un alta pública; prohibido en todo lo demás.
+    v_log := v_log || case when pg_temp.reg(gen_random_uuid(), pg_temp.web_alta('3519990024', 'zz-tres', v_h3) - 'solicitado_en', 'publico') like '%campo_invalido:solicitado_en%'
+                              and pg_temp.reg(gen_random_uuid(), pg_temp.web_alta('3519990024', 'zz-tres', v_h3, '{}', clock_timestamp() - interval '4 hours'), 'publico') like '%campo_invalido:solicitado_en%'
+                              and pg_temp.reg(gen_random_uuid(), pg_temp.web_alta('3519990024', 'zz-tres', v_h3, '{}', clock_timestamp() + interval '10 minutes'), 'publico') like '%campo_invalido:solicitado_en%'
+                              and pg_temp.reg(gen_random_uuid(), pg_temp.web_baja('3519990024') || jsonb_build_object('solicitado_en', clock_timestamp()), 'publico') like '%campo_no_aplica:solicitado_en%'
+                              and pg_temp.reg(gen_random_uuid(), '{"tipo":"alta","fuente":"admin_evidencia","telefono":"3519990024","texto_version":"zz-tres","evidencia":{"tipo":"papel_firmado","referencia":"Planilla"}}'::jsonb
+                                                || jsonb_build_object('solicitado_en', clock_timestamp()), 'admin') like '%campo_no_aplica:solicitado_en%'
+                              and pg_temp.intentar($q$insert into public.mkt_consentimiento_eventos (idempotency_key, huella, telefono, tipo, fuente, actor_rol, texto_version, texto_huella, ocurrido_en)
+                                                    values (gen_random_uuid(), 'x', '3519990024', 'alta', 'formulario_web', 'publico', 'zz-tres', 'h', now())$q$) like '23514:%'
+                              and pg_temp.estado('3519990024') = 'sin_registro'
+                           then 'C22 ' else 'FALLA:C22 ' end;
 
     -- C19 · el resumen cuadra con la vista y no trae teléfonos.
     v_j := public.mkt_consentimiento_resumen(now() - interval '1 day');

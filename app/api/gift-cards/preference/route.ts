@@ -18,6 +18,7 @@ import {
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
+import { registrarPromosCheckout } from "@/lib/marketing/checkoutPromos";
 
 // Flujo de pago de Gift Cards, totalmente separado del de reservas.
 // external_reference usa el prefijo "gift_card_" + grupo_compra_id y la
@@ -203,7 +204,13 @@ export async function POST(req: Request) {
         })
         .eq("grupo_compra_id", grupoId);
 
-      return NextResponse.json({ free: true, grupo_compra_id: grupoId });
+      // Casilla voluntaria de promociones: aparte de la compra, nunca la bloquea
+      // ni la cambia (lib/marketing/checkoutPromos.ts). Sin casilla, no hace nada.
+      const promos = await registrarPromosCheckout({
+        body, fuente: "checkout_gift_card", telefono: comprador_telefono, nombre: comprador_nombre,
+        compra: { grupo_compra_id: grupoId }, ip: clientIp(req),
+      });
+      return NextResponse.json({ free: true, grupo_compra_id: grupoId, promos: promos.estado });
     }
 
     if (!accessToken || !baseUrl || isInvalidBaseUrl(baseUrl)) {
@@ -244,11 +251,17 @@ export async function POST(req: Request) {
       .update({ mercado_pago_preference_id: result.id || null, updated_at: nowIso })
       .eq("grupo_compra_id", grupoId);
 
+    const promos = await registrarPromosCheckout({
+      body, fuente: "checkout_gift_card", telefono: comprador_telefono, nombre: comprador_nombre,
+      compra: { grupo_compra_id: grupoId }, ip: clientIp(req),
+    });
+
     return NextResponse.json({
       id: result.id,
       grupo_compra_id: grupoId,
       init_point: result.init_point,
       sandbox_init_point: result.sandbox_init_point,
+      promos: promos.estado,
     });
   } catch (error: unknown) {
     if (grupoId) {

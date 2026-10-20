@@ -9,7 +9,10 @@
 // ============================================================================
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { leerRegistroParaAudiencia, type RegistroParaAudiencia } from "@/lib/marketing/registroLectura";
+import { emitirTokenFormulario } from "@/lib/marketing/tokenFormulario";
 import {
+  textoPublico,
   errorDeRpc,
   type DatosRpc,
   type ErrorApi,
@@ -31,7 +34,6 @@ function fallo<T>(error: ErrorPg): R<T> {
 const COLS_TEXTO = "version, titulo, texto, huella, estado, creado_en, publicado_en, retirado_en";
 const COLS_EVENTO =
   "id, telefono, tipo, fuente, actor_rol, texto_version, nombre, localidad, evidencia, ocurrido_en, registrado_en";
-const LOTE = 1000;
 
 // ── Textos ────────────────────────────────────────────────────────────────
 export async function listarTextos(): Promise<R<TextoDto[]>> {
@@ -46,6 +48,21 @@ export async function textoVigente(): Promise<R<TextoDto | null>> {
     .from("mkt_textos_consentimiento").select(COLS_TEXTO).eq("estado", "vigente").maybeSingle();
   if (error) return fallo(error);
   return { ok: true, valor: (data as TextoDto | null) ?? null };
+}
+
+export type TextoParaFormulario = { texto: ReturnType<typeof textoPublico>; token: string };
+
+/**
+ * El texto vigente, tal como lo ve el público, con el token firmado del momento
+ * en que se muestra. null si no hay texto publicado o no hay secreto para firmar
+ * (las altas quedan cerradas: falla cerrada).
+ */
+export async function textoParaFormulario(ahora: Date): Promise<R<TextoParaFormulario | null>> {
+  const t = await textoVigente();
+  if (!t.ok) return t;
+  if (!t.valor) return { ok: true, valor: null };
+  const token = emitirTokenFormulario(t.valor.version, ahora);
+  return { ok: true, valor: token ? { texto: textoPublico(t.valor), token } : null };
 }
 
 export async function publicarTexto(version: string): Promise<R<Record<string, unknown>>> {
@@ -138,30 +155,10 @@ export async function moduloInstalado(): Promise<R<boolean>> {
 }
 
 // ── Para la audiencia de campañas ─────────────────────────────────────────
-export type RegistroParaAudiencia = {
-  instalado: boolean;
-  /** Teléfono canónico → fuente del alta vigente. */
-  consentimientos: Map<string, Fuente>;
-  bajas: Set<string>;
-};
+export type { RegistroParaAudiencia };
 
-/** Estado vigente de todos los teléfonos, paginado (PostgREST corta en 1000). */
+/** Estado vigente de todos los teléfonos (lectura paginada en lib/marketing/registroLectura.ts). */
 export async function registroParaAudiencia(): Promise<R<RegistroParaAudiencia>> {
-  const consentimientos = new Map<string, Fuente>();
-  const bajas = new Set<string>();
-  for (let i = 0; ; i += LOTE) {
-    const { data, error } = await supabaseAdmin.from("mkt_consentimiento_estado")
-      .select("telefono, estado, alta_fuente").order("telefono", { ascending: true }).range(i, i + LOTE - 1);
-    if (error) {
-      const e = errorDeRpc(error);
-      if (e?.codigo === "modulo_no_instalado") return { ok: true, valor: { instalado: false, consentimientos, bajas } };
-      return fallo(error);
-    }
-    for (const f of (data ?? []) as { telefono: string; estado: string; alta_fuente: Fuente | null }[]) {
-      if (f.estado === "alta" && f.alta_fuente) consentimientos.set(f.telefono, f.alta_fuente);
-      else bajas.add(f.telefono);
-    }
-    if (!data || data.length < LOTE) break;
-  }
-  return { ok: true, valor: { instalado: true, consentimientos, bajas } };
+  const r = await leerRegistroParaAudiencia(supabaseAdmin);
+  return r.ok ? r : { ok: false, e: null, causa: r.causa };
 }

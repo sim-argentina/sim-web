@@ -11,6 +11,7 @@ import {
   CircleAlert,
 } from "lucide-react";
 import TeamCard from "@/components/TeamCard";
+import OptInPromos, { mensajePromosTrasCompra, type OptInPromosValor } from "@/components/OptInPromos";
 import {
   gaEvent, setPendingPurchase,
   trackSelectDate, trackSelectTime, trackApplyPromotion,
@@ -242,6 +243,9 @@ export default function ReservasPage() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [acceptedConditions, setAcceptedConditions] = useState(false);
+  // Casilla VOLUNTARIA de promociones, aparte de las condiciones. null = no marcada.
+  const [promos, setPromos] = useState<OptInPromosValor>(null);
+  const [optinClave, setOptinClave] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingReservations, setIsLoadingReservations] = useState(false);
 
@@ -681,6 +685,8 @@ export default function ReservasPage() {
       // precio, responde 409 sin crear nada ni cobrar.
       modalidad_vista: oferta.modalidad,
       precio_visto: pricePerSim,
+      // Solo si la persona marcó la casilla de promociones. La reserva no depende de esto.
+      ...(promos ? { promos } : {}),
     };
 
     // Lo elegido, para conservarlo si hay que recargar la oferta.
@@ -734,13 +740,17 @@ export default function ReservasPage() {
         openFeedbackModal(
           "success",
           "Reserva confirmada",
-          "Tu reserva bonificada fue guardada correctamente. No tenés que pagar nada por Mercado Pago."
+          // La línea de promociones solo aparece según lo que el servidor registró de verdad.
+          ["Tu reserva bonificada fue guardada correctamente. No tenés que pagar nada por Mercado Pago.",
+            mensajePromosTrasCompra(result?.promos)].filter(Boolean).join(" ")
         );
 
         setName("");
         setPhone("");
         setSelectedTeams([]);
         setAcceptedConditions(false);
+        setPromos(null);
+        setOptinClave((k) => k + 1);
         setCodigoInput("");
         setCodigoAplicado(null);
 
@@ -1411,6 +1421,9 @@ export default function ReservasPage() {
                       .
                     </span>
                   </label>
+
+                  {/* Voluntaria y aparte: reservar no exige marcarla. */}
+                  <OptInPromos key={optinClave} onChange={setPromos} />
                 </div>
 
                 <button

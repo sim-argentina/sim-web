@@ -1,23 +1,25 @@
 // ============================================================================
-// Simulación de la audiencia de recuperación del stand (Marketing · Etapa 1).
+// Simulación de la audiencia de recuperación del stand (Marketing).
 // ----------------------------------------------------------------------------
-// SOLO LECTURA contra la base de .env.local (hoy, Producción):
-//   · un guardián de red deja salir solo GET/HEAD al host de Supabase;
-//   · insert/update/upsert/delete/rpc del cliente abortan antes de salir;
+// SOLO LECTURA contra la base del archivo de entorno (con .env.local, Producción):
+//   · el cliente usa un transporte de solo lectura: GET/HEAD al host de la base y
+//     nada más (lib/marketing/soloLectura.ts); además, insert/update/upsert/
+//     delete y rpc están cortados en el cliente. El script NO intenta ninguna
+//     escritura, ni para comprobar que se rechaza: eso se prueba con un transporte
+//     simulado en lib/marketing/soloLectura.test.ts;
 //   · no imprime nombres y los teléfonos salen enmascarados.
 // No crea códigos ni envía nada: el proveedor falso solo cuenta en memoria.
-// Consentimientos y bajas salen del registro (db/marketing-consentimiento.sql,
-// vista mkt_consentimiento_estado). Si esa base no lo tiene instalado, se
-// simulan VACÍOS y el informe lo dice: la audiencia elegible da 0.
+// Consentimientos y bajas salen del registro (vista mkt_consentimiento_estado);
+// si la base no lo tiene instalado, el informe lo dice y los simula vacíos.
 //
 //   npx tsx --env-file=.env.local scripts/marketing/simular.ts --ventana 14
 //   npx tsx --env-file=.env.test.local scripts/marketing/simular.ts   # stack local
 //
-// Opciones:
+// Opciones (todos los filtros comerciales son opcionales):
 //   --ventana 14|21            días hacia atrás (hoy excluido). Por defecto 14.
-//   --incluir-gratis           cuenta también turnos gratis o sin cobro.
-//   --codigos-area 351,3543    lista explícita de códigos de área completos.
-//   --excluir-retornados       saca a quien vino 2 o más días (hoy incluido).
+//   --incluir-gratis           apaga "solo pagos" (por defecto encendido).
+//   --excluir-retornados       saca a quien vino 2 o más días (por defecto NO).
+//   --indicativos 351,3543     segmento por indicativos OFICIALES completos.
 //   --excluir-mensualidades    saca a titulares de mensualidad (lee telefono_norm).
 //   --tarifa 0.0618 --moneda USD   tarifa de marketing por mensaje entregado.
 //   --limite 50                tope de destinatarios.
@@ -25,12 +27,12 @@
 //   --muestra 5                filas enmascaradas a mostrar (máx. 20).
 // ============================================================================
 
+import { createClient } from "@supabase/supabase-js";
 import {
   MOTIVOS_FILA,
   MOTIVOS_TELEFONO,
   calcularAudiencia,
   enmascararDestino,
-  prefijoReporte,
   validarConfigAudiencia,
   ventanaAudiencia,
   type ConfigAudiencia,
@@ -41,6 +43,8 @@ import {
 } from "@/lib/marketing/audiencia";
 import { estimarCosto, type EstimacionCosto } from "@/lib/marketing/costo";
 import { crearProveedorFalso } from "@/lib/marketing/proveedorWhatsapp";
+import { leerRegistroParaAudiencia } from "@/lib/marketing/registroLectura";
+import { blindarCliente, crearFetchSoloLectura } from "@/lib/marketing/soloLectura";
 
 type Opciones = {
   config: ConfigAudiencia;
@@ -54,7 +58,7 @@ type Opciones = {
 
 function leerOpciones(argv: string[]): Opciones {
   const o: Opciones = {
-    config: { ventanaDias: 14 },
+    config: { ventanaDias: 14, soloPagos: true, excluirRetornados: false },
     excluirMensualidades: false,
     tarifa: null,
     moneda: "USD",
@@ -71,13 +75,13 @@ function leerOpciones(argv: string[]): Opciones {
     const a = argv[i];
     switch (a) {
       case "--ventana": o.config.ventanaDias = numero(a, argv[++i]) as VentanaAudiencia; break;
-      case "--incluir-gratis": o.config.incluirGratis = true; break;
+      case "--incluir-gratis": o.config.soloPagos = false; break;
       case "--excluir-retornados": o.config.excluirRetornados = true; break;
       case "--excluir-mensualidades": o.excluirMensualidades = true; break;
-      case "--codigos-area": {
+      case "--indicativos": {
         const v = argv[++i];
-        if (!v || v.startsWith("--")) throw new Error("--codigos-area necesita una lista, p. ej. 351,3543.");
-        o.config.codigosArea = v.split(",").map((c) => c.trim()).filter(Boolean);
+        if (!v || v.startsWith("--")) throw new Error("--indicativos necesita una lista, p. ej. 351,3543.");
+        o.config.indicativos = v.split(",").map((c) => c.trim()).filter(Boolean);
         break;
       }
       case "--tarifa": o.tarifa = numero(a, argv[++i]); break;
@@ -95,60 +99,21 @@ function leerOpciones(argv: string[]): Opciones {
   return o;
 }
 
-/** Guardián de red: solo GET/HEAD al host de la base. Se instala ANTES de crear el cliente. */
-function instalarGuardianDeRed(): { pedidos: () => number } {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!url) throw new Error("Falta NEXT_PUBLIC_SUPABASE_URL: correr con --env-file=.env.local.");
-  const host = new URL(url).host;
-  const original = globalThis.fetch;
-  let pedidos = 0;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const destino = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-    const metodo = String(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-    if (destino.host !== host) throw new Error(`solo lectura: host no permitido (${destino.host})`);
-    if (metodo !== "GET" && metodo !== "HEAD") throw new Error(`solo lectura: ${metodo} bloqueado`);
-    pedidos++;
-    return original(input, init);
-  }) as typeof fetch;
-  return { pedidos: () => pedidos };
-}
-
 const LOTE = 1000;
 
 async function main() {
   const o = leerOpciones(process.argv.slice(2));
-  const red = instalarGuardianDeRed();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const clave = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !clave) throw new Error("Faltan NEXT_PUBLIC_SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY: correr con --env-file.");
 
-  // El cliente se crea DESPUÉS del guardián, así usa el fetch vigilado.
-  const { supabaseAdmin } = await import("@/lib/supabaseAdmin");
-  const cliente = supabaseAdmin as unknown as Record<string, unknown>;
-  const fromOriginal = cliente.from as (t: string) => Record<string, unknown>;
-  cliente.from = (t: string) => {
-    const q = fromOriginal.call(supabaseAdmin, t);
-    for (const escritura of ["insert", "update", "upsert", "delete"]) {
-      q[escritura] = () => { throw new Error(`solo lectura: ${escritura} sobre ${t}`); };
-    }
-    return q;
-  };
-  cliente.rpc = () => { throw new Error("solo lectura: rpc"); };
-
-  // Autoverificación en cada corrida: una escritura tiene que fallar ANTES de
-  // salir. Si alguna pasara, se aborta sin leer nada.
-  const bloqueos: string[] = [];
-  const intentar = async (nombre: string, fn: () => unknown) => {
-    try {
-      await fn();
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith("solo lectura")) { bloqueos.push(nombre); return; }
-      throw e;
-    }
-    throw new Error(`El guardián dejó pasar ${nombre}: abortado sin leer datos.`);
-  };
-  const antes = red.pedidos();
-  await intentar("POST", () => fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/turnos_stand`, { method: "POST", body: "{}" }));
-  await intentar("insert", () => supabaseAdmin.from("turnos_stand").insert({}));
-  await intentar("rpc", () => supabaseAdmin.rpc("consumir_codigo_descuento", { p_codigo: "X" }));
-  if (red.pedidos() !== antes) throw new Error("Una escritura bloqueada llegó a la red: abortado.");
+  // Cliente PROPIO de solo lectura (no el de la app): transporte GET/HEAD al host
+  // de la base y escrituras cortadas en el cliente.
+  const transporte = crearFetchSoloLectura(globalThis.fetch.bind(globalThis), new URL(url).host);
+  const cliente = blindarCliente(createClient(url, clave, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: transporte.fetch as typeof fetch },
+  }));
 
   const ahora = new Date();
   const { hoy, desde, hasta } = ventanaAudiencia(ahora, o.config.ventanaDias);
@@ -157,21 +122,16 @@ async function main() {
   // pero dice si alguien ya volvió. Paginado (PostgREST corta en 1000) y
   // contrastado con un conteo exacto.
   async function leerTurnos(): Promise<{ filas: TurnoAudiencia[]; esperado: number }> {
-    const { count, error: errCount } = await supabaseAdmin
-      .from("turnos_stand")
-      .select("id", { count: "exact", head: true })
-      .gte("fecha", desde)
-      .lte("fecha", hoy);
+    const { count, error: errCount } = await cliente
+      .from("turnos_stand").select("id", { count: "exact", head: true }).gte("fecha", desde).lte("fecha", hoy);
     if (errCount) throw errCount;
     const filas: TurnoAudiencia[] = [];
     for (let i = 0; ; i += LOTE) {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await cliente
         .from("turnos_stand")
         .select("id, nombre, telefono, fecha, estado, total, metodo_pago")
-        .gte("fecha", desde)
-        .lte("fecha", hoy)
-        .order("id", { ascending: true })
-        .range(i, i + LOTE - 1);
+        .gte("fecha", desde).lte("fecha", hoy)
+        .order("id", { ascending: true }).range(i, i + LOTE - 1);
       if (error) throw error;
       filas.push(...((data ?? []) as TurnoAudiencia[]));
       if (!data || data.length < LOTE) break;
@@ -186,23 +146,17 @@ async function main() {
   const otrasExclusiones = new Map<string, MotivoExterno>();
   if (o.excluirMensualidades) {
     for (let i = 0; ; i += LOTE) {
-      const { data, error } = await supabaseAdmin
-        .from("mensualidades")
-        .select("telefono_norm")
-        .not("telefono_norm", "is", null)
-        .order("id", { ascending: true })
-        .range(i, i + LOTE - 1);
+      const { data, error } = await cliente
+        .from("mensualidades").select("telefono_norm").not("telefono_norm", "is", null)
+        .order("id", { ascending: true }).range(i, i + LOTE - 1);
       if (error) throw error;
       for (const f of (data ?? []) as { telefono_norm: string }[]) otrasExclusiones.set(f.telefono_norm, "titular_mensualidad");
       if (!data || data.length < LOTE) break;
     }
   }
 
-  // Registro de consentimiento: altas vigentes (con su fuente) y bajas. Se importa
-  // DESPUÉS del guardián, igual que el cliente.
-  const { registroParaAudiencia } = await import("@/lib/marketing/consentimientoServer");
-  const registro = await registroParaAudiencia();
-  if (!registro.ok) throw new Error(`No se pudo leer el registro de consentimiento: ${registro.e?.codigo ?? registro.causa ?? "error"}`);
+  const registro = await leerRegistroParaAudiencia(cliente);
+  if (!registro.ok) throw new Error(`No se pudo leer el registro de consentimiento: ${registro.causa}`);
 
   const r = calcularAudiencia(lectura.filas, o.config, {
     ahora,
@@ -221,11 +175,8 @@ async function main() {
   let enviables = o.limite === null ? r.elegibles.length : Math.min(o.limite, r.elegibles.length);
   if (o.tarifa !== null) {
     costo = estimarCosto({
-      destinatarios: r.elegibles.length,
-      tarifaPorEntregado: o.tarifa,
-      moneda: o.moneda,
-      limiteDestinatarios: o.limite,
-      presupuestoMaximo: o.presupuesto,
+      destinatarios: r.elegibles.length, tarifaPorEntregado: o.tarifa, moneda: o.moneda,
+      limiteDestinatarios: o.limite, presupuestoMaximo: o.presupuesto,
     });
     enviables = costo.enviables;
   }
@@ -245,21 +196,25 @@ async function main() {
   const linea = (s = "") => console.log(s);
   const conteo = (obj: Record<string, number>, orden: readonly string[]) =>
     orden.filter((k) => obj[k]).map((k) => `${k} ${obj[k]}`).join(" · ") || "ninguna";
-  const prefijos = (lista: Destinatario[]) => {
+  const porIndicativo = (lista: Destinatario[]) => {
     const m = new Map<string, number>();
-    for (const d of lista) m.set(prefijoReporte(d.telefono), (m.get(prefijoReporte(d.telefono)) ?? 0) + 1);
-    return [...m.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([p, n]) => `${p}: ${n}`).join(" · ") || "—";
+    let sin = 0;
+    for (const d of lista) {
+      if (!d.indicativo) { sin++; continue; }
+      const k = `${d.indicativo} ${d.areaNumeracion}`;
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    const top = [...m.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 12);
+    return `${top.map(([k, n]) => `${k}: ${n}`).join(" · ") || "—"}${m.size > 12 ? ` · (+${m.size - 12} indicativos)` : ""} · sin indicativo determinable: ${sin}`;
   };
   const muestra = (lista: Destinatario[]) =>
     lista.slice(0, o.muestra).map((d) =>
-      `  ${enmascararDestino(d.telefono)} · última visita ${d.ultimaVisita} · ${d.visitas} turno(s) · ${d.diasConVisita} día(s)${d.variosNombres ? " · varios nombres" : ""}`);
+      `  ${enmascararDestino(d.telefono)} · indicativo ${d.indicativo ?? "indeterminado"} · última visita ${d.ultimaVisita} · ${d.visitas} turno(s) · ${d.diasConVisita} día(s)${d.variosNombres ? " · varios nombres" : ""}`);
+  const f = r.filtros;
+  const si = (b: boolean) => (b ? "SÍ" : "no");
 
   linea("Simulación de audiencia · SOLO LECTURA · no se envía ni se guarda nada");
   linea(`Hoy (Argentina): ${hoy} · ventana de ${r.ventanaDias} días: ${desde} a ${hasta} (hoy excluido)`);
-  linea(
-    `Configuración: ${o.config.incluirGratis ? "pagos y gratis" : "solo pagos"} · segmento: ${o.config.codigosArea?.length ? o.config.codigosArea.join(", ") : "sin filtro"}` +
-      ` · excluir retornados: ${o.config.excluirRetornados ? "sí" : "no"} · excluir mensualidades: ${o.excluirMensualidades ? `sí (${otrasExclusiones.size} teléfono${otrasExclusiones.size === 1 ? "" : "s"})` : "no"}`,
-  );
   linea(`Lectura: ${lectura.filas.length} filas de turnos_stand · conteo exacto ${lectura.esperado} · ${consistente ? "consistente" : "INCONSISTENTE: no usar estos números"}`);
   linea(
     registro.valor.instalado
@@ -267,23 +222,28 @@ async function main() {
       : "Registro de consentimiento: NO instalado en esta base (falta db/marketing-consentimiento.sql) → se simula vacío",
   );
   linea();
+  linea("Filtros (todos configurables) y su efecto en esta corrida:");
+  linea(`  ventana ${f.ventana.desde}..${f.ventana.hasta}: ${f.ventana.filasEnVentana} filas adentro · ${f.ventana.filasFuera} afuera (hoy, anteriores o futuras)`);
+  linea(`  solo pagos: ${si(f.soloPagos.activo)} · excluyó ${f.soloPagos.filasExcluidas} fila(s) · alcanza a ${f.soloPagos.filasAfectables}`);
+  linea(`  excluir a quien ya volvió: ${si(f.excluirRetornados.activo)} · excluyó ${f.excluirRetornados.telefonosExcluidos} teléfono(s) · alcanza a ${f.excluirRetornados.telefonosAfectables}`);
+  linea(`  segmento por indicativo: ${f.segmento.activo ? f.segmento.indicativos.join(", ") : "no"} · fuera ${f.segmento.telefonosFuera} · indeterminados ${f.segmento.telefonosIndeterminados}`);
+  linea(`  titulares de mensualidad: ${o.excluirMensualidades ? `SÍ (${otrasExclusiones.size} en la base) · excluyó ${r.telefonos.excluidos.titular_mensualidad}` : "no"}`);
+  linea(`  bajas: excluyó ${f.bajas.telefonosExcluidos} · sin consentimiento: ${f.consentimiento.telefonosSin}`);
+  linea();
   linea(`Filas en la ventana: ${r.filas.enVentana} · válidas ${r.filas.validas}`);
   linea(`  excluidas: ${conteo(r.filas.excluidas, MOTIVOS_FILA)}`);
   linea(`  no normalizables por motivo: ${conteo(r.filas.rechazosTelefono as Record<string, number>, Object.keys(r.filas.rechazosTelefono).sort())}`);
-  linea(`  fuera de la ventana: de hoy ${r.filas.deHoy} · anteriores ${r.filas.fueraDeVentana} · futuras ${r.filas.futuras} · fecha inválida ${r.filas.fechaInvalida}`);
   linea();
-  linea(`Teléfonos únicos: ${r.telefonos.unicos}`);
-  linea(`  ELEGIBLES: ${r.telefonos.elegibles}${r.telefonos.elegibles ? ` (por fuente del consentimiento: ${[...elegiblesPorFuente.entries()].map(([f, n]) => `${f} ${n}`).join(" · ")})` : ""}`);
+  linea(`Teléfonos únicos: ${r.telefonos.unicos} · sin indicativo determinable: ${r.telefonos.sinIndicativo}`);
+  linea(`  ELEGIBLES: ${r.telefonos.elegibles}${r.telefonos.elegibles ? ` (por fuente del consentimiento: ${[...elegiblesPorFuente.entries()].map(([k, n]) => `${k} ${n}`).join(" · ")})` : ""}`);
   linea(`  excluidos: ${conteo(r.telefonos.excluidos, MOTIVOS_TELEFONO)}`);
-  linea(`  con varios nombres (sin personalizar): ${r.excluidos.filter((x) => x.destinatario.variosNombres).length + r.elegibles.filter((d) => d.variosNombres).length}`);
-  linea(`  volvieron otro día (hoy incluido): ${[...r.elegibles, ...r.excluidos.map((x) => x.destinatario)].filter((d) => d.diasConVisita >= 2).length}`);
   if (o.muestra > 0 && r.elegibles.length > 0) {
     linea(`  muestra enmascarada de elegibles (${Math.min(o.muestra, r.elegibles.length)}):`);
     for (const l of muestra(r.elegibles)) linea(l);
   }
   linea();
   linea(`Pendientes de consentimiento (pasan todo lo demás; NO se les escribe): ${r.pendientesConsentimiento.length}`);
-  linea(`  prefijos (no son localidades): ${prefijos(r.pendientesConsentimiento)}`);
+  linea(`  por indicativo (área de NUMERACIÓN de ENACOM, no residencia): ${porIndicativo(r.pendientesConsentimiento)}`);
   if (o.muestra > 0 && r.pendientesConsentimiento.length > 0) {
     linea(`  muestra enmascarada (${Math.min(o.muestra, r.pendientesConsentimiento.length)}):`);
     for (const l of muestra(r.pendientesConsentimiento)) linea(l);
@@ -292,11 +252,8 @@ async function main() {
   linea(`Envío simulado (proveedor falso en memoria): ${proveedor.enviados.length} mensaje(s)`);
   if (o.tarifa !== null) {
     const potencial = estimarCosto({
-      destinatarios: r.pendientesConsentimiento.length,
-      tarifaPorEntregado: o.tarifa,
-      moneda: o.moneda,
-      limiteDestinatarios: o.limite,
-      presupuestoMaximo: o.presupuesto,
+      destinatarios: r.pendientesConsentimiento.length, tarifaPorEntregado: o.tarifa, moneda: o.moneda,
+      limiteDestinatarios: o.limite, presupuestoMaximo: o.presupuesto,
     });
     const recorte = (c: EstimacionCosto) => (c.recortadoPor.length ? ` (recortado por ${c.recortadoPor.join(" y ")})` : "");
     linea(`Costo máximo con tarifa ${o.tarifa} ${o.moneda} por entregado:`);
@@ -309,7 +266,13 @@ async function main() {
     for (const a of r.advertencias) linea(`  · ${a}`);
   }
   linea();
-  linea(`Pedidos a la base: ${red.pedidos()} (solo GET/HEAD) · escrituras bloqueadas en la autoverificación: ${bloqueos.join(", ")}`);
+  const pedidos = transporte.pedidos();
+  const porMetodo = pedidos.reduce<Record<string, number>>((acc, p) => ({ ...acc, [p.metodo]: (acc[p.metodo] ?? 0) + 1 }), {});
+  linea(`Transporte de solo lectura: ${pedidos.length} pedido(s) (${Object.entries(porMetodo).map(([m, n]) => `${m} ${n}`).join(" · ")}) · cortados antes de salir: ${transporte.bloqueados()}`);
+  if (transporte.bloqueados() > 0) {
+    console.error("Algo intentó escribir o salir a otro host: revisar antes de usar estos números.");
+    process.exit(1);
+  }
 }
 
 main().catch((e) => {

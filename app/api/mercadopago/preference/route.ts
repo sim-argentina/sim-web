@@ -9,6 +9,7 @@ import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 import { experimentoPostpayActivo, retornoExperimental } from "@/lib/reservaPostpay";
+import { registrarPromosCheckout } from "@/lib/marketing/checkoutPromos";
 
 const falloJson = (f: Fallo) =>
   NextResponse.json(
@@ -154,6 +155,13 @@ export async function POST(req: Request) {
       },
     });
 
+    // Casilla voluntaria de promociones: aparte de la compra, nunca la bloquea ni
+    // la cambia (lib/marketing/checkoutPromos.ts). Sin casilla, no hace nada.
+    const promos = await registrarPromosCheckout({
+      body, fuente: "checkout_reserva", telefono: pedido.telefono, nombre: pedido.nombre,
+      compra: { reserva_id: String(reservaPendiente.id) }, ip: clientIp(req),
+    });
+
     return NextResponse.json({
       id: result.id,
       init_point: result.init_point,
@@ -163,6 +171,7 @@ export async function POST(req: Request) {
       descuento_aplicado: Math.round(descuentoAplicado),
       total_final: totalFinal,
       codigo_descuento: codigoAplicado,
+      promos: promos.estado,
     });
   } catch (error) {
     if (reservaPendienteId) {

@@ -31,12 +31,14 @@ const NOCHE_19 = new Date("2026-10-20T02:30:00Z");
 
 // ── 1. Alta pública ─────────────────────────────────────────────────────────
 {
-  const base = { idempotency_key: K, telefono: "+54 9 351 555-0101", acepto: true, texto_version: "promos-v1", texto_huella: H };
+  const TOKEN = `lz1abc.${"A".repeat(32)}`; // la forma; la firma la verifica la ruta
+  const base = { idempotency_key: K, telefono: "+54 9 351 555-0101", acepto: true, texto_version: "promos-v1", texto_huella: H, token: TOKEN };
   const r = validarAltaPublica({ ...base, nombre: "  Ana   López ", localidad: " Villa  Allende ", sitio: "" });
   assert.ok(r.ok);
   assert.deepEqual(r.valor, {
     clave: K,
     bot: false,
+    token: TOKEN,
     datos: {
       tipo: "alta", fuente: "formulario_web", telefono: "3515550101", texto_version: "promos-v1", texto_huella: H,
       nombre: "Ana López", localidad: "Villa Allende",
@@ -46,6 +48,10 @@ const NOCHE_19 = new Date("2026-10-20T02:30:00Z");
   assert.ok(vacios.ok && vacios.valor.datos.nombre === null && vacios.valor.datos.localidad === null, "vacío = sin dato");
   assert.equal(codigo(validarAltaPublica({ ...base, acepto: false })), "falta_aceptacion", "la casilla tiene que estar marcada");
   assert.equal(codigo(validarAltaPublica({ ...base, acepto: "true" })), "falta_aceptacion", "solo el booleano true");
+  const { token: _sinToken, ...sinToken } = base;
+  void _sinToken;
+  assert.equal(codigo(validarAltaPublica(sinToken)), "formulario_vencido", "sin token del formulario no hay alta");
+  assert.equal(codigo(validarAltaPublica({ ...base, token: "inventado" })), "formulario_vencido");
   assert.equal(codigo(validarAltaPublica({ ...base, telefono: "12345" })), "telefono_invalido");
   assert.equal(codigo(validarAltaPublica({ ...base, telefono: "+1 305 555 0101" })), "telefono_invalido");
   assert.equal(codigo(validarAltaPublica({ ...base, telefono: 3515550101 })), "telefono_invalido");

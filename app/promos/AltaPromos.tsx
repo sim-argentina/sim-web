@@ -14,6 +14,8 @@ type Texto = { version: string; titulo: string; texto: string; huella: string };
 
 export default function AltaPromos() {
   const [texto, setTexto] = useState<Texto | null>(null);
+  // Token firmado del momento en que se mostró el texto: el alta lo devuelve tal cual.
+  const [token, setToken] = useState("");
   const [cargaError, setCargaError] = useState("");
   const [telefono, setTelefono] = useState("");
   const [nombre, setNombre] = useState("");
@@ -32,7 +34,7 @@ export default function AltaPromos() {
       .then(async (res) => {
         const d = await res.json().catch(() => null);
         if (!vivo) return;
-        if (res.ok && d?.texto) setTexto(d.texto as Texto);
+        if (res.ok && d?.texto && d?.token) { setTexto(d.texto as Texto); setToken(String(d.token)); }
         else setCargaError(d?.error || "La inscripción no está disponible en este momento.");
       })
       .catch(() => vivo && setCargaError("Error de conexión. Recargá la página."));
@@ -43,7 +45,7 @@ export default function AltaPromos() {
     if (!texto || enviando || !telefono.trim() || !acepto) return;
     setEnviando(true);
     setError("");
-    const datos = { telefono, nombre, localidad, acepto, texto_version: texto.version, texto_huella: texto.huella, sitio };
+    const datos = { telefono, nombre, localidad, acepto, texto_version: texto.version, texto_huella: texto.huella, token, sitio };
     const cuerpo = JSON.stringify(datos);
     if (!intento.current || intento.current.cuerpo !== cuerpo) intento.current = { clave: crypto.randomUUID(), cuerpo };
     try {
@@ -59,10 +61,16 @@ export default function AltaPromos() {
         intento.current = null;
         return;
       }
-      if (d?.codigo === "texto_desactualizado" && d?.texto) {
+      // Texto cambiado o formulario vencido: llega el texto vigente con un token nuevo y
+      // la persona tiene que volver a leerlo y marcar la casilla (autorización nueva).
+      if ((d?.codigo === "texto_desactualizado" || d?.codigo === "formulario_vencido") && d?.texto && d?.token) {
         setTexto(d.texto as Texto);
+        setToken(String(d.token));
         setAcepto(false);
-        setError("El texto cambió mientras lo leías. Leelo de nuevo y, si estás de acuerdo, volvé a marcar la casilla.");
+        intento.current = null;
+        setError(d.codigo === "texto_desactualizado"
+          ? "El texto cambió mientras lo leías. Leelo de nuevo y, si estás de acuerdo, volvé a marcar la casilla."
+          : "El formulario venció. Leé el texto de nuevo y, si estás de acuerdo, volvé a marcar la casilla.");
         return;
       }
       setError(d?.error || "No pudimos anotarte. Probá de nuevo.");

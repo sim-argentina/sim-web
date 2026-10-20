@@ -6,8 +6,7 @@ import {
   destinoWhatsapp,
   enmascararDestino,
   enmascararTelefono,
-  prefijoReporte,
-  validarCodigosArea,
+  validarIndicativos,
   validarConfigAudiencia,
   ventanaAudiencia,
   type ConfigAudiencia,
@@ -169,7 +168,7 @@ function invariantes(r: ResultadoAudiencia, filas: number) {
   assert.equal(r.telefonos.unicos, 1, "solo el legible");
 }
 
-// ── 6. Gratis: afuera por defecto, adentro si se pide ───────────────────────
+// ── 6. "Solo pagos" es una opción: activa por defecto, apagable, con su efecto ─
 {
   const filas = [
     turno({ fecha: "2026-10-10", telefono: "3515550101", total: 0, metodo_pago: "gratis" }),
@@ -180,47 +179,86 @@ function invariantes(r: ResultadoAudiencia, filas: number) {
   ];
   const r = calcularAudiencia(filas, config(14), sinConsentimiento);
   invariantes(r, filas.length);
+  assert.equal(r.config.soloPagos, true, "por defecto, solo pagos");
   assert.equal(r.filas.excluidas.no_pago, 3, "un dato contradictorio no cuenta como pago");
   assert.equal(r.filas.excluidas.cancelado, 1);
+  assert.deepEqual(r.filtros.soloPagos, { activo: true, filasExcluidas: 3, filasAfectables: 3 });
   assert.deepEqual(r.pendientesConsentimiento.map((d) => d.telefono), ["3515550104"]);
 
-  const conGratis = calcularAudiencia(filas, config(14, { incluirGratis: true }), sinConsentimiento);
+  const conGratis = calcularAudiencia(filas, config(14, { soloPagos: false }), sinConsentimiento);
   invariantes(conGratis, filas.length);
+  assert.equal(conGratis.config.soloPagos, false);
+  assert.deepEqual(conGratis.filtros.soloPagos, { activo: false, filasExcluidas: 0, filasAfectables: 3 }, "apagado no excluye, pero informa a cuántos alcanzaría");
   assert.equal(conGratis.telefonos.unicos, 4, "el cancelado sigue afuera");
 }
 
-// ── 7. Segmento por códigos de área completos: 3 vs 4 dígitos ───────────────
+// ── 7. Segmento por indicativo OFICIAL completo, nunca por prefijo ───────────
 {
-  const v = validarCodigosArea(["351", "3543", "11", "351", " 358 "]);
-  assert.deepEqual(v.codigos, ["11", "351", "3543", "358"]);
+  const v = validarIndicativos(["351", "3543", "11", "351", " 358 "]);
+  assert.deepEqual(v.indicativos, ["11", "351", "3543", "358"]);
   assert.deepEqual(v.errores, []);
-  assert.ok(v.advertencias.some((a) => a.includes("351, 358") && /4 que empiezan igual/.test(a)));
-  assert.ok(v.advertencias.some((a) => a.includes("3543") && /solo la forma/.test(a)));
-  for (const malo of ["35", "3", "999", "0351", "35x", "12345", "4123", ""]) {
-    assert.equal(validarCodigosArea([malo]).errores.length, 1, `"${malo}" se rechaza`);
+  for (const malo of ["35", "354", "3", "999", "0351", "35x", "12345", "4123", "", "2000"]) {
+    assert.equal(validarIndicativos([malo]).errores.length, 1, `"${malo}" se rechaza`);
   }
-  assert.match(validarCodigosArea(["35"]).errores[0], /no es un código de área/, "'empieza con 35' no es segmento");
+  assert.match(validarIndicativos(["354"]).errores[0], /no es un indicativo oficial/, "354 es solo un prefijo (3541, 3543…)");
+  assert.match(validarIndicativos(["35"]).errores[0], /no es un indicativo oficial/, "'empieza con 35' no es segmento");
 
+  // Números que comparten parte del prefijo: 353 (Villa María) y 3532/3537 (otras áreas);
+  // 358 (Río Cuarto) y 3582; 351 y el 3543 de Argüello.
   const filas = [
-    turno({ fecha: "2026-10-10", telefono: "3515550101" }),
-    turno({ fecha: "2026-10-10", telefono: "3543550101" }),
-    turno({ fecha: "2026-10-10", telefono: "3585550101" }),
-    turno({ fecha: "2026-10-10", telefono: "1155550101" }),
+    turno({ fecha: "2026-10-10", telefono: "3534000001" }), // 353 + abonado que no arma ningún indicativo de 4
+    turno({ fecha: "2026-10-10", telefono: "3532000001" }), // 3532
+    turno({ fecha: "2026-10-10", telefono: "3537000001" }), // 3537
+    turno({ fecha: "2026-10-10", telefono: "3581000001" }), // 358
+    turno({ fecha: "2026-10-10", telefono: "3582000001" }), // 3582
+    turno({ fecha: "2026-10-10", telefono: "3515550101" }), // 351
+    turno({ fecha: "2026-10-10", telefono: "3543550101" }), // 3543
+    turno({ fecha: "2026-10-10", telefono: "1155550101" }), // 11
   ];
-  const todos = ["3515550101", "3543550101", "3585550101", "1155550101"];
-  const solo351 = calcularAudiencia(filas, config(14, { codigosArea: ["351"] }), con(todos));
-  invariantes(solo351, filas.length);
-  assert.deepEqual(solo351.elegibles.map((d) => d.telefono), ["3515550101"]);
-  assert.equal(solo351.telefonos.excluidos.fuera_de_segmento, 3);
-  assert.deepEqual(
-    calcularAudiencia(filas, config(14, { codigosArea: ["3543", "11"] }), con(todos)).elegibles.map((d) => d.telefono),
-    ["1155550101", "3543550101"],
-  );
-  assert.equal(calcularAudiencia(filas, config(14, { codigosArea: [] }), con(todos)).telefonos.elegibles, 4, "lista vacía = sin filtro");
-  assert.throws(() => calcularAudiencia(filas, config(14, { codigosArea: ["35"] }), con(todos)), /Configuración de audiencia inválida/);
+  const todos = filas.map((f) => f.telefono as string);
+  const segmento = (indicativos: string[]) =>
+    calcularAudiencia(filas, config(14, { indicativos }), con(todos)).elegibles.map((d) => d.telefono).sort();
+  assert.deepEqual(segmento(["353"]), ["3534000001"], "353 no se lleva 3532 ni 3537");
+  assert.deepEqual(segmento(["3532"]), ["3532000001"]);
+  assert.deepEqual(segmento(["358"]), ["3581000001"], "358 no se lleva 3582");
+  assert.deepEqual(segmento(["351", "11"]), ["1155550101", "3515550101"], "351 no se lleva 3543");
+  assert.deepEqual(segmento(["3543"]), ["3543550101"]);
+
+  const r = calcularAudiencia(filas, config(14, { indicativos: ["353"] }), con(todos));
+  invariantes(r, filas.length);
+  assert.equal(r.telefonos.excluidos.fuera_de_segmento, 7);
+  assert.deepEqual(r.filtros.segmento, { activo: true, indicativos: ["353"], telefonosFuera: 7, telefonosIndeterminados: 0 });
+  const porTelefono = new Map([...r.elegibles, ...r.excluidos.map((x) => x.destinatario)].map((d) => [d.telefono, [d.indicativo, d.areaNumeracion]]));
+  assert.deepEqual(porTelefono.get("3532000001")?.[0], "3532");
+  assert.deepEqual(porTelefono.get("3534000001"), ["353", "VILLA MARIA"]);
+  assert.equal(calcularAudiencia(filas, config(14, { indicativos: [] }), con(todos)).telefonos.elegibles, filas.length, "lista vacía = sin segmento");
+  assert.throws(() => calcularAudiencia(filas, config(14, { indicativos: ["35"] }), con(todos)), /Configuración de audiencia inválida/);
 }
 
-// ── 8. Bajas, exclusiones externas y quien ya volvió ────────────────────────
+// ── 7b. Indicativo que no se puede determinar: afuera del segmento, sin área ─
+{
+  const filas = [
+    turno({ fecha: "2026-10-10", telefono: "0294 15-5123456" }), // escrito como 294; el canónico 2945123456 es de 2945
+    turno({ fecha: "2026-10-10", telefono: "02945 15-123457" }), // escrito como 2945: coincide
+    turno({ fecha: "2026-10-10", telefono: "2000000001" }), // ningún indicativo oficial
+  ];
+  const todos = ["2945123456", "2945123457", "2000000001"];
+  const r = calcularAudiencia(filas, config(14, { indicativos: ["294", "2945"] }), con(todos));
+  invariantes(r, filas.length);
+  assert.deepEqual(r.elegibles.map((d) => [d.telefono, d.indicativo, d.areaNumeracion]), [["2945123457", "2945", "ESQUEL"]]);
+  assert.equal(r.telefonos.excluidos.indicativo_indeterminado, 2);
+  for (const x of r.excluidos) {
+    assert.equal(x.destinatario.indicativo, null, "sin indicativo determinado no hay indicativo");
+    assert.equal(x.destinatario.areaNumeracion, null, "ni área");
+  }
+  assert.ok(r.advertencias.some((a) => /2 teléfono\(s\) sin indicativo determinable/.test(a)));
+  // Sin segmento, esos números participan igual: el indicativo solo filtra si se pide.
+  const sinSegmento = calcularAudiencia(filas, config(14), con(todos));
+  assert.equal(sinSegmento.telefonos.elegibles, 3);
+  assert.equal(sinSegmento.telefonos.sinIndicativo, 2);
+}
+
+// ── 8. Bajas, exclusiones externas y quien ya volvió (opcional) ─────────────
 {
   const filas = [
     turno({ fecha: "2026-10-10", telefono: "3515550101" }),
@@ -236,15 +274,19 @@ function invariantes(r: ResultadoAudiencia, filas: number) {
   });
   const r = calcularAudiencia(filas, config(14), ctx);
   invariantes(r, filas.length);
+  assert.equal(r.config.excluirRetornados, false, "por defecto, haber vuelto no excluye");
   assert.equal(r.telefonos.excluidos.con_baja, 1, "la baja gana aunque haya consentimiento");
   assert.equal(r.telefonos.excluidos.titular_mensualidad, 1);
-  assert.deepEqual(r.elegibles.map((d) => [d.telefono, d.diasConVisita]), [["3515550103", 2], ["3515550104", 2]]);
+  assert.deepEqual(r.elegibles.map((d) => [d.telefono, d.diasConVisita]), [["3515550103", 2], ["3515550104", 2]], "los que volvieron participan");
+  assert.deepEqual(r.filtros.excluirRetornados, { activo: false, telefonosExcluidos: 0, telefonosAfectables: 2 });
+  assert.deepEqual(r.filtros.bajas, { telefonosExcluidos: 1 });
   assert.ok(r.advertencias.some((a) => /1 baja\(s\)/.test(a)), "una baja ilegible se avisa, no se ignora en silencio");
 
   const sinRetornados = calcularAudiencia(filas, config(14, { excluirRetornados: true }), ctx);
   invariantes(sinRetornados, filas.length);
   assert.equal(sinRetornados.telefonos.excluidos.ya_volvio, 2);
   assert.equal(sinRetornados.telefonos.elegibles, 0);
+  assert.deepEqual(sinRetornados.filtros.excluirRetornados, { activo: true, telefonosExcluidos: 2, telefonosAfectables: 2 });
 }
 
 // ── 9. El orden de las filas no cambia el resultado ─────────────────────────
@@ -270,6 +312,7 @@ function invariantes(r: ResultadoAudiencia, filas: number) {
   invariantes(r, filas.length);
   assert.equal(r.desde, "2026-09-28");
   assert.equal(r.filas.enVentana, 1);
+  assert.deepEqual(r.filtros.ventana, { desde: "2026-09-28", hasta: "2026-10-18", filasEnVentana: 1, filasFuera: 1 });
   assert.deepEqual(validarConfigAudiencia({ ventanaDias: 30 as VentanaAudiencia }), ["La ventana tiene que ser de 14 o 21 días."]);
   assert.throws(() => calcularAudiencia(filas, { ventanaDias: 7 as VentanaAudiencia }, sinConsentimiento), /14 o 21/);
 }
@@ -282,8 +325,6 @@ function invariantes(r: ResultadoAudiencia, filas: number) {
   assert.equal(enmascararDestino("x"), "+54 9 ***");
   assert.equal(destinoWhatsapp("1155550101"), "5491155550101");
   assert.throws(() => destinoWhatsapp("05491155550101"), /no canónico/);
-  assert.equal(prefijoReporte("1155550101"), "11");
-  assert.equal(prefijoReporte("3543550101"), "354");
   const visibles = enmascararTelefono("3515550101").replace(/\D/g, "");
   assert.ok(visibles.length <= 5);
 }

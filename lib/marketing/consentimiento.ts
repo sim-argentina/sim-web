@@ -22,11 +22,13 @@ import { enmascararTelefono } from "@/lib/marketing/audiencia";
 export const RUTA_ALTA = "/promos";
 export const RUTA_BAJA = "/promos/baja";
 
-export const FUENTES = ["formulario_web", "admin_evidencia", "admin_pedido"] as const;
+export const FUENTES = ["formulario_web", "checkout_reserva", "checkout_gift_card", "admin_evidencia", "admin_pedido"] as const;
 export type Fuente = (typeof FUENTES)[number];
 
 export const ETIQUETA_FUENTE: Record<Fuente, string> = {
   formulario_web: "Formulario web",
+  checkout_reserva: "Casilla en Reservas",
+  checkout_gift_card: "Casilla en Gift Cards",
   admin_evidencia: "Panel, con evidencia",
   admin_pedido: "Panel, a pedido",
 };
@@ -81,6 +83,7 @@ const MENSAJES: Record<string, { status: number; error: string }> = {
   solo_admin: { status: 403, error: "Solo un administrador puede hacer esto." },
   texto_inexistente: { status: 404, error: "Ese texto no existe." },
   texto_desactualizado: { status: 409, error: "El texto de la aceptación cambió. Leelo de nuevo antes de confirmar." },
+  formulario_vencido: { status: 409, error: "El formulario venció. Leé el texto de nuevo y, si estás de acuerdo, volvé a confirmar." },
   baja_vigente: {
     status: 409,
     error: "Este número pidió la baja. Solo la persona puede volver a anotarse, desde el formulario.",
@@ -172,12 +175,17 @@ export type DatosRpc = {
   localidad?: string | null;
   evidencia?: Record<string, string>;
   ocurrido_en?: string;
+  /** Solo altas públicas: momento firmado en que se mostró el texto (lo pone la ruta). */
+  solicitado_en?: string;
 };
 
-export type Pedido = { clave: string; datos: DatosRpc; bot: boolean };
+/** `token`: el del formulario, sin verificar todavía (lo verifica la ruta). */
+export type Pedido = { clave: string; datos: DatosRpc; bot: boolean; token?: string };
+
+const TOKEN_RE = /^[0-9a-z]{1,12}\.[A-Za-z0-9_-]{32}$/;
 
 // ── Formularios públicos ──────────────────────────────────────────────────
-const CLAVES_ALTA_PUBLICA = ["idempotency_key", "telefono", "nombre", "localidad", "acepto", "texto_version", "texto_huella", "sitio"] as const;
+const CLAVES_ALTA_PUBLICA = ["idempotency_key", "telefono", "nombre", "localidad", "acepto", "texto_version", "texto_huella", "token", "sitio"] as const;
 const CLAVES_BAJA_PUBLICA = ["idempotency_key", "telefono", "sitio"] as const;
 
 function esBot(body: Record<string, unknown>): boolean {
@@ -199,9 +207,11 @@ export function validarAltaPublica(body: unknown): Resultado<Pedido> {
   if (body.acepto !== true) return falla("falta_aceptacion");
   if (typeof body.texto_version !== "string" || !VERSION_RE.test(body.texto_version)) return falla("campo_invalido", "texto_version");
   if (typeof body.texto_huella !== "string" || !HUELLA_RE.test(body.texto_huella)) return falla("campo_invalido", "texto_huella");
+  if (typeof body.token !== "string" || !TOKEN_RE.test(body.token)) return falla("formulario_vencido");
   return ok({
     clave: k.valor,
     bot: esBot(body),
+    token: body.token,
     datos: {
       tipo: "alta",
       fuente: "formulario_web",
@@ -224,6 +234,31 @@ export function validarBajaPublica(body: unknown): Resultado<Pedido> {
   if (!tel.ok) return tel;
   return ok({ clave: k.valor, bot: esBot(body), datos: { tipo: "baja", fuente: "formulario_web", telefono: tel.valor } });
 }
+
+// ── Casilla voluntaria del checkout (Reservas y Gift Cards) ───────────────
+/**
+ * Lo que el checkout manda en `promos`. Cuenta SOLO si la persona marcó la
+ * casilla (acepto === true, el booleano): ausente, false o cualquier otra cosa =
+ * no se pidió, y no se registra nada. Pedida pero incompleta = no válida (la
+ * compra sigue igual; la suscripción no se registra).
+ */
+export type PromosCheckout =
+  | { solicitada: false }
+  | { solicitada: true; valida: false }
+  | { solicitada: true; valida: true; texto_version: string; texto_huella: string; token: string };
+
+export function leerPromosCheckout(body: unknown): PromosCheckout {
+  const p = esObjeto(body) ? body.promos : undefined;
+  if (!esObjeto(p) || p.acepto !== true) return { solicitada: false };
+  const { texto_version: v, texto_huella: h, token: t } = p;
+  if (typeof v !== "string" || !VERSION_RE.test(v) || typeof h !== "string" || !HUELLA_RE.test(h) || typeof t !== "string" || !TOKEN_RE.test(t)) {
+    return { solicitada: true, valida: false };
+  }
+  return { solicitada: true, valida: true, texto_version: v, texto_huella: h, token: t };
+}
+
+/** Qué pasó con la suscripción pedida en el checkout. Solo "registrada" permite decir "te anotamos". */
+export type EstadoPromosCheckout = "no_solicitada" | "registrada" | "no_registrada";
 
 // ── Fecha de origen de una carga del panel ────────────────────────────────
 /**

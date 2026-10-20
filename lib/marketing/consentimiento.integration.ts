@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { MENSAJE_ALTA_OK, MENSAJE_BAJA_OK } from "@/lib/marketing/consentimiento";
+import { emitirTokenFormulario } from "@/lib/marketing/tokenFormulario";
 
 // Marketing · consentimiento y bajas — las RUTAS reales de Next contra el stack
 // LOCAL (db/marketing-consentimiento.sql aplicado). Cubre: las dos llaves (entorno
@@ -98,17 +99,21 @@ async function main() {
        (${lit(V1)}, 'Prueba A', 'Acepto recibir promociones de prueba de SIM Argentina por WhatsApp (corrida ${RUN}, versión A).', ''),
        (${lit(V2)}, 'Prueba B', 'Acepto recibir promociones de prueba de SIM Argentina por WhatsApp (corrida ${RUN}, versión B).', '')`);
 
-  // ── 1. Llave de entorno apagada: lo público no existe; el panel sí ────────
+  // ── 1. Captación apagada: texto y alta no existen; la BAJA y el panel sí ──
   flag(false);
   assert.equal((await http(TEXTO.GET, "GET", "/api/promos/texto")).status, 404);
   assert.equal((await http(ALTA.POST, "POST", "/api/promos/alta", { body: {} })).status, 404);
-  assert.equal((await http(BAJA.POST, "POST", "/api/promos/baja", { body: {} })).status, 404);
+  {
+    const r = await http(BAJA.POST, "POST", "/api/promos/baja", { body: { idempotency_key: randomUUID(), telefono: tel(0) } });
+    assert.equal(r.status, 200, "la baja NO depende de la llave de captación");
+    assert.equal(estado(tel(0)), "baja|-");
+  }
   {
     const r = await http(PANEL.GET, "GET", "/api/admin/marketing/consentimientos", { token: staff });
     assert.equal(r.status, 200);
     assert.deepEqual(r.json.modulo, { instalado: true, formulario_publico: false, texto_vigente: null });
   }
-  console.log("OK — 1: con la llave apagada, /api/promos/* da 404 y el panel funciona.");
+  console.log("OK — 1: con la captación apagada, texto y alta dan 404; la baja y el panel funcionan.");
 
   // ── 2. Llave prendida sin texto vigente: altas cerradas, bajas abiertas ───
   flag(true);
@@ -147,15 +152,22 @@ async function main() {
   const t1 = await http(TEXTO.GET, "GET", "/api/promos/texto");
   assert.equal(t1.status, 200);
   const texto1 = t1.json.texto as { version: string; huella: string; titulo: string; texto: string };
+  const token1 = String(t1.json.token);
+  assert.deepEqual(Object.keys(t1.json).sort(), ["texto", "token"]);
+  assert.match(token1, /^[0-9a-z]+\.[A-Za-z0-9_-]{32}$/, "con el token firmado de cuándo se mostró");
+  {
+    const conConsulta = await http(TEXTO.GET, "GET", `/api/promos/texto?telefono=${tel(2)}`);
+    assert.deepEqual(Object.keys(conConsulta.json).sort(), ["texto", "token"], "no acepta consultas por teléfono");
+  }
   assert.deepEqual(Object.keys(texto1).sort(), ["huella", "texto", "titulo", "version"]);
   assert.equal(texto1.version, V1);
   assert.match(texto1.huella, /^[0-9a-f]{64}$/);
-  console.log("OK — 4: el texto vigente sale con versión y huella, sin estado ni fechas.");
+  console.log("OK — 4: el texto vigente sale con versión, huella y token; no consulta contactos.");
 
   // ── 5. Alta pública: genérica, idempotente, con evidencia y sin IP ────────
   const A = tel(2);
   {
-    const cuerpo = { idempotency_key: randomUUID(), telefono: `+54 9 ${A.slice(0, 3)} ${A.slice(3, 6)}-${A.slice(6)}`, nombre: "  Prueba   Integración ", localidad: "Córdoba", acepto: true, texto_version: texto1.version, texto_huella: texto1.huella };
+    const cuerpo = { idempotency_key: randomUUID(), telefono: `+54 9 ${A.slice(0, 3)} ${A.slice(3, 6)}-${A.slice(6)}`, nombre: "  Prueba   Integración ", localidad: "Córdoba", acepto: true, texto_version: texto1.version, texto_huella: texto1.huella, token: token1 };
     assert.equal((await http(ALTA.POST, "POST", "/api/promos/alta", { body: { ...cuerpo, acepto: false } })).json.codigo, "falta_aceptacion");
     assert.equal((await http(ALTA.POST, "POST", "/api/promos/alta", { body: { ...cuerpo, telefono: "12345" } })).json.codigo, "telefono_invalido");
     assert.equal((await http(ALTA.POST, "POST", "/api/promos/alta", { body: { ...cuerpo, fuente: "admin_evidencia" } })).json.codigo, "campo_desconocido");
@@ -190,7 +202,7 @@ async function main() {
   {
     const B = tel(4);
     const r = await http(ALTA.POST, "POST", "/api/promos/alta", {
-      body: { idempotency_key: randomUUID(), telefono: B, acepto: true, texto_version: texto1.version, texto_huella: texto1.huella, sitio: "https://spam.example" },
+      body: { idempotency_key: randomUUID(), telefono: B, acepto: true, texto_version: texto1.version, texto_huella: texto1.huella, token: token1, sitio: "https://spam.example" },
     });
     assert.equal(r.status, 201);
     assert.deepEqual(r.json, { ok: true, mensaje: MENSAJE_ALTA_OK });
@@ -204,7 +216,7 @@ async function main() {
     assert.equal((p.json.resultado as { retirado: string }).retirado, V1);
     const C = tel(5);
     const r = await http(ALTA.POST, "POST", "/api/promos/alta", {
-      body: { idempotency_key: randomUUID(), telefono: C, acepto: true, texto_version: texto1.version, texto_huella: texto1.huella },
+      body: { idempotency_key: randomUUID(), telefono: C, acepto: true, texto_version: texto1.version, texto_huella: texto1.huella, token: token1 },
     });
     assert.equal(r.status, 409);
     assert.equal(r.json.codigo, "texto_desactualizado");
@@ -225,14 +237,76 @@ async function main() {
     assert.equal(estado(D), "baja|-", "lista de supresión");
     assert.equal((await http(BAJA.POST, "POST", "/api/promos/baja", { body: { idempotency_key: randomUUID(), telefono: D, nombre: "x" } })).status, 400);
     // El propio titular puede volver a anotarse.
-    const t2 = (await http(TEXTO.GET, "GET", "/api/promos/texto")).json.texto as { version: string; huella: string };
+    const g2 = (await http(TEXTO.GET, "GET", "/api/promos/texto")).json;
+    const t2 = g2.texto as { version: string; huella: string };
     const r3 = await http(ALTA.POST, "POST", "/api/promos/alta", {
-      body: { idempotency_key: randomUUID(), telefono: A, acepto: true, texto_version: t2.version, texto_huella: t2.huella },
+      body: { idempotency_key: randomUUID(), telefono: A, acepto: true, texto_version: t2.version, texto_huella: t2.huella, token: String(g2.token) },
     });
     assert.equal(r3.status, 201);
     assert.equal(estado(A), "alta|formulario_web");
   }
   console.log("OK — 8: la baja no revela nada, sirve como supresión y el titular puede volver.");
+
+  // ── 8b. Un alta vieja, reenviada o fuera de orden no reactiva una baja ────
+  {
+    const P = tel(11);
+    const g = (await http(TEXTO.GET, "GET", "/api/promos/texto")).json;
+    const tx = g.texto as { version: string; huella: string };
+    const cuerpo = (token: string, clave = randomUUID()) => ({ idempotency_key: clave, telefono: P, acepto: true, texto_version: tx.version, texto_huella: tx.huella, token });
+    const original = cuerpo(String(g.token));
+    assert.equal((await http(ALTA.POST, "POST", "/api/promos/alta", { body: original })).status, 201);
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal((await http(BAJA.POST, "POST", "/api/promos/baja", { body: { idempotency_key: randomUUID(), telefono: P } })).status, 200);
+    assert.equal(estado(P), "baja|-");
+    const antes = eventos(P);
+    // (a) el mismo pedido, reenviado: devuelve el original y no reactiva.
+    const reenvio = await http(ALTA.POST, "POST", "/api/promos/alta", { body: original });
+    assert.equal(reenvio.status, 200);
+    assert.deepEqual(reenvio.json, { ok: true, mensaje: MENSAJE_ALTA_OK });
+    // (b) el mismo formulario (texto mostrado ANTES de la baja) con otra clave: 409 y texto nuevo.
+    const viejo = await http(ALTA.POST, "POST", "/api/promos/alta", { body: cuerpo(String(g.token)) });
+    assert.equal(viejo.status, 409);
+    assert.equal(viejo.json.codigo, "formulario_vencido");
+    assert.ok(viejo.json.token && viejo.json.token !== g.token, "con un token nuevo para volver a confirmar");
+    // (c) un token vencido (más de 2 h) tampoco.
+    const vencido = emitirTokenFormulario(tx.version, new Date(Date.now() - 3 * 3_600_000))!;
+    const r3 = await http(ALTA.POST, "POST", "/api/promos/alta", { body: cuerpo(vencido) });
+    assert.equal(r3.json.codigo, "formulario_vencido");
+    assert.equal(eventos(P), antes, "nada de eso se registró");
+    assert.equal(estado(P), "baja|-", "sigue en baja");
+    // (d) autorización nueva: se vuelve a mostrar el texto y se confirma.
+    const nuevo = (await http(TEXTO.GET, "GET", "/api/promos/texto")).json;
+    assert.equal((await http(ALTA.POST, "POST", "/api/promos/alta", { body: cuerpo(String(nuevo.token)) })).status, 201);
+    assert.equal(estado(P), "alta|formulario_web");
+  }
+  console.log("OK — 8b: un alta reenviada, vieja o vencida no reactiva una baja; volver exige confirmar de nuevo.");
+
+  // ── 8c. Lo público no permite consultar contactos ni su estado ────────────
+  {
+    for (const ruta of [ALTA, BAJA] as Record<string, unknown>[]) {
+      assert.equal(typeof ruta.GET, "undefined", "ni alta ni baja tienen GET");
+    }
+    // Un número con baja ANTES de mostrar el texto, para compararlo con los demás.
+    assert.equal((await http(BAJA.POST, "POST", "/api/promos/baja", { body: { idempotency_key: randomUUID(), telefono: tel(14) } })).status, 200);
+    await new Promise((r) => setTimeout(r, 5));
+    const g = (await http(TEXTO.GET, "GET", "/api/promos/texto")).json;
+    const tx = g.texto as { version: string; huella: string };
+    const alta = (t: string) => http(ALTA.POST, "POST", "/api/promos/alta", {
+      body: { idempotency_key: randomUUID(), telefono: t, acepto: true, texto_version: tx.version, texto_huella: tx.huella, token: String(g.token) },
+    });
+    // Un número anotado (8b), uno nunca visto y uno con una baja vieja: misma respuesta.
+    const yaAnotado = await alta(tel(11));
+    const nuevo = await alta(tel(12));
+    const conBajaVieja = await alta(tel(14));
+    assert.equal(yaAnotado.status, 201);
+    assert.equal(yaAnotado.crudo, nuevo.crudo);
+    assert.equal(nuevo.crudo, conBajaVieja.crudo);
+    for (const r of [yaAnotado, nuevo, conBajaVieja]) {
+      for (const t of usados) assert.ok(!r.crudo.includes(t), "la respuesta no trae teléfonos");
+      assert.ok(!/estado|alta_|baja_/.test(r.crudo), "ni estados");
+    }
+  }
+  console.log("OK — 8c: las respuestas públicas son idénticas para cualquier número y no traen estados.");
 
   // ── 9. Panel: sesión, rol, origen, consulta y cargas ──────────────────────
   {
@@ -282,12 +356,20 @@ async function main() {
     assert.equal((await http(TEXTOS.POST, "POST", "/api/admin/marketing/textos", { token: admin, body: { accion: "retirar", version: V2 } })).status, 200);
     assert.equal((await http(TEXTO.GET, "GET", "/api/promos/texto")).status, 503);
     const G = tel(9);
-    const r = await http(ALTA.POST, "POST", "/api/promos/alta", { body: { idempotency_key: randomUUID(), telefono: G, acepto: true, texto_version: V2, texto_huella: "b".repeat(64) } });
+    const r = await http(ALTA.POST, "POST", "/api/promos/alta", {
+      body: { idempotency_key: randomUUID(), telefono: G, acepto: true, texto_version: V2, texto_huella: "b".repeat(64), token: emitirTokenFormulario(V2, new Date()) },
+    });
     assert.equal(r.status, 503);
     assert.equal((await http(BAJA.POST, "POST", "/api/promos/baja", { body: { idempotency_key: randomUUID(), telefono: G } })).status, 200);
     assert.equal(estado(G), "baja|-");
+    // Con el texto retirado Y la captación apagada, la baja sigue.
+    flag(false);
+    const H2 = tel(13);
+    assert.equal((await http(BAJA.POST, "POST", "/api/promos/baja", { body: { idempotency_key: randomUUID(), telefono: H2 } })).status, 200);
+    assert.equal(estado(H2), "baja|-");
+    flag(true);
   }
-  console.log("OK — 10: retirar el texto es la pausa inmediata de las altas.");
+  console.log("OK — 10: retirar el texto es la pausa inmediata de las altas; las bajas siguen, también con la captación apagada.");
 
   // ── 11. Límite por IP en las altas ────────────────────────────────────────
   {

@@ -30,10 +30,13 @@ export function reservaPostpayHabilitada(): boolean {
   return flagHabilitada(process.env.EXPERIMENTAL_RESERVA_POSTPAY);
 }
 
-// Marketing · formularios públicos de promociones (/promos y /promos/baja) y sus
-// APIs (/api/promos/*). Apagada, todo eso responde 404. Es la llave de ENTORNO;
-// la de la BASE es el texto vigente (sin texto publicado no hay altas). El panel
-// (/admin/marketing) funciona con la llave apagada, para preparar el texto.
+// Marketing · CAPTACIÓN de promociones: el formulario /promos, /api/promos/texto,
+// /api/promos/alta y la casilla voluntaria del checkout de Reservas y Gift Cards.
+// Apagada, el formulario responde 404 y la casilla no aparece. Es la llave de
+// ENTORNO; la de la BASE es el texto vigente (sin texto publicado no hay altas).
+// NO apaga las bajas: /promos/baja y /api/promos/baja siguen siempre que el
+// registro esté instalado. El panel (/admin/marketing) funciona con la llave
+// apagada, para preparar el texto.
 export function marketingConsentimientoHabilitado(): boolean {
   return flagHabilitada(process.env.MARKETING_CONSENTIMIENTO_ENABLED);
 }

@@ -23,14 +23,21 @@
 --     con public.mensualidad_normalizar_telefono (lo que no normaliza se rechaza).
 --   · Un alta pública exige la versión VIGENTE y la huella (sha256) del texto tal
 --     como se mostró; si cambió en el medio, 'texto_desactualizado'.
---   · Una baja se acepta siempre, aunque no haya alta: es lista de supresión.
+--   · Una baja se acepta siempre, aunque no haya alta ni texto vigente: es lista
+--     de supresión.
 --   · Estado = el evento más reciente por fecha de origen (ocurrido_en); en un
 --     empate gana la baja. Después de una baja, solo un alta del PROPIO titular
---     (formulario web) la revierte: una carga administrativa no.
---   · Fuentes de esta versión: formulario_web (alta y baja, actor público),
---     admin_evidencia (alta con evidencia escrita, solo admin) y admin_pedido
---     (baja pedida por otro canal, staff o admin). Cargar una baja en nombre de
---     alguien es seguro; cargar un alta exige evidencia y rol admin.
+--     (formulario web o casilla del checkout) la revierte: una carga
+--     administrativa no.
+--   · Alta pública = una autorización explícita NUEVA: lleva solicitado_en, el
+--     momento (firmado por el servidor) en que se le mostró el texto, y esa es su
+--     fecha de origen. Si hubo una baja desde ese momento, se rechaza
+--     ('formulario_vencido'): un formulario viejo, reenviado o que llega fuera de
+--     orden no reactiva una baja; hay que volver a leer el texto y confirmar.
+--   · Fuentes: formulario_web (alta y baja, público), checkout_reserva y
+--     checkout_gift_card (alta desde la casilla voluntaria de esas compras,
+--     público), admin_evidencia (alta con evidencia escrita, solo admin) y
+--     admin_pedido (baja pedida por otro canal, staff o admin).
 --   · Idempotente por clave: el mismo pedido devuelve el evento original; la
 --     misma clave con otro contenido, conflicto.
 --
@@ -145,15 +152,20 @@ create table if not exists public.mkt_consentimiento_eventos (
   evidencia        jsonb not null default '{}'::jsonb,
   ocurrido_en      timestamptz not null,
   registrado_en    timestamptz not null default now(),
+  solicitado_en    timestamptz,
   constraint mkt_eventos_clave_unica unique (idempotency_key),
   constraint mkt_eventos_telefono_canonico check (telefono ~ '^(11[0-9]{8}|[23][0-9]{9})$'),
   constraint mkt_eventos_tipo check (tipo in ('alta', 'baja')),
-  constraint mkt_eventos_fuente check (fuente in ('formulario_web', 'admin_evidencia', 'admin_pedido')),
+  constraint mkt_eventos_fuente check (fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card', 'admin_evidencia', 'admin_pedido')),
   constraint mkt_eventos_actor check (actor_rol in ('publico', 'staff', 'admin')),
   constraint mkt_eventos_combinacion check (
        (fuente = 'formulario_web' and actor_rol = 'publico')
+    or (fuente in ('checkout_reserva', 'checkout_gift_card') and tipo = 'alta' and actor_rol = 'publico')
     or (fuente = 'admin_evidencia' and tipo = 'alta' and actor_rol = 'admin')
     or (fuente = 'admin_pedido' and tipo = 'baja' and actor_rol in ('staff', 'admin'))),
+  constraint mkt_eventos_solicitud check (
+    ((actor_rol = 'publico' and tipo = 'alta') = (solicitado_en is not null))
+    and (solicitado_en is null or ocurrido_en = solicitado_en)),
   constraint mkt_eventos_texto check (
     (tipo = 'alta') = (texto_version is not null) and (texto_version is null) = (texto_huella is null)),
   constraint mkt_eventos_datos_solo_alta check (tipo = 'alta' or (nombre is null and localidad is null)),
@@ -162,6 +174,23 @@ create table if not exists public.mkt_consentimiento_eventos (
   constraint mkt_eventos_evidencia_objeto check (jsonb_typeof(evidencia) = 'object'),
   constraint mkt_eventos_ocurrido check (ocurrido_en <= registrado_en + interval '2 minutes')
 );
+
+-- Para una base que ya tenía la versión anterior de esta tabla (stack local): las
+-- mismas reglas de arriba, re-declaradas por nombre. En una base nueva no cambian nada.
+alter table public.mkt_consentimiento_eventos add column if not exists solicitado_en timestamptz;
+alter table public.mkt_consentimiento_eventos drop constraint if exists mkt_eventos_fuente;
+alter table public.mkt_consentimiento_eventos add constraint mkt_eventos_fuente
+  check (fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card', 'admin_evidencia', 'admin_pedido'));
+alter table public.mkt_consentimiento_eventos drop constraint if exists mkt_eventos_combinacion;
+alter table public.mkt_consentimiento_eventos add constraint mkt_eventos_combinacion check (
+       (fuente = 'formulario_web' and actor_rol = 'publico')
+    or (fuente in ('checkout_reserva', 'checkout_gift_card') and tipo = 'alta' and actor_rol = 'publico')
+    or (fuente = 'admin_evidencia' and tipo = 'alta' and actor_rol = 'admin')
+    or (fuente = 'admin_pedido' and tipo = 'baja' and actor_rol in ('staff', 'admin')));
+alter table public.mkt_consentimiento_eventos drop constraint if exists mkt_eventos_solicitud;
+alter table public.mkt_consentimiento_eventos add constraint mkt_eventos_solicitud check (
+    ((actor_rol = 'publico' and tipo = 'alta') = (solicitado_en is not null))
+    and (solicitado_en is null or ocurrido_en = solicitado_en));
 
 create index if not exists mkt_eventos_telefono_idx
   on public.mkt_consentimiento_eventos (telefono, ocurrido_en desc, registrado_en desc);
@@ -193,7 +222,9 @@ create trigger mkt_eventos_sin_truncate
 
 -- ── 3. Estado vigente por teléfono ──────────────────────────────────────────
 -- 'alta' si hay un alta posterior a la última baja (y, si hubo baja, esa alta
--- es del propio titular por el formulario web); si no, 'baja'. Empate → baja.
+-- es del propio titular: formulario web o casilla del checkout); si no, 'baja'.
+-- Empate → baja. Un alta pública tiene como fecha el momento en que se mostró el
+-- texto, así que una baja hecha mientras el formulario estaba abierto gana.
 create or replace view public.mkt_consentimiento_estado
 with (security_invoker = true) as
 with b as (
@@ -209,7 +240,8 @@ a as (
     from public.mkt_consentimiento_eventos e
     left join b on b.telefono = e.telefono
    where e.tipo = 'alta'
-     and (b.baja_en is null or (e.ocurrido_en > b.baja_en and e.fuente = 'formulario_web'))
+     and (b.baja_en is null
+          or (e.ocurrido_en > b.baja_en and e.fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card')))
    order by e.telefono, e.ocurrido_en desc, e.registrado_en desc, e.id desc
 ),
 t as (
@@ -229,7 +261,9 @@ select t.telefono,
 
 -- ── 4. Registrar un alta o una baja ─────────────────────────────────────────
 -- p_datos: tipo, fuente, telefono y, según el caso, texto_version, texto_huella,
--- nombre, localidad, evidencia (objeto) y ocurrido_en (solo cargas del panel).
+-- nombre, localidad, evidencia (objeto), ocurrido_en (solo cargas del panel) y
+-- solicitado_en (solo altas públicas: lo pone la ruta desde el token firmado del
+-- formulario, nunca el navegador).
 -- p_rol: 'publico' (rutas públicas) o el rol de la sesión firmada del panel.
 -- La huella de idempotencia sale de los datos NORMALIZADOS (sin la hora del
 -- servidor ni la huella de IP, que es evidencia y no contenido: un reintento
@@ -266,6 +300,9 @@ declare
   v_texto    public.mkt_textos_consentimiento;
   v_estado   text;
   v_repetida boolean := false;
+  v_publica  boolean;
+  v_sol      timestamptz;
+  v_sol_in   text;
 begin
   if v_rol not in ('publico', 'staff', 'admin') then
     raise exception 'actor_invalido' using errcode = '42501';
@@ -277,7 +314,7 @@ begin
     raise exception 'datos_invalidos' using errcode = '22023';
   end if;
   for v_k in select jsonb_object_keys(p_datos) loop
-    if v_k not in ('tipo', 'fuente', 'telefono', 'texto_version', 'texto_huella', 'nombre', 'localidad', 'evidencia', 'ocurrido_en') then
+    if v_k not in ('tipo', 'fuente', 'telefono', 'texto_version', 'texto_huella', 'nombre', 'localidad', 'evidencia', 'ocurrido_en', 'solicitado_en') then
       raise exception 'campo_desconocido:%', v_k using errcode = '22023';
     end if;
   end loop;
@@ -287,14 +324,16 @@ begin
   if v_tipo is null or v_tipo not in ('alta', 'baja') then
     raise exception 'campo_invalido:tipo' using errcode = '22023';
   end if;
-  if v_fuente is null or v_fuente not in ('formulario_web', 'admin_evidencia', 'admin_pedido') then
+  if v_fuente is null or v_fuente not in ('formulario_web', 'checkout_reserva', 'checkout_gift_card', 'admin_evidencia', 'admin_pedido') then
     raise exception 'campo_invalido:fuente' using errcode = '22023';
   end if;
   if not ((v_rol = 'publico' and v_fuente = 'formulario_web')
+       or (v_rol = 'publico' and v_fuente in ('checkout_reserva', 'checkout_gift_card') and v_tipo = 'alta')
        or (v_rol = 'admin' and v_fuente = 'admin_evidencia' and v_tipo = 'alta')
        or (v_rol in ('staff', 'admin') and v_fuente = 'admin_pedido' and v_tipo = 'baja')) then
     raise exception 'fuente_no_permitida' using errcode = '42501';
   end if;
+  v_publica := v_rol = 'publico' and v_tipo = 'alta';
 
   if jsonb_typeof(p_datos -> 'telefono') is distinct from 'string' then
     raise exception 'telefono_invalido' using errcode = '22023';
@@ -332,7 +371,7 @@ begin
       raise exception 'campo_invalido:texto_huella' using errcode = '22023';
     end if;
     v_htexto := nullif(p_datos ->> 'texto_huella', '');
-    if v_fuente = 'formulario_web' and v_htexto is null then
+    if v_publica and v_htexto is null then
       raise exception 'campo_invalido:texto_huella' using errcode = '22023';
     end if;
   end if;
@@ -343,6 +382,8 @@ begin
   end if;
   for v_k in select jsonb_object_keys(v_ev_in) loop
     if not ((v_fuente = 'formulario_web' and v_k in ('pagina', 'ip_hash'))
+         or (v_fuente = 'checkout_reserva' and v_k in ('pagina', 'ip_hash', 'reserva_id'))
+         or (v_fuente = 'checkout_gift_card' and v_k in ('pagina', 'ip_hash', 'grupo_compra_id'))
          or (v_fuente = 'admin_evidencia' and v_k in ('tipo', 'referencia', 'nota'))
          or (v_fuente = 'admin_pedido' and v_k in ('canal', 'nota'))) then
       raise exception 'campo_desconocido:evidencia.%', v_k using errcode = '22023';
@@ -354,12 +395,19 @@ begin
       v_ev := v_ev || jsonb_build_object(v_k, btrim(v_ev_in ->> v_k));
     end if;
   end loop;
-  if v_fuente = 'formulario_web' then
+  if v_fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card') then
     if v_ev ? 'pagina' and (v_ev ->> 'pagina') !~ '^/[a-z0-9/_-]{0,59}$' then
       raise exception 'campo_invalido:evidencia.pagina' using errcode = '22023';
     end if;
     if v_ev ? 'ip_hash' and (v_ev ->> 'ip_hash') !~ '^[0-9a-f]{16,64}$' then
       raise exception 'campo_invalido:evidencia.ip_hash' using errcode = '22023';
+    end if;
+    if v_fuente = 'checkout_reserva' and coalesce(v_ev ->> 'reserva_id', '') !~ '^[1-9][0-9]{0,18}$' then
+      raise exception 'campo_invalido:evidencia.reserva_id' using errcode = '22023';
+    end if;
+    if v_fuente = 'checkout_gift_card'
+       and coalesce(v_ev ->> 'grupo_compra_id', '') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+      raise exception 'campo_invalido:evidencia.grupo_compra_id' using errcode = '22023';
     end if;
   elsif v_fuente = 'admin_evidencia' then
     if coalesce(v_ev ->> 'tipo', '') not in ('papel_firmado', 'mensaje_del_titular', 'email_del_titular') then
@@ -379,7 +427,7 @@ begin
 
   v_ocu_in := null;
   if p_datos ? 'ocurrido_en' and jsonb_typeof(p_datos -> 'ocurrido_en') <> 'null' then
-    if v_fuente = 'formulario_web' then
+    if v_fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card') then
       raise exception 'campo_no_aplica:ocurrido_en' using errcode = '22023';
     end if;
     if jsonb_typeof(p_datos -> 'ocurrido_en') <> 'string' then
@@ -396,9 +444,31 @@ begin
     v_ocu_in := to_char(v_ocu at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
   end if;
 
+  v_sol_in := null;
+  if p_datos ? 'solicitado_en' and jsonb_typeof(p_datos -> 'solicitado_en') <> 'null' then
+    if not v_publica then
+      raise exception 'campo_no_aplica:solicitado_en' using errcode = '22023';
+    end if;
+    if jsonb_typeof(p_datos -> 'solicitado_en') <> 'string' then
+      raise exception 'campo_invalido:solicitado_en' using errcode = '22023';
+    end if;
+    begin
+      v_sol := (p_datos ->> 'solicitado_en')::timestamptz;
+    exception when others then
+      raise exception 'campo_invalido:solicitado_en' using errcode = '22023';
+    end;
+    if v_sol > clock_timestamp() + interval '2 minutes' or v_sol < clock_timestamp() - interval '3 hours' then
+      raise exception 'campo_invalido:solicitado_en' using errcode = '22023';
+    end if;
+    v_sol_in := to_char(v_sol at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
+  elsif v_publica then
+    raise exception 'campo_invalido:solicitado_en' using errcode = '22023';
+  end if;
+
   v_huella := md5(jsonb_build_object(
     'rol', v_rol, 'tipo', v_tipo, 'fuente', v_fuente, 'telefono', v_tel, 'texto_version', v_version,
-    'texto_huella', v_htexto, 'nombre', v_nombre, 'localidad', v_local, 'evidencia', v_ev - 'ip_hash', 'ocurrido_en', v_ocu_in)::text);
+    'texto_huella', v_htexto, 'nombre', v_nombre, 'localidad', v_local, 'evidencia', v_ev - 'ip_hash',
+    'ocurrido_en', v_ocu_in, 'solicitado_en', v_sol_in)::text);
 
   perform pg_advisory_xact_lock(hashtext('mkt_consentimiento'), hashtext(p_idempotency_key::text));
   select * into v_prev from public.mkt_consentimiento_eventos where idempotency_key = p_idempotency_key;
@@ -410,13 +480,17 @@ begin
     v_repetida := true;
   else
     if v_tipo = 'alta' then
-      if v_fuente = 'formulario_web' then
+      if v_publica then
         select * into v_texto from public.mkt_textos_consentimiento where estado = 'vigente';
         if not found then
           raise exception 'consentimiento_no_habilitado' using errcode = '55000';
         end if;
         if v_version <> v_texto.version or v_htexto <> v_texto.huella then
           raise exception 'texto_desactualizado' using errcode = '55000';
+        end if;
+        if exists (select 1 from public.mkt_consentimiento_eventos e
+                    where e.telefono = v_tel and e.tipo = 'baja' and e.ocurrido_en >= v_sol) then
+          raise exception 'formulario_vencido' using errcode = '55000';
         end if;
       else
         select * into v_texto from public.mkt_textos_consentimiento where version = v_version;
@@ -437,10 +511,10 @@ begin
 
     insert into public.mkt_consentimiento_eventos (
       idempotency_key, huella, telefono, tipo, fuente, actor_rol, texto_version, texto_huella,
-      nombre, localidad, evidencia, ocurrido_en, registrado_en)
+      nombre, localidad, evidencia, ocurrido_en, registrado_en, solicitado_en)
     values (
       p_idempotency_key, v_huella, v_tel, v_tipo, v_fuente, v_rol, v_version, v_htexto,
-      v_nombre, v_local, v_ev, coalesce(v_ocu, clock_timestamp()), clock_timestamp())
+      v_nombre, v_local, v_ev, coalesce(v_sol, v_ocu, clock_timestamp()), clock_timestamp(), v_sol)
     returning * into v_nuevo;
   end if;
 
