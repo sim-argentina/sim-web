@@ -100,8 +100,8 @@ async function main() {
       ["pedido incompleto", args({ promos: { acepto: true } }, { registrar: registrador(exito).registrar }), "pedido_incompleto"],
       ["token vencido", args({ promos: promosOk }, { registrar: registrador(exito).registrar }, { ahora: new Date(MOSTRADO.getTime() + 3 * 3_600_000) }), "formulario_vencido"],
       ["la base rechaza", args({ promos: promosOk }, {
-        registrar: registrador(async () => ({ ok: false, e: { status: 409, codigo: "formulario_vencido", error: "x" } })).registrar,
-      }), "formulario_vencido"],
+        registrar: registrador(async () => ({ ok: false, e: { status: 409, codigo: "texto_desactualizado", error: "x" } })).registrar,
+      }), "texto_desactualizado"],
       ["error inesperado de la base", args({ promos: promosOk }, { registrar: registrador(async () => ({ ok: false, e: null, causa: "boom" })).registrar }), "error_inesperado"],
       ["la base explota", args({ promos: promosOk }, { registrar: registrador(async () => { throw new Error("conexión caída"); }).registrar }), "error_inesperado"],
       ["la base no contesta", args({ promos: promosOk }, { registrar: registrador(() => new Promise(() => {})).registrar, timeoutMs: 30 }), "tiempo_agotado"],

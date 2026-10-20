@@ -204,13 +204,16 @@ function invariantes(r: ResultadoAudiencia, filas: number) {
   assert.match(validarIndicativos(["35"]).errores[0], /no es un indicativo oficial/, "'empieza con 35' no es segmento");
 
   // Números que comparten parte del prefijo: 353 (Villa María) y 3532/3537 (otras áreas);
-  // 358 (Río Cuarto) y 3582; 351 y el 3543 de Argüello.
+  // 358 (Río Cuarto) y 3582/3584; 351 y el 3543 de Argüello. Los de 4 dígitos
+  // están armados sobre bloques ASIGNADOS de la planilla de ENACOM
+  // (lib/bloquesNumeracionAmbiguos.ts); 3584620123 es del bloque 358 | 462.
   const filas = [
     turno({ fecha: "2026-10-10", telefono: "3534000001" }), // 353 + abonado que no arma ningún indicativo de 4
-    turno({ fecha: "2026-10-10", telefono: "3532000001" }), // 3532
-    turno({ fecha: "2026-10-10", telefono: "3537000001" }), // 3537
+    turno({ fecha: "2026-10-10", telefono: "3532400123" }), // 3532, bloque 400
+    turno({ fecha: "2026-10-10", telefono: "3537300123" }), // 3537, bloque 300
     turno({ fecha: "2026-10-10", telefono: "3581000001" }), // 358
-    turno({ fecha: "2026-10-10", telefono: "3582000001" }), // 3582
+    turno({ fecha: "2026-10-10", telefono: "3582400123" }), // 3582, bloque 400
+    turno({ fecha: "2026-10-10", telefono: "3584620123" }), // 358, bloque 462: empieza con 3584 y NO es de La Carlota
     turno({ fecha: "2026-10-10", telefono: "3515550101" }), // 351
     turno({ fecha: "2026-10-10", telefono: "3543550101" }), // 3543
     turno({ fecha: "2026-10-10", telefono: "1155550101" }), // 11
@@ -219,17 +222,19 @@ function invariantes(r: ResultadoAudiencia, filas: number) {
   const segmento = (indicativos: string[]) =>
     calcularAudiencia(filas, config(14, { indicativos }), con(todos)).elegibles.map((d) => d.telefono).sort();
   assert.deepEqual(segmento(["353"]), ["3534000001"], "353 no se lleva 3532 ni 3537");
-  assert.deepEqual(segmento(["3532"]), ["3532000001"]);
-  assert.deepEqual(segmento(["358"]), ["3581000001"], "358 no se lleva 3582");
+  assert.deepEqual(segmento(["3532"]), ["3532400123"]);
+  assert.deepEqual(segmento(["358"]), ["3581000001", "3584620123"], "358 no se lleva 3582, pero sí su bloque 462");
+  assert.deepEqual(segmento(["3584"]), [], "3584620123 no es de 3584");
   assert.deepEqual(segmento(["351", "11"]), ["1155550101", "3515550101"], "351 no se lleva 3543");
   assert.deepEqual(segmento(["3543"]), ["3543550101"]);
 
   const r = calcularAudiencia(filas, config(14, { indicativos: ["353"] }), con(todos));
   invariantes(r, filas.length);
-  assert.equal(r.telefonos.excluidos.fuera_de_segmento, 7);
-  assert.deepEqual(r.filtros.segmento, { activo: true, indicativos: ["353"], telefonosFuera: 7, telefonosIndeterminados: 0 });
+  assert.equal(r.telefonos.excluidos.fuera_de_segmento, 8);
+  assert.deepEqual(r.filtros.segmento, { activo: true, indicativos: ["353"], telefonosFuera: 8, telefonosIndeterminados: 0 });
   const porTelefono = new Map([...r.elegibles, ...r.excluidos.map((x) => x.destinatario)].map((d) => [d.telefono, [d.indicativo, d.areaNumeracion]]));
-  assert.deepEqual(porTelefono.get("3532000001")?.[0], "3532");
+  assert.deepEqual(porTelefono.get("3532400123")?.[0], "3532");
+  assert.deepEqual(porTelefono.get("3584620123"), ["358", "RIO CUARTO"]);
   assert.deepEqual(porTelefono.get("3534000001"), ["353", "VILLA MARIA"]);
   assert.equal(calcularAudiencia(filas, config(14, { indicativos: [] }), con(todos)).telefonos.elegibles, filas.length, "lista vacía = sin segmento");
   assert.throws(() => calcularAudiencia(filas, config(14, { indicativos: ["35"] }), con(todos)), /Configuración de audiencia inválida/);
@@ -238,24 +243,25 @@ function invariantes(r: ResultadoAudiencia, filas: number) {
 // ── 7b. Indicativo que no se puede determinar: afuera del segmento, sin área ─
 {
   const filas = [
-    turno({ fecha: "2026-10-10", telefono: "0294 15-5123456" }), // escrito como 294; el canónico 2945123456 es de 2945
-    turno({ fecha: "2026-10-10", telefono: "02945 15-123457" }), // escrito como 2945: coincide
+    turno({ fecha: "2026-10-10", telefono: "0294 15-5201234" }), // escrito como 294; 2945201234 está en el bloque 2945 | 20
+    turno({ fecha: "2026-10-10", telefono: "02945 15-201235" }), // escrito como 2945: coincide con el bloque
+    turno({ fecha: "2026-10-10", telefono: "3532999999" }), // 353 o 3532: ninguna lectura cae en un bloque asignado
     turno({ fecha: "2026-10-10", telefono: "2000000001" }), // ningún indicativo oficial
   ];
-  const todos = ["2945123456", "2945123457", "2000000001"];
-  const r = calcularAudiencia(filas, config(14, { indicativos: ["294", "2945"] }), con(todos));
+  const todos = ["2945201234", "2945201235", "3532999999", "2000000001"];
+  const r = calcularAudiencia(filas, config(14, { indicativos: ["294", "2945", "353", "3532"] }), con(todos));
   invariantes(r, filas.length);
-  assert.deepEqual(r.elegibles.map((d) => [d.telefono, d.indicativo, d.areaNumeracion]), [["2945123457", "2945", "ESQUEL"]]);
-  assert.equal(r.telefonos.excluidos.indicativo_indeterminado, 2);
+  assert.deepEqual(r.elegibles.map((d) => [d.telefono, d.indicativo, d.areaNumeracion]), [["2945201235", "2945", "ESQUEL"]]);
+  assert.equal(r.telefonos.excluidos.indicativo_indeterminado, 3);
   for (const x of r.excluidos) {
     assert.equal(x.destinatario.indicativo, null, "sin indicativo determinado no hay indicativo");
     assert.equal(x.destinatario.areaNumeracion, null, "ni área");
   }
-  assert.ok(r.advertencias.some((a) => /2 teléfono\(s\) sin indicativo determinable/.test(a)));
+  assert.ok(r.advertencias.some((a) => /3 teléfono\(s\) sin indicativo determinable/.test(a)));
   // Sin segmento, esos números participan igual: el indicativo solo filtra si se pide.
   const sinSegmento = calcularAudiencia(filas, config(14), con(todos));
-  assert.equal(sinSegmento.telefonos.elegibles, 3);
-  assert.equal(sinSegmento.telefonos.sinIndicativo, 2);
+  assert.equal(sinSegmento.telefonos.elegibles, 4);
+  assert.equal(sinSegmento.telefonos.sinIndicativo, 3);
 }
 
 // ── 8. Bajas, exclusiones externas y quien ya volvió (opcional) ─────────────

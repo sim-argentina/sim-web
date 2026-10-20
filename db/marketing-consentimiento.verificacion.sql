@@ -280,7 +280,8 @@ begin
     select count(*) into v_n from public.mkt_consentimiento_eventos where telefono = '3519990020';
     -- (a) el mismo pedido reenviado: devuelve el original y no agrega nada.
     v_a := pg_temp.reg(v_k3, pg_temp.web_alta('3519990020', 'zz-tres', v_h3, '{}', v_t0), 'publico');
-    -- (b) el mismo formulario (texto mostrado ANTES de la baja) enviado de nuevo con otra clave: rechazado.
+    -- (b) el mismo formulario (texto mostrado ANTES de la baja) enviado de nuevo con otra clave:
+    --     se registra (evidencia de que llegó) SIN error que delate la baja, y no reactiva nada.
     v_b := pg_temp.reg(gen_random_uuid(), pg_temp.web_alta('3519990020', 'zz-tres', v_h3, '{}', v_t0), 'publico');
     -- (c) una baja que llega tarde con fecha de origen posterior al alta la tapa igual.
     v_t1 := clock_timestamp();
@@ -289,8 +290,11 @@ begin
              'evidencia', jsonb_build_object('canal', 'presencial'),
              'ocurrido_en', to_char((v_t1 + interval '1 millisecond') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')), 'staff');
     v_log := v_log || case when v_r = 'ok|alta|false|3519990020' and v_r2 = 'ok|baja|false|3519990020'
-                              and v_a = 'ok|baja|true|3519990020' and v_b like '55000:formulario_vencido%'
-                              and (select count(*) from public.mkt_consentimiento_eventos where telefono = '3519990020') = v_n
+                              and v_a = 'ok|baja|true|3519990020' and v_b = 'ok|baja|false|3519990020'
+                              and (select count(*) from public.mkt_consentimiento_eventos where telefono = '3519990020') = v_n + 1
+                              and (select count(*) from public.mkt_consentimiento_eventos a
+                                     where a.telefono = '3519990020' and a.tipo = 'alta' and a.ocurrido_en = v_t0) = 2
+                              and pg_temp.estado('3519990020') = 'baja'
                               and v_c = 'ok|alta|false|3519990022' and v_d = 'ok|baja|false|3519990022'
                            then 'C20a ' else 'FALLA:C20a ' end;
     -- (d) autorización nueva: el texto se muestra DESPUÉS de la baja → vuelve a alta.

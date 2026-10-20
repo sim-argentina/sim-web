@@ -61,8 +61,9 @@ export default function AltaPromos() {
         intento.current = null;
         return;
       }
-      // Texto cambiado o formulario vencido: llega el texto vigente con un token nuevo y
-      // la persona tiene que volver a leerlo y marcar la casilla (autorización nueva).
+      // Texto cambiado o formulario vencido (más de 2 h): llega el texto vigente con un
+      // token nuevo y la persona tiene que volver a leerlo y marcar la casilla. Ninguno
+      // de los dos depende del número ni de su historial.
       if ((d?.codigo === "texto_desactualizado" || d?.codigo === "formulario_vencido") && d?.texto && d?.token) {
         setTexto(d.texto as Texto);
         setToken(String(d.token));

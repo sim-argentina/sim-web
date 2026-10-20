@@ -391,7 +391,7 @@ export function calcularAudiencia(
 
   if (sinIndicativo > 0) {
     advertencias.push(
-      `${sinIndicativo} teléfono(s) sin indicativo determinable (fuera de la lista oficial o contradicho por cómo se escribió): no se les atribuye área${segmento.length > 0 ? " y quedan fuera del segmento" : ""}.`,
+      `${sinIndicativo} teléfono(s) sin indicativo determinable (fuera de la lista oficial, con dos lecturas posibles y ningún bloque asignado que decida, o contradicho por cómo se escribió): no se les atribuye área${segmento.length > 0 ? " y quedan fuera del segmento" : ""}.`,
     );
   }
 

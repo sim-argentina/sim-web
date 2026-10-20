@@ -31,9 +31,12 @@
 --     administrativa no.
 --   · Alta pública = una autorización explícita NUEVA: lleva solicitado_en, el
 --     momento (firmado por el servidor) en que se le mostró el texto, y esa es su
---     fecha de origen. Si hubo una baja desde ese momento, se rechaza
---     ('formulario_vencido'): un formulario viejo, reenviado o que llega fuera de
---     orden no reactiva una baja; hay que volver a leer el texto y confirmar.
+--     fecha de origen. Un formulario mostrado ANTES de una baja se registra igual
+--     (queda la evidencia de que llegó), pero su fecha de origen es anterior a la
+--     baja y la vista no lo cuenta: no reactiva nada. NO se rechaza: el rechazo
+--     dependía del historial del número y le contaba a cualquiera que esa línea
+--     había pedido la baja hacía poco. La respuesta pública es la misma en los
+--     dos casos; volver a suscribirse exige un texto mostrado después de la baja.
 --   · Fuentes: formulario_web (alta y baja, público), checkout_reserva y
 --     checkout_gift_card (alta desde la casilla voluntaria de esas compras,
 --     público), admin_evidencia (alta con evidencia escrita, solo admin) y
@@ -487,10 +490,6 @@ begin
         end if;
         if v_version <> v_texto.version or v_htexto <> v_texto.huella then
           raise exception 'texto_desactualizado' using errcode = '55000';
-        end if;
-        if exists (select 1 from public.mkt_consentimiento_eventos e
-                    where e.telefono = v_tel and e.tipo = 'baja' and e.ocurrido_en >= v_sol) then
-          raise exception 'formulario_vencido' using errcode = '55000';
         end if;
       else
         select * into v_texto from public.mkt_textos_consentimiento where version = v_version;

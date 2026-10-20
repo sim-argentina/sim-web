@@ -88,13 +88,19 @@ no se muestra en el Turnero y su §2 no menciona los datos del stand.
   registro la guarda si la persona la da). Como respaldo, **indicativos oficiales
   completos**: `lib/indicativosArgentina.ts` (los 300 de ENACOM, generados por
   `scripts/marketing/generar-indicativos.mjs` con el sha256 de la planilla) y
-  `lib/marketing/indicativo.ts` (gana el indicativo oficial más largo; si el número
-  escrito con "15" lo contradice, queda indeterminado). Se compara por IGUALDAD, nunca
-  por prefijo: "353" no incluye 3532/3537. Sin indicativo determinable, el número queda
-  fuera del segmento con su motivo y SIN área. Límites que siempre se informan: el
-  indicativo es el área de numeración donde se dio de alta la línea, no la residencia;
-  hay portabilidad y turistas; ENACOM publica indicativos, no la asignación de cada
-  bloque de abonados.
+  `lib/marketing/indicativo.ts`. En los 49 indicativos de 4 dígitos que empiezan con
+  uno de 3 (2646/264, 3584/358…) el número admite dos lecturas y **"gana el más largo"
+  es falso**: en 17 pares el de 3 tiene bloques asignados dentro del de 4 (358 | 462 se
+  escribe 3584 62…). Decide, en orden: la tabla (una sola lectura), el Plan
+  Fundamental (Res. SC 46/97, III.2.1.2: el abonado no empieza con 0 ni 1) y los
+  bloques ASIGNADOS de ENACOM (`lib/bloquesNumeracionAmbiguos.ts`, generado por
+  `scripts/marketing/generar-bloques-ambiguos.mjs`; ningún rango se superpone con
+  otro). Si nada decide, o el número escrito con "15" lo contradice, queda
+  indeterminado. Se compara por IGUALDAD, nunca por prefijo: "353" no incluye
+  3532/3537. Sin indicativo determinable, el número queda fuera del segmento con su
+  motivo y SIN área. Límites que siempre se informan: el indicativo es el área de
+  numeración donde se dio de alta la línea, no la residencia; hay portabilidad y
+  turistas; la planilla de bloques es una foto (regenerar si ENACOM la actualiza).
 
 ## Códigos y pagos (lo que existe y sus brechas)
 
@@ -200,9 +206,13 @@ seguido; citá URL y fecha):
   staff o admin). La IP no se guarda: solo una huella HMAC.
 - Alta pública = autorización NUEVA: `/api/promos/texto` entrega el texto con un token
   firmado (`lib/marketing/tokenFormulario.ts`, 2 h) del momento en que se mostró; ese
-  momento (`solicitado_en`) es la fecha del alta. Si hubo una baja desde entonces → 409
-  `formulario_vencido` (volver a leer y confirmar). Un reenvío con la misma clave
-  devuelve el original y no reactiva nada.
+  momento (`solicitado_en`) es la fecha del alta. Un formulario mostrado ANTES de una
+  baja se registra y recibe la MISMA respuesta que cualquier alta, pero no revierte la
+  baja (fecha de origen anterior). Rechazarlo era un oráculo: contaba a cualquiera que
+  ese número había pedido la baja. Por eso ni el formulario ni el checkout dicen "te
+  anotamos" a secas: dicen la condición. Solo reconfirman por causas que no dependen
+  del número (texto cambiado, token de más de 2 h). Un reenvío con la misma clave
+  devuelve el original.
 - Llaves: `MARKETING_CONSENTIMIENTO_ENABLED` apaga la CAPTACIÓN (formulario, alta y
   casilla del checkout); el texto vigente es la llave de la base. Las BAJAS no dependen
   de ninguna de las dos: solo de que el registro esté instalado.
@@ -210,7 +220,7 @@ seguido; citá URL y fecha):
   (`components/OptInPromos.tsx`) en `/reservas` y `/gift-cards`;
   `lib/marketing/checkoutPromos.ts` registra DESPUÉS de crear la compra, nunca lanza ni
   bloquea, tiene tiempo límite y devuelve `promos: no_solicitada | registrada |
-  no_registrada`. Solo "registrada" permite decir "te anotamos".
+  no_registrada`. "registrada" = el pedido quedó en el registro, no que esté activo.
 - Código: `lib/marketing/consentimiento.ts` (contrato puro), `consentimientoServer.ts`,
   `http.ts`, `huellaIp.ts`; rutas `/api/promos/{texto,alta,baja}` y
   `/api/admin/marketing/{consentimientos,textos}`; páginas `/promos`, `/promos/baja` y

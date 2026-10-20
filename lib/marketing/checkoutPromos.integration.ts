@@ -208,6 +208,27 @@ async function main() {
   }
   console.log("OK — 4: Gift Card paga con la casilla: preferencia normal y suscripción registrada.");
 
+  // ── 4b. Casilla con un texto mostrado ANTES de una baja: misma respuesta, la baja sigue ─
+  {
+    const T = tel(21);
+    const SIN = tel(22);
+    const p = await token();
+    await new Promise((r) => setTimeout(r, 5));
+    sql(`select public.mkt_consentimiento_registrar(gen_random_uuid(), jsonb_build_object('tipo', 'baja', 'fuente', 'formulario_web', 'telefono', ${lit(T)}), 'publico')`);
+    const conBaja = await post(GC.POST, "/api/gift-cards/preference", giftCard(T, { codigo_descuento: CODIGO, promos: { acepto: true, ...p } }));
+    const sinHistorial = await post(GC.POST, "/api/gift-cards/preference", giftCard(SIN, { codigo_descuento: CODIGO, promos: { acepto: true, ...p } }));
+    registrarGrupo(conBaja);
+    registrarGrupo(sinHistorial);
+    assert.equal(conBaja.status, 200);
+    assert.equal(conBaja.json.free, true, "la compra se hizo");
+    assert.equal(conBaja.json.promos, sinHistorial.json.promos, "la respuesta no distingue al número con baja");
+    assert.equal(conBaja.json.promos, "registrada");
+    assert.equal(eventosDe(T), 2, "quedó la evidencia del pedido");
+    assert.equal(sql(`select estado from public.mkt_consentimiento_estado where telefono = ${lit(T)}`), "baja", "pero la baja sigue vigente");
+    assert.equal(sql(`select estado from public.mkt_consentimiento_estado where telefono = ${lit(SIN)}`), "alta");
+  }
+  console.log("OK — 4b: un texto mostrado antes de una baja responde igual que cualquiera y no revierte la baja.");
+
   // ── 5. Reservas: bonificada con casilla, paga sin casilla y paga con casilla ─
   {
     const disp = await disponibilidadReservas({ ahora: new Date() });

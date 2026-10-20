@@ -8,8 +8,10 @@
 //   · Solo registra si la persona marcó la casilla (promos.acepto === true) con
 //     el texto vigente, su huella y el token firmado de cuando se le mostró.
 //     Sin casilla → "no_solicitada" y no se toca el registro.
-//   · Devuelve lo que pasó de verdad: solo "registrada" permite decir "te
-//     anotamos". Cualquier falla es "no_registrada" (la pantalla no confirma).
+//   · Devuelve lo que pasó de verdad: "registrada" = el pedido quedó en el
+//     registro (si el texto se mostró antes de una baja, no la revierte; la
+//     respuesta no lo distingue para no revelar el historial del número).
+//     Cualquier falla es "no_registrada" (la pantalla no confirma).
 //   · Clave de idempotencia derivada de la compra: reintentar el mismo pedido no
 //     duplica la suscripción.
 // ============================================================================

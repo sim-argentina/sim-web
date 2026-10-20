@@ -60,8 +60,14 @@ export const LIMITES = {
   cuerpoBytes: 4096,
 } as const;
 
-export const MENSAJE_ALTA_OK =
-  "¡Listo! Vas a recibir nuestras promociones por WhatsApp en ese número. Podés darte de baja cuando quieras.";
+/**
+ * Respuesta del alta pública. Es la MISMA para cualquier número y cualquier
+ * historial, así que no puede afirmar que la suscripción quedó activa: un
+ * formulario mostrado antes de una baja se registra pero no la revierte. Por eso
+ * dice la condición en vez de confirmar a ciegas.
+ */
+export const MENSAJE_ALTA_RECIBIDA =
+  "Recibimos tu pedido: vas a recibir nuestras promociones por WhatsApp en ese número, salvo que se haya pedido su baja después de que abriste este formulario (en ese caso, recargá la página y confirmá de nuevo). Podés darte de baja cuando quieras.";
 export const MENSAJE_BAJA_OK =
   "Listo. Si ese número estaba anotado, no va a recibir más promociones de SIM Argentina.";
 
@@ -257,7 +263,11 @@ export function leerPromosCheckout(body: unknown): PromosCheckout {
   return { solicitada: true, valida: true, texto_version: v, texto_huella: h, token: t };
 }
 
-/** Qué pasó con la suscripción pedida en el checkout. Solo "registrada" permite decir "te anotamos". */
+/**
+ * Qué pasó con la suscripción pedida en el checkout. "registrada" = el pedido
+ * quedó en el registro; no asegura que esté activa (un texto mostrado antes de una
+ * baja no la revierte), así que la pantalla tampoco dice "te anotamos" a secas.
+ */
 export type EstadoPromosCheckout = "no_solicitada" | "registrada" | "no_registrada";
 
 // ── Fecha de origen de una carga del panel ────────────────────────────────

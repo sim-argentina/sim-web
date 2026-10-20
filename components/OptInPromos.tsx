@@ -57,9 +57,13 @@ export default function OptInPromos({ onChange }: { onChange: (v: OptInPromosVal
   );
 }
 
-/** Texto honesto para después de una compra: solo confirma si quedó registrada. */
+/**
+ * Texto honesto para después de una compra. Con "registrada" el pedido quedó en el
+ * registro, pero si ese número pidió la baja después de ver el texto, la baja se
+ * mantiene; la pantalla no lo sabe ni lo puede decir, así que dice la condición.
+ */
 export function mensajePromosTrasCompra(estado: unknown): string | null {
-  if (estado === "registrada") return "Además, te anotamos para recibir promociones por WhatsApp.";
+  if (estado === "registrada") return "Además, recibimos tu pedido de promociones por WhatsApp (si ese número pidió la baja después de que abriste esta página, la baja se mantiene).";
   if (estado === "no_registrada") return "No pudimos anotarte a las promociones; podés hacerlo desde simexperience.com.ar/promos.";
   return null;
 }

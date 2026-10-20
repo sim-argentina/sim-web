@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { MENSAJE_ALTA_OK, MENSAJE_BAJA_OK } from "@/lib/marketing/consentimiento";
+import { MENSAJE_ALTA_RECIBIDA, MENSAJE_BAJA_OK } from "@/lib/marketing/consentimiento";
 import { emitirTokenFormulario } from "@/lib/marketing/tokenFormulario";
 
 // Marketing · consentimiento y bajas — las RUTAS reales de Next contra el stack
@@ -177,7 +177,7 @@ async function main() {
 
     const r = await http(ALTA.POST, "POST", "/api/promos/alta", { body: cuerpo, ip: "198.51.100.7" });
     assert.equal(r.status, 201);
-    assert.deepEqual(r.json, { ok: true, mensaje: MENSAJE_ALTA_OK }, "no dice nada del número");
+    assert.deepEqual(r.json, { ok: true, mensaje: MENSAJE_ALTA_RECIBIDA }, "no dice nada del número");
     assert.equal(estado(A), "alta|formulario_web");
     const ev = JSON.parse(sql(`select row_to_json(e) from public.mkt_consentimiento_eventos e where telefono = ${lit(A)}`)) as Record<string, unknown>;
     assert.equal(ev.actor_rol, "publico");
@@ -205,7 +205,7 @@ async function main() {
       body: { idempotency_key: randomUUID(), telefono: B, acepto: true, texto_version: texto1.version, texto_huella: texto1.huella, token: token1, sitio: "https://spam.example" },
     });
     assert.equal(r.status, 201);
-    assert.deepEqual(r.json, { ok: true, mensaje: MENSAJE_ALTA_OK });
+    assert.deepEqual(r.json, { ok: true, mensaje: MENSAJE_ALTA_RECIBIDA });
     assert.equal(eventos(B), 0);
   }
   console.log("OK — 6: el campo trampa no registra nada y responde igual.");
@@ -248,6 +248,7 @@ async function main() {
   console.log("OK — 8: la baja no revela nada, sirve como supresión y el titular puede volver.");
 
   // ── 8b. Un alta vieja, reenviada o fuera de orden no reactiva una baja ────
+  //       y la respuesta no permite saber que hubo una baja.
   {
     const P = tel(11);
     const g = (await http(TEXTO.GET, "GET", "/api/promos/texto")).json;
@@ -262,24 +263,38 @@ async function main() {
     // (a) el mismo pedido, reenviado: devuelve el original y no reactiva.
     const reenvio = await http(ALTA.POST, "POST", "/api/promos/alta", { body: original });
     assert.equal(reenvio.status, 200);
-    assert.deepEqual(reenvio.json, { ok: true, mensaje: MENSAJE_ALTA_OK });
-    // (b) el mismo formulario (texto mostrado ANTES de la baja) con otra clave: 409 y texto nuevo.
+    assert.deepEqual(reenvio.json, { ok: true, mensaje: MENSAJE_ALTA_RECIBIDA });
+    assert.equal(eventos(P), antes, "el reenvío no agrega nada");
+    // (b) el mismo formulario (texto mostrado ANTES de la baja) con otra clave: se
+    //     registra, NO revierte la baja y responde EXACTAMENTE igual que el alta de un
+    //     número sin historial con el mismo formulario. Antes era un 409 que delataba la baja.
     const viejo = await http(ALTA.POST, "POST", "/api/promos/alta", { body: cuerpo(String(g.token)) });
-    assert.equal(viejo.status, 409);
-    assert.equal(viejo.json.codigo, "formulario_vencido");
-    assert.ok(viejo.json.token && viejo.json.token !== g.token, "con un token nuevo para volver a confirmar");
-    // (c) un token vencido (más de 2 h) tampoco.
+    const sinHistorial = await http(ALTA.POST, "POST", "/api/promos/alta", { body: { ...cuerpo(String(g.token)), telefono: tel(15) } });
+    assert.equal(viejo.status, 201);
+    assert.equal(viejo.status, sinHistorial.status, "mismo estado HTTP");
+    assert.equal(viejo.crudo, sinHistorial.crudo, "mismo cuerpo, byte a byte");
+    assert.deepEqual(viejo.json, { ok: true, mensaje: MENSAJE_ALTA_RECIBIDA }, "ni código ni token nuevo ni reconfirmación");
+    assert.equal(eventos(P), antes + 1, "quedó la evidencia de que llegó");
+    assert.equal(estado(P), "baja|-", "pero la baja sigue vigente");
+    assert.equal(estado(tel(15)), "alta|formulario_web");
+    const llegado = JSON.parse(sql(`select json_build_object('antes', max(a.ocurrido_en) < max(b.ocurrido_en)) from public.mkt_consentimiento_eventos a, public.mkt_consentimiento_eventos b where a.telefono = ${lit(P)} and a.tipo = 'alta' and b.telefono = ${lit(P)} and b.tipo = 'baja'`)) as { antes: boolean };
+    assert.equal(llegado.antes, true, "su fecha de origen es la de cuando se mostró el texto, anterior a la baja");
+    // (c) un token vencido (más de 2 h) pide reconfirmar a cualquiera, tenga o no historial.
     const vencido = emitirTokenFormulario(tx.version, new Date(Date.now() - 3 * 3_600_000))!;
     const r3 = await http(ALTA.POST, "POST", "/api/promos/alta", { body: cuerpo(vencido) });
+    const r3Otro = await http(ALTA.POST, "POST", "/api/promos/alta", { body: { ...cuerpo(vencido), telefono: tel(16) } });
     assert.equal(r3.json.codigo, "formulario_vencido");
-    assert.equal(eventos(P), antes, "nada de eso se registró");
+    assert.equal(r3.status, r3Otro.status);
+    assert.equal(r3Otro.json.codigo, "formulario_vencido", "la reconfirmación depende del token, no del número");
+    assert.equal(eventos(P), antes + 1, "el vencido no se registró");
+    assert.equal(eventos(tel(16)), 0);
     assert.equal(estado(P), "baja|-", "sigue en baja");
     // (d) autorización nueva: se vuelve a mostrar el texto y se confirma.
     const nuevo = (await http(TEXTO.GET, "GET", "/api/promos/texto")).json;
     assert.equal((await http(ALTA.POST, "POST", "/api/promos/alta", { body: cuerpo(String(nuevo.token)) })).status, 201);
     assert.equal(estado(P), "alta|formulario_web");
   }
-  console.log("OK — 8b: un alta reenviada, vieja o vencida no reactiva una baja; volver exige confirmar de nuevo.");
+  console.log("OK — 8b: un alta reenviada, vieja o vencida no reactiva una baja, la respuesta no la delata y volver exige un texto nuevo.");
 
   // ── 8c. Lo público no permite consultar contactos ni su estado ────────────
   {
