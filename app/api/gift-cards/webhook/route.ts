@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import MercadoPagoConfig, { Payment } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
+import { consumirRetencionDeCompra } from "@/lib/cuponesRetencion";
 import { calcularVencimientoGiftCard } from "@/lib/giftCards";
 import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
@@ -10,6 +11,11 @@ import { registrarPagoWebSeguro, type PagoMpFinanzas } from "@/lib/mercadopagoPa
 
 // Webhook exclusivo para Gift Cards. Se distingue por el prefijo
 // "gift_card_" en external_reference. No toca la tabla "reservas".
+//
+// Cupón de usos limitados (lib/cuponesRetencion.ts): el pago aprobado consume
+// la retención de la compra (idempotente; también se asegura con una
+// notificación repetida). Un rechazo o una cancelación NO la liberan: con la
+// misma preferencia se puede volver a pagar hasta que vence.
 
 const client = new MercadoPagoConfig({
   accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN!,
@@ -70,8 +76,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Gift Card no encontrada" }, { status: 404 });
     }
 
-    // Idempotente: si alguna fila ya tiene payment_id, ya se procesó.
-    if (filas.some((f) => f.mercado_pago_payment_id)) {
+    // Idempotente: si alguna fila ya tiene payment_id, ya se procesó. Solo se
+    // asegura el consumo de su retención (si la llamada anterior murió antes).
+    const procesada = filas.find((f) => f.mercado_pago_payment_id);
+    if (procesada) {
+      if (filtro === "grupo_compra_id" && procesada.codigo_descuento) {
+        const consumo = await consumirRetencionDeCompra({ grupo_compra_id: ref }, String(procesada.mercado_pago_payment_id))
+          .catch(() => "error" as const);
+        if (consumo === "error") return NextResponse.json({ error: "No se pudo registrar el uso del código" }, { status: 500 });
+      }
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
@@ -114,7 +127,15 @@ export async function POST(req: Request) {
       }
 
       const codigo = filas.find((f) => f.codigo_descuento)?.codigo_descuento;
-      if (codigo && (activadas?.length ?? 0) > 0) {
+      // Con retención: se consume la de esta compra; si la base no responde,
+      // 500 y el reintento de Mercado Pago lo asegura (rama de arriba).
+      let conRetencion = false;
+      if (codigo && filtro === "grupo_compra_id" && (activadas?.length ?? 0) > 0) {
+        const consumo = await consumirRetencionDeCompra({ grupo_compra_id: ref }, String(paymentId)).catch(() => "error" as const);
+        if (consumo === "error") return NextResponse.json({ error: "No se pudo registrar el uso del código" }, { status: 500 });
+        conRetencion = consumo !== null;
+      }
+      if (!conRetencion && codigo && (activadas?.length ?? 0) > 0) {
         const consumido = await consumirCodigoDescuento(codigo, {
           mercado_pago_payment_id: String(paymentId),
         });

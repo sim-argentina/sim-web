@@ -25,6 +25,7 @@ import type { ProductoAgenda } from "@/lib/agendaIntervalos";
 import { evaluarTurno } from "@/lib/reservasComercial";
 import { ESTADO_CONFLICTO_PAGO, motivoDeError } from "@/lib/reservasWebhook";
 import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
+import { retencionDeCompra } from "@/lib/cuponesRetencion";
 
 export type ResultadoEstado =
   | { ok: true; data: Record<string, unknown> }
@@ -152,8 +153,12 @@ export async function cambiarEstadoReserva(
   // 4) Una reserva PAGADA que el webhook dejó sin turno recién ahora queda
   // confirmada: se completa lo único que el webhook no hizo, consumir el código
   // de descuento (el webhook solo lo consume al activar). Best-effort, como
-  // allá: la reserva ya está paga y activa.
-  if (reserva.estado === ESTADO_CONFLICTO_PAGO && reserva.codigo_descuento && reserva.mercado_pago_payment_id) {
+  // allá: la reserva ya está paga y activa. Con retención de cupón limitado no
+  // hay nada que completar: el pago aprobado ya la consumió.
+  const conRetencion = reserva.estado === ESTADO_CONFLICTO_PAGO && reserva.codigo_descuento
+    ? await retencionDeCompra({ reserva_id: id }).then((r) => r !== null, () => false)
+    : false;
+  if (!conRetencion && reserva.estado === ESTADO_CONFLICTO_PAGO && reserva.codigo_descuento && reserva.mercado_pago_payment_id) {
     const consumir = opts.consumirCodigo ?? consumirCodigoDescuento;
     const consumido = await consumir(reserva.codigo_descuento, {
       reserva_id: reserva.id,

@@ -118,19 +118,19 @@ no se muestra en el Turnero y su §2 no menciona los datos del stand.
   fecha ni duración: el descuento vale completo sobre hasta 10 Gift Cards por compra
   (`GIFT_CARD_MAX_CANTIDAD`), y cuenta como un solo uso. No hay columna de producto ni
   tope de descuento.
-- **Cuándo se consume:**
-  - Reserva pagada: se valida al crear la preferencia (`app/api/mercadopago/preference/route.ts`)
-    sin reservar el código; se consume en `lib/reservasWebhook.ts` solo si esa llamada
-    activó la reserva. **Si el consumo falla, se ignora en silencio.**
-  - Reserva 100 % bonificada: `app/api/reservas/route.ts` consume y, si no puede, borra la reserva (409).
-  - Gift Card pagada: `app/api/gift-cards/webhook/route.ts` consume tras el UPDATE
-    condicional; si falla, registra `gift_card_codigo_no_consumido` y la Gift Card queda paga.
-  - Gift Card 100 %: consume antes de activar (409 si se agotó).
-  - Reactivación de `conflicto_pago`: `lib/reservasEstado.ts`.
+- **Códigos con `usos_maximos` (cupón de campaña): RETENCIÓN** (`db/cupones-retencion.sql`,
+  `lib/cuponesRetencion.ts`, doc `docs/marketing/cupones-retencion.md`; en la rama
+  `marketing-etapa1-simulacion`, migración NO aplicada en Producción). Se retiene en la
+  base ANTES de habilitar el pago (exclusiva entre Reservas y Gift Cards), la preferencia
+  vence a los 30 min, el pago aprobado consume (aunque la reserva quede en conflicto) y
+  solo se libera sin oportunidad de pago, o vencida Y verificada en Mercado Pago sin
+  pago aprobado ni abierto. Mismo `intento_id` = mismo link. Rechazo no libera;
+  devolución no restaura. `consumir_codigo_descuento` también cuenta retenciones.
+- **Códigos sin límite:** como siempre: se validan al crear la preferencia y se consumen
+  en el webhook (Reserva solo si quedó activa; Gift Card tras el UPDATE condicional) o
+  en el pedido si es 100 % bonificada.
 - **Reintentos de Mercado Pago:** idempotentes (payment_id + UPDATE condicional), no
-  consumen dos veces. **Usos simultáneos:** no están cubiertos. Dos checkouts abiertos
-  con el mismo código de un uso pueden pagar los dos con descuento; solo uno consume.
-  El código tampoco está atado a un teléfono: puede reenviarse.
+  consumen dos veces. El código no está atado a un teléfono: puede reenviarse.
 - **El Turnero no tiene campo de código:** un cupón no se puede canjear en el stand
   por sistema. En v1 se canjea online (Reservas web o Gift Cards).
 - **Cupón ≠ Gift Card:** el cupón (`codigos_descuento.codigo`) descuenta una compra

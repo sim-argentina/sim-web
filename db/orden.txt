@@ -119,5 +119,10 @@ interacciones-bloque1.sql
 # Necesita mensualidad_normalizar_telefono (mensualidades-m2-1-telefono.sql).
 marketing-consentimiento.sql
 
+# ── 13d. Cupones de usos limitados: retención compartida Reservas / Gift Cards ─
+# Mismo motivo que 13b: service_role solo lee la tabla (escribe por RPC).
+# Reemplaza consumir_codigo_descuento (codigos-b9) para que cuente retenciones.
+cupones-retencion.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql

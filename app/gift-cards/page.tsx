@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Gift, ArrowLeft, ShieldCheck, CircleAlert } from "lucide-react";
 import { GIFT_CARD_CONDICIONES, GIFT_CARD_MAX_CANTIDAD } from "@/lib/giftCards";
@@ -60,6 +60,7 @@ export default function GiftCardsPage() {
   const [acepto, setAcepto] = useState(false);
   // Casilla VOLUNTARIA de promociones, aparte de las condiciones. null = no marcada.
   const [promos, setPromos] = useState<OptInPromosValor>(null);
+  const intentoRef = useRef<{ clave: string; cuerpo: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -191,26 +192,36 @@ export default function GiftCardsPage() {
       duration_minutes: producto.duracion,
       items: [{ item_id: `gift_card_${producto.duracion}`, item_name: "Gift Card", item_category: "gift_card", quantity: cantidad, price: unit }],
     });
+    const payload = {
+      comprador_nombre: compradorNombre.trim(),
+      comprador_telefono: compradorTelefono.trim(),
+      destinatario_nombre: destinatario.trim() || null,
+      duracion_minutos: producto.duracion,
+      cantidad,
+      modo_uso: modoUso,
+      codigo_descuento: codigoAplicado?.codigo || null,
+      // El catálogo que la persona VIO. Si el servidor ya ofrece otro,
+      // responde 409 sin crear nada ni cobrar.
+      modalidad_vista: catalogo.modalidad,
+      // Solo si la persona marcó la casilla de promociones. La compra no depende de esto.
+      ...(promos ? { promos } : {}),
+    };
+    // Clave del intento: la MISMA en cada reintento de este pedido (con un cupón
+    // limitado el servidor devuelve el mismo link de pago en vez de abrir otro);
+    // cambia si cambia el pedido.
+    const cuerpoIntento = JSON.stringify(payload);
+    if (!intentoRef.current || intentoRef.current.cuerpo !== cuerpoIntento) {
+      intentoRef.current = { clave: crypto.randomUUID(), cuerpo: cuerpoIntento };
+    }
+    const intento_id = intentoRef.current.clave;
     try {
       const res = await fetch("/api/gift-cards/preference", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          comprador_nombre: compradorNombre.trim(),
-          comprador_telefono: compradorTelefono.trim(),
-          destinatario_nombre: destinatario.trim() || null,
-          duracion_minutos: producto.duracion,
-          cantidad,
-          modo_uso: modoUso,
-          codigo_descuento: codigoAplicado?.codigo || null,
-          // El catálogo que la persona VIO. Si el servidor ya ofrece otro,
-          // responde 409 sin crear nada ni cobrar.
-          modalidad_vista: catalogo.modalidad,
-          // Solo si la persona marcó la casilla de promociones. La compra no depende de esto.
-          ...(promos ? { promos } : {}),
-        }),
+        body: JSON.stringify({ ...payload, intento_id }),
       });
       const data = await res.json().catch(() => ({}));
+      if (data?.codigo === "intento_vencido" || data?.codigo === "intento_con_otro_pedido") intentoRef.current = null;
       if (res.status === 409 && data?.codigo === "catalogo_actualizado") {
         // Cambió el catálogo (el corte): no se creó nada. Los datos personales
         // quedan; la Gift Card elegida y el código se limpian y se vuelve a elegir.

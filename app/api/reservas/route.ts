@@ -7,7 +7,12 @@ import {
 import {
   validarCodigoDescuento,
   consumirCodigoDescuento,
+  evaluarCodigoDescuento,
 } from "@/lib/codigosDescuento";
+import {
+  consumirRetencion, huellaIntento, intentoDe, liberarRetencion, pasoReintento, retencionDeIntento, retenerCupon, vincularRetencion,
+  type FalloCupon, type Retencion,
+} from "@/lib/cuponesRetencion";
 import { getCurrentAdminRole } from "@/lib/adminGuards";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
@@ -84,6 +89,8 @@ const falloJson = (f: Fallo) =>
     { error: f.error, ...(f.codigo ? { codigo: f.codigo } : {}), ...(f.duraciones ? { duraciones: f.duraciones } : {}) },
     { status: f.status },
   );
+const falloCuponJson = (f: FalloCupon) => NextResponse.json({ error: f.error, codigo: f.codigo }, { status: f.status });
+const USADO = new Set(["consumida", "ya_consumida", "consumida_tras_liberar"]);
 
 // POST: SOLO crea reservas 100% bonificadas (gratis). Con saldo > 0 se exige
 // pago online. Precio recalculado server-side; turno reservado con garantía DB.
@@ -94,6 +101,9 @@ export async function POST(req: Request) {
   if (!isAllowedOrigin(req)) return forbiddenOrigin();
 
   let reservaCreadaId: number | null = null;
+  // Cupón de usos limitados: retenido antes de crear la reserva y consumido en
+  // este mismo pedido (no hay pago). Si algo falla antes, se libera.
+  let retencion: Retencion | null = null;
   try {
     const body = await req.json().catch(() => null);
 
@@ -114,7 +124,6 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (veredicto.ocupado) return falloJson(veredicto.ocupado);
 
     // ── Precio recalculado server-side por SU modalidad (precio especial de la
     // fecha si existe; nunca se confía en el cliente) ──
@@ -124,13 +133,19 @@ export async function POST(req: Request) {
 
     let descuento = 0;
     let codigoValido: string | null = null;
+    let limitado = false;
+    const intento = intentoDe(body);
     if (codigo_descuento) {
       const r = await validarCodigoDescuento(codigo_descuento, totalOriginal, fecha, duracion);
-      if (!r.valido) {
+      const previa = r.valido ? null : await retencionDeIntento(intento, codigo_descuento);
+      // Un reintento de una compra que ya usó el cupón no vuelve a validar: manda el
+      // estado de su propia retención (misma compra, mismo link, o "ya se pagó").
+      if (!r.valido && !previa) {
         return NextResponse.json({ error: r.error || "Código inválido" }, { status: 400 });
       }
-      descuento = Math.round(r.descuento || 0);
-      codigoValido = r.codigo;
+      descuento = previa ? Math.round(Number(previa.descuento ?? 0)) : Math.round(r.descuento || 0);
+      codigoValido = previa ? previa.codigo : r.codigo;
+      limitado = previa ? true : Boolean(r.limitado);
     }
 
     const totalFinal = Math.max(totalOriginal - descuento, 0);
@@ -139,6 +154,49 @@ export async function POST(req: Request) {
         { error: "Esta reserva requiere pago online con Mercado Pago." },
         { status: 400 }
       );
+    }
+
+    // Cupón de usos limitados: retención exclusiva en la base ANTES de crear
+    // nada. El mismo intento ya completado devuelve la misma reserva.
+    if (codigoValido && limitado) {
+      const h = await retenerCupon({
+        codigo: codigoValido, producto: "reserva", intento,
+        huella: huellaIntento({
+          producto: "reserva", codigo: codigoValido, modalidad: pedido.modalidad, fecha, hora: pedido.hora, duracion,
+          simuladores: [...pedido.simuladores].sort(), nombre: pedido.nombre, telefono: pedido.telefono, total_original: totalOriginal,
+        }),
+      });
+      if (!h.ok) return falloCuponJson(h);
+      retencion = h.retencion;
+      if (h.reutilizada) {
+        const previa = h.retencion.reserva_id
+          ? (await supabaseAdmin.from("reservas").select("*").eq("id", h.retencion.reserva_id).maybeSingle()).data
+          : null;
+        const paso = pasoReintento(h.retencion, previa?.estado === "activa" ? "completada" : "sin_compra", new Date(), false);
+        if (paso.paso === "rechazar") return falloCuponJson(paso.fallo);
+        if (paso.paso === "completada") {
+          if (!previa) return falloCuponJson({ ok: false, status: 409, error: "Este intento de pago venció. Volvé a armar tu compra.", codigo: "intento_vencido" });
+          if (h.retencion.estado === "retenido" && !USADO.has(await consumirRetencion(h.retencion.id, null))) {
+            return falloCuponJson({ ok: false, status: 409, error: "El código de descuento ya no está disponible", codigo: "agotado" });
+          }
+          return NextResponse.json({ ...previa, promos: "no_solicitada" }, { status: 201 });
+        }
+      }
+      const ev = evaluarCodigoDescuento(h.fila, totalOriginal, fecha, duracion, new Date(), { ignorarCupo: true });
+      if (!ev.valido || Math.round(ev.descuento) !== descuento) {
+        await liberarRetencion(h.retencion.id, "sin_oportunidad_de_pago");
+        retencion = null;
+        return NextResponse.json(
+          { error: ev.valido ? "El código de descuento cambió mientras reservabas. Probá de nuevo." : ev.error || "Código inválido", codigo: "codigo_cambiado" },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (veredicto.ocupado) {
+      if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
+      retencion = null;
+      return falloJson(veredicto.ocupado);
     }
 
     // 1) Crear la reserva activa, con SU modalidad explícita.
@@ -157,6 +215,8 @@ export async function POST(req: Request) {
       .single();
 
     if (error || !data) {
+      if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
+      retencion = null;
       return failResponse(500, "Error al guardar la reserva", {
         logContext: "reservas POST insert",
         error,
@@ -174,6 +234,8 @@ export async function POST(req: Request) {
     if (slotErr) {
       await supabaseAdmin.from("reservas").delete().eq("id", data.id);
       reservaCreadaId = null;
+      if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
+      retencion = null;
       if ((slotErr as { code?: string }).code === "23505") {
         return NextResponse.json(
           { error: "Uno o más simuladores ya están reservados en ese horario" },
@@ -194,8 +256,24 @@ export async function POST(req: Request) {
       });
     }
 
-    // 3) Consumir el código atómicamente. Si ya no está disponible, revertir.
-    if (codigoValido) {
+    // 3) Consumir el código. Limitado: la retención de ESTE intento, vinculada a la
+    // reserva para la auditoría. Sin límite: el consumo atómico de siempre. Si ya
+    // no está disponible, revertir.
+    if (retencion) {
+      await vincularRetencion(retencion.id, { reserva_id: data.id, total_original: totalOriginal, descuento, total_final: 0 });
+      const r = await consumirRetencion(retencion.id, null, {
+        nombre: data.nombre, telefono: data.telefono, fecha_reserva: data.fecha, hora_reserva: data.hora,
+      });
+      if (!USADO.has(r)) {
+        await supabaseAdmin.from("reservas").delete().eq("id", data.id);
+        reservaCreadaId = null;
+        return NextResponse.json(
+          { error: "El código de descuento ya no está disponible" },
+          { status: 409 }
+        );
+      }
+      retencion = null;
+    } else if (codigoValido) {
       const consumido = await consumirCodigoDescuento(codigoValido, {
         reserva_id: data.id,
         nombre: data.nombre,
@@ -232,6 +310,8 @@ export async function POST(req: Request) {
         /* best-effort */
       }
     }
+    // Sin pago de por medio: si la reserva no quedó, el cupón vuelve.
+    if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
     return failResponse(500, "Error interno del servidor", {
       logContext: "reservas POST",
       error,

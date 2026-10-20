@@ -303,6 +303,7 @@ function limpiar() {
        delete from public.gift_cards where grupo_compra_id::text in (${gs}) or comprador_nombre = ${lit(`Comprador ${MARCA}`)};
        delete from public.reserva_slots where reserva_id in (${rs});
        delete from public.usos_codigos_descuento where codigo = ${lit(CODIGO)};
+       delete from public.codigo_retenciones where codigo = ${lit(CODIGO)};
        delete from public.reservas where id in (${rs}) or nombre = ${lit(`Reserva ${MARCA}`)};
        delete from public.codigos_descuento where codigo = ${lit(CODIGO)};
        ${vigentePrevio ? `update public.mkt_textos_consentimiento set estado = 'vigente', retirado_en = null, retirado_por_rol = null where version = ${lit(vigentePrevio)};` : ""}

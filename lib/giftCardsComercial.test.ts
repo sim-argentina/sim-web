@@ -13,6 +13,7 @@ import {
   MENSAJE_GIFT_CARDS_ACTUALIZADAS, MENSAJE_GIFT_CARDS_ACTUALIZADAS_ADMIN, catalogoGiftCardsVigente,
   modalidadParaNuevaGiftCard,
 } from "@/lib/giftCardsComercial";
+import { rpcRetencionesEnMemoria } from "@/lib/cuponesRetencion.memoria";
 
 // Gift Cards 10/20/30 por modalidad (Bloque B5).
 // Ejecutar: npx tsx --env-file=.env.local lib/giftCardsComercial.test.ts
@@ -191,8 +192,12 @@ class Consulta implements PromiseLike<Resultado> {
 const rpcs: string[] = [];
 const cliente = supabaseAdmin as unknown as { from: (t: string) => unknown; rpc: (fn: string, a?: Record<string, unknown>) => unknown };
 cliente.from = (t: string) => new Consulta(t);
+// Retenciones de cupones limitados: las mismas reglas que db/cupones-retencion.sql.
+const retenciones = rpcRetencionesEnMemoria(tabla);
 cliente.rpc = (fn: string, args: Record<string, unknown> = {}) => {
   rpcs.push(fn);
+  const r = retenciones(fn, args);
+  if (r) return r;
   if (fn === "consumir_codigo_descuento") {
     const c = tabla("codigos_descuento").find((x) => x.codigo === args.p_codigo);
     const agotado = c && c.usos_maximos != null && Number(c.usos_actuales ?? 0) >= Number(c.usos_maximos);

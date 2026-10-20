@@ -235,6 +235,7 @@ export default function ReservasPage() {
   const ofertaRef = useRef<Oferta | null>(null);
   // Cada carga tiene un número: una respuesta vieja nunca pisa a una nueva.
   const solicitudRef = useRef(0);
+  const intentoRef = useRef<{ clave: string; cuerpo: string } | null>(null);
 
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedTime, setSelectedTime] = useState<string>("");
@@ -689,6 +690,15 @@ export default function ReservasPage() {
       ...(promos ? { promos } : {}),
     };
 
+    // Clave del intento: la MISMA en cada reintento de este pedido (con un cupón
+    // limitado el servidor devuelve el mismo link de pago en vez de abrir otro);
+    // cambia si cambia el pedido.
+    const cuerpoIntento = JSON.stringify(payload);
+    if (!intentoRef.current || intentoRef.current.cuerpo !== cuerpoIntento) {
+      intentoRef.current = { clave: crypto.randomUUID(), cuerpo: cuerpoIntento };
+    }
+    const intento_id = intentoRef.current.clave;
+
     // Lo elegido, para conservarlo si hay que recargar la oferta.
     const pedidoActual = { fecha: selectedDate, duracion };
     const preferencia: Preferencia = { hora: selectedTime, equipos: selectedTeams };
@@ -712,12 +722,14 @@ export default function ReservasPage() {
           body: JSON.stringify({
             ...payload,
             total: 0,
+            intento_id,
           }),
         });
 
         const result = await response.json().catch(() => null);
 
         if (!response.ok) {
+          if (result?.codigo === "intento_vencido" || result?.codigo === "intento_con_otro_pedido") intentoRef.current = null;
           if (esCatalogoActualizado(response, result)) {
             await cargarOferta(pedidoActual, "catalogo_actualizado", preferencia);
             return;
@@ -745,6 +757,7 @@ export default function ReservasPage() {
             mensajePromosTrasCompra(result?.promos)].filter(Boolean).join(" ")
         );
 
+        intentoRef.current = null;
         setName("");
         setPhone("");
         setSelectedTeams([]);
@@ -775,12 +788,13 @@ export default function ReservasPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, intento_id }),
       });
 
       const result = await response.json().catch(() => null);
 
       if (!response.ok) {
+        if (result?.codigo === "intento_vencido" || result?.codigo === "intento_con_otro_pedido") intentoRef.current = null;
         // La oferta cambió (corte de modalidad o precio nuevo): no es un error
         // técnico. No se creó reserva ni preferencia; se muestra la vigente.
         if (esCatalogoActualizado(response, result)) {

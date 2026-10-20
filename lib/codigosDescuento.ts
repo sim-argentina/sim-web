@@ -42,7 +42,12 @@ export type ValidacionCodigo = {
   codigo: string | null;
   descuento: number;
   error: string | null;
+  /** Tiene usos_maximos: se RETIENE antes de habilitar un pago (lib/cuponesRetencion.ts). */
+  limitado?: boolean;
 };
+
+/** Fila de codigos_descuento tal como la devuelve la base. */
+export type FilaCodigoDescuento = Record<string, unknown> & { codigo: string };
 
 export async function validarCodigoDescuento(
   codigoIngresado: string,
@@ -65,6 +70,25 @@ export async function validarCodigoDescuento(
 
   if (error) throw new Error(error.message);
 
+  return evaluarCodigoDescuento(codigo, totalOriginal, fechaTurno, duracionTurno, ahora);
+}
+
+/**
+ * Las mismas reglas sobre una fila ya leída, sin tocar la base. La usa la
+ * validación de arriba y, con la fila BLOQUEADA que devuelve codigo_retener, el
+ * checkout de un cupón limitado: así el descuento sale del código tal como
+ * estaba en el momento de retenerlo. `ignorarCupo`: el cupo ya lo controló la
+ * base al retener (contando retenciones), no se vuelve a mirar.
+ */
+export function evaluarCodigoDescuento(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  codigo: any,
+  totalOriginal: number,
+  fechaTurno?: string | null,
+  duracionTurno?: number | null,
+  ahora: Date = new Date(),
+  opts: { ignorarCupo?: boolean } = {}
+): ValidacionCodigo {
   // (B9) Un código eliminado desde el panel (soft delete) ya no se puede usar,
   // aunque haya quedado activo y vigente: eliminado = como si no existiera.
   if (!codigo || codigo.deleted_at) {
@@ -84,6 +108,7 @@ export async function validarCodigoDescuento(
     return { valido: false, codigo: null, descuento: 0, error: "El código está vencido" };
   }
   if (
+    !opts.ignorarCupo &&
     codigo.usos_maximos !== null &&
     codigo.usos_maximos !== undefined &&
     Number(codigo.usos_actuales || 0) >= Number(codigo.usos_maximos)
@@ -154,6 +179,7 @@ export async function validarCodigoDescuento(
     codigo: codigo.codigo,
     descuento: Math.min(descuentoCalculado, totalOriginal),
     error: null,
+    limitado: codigo.usos_maximos !== null && codigo.usos_maximos !== undefined,
   };
 }
 

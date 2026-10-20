@@ -14,7 +14,12 @@ import { MENSAJE_GIFT_CARDS_ACTUALIZADAS, modalidadParaNuevaGiftCard } from "@/l
 import {
   validarCodigoDescuento,
   consumirCodigoDescuento,
+  evaluarCodigoDescuento,
 } from "@/lib/codigosDescuento";
+import {
+  consumirRetencion, huellaIntento, intentoDe, liberarRetencion, pasoReintento, retencionDeIntento, retenerCupon, vencimientoPreferencia,
+  vincularRetencion, type EstadoCompraIntento, type FalloCupon, type Retencion,
+} from "@/lib/cuponesRetencion";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
@@ -23,6 +28,28 @@ import { registrarPromosCheckout } from "@/lib/marketing/checkoutPromos";
 // Flujo de pago de Gift Cards, totalmente separado del de reservas.
 // external_reference usa el prefijo "gift_card_" + grupo_compra_id y la
 // notificación va a /api/gift-cards/webhook. No toca la tabla "reservas".
+//
+// Código de descuento con varias Gift Cards (regla de siempre, sin cambios): se
+// valida y se descuenta UNA vez sobre el total de la compra (precio × cantidad),
+// se reparte entre las tarjetas (separadas) o va entero en la única fila
+// (juntas), y cuenta UN uso del código por compra, sea 1 o 10 tarjetas.
+// Con un cupón de usos limitados la compra entera tiene UNA retención.
+
+const falloCuponJson = (f: FalloCupon) => NextResponse.json({ error: f.error, codigo: f.codigo }, { status: f.status });
+const USADO = new Set(["consumida", "ya_consumida", "consumida_tras_liberar"]);
+
+/** Estado de la compra de un intento que se reintenta. */
+async function estadoGrupoDelIntento(r: Retencion): Promise<EstadoCompraIntento> {
+  if (!r.grupo_compra_id) return "sin_compra";
+  const { data } = await supabaseAdmin
+    .from("gift_cards")
+    .select("estado_pago, mercado_pago_payment_id")
+    .eq("grupo_compra_id", r.grupo_compra_id);
+  if (!data || data.length === 0) return "sin_compra";
+  if (data.some((g) => g.mercado_pago_payment_id || g.estado_pago === "pagado")) return "completada";
+  if (data.every((g) => g.estado_pago === "cancelado")) return "fallida";
+  return "en_preparacion";
+}
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
@@ -47,6 +74,9 @@ export async function POST(req: Request) {
   if (!isAllowedOrigin(req)) return forbiddenOrigin();
 
   let grupoId: string | null = null;
+  // Cupón de usos limitados: retenido ANTES de habilitar el pago con descuento.
+  let retencion: Retencion | null = null;
+  let conPagoMarcado = false;
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -98,12 +128,24 @@ export async function POST(req: Request) {
     // Validar código de descuento sobre el total (misma lógica que reservas)
     let codigoAplicado: string | null = null;
     let descuentoAplicado = 0;
+    let limitado = false;
 
+    const intento = intentoDe(body);
+    let previa: Retencion | null = null;
     if (codigo_descuento && String(codigo_descuento).trim()) {
       const resultado = await validarCodigoDescuento(
         String(codigo_descuento),
         montoOriginal
       );
+      previa = resultado.valido ? null : await retencionDeIntento(intento, String(codigo_descuento));
+      // Un reintento de una compra que ya usó el cupón no vuelve a validar: manda el
+      // estado de su propia retención (misma compra, mismo link, o "ya se pagó").
+      if (previa) {
+        resultado.valido = true;
+        resultado.codigo = previa.codigo;
+        resultado.descuento = Number(previa.descuento ?? 0);
+        resultado.limitado = true;
+      }
       if (!resultado.valido) {
         return NextResponse.json(
           { error: resultado.error || "Código inválido" },
@@ -112,12 +154,86 @@ export async function POST(req: Request) {
       }
       codigoAplicado = resultado.codigo;
       descuentoAplicado = Math.round(resultado.descuento || 0);
+      limitado = Boolean(resultado.limitado);
     }
 
-    const montoFinal = Math.max(montoOriginal - descuentoAplicado, 0);
-
-    grupoId = randomUUID();
+    let montoFinal = Math.max(montoOriginal - descuentoAplicado, 0);
     const nowIso = new Date().toISOString();
+
+    // Cupón de usos limitados: retención exclusiva en la base (compartida con
+    // Reservas) y descuento recalculado sobre la fila bloqueada. Un reintento
+    // del mismo intento reutiliza su compra y su link.
+    let rehacer = false;
+    if (codigoAplicado && limitado) {
+      const h = await retenerCupon({
+        codigo: codigoAplicado, producto: "gift_card", intento,
+        huella: huellaIntento({
+          producto: "gift_card", codigo: codigoAplicado, modalidad: vigente.modalidad, duracion: producto.duracion,
+          cantidad, modo_uso, comprador_nombre, comprador_telefono, destinatario_nombre, monto_original: montoOriginal,
+        }),
+      });
+      if (!h.ok) return falloCuponJson(h);
+      retencion = h.retencion;
+      if (h.reutilizada) {
+        const paso = pasoReintento(h.retencion, await estadoGrupoDelIntento(h.retencion), new Date(), montoFinal > 0);
+        if (paso.paso === "rechazar") return falloCuponJson(paso.fallo);
+        if (paso.paso === "devolver") {
+          return NextResponse.json({
+            id: paso.preferencia_id, grupo_compra_id: h.retencion.grupo_compra_id,
+            init_point: paso.init_point, sandbox_init_point: null, promos: "no_solicitada",
+          });
+        }
+        if (paso.paso === "completada") {
+          if (!h.retencion.grupo_compra_id) return falloCuponJson({ ok: false, status: 409, error: "Este intento de pago venció. Volvé a armar tu compra.", codigo: "intento_vencido" });
+          if (h.retencion.estado === "retenido" && !USADO.has(await consumirRetencion(h.retencion.id, null))) {
+            return falloCuponJson({ ok: false, status: 409, error: "El código de descuento ya no está disponible", codigo: "agotado" });
+          }
+          // Si el pedido anterior murió entre el consumo y la activación, se
+          // completa acá: misma vigencia que cualquier Gift Card (30 días).
+          if (Number(h.retencion.total_final) === 0) {
+            const activadaEn = new Date().toISOString();
+            await supabaseAdmin
+              .from("gift_cards")
+              .update({
+                estado_pago: "pagado", estado_uso: "pendiente", fecha_pago: activadaEn,
+                fecha_vencimiento: calcularVencimientoGiftCard(activadaEn), updated_at: activadaEn,
+              })
+              .eq("grupo_compra_id", h.retencion.grupo_compra_id)
+              .eq("estado_pago", "pendiente_pago")
+              .is("mercado_pago_payment_id", null);
+          }
+          return NextResponse.json({ free: true, grupo_compra_id: h.retencion.grupo_compra_id, promos: "no_solicitada" });
+        }
+        if (paso.paso === "rehacer_preferencia" && h.retencion.grupo_compra_id) {
+          // La compra del intento anterior se reabre (si había quedado cancelada
+          // por el error) y se le rehace la preferencia: misma external_reference.
+          await supabaseAdmin
+            .from("gift_cards")
+            .update({ estado_pago: "pendiente_pago", updated_at: nowIso })
+            .eq("grupo_compra_id", h.retencion.grupo_compra_id)
+            .eq("estado_pago", "cancelado")
+            .is("mercado_pago_payment_id", null);
+          rehacer = true;
+          grupoId = h.retencion.grupo_compra_id;
+          descuentoAplicado = Number(h.retencion.descuento);
+          montoFinal = Number(h.retencion.total_final);
+        }
+      }
+      if (!rehacer) {
+        const ev = evaluarCodigoDescuento(h.fila, montoOriginal, null, null, new Date(), { ignorarCupo: true });
+        if (!ev.valido || Math.round(ev.descuento) !== descuentoAplicado) {
+          await liberarRetencion(h.retencion.id, "sin_oportunidad_de_pago");
+          retencion = null;
+          return NextResponse.json(
+            { error: ev.valido ? "El código de descuento cambió mientras comprabas. Probá de nuevo." : ev.error || "Código inválido", codigo: "codigo_cambiado" },
+            { status: 409 },
+          );
+        }
+      }
+    }
+
+    if (!rehacer) grupoId = randomUUID();
+    if (!grupoId) throw new Error("Gift Card sin grupo de compra");
 
     const base = {
       comprador_nombre: comprador_nombre.trim(),
@@ -163,11 +279,14 @@ export async function POST(req: Request) {
       }));
     }
 
-    const { error: insertError } = await supabaseAdmin
+    const { error: insertError } = rehacer ? { error: null } : await supabaseAdmin
       .from("gift_cards")
       .insert(rows);
 
     if (insertError) {
+      if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
+      retencion = null;
+      grupoId = null;
       return failResponse(500, "Error creando la Gift Card", {
         logContext: "pref-gift insert",
         error: insertError,
@@ -176,8 +295,25 @@ export async function POST(req: Request) {
 
     // Gift Card 100% bonificada: no pasa por Mercado Pago.
     if (montoFinal <= 0) {
-      // Consumir el código atómicamente ANTES de habilitar la gift card gratis.
-      if (codigoAplicado) {
+      // Consumir el código ANTES de habilitar la gift card gratis. Limitado: la
+      // retención de este intento; sin límite: el consumo atómico de siempre.
+      if (retencion) {
+        await vincularRetencion(retencion.id, {
+          grupo_compra_id: grupoId, total_original: montoOriginal, descuento: descuentoAplicado, total_final: 0,
+        });
+        if (!USADO.has(await consumirRetencion(retencion.id, null, { nombre: comprador_nombre, telefono: comprador_telefono }))) {
+          retencion = null;
+          await supabaseAdmin
+            .from("gift_cards")
+            .update({ estado_pago: "cancelado", updated_at: nowIso })
+            .eq("grupo_compra_id", grupoId);
+          return NextResponse.json(
+            { error: "El código de descuento ya no está disponible" },
+            { status: 409 }
+          );
+        }
+        retencion = null;
+      } else if (codigoAplicado) {
         const consumido = await consumirCodigoDescuento(codigoAplicado);
         if (!consumido) {
           await supabaseAdmin
@@ -224,6 +360,19 @@ export async function POST(req: Request) {
         ? `${cantidad} Gift Cards SIM · ${producto.duracion} min${modo_uso === "juntas" ? " (juntas)" : ""}`
         : `Gift Card SIM Argentina · ${producto.duracion} min`;
 
+    // La oportunidad de pago se anota en la retención ANTES de pedirle la
+    // preferencia a Mercado Pago (si la respuesta no llega, la retención igual
+    // sabe que pudo existir un pago hasta `expira`).
+    const vencimiento = retencion ? vencimientoPreferencia(new Date()) : null;
+    if (retencion && vencimiento) {
+      await vincularRetencion(retencion.id, {
+        grupo_compra_id: grupoId, external_reference: `gift_card_${grupoId}`,
+        total_original: montoOriginal, descuento: descuentoAplicado, total_final: montoFinal,
+        con_pago: true, expira: vencimiento.expira,
+      });
+      conPagoMarcado = true;
+    }
+
     const preference = new Preference(client);
     const result = await preference.create({
       body: {
@@ -243,8 +392,16 @@ export async function POST(req: Request) {
           pending: `${baseUrl}/gift-cards/pendiente`,
         },
         notification_url: `${baseUrl}/api/gift-cards/webhook`,
+        // Con cupón limitado la preferencia vence: es lo que acota la retención.
+        ...(vencimiento ? vencimiento.campos : {}),
       },
     });
+
+    // El link queda en la retención: un reintento del mismo intento recibe ESTE
+    // link y no uno nuevo. Si no se puede guardar, no se entrega.
+    if (retencion) {
+      await vincularRetencion(retencion.id, { preferencia_id: String(result.id), init_point: String(result.init_point) });
+    }
 
     await supabaseAdmin
       .from("gift_cards")
@@ -268,8 +425,13 @@ export async function POST(req: Request) {
       await supabaseAdmin
         .from("gift_cards")
         .update({ estado_pago: "cancelado", updated_at: new Date().toISOString() })
-        .eq("grupo_compra_id", grupoId);
+        .eq("grupo_compra_id", grupoId)
+        .is("mercado_pago_payment_id", null);
     }
+    // Sin oportunidad de pago anotada, nada pudo cobrarse con este cupón. Con
+    // ella, la preferencia pudo crearse aunque no llegó la respuesta: la
+    // retención queda hasta su vencimiento y la verificación en Mercado Pago.
+    if (retencion && !conPagoMarcado) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
     return failResponse(500, "No se pudo crear la preferencia de Gift Card", {
       logContext: "pref-gift",
       error,

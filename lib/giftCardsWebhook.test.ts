@@ -362,7 +362,8 @@ async function main() {
   {
     const src = readFileSync(join(process.cwd(), "app/api/gift-cards/webhook/route.ts"), "utf8");
     assert.ok(/\.is\("mercado_pago_payment_id", null\)\s*\.select\("id"\)/.test(src), "el UPDATE condicional devuelve las filas que activó");
-    assert.ok(/if \(codigo && \(activadas\?\.length \?\? 0\) > 0\)/.test(src), "solo quien activó consume");
+    assert.ok(/if \(!conRetencion && codigo && \(activadas\?\.length \?\? 0\) > 0\)/.test(src), "solo quien activó consume (sin retención)");
+    assert.ok(/if \(codigo && filtro === "grupo_compra_id" && \(activadas\?\.length \?\? 0\) > 0\)/.test(src), "y con retención, también solo quien activó");
     assert.ok(src.indexOf("activadas") < src.indexOf("consumirCodigoDescuento(codigo"), "primero la transición, después el consumo");
     // La compra 100% bonificada ya era atómica: consume una vez dentro de su
     // propio pedido, antes de activar, y cada pedido es una compra nueva.
