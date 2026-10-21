@@ -62,11 +62,14 @@ assert.equal(
   "El cron `*/10 * * * *` de M5B no puede volver mientras el plan sea Hobby",
 );
 
-// ── 3) Los tres crons diarios preexistentes siguen intactos ────────────────
+// ── 3) Los crons diarios conocidos siguen intactos ──────────────────────────
+// La conciliación de cupones es diaria a propósito: en Hobby se dispara en
+// cualquier minuto de esa hora, y la compra siguiente y el panel cubren el resto.
 const esperados = [
   { path: "/api/admin/ia/purga", schedule: "0 4 * * *" },
   { path: "/api/admin/ia/informes/purga", schedule: "30 4 * * *" },
   { path: "/api/admin/ia/creditos/sincronizar", schedule: "0 5 * * *" },
+  { path: "/api/admin/cupones/conciliar", schedule: "20 5 * * *" },
 ];
 for (const e of esperados) {
   assert.ok(
@@ -74,7 +77,7 @@ for (const e of esperados) {
     `Falta o cambió el cron preexistente ${e.path} (${e.schedule})`,
   );
 }
-assert.equal(crons.length, esperados.length, "No debería haber más crons que los tres diarios");
+assert.equal(crons.length, esperados.length, "No debería haber más crons que los diarios conocidos");
 
 // ── 4) Cordura del detector ────────────────────────────────────────────────
 for (const ok of ["0 4 * * *", "30 4 * * *", "0 5 * * *", "15 3 * * 1", "0 0 1 * *"]) {
