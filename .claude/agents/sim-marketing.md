@@ -123,9 +123,21 @@ no se muestra en el Turnero y su §2 no menciona los datos del stand.
   `marketing-etapa1-simulacion`, migración NO aplicada en Producción). Se retiene en la
   base ANTES de habilitar el pago (exclusiva entre Reservas y Gift Cards), la preferencia
   vence a los 30 min, el pago aprobado consume (aunque la reserva quede en conflicto) y
-  solo se libera sin oportunidad de pago, o vencida Y verificada en Mercado Pago sin
-  pago aprobado ni abierto. Mismo `intento_id` = mismo link. Rechazo no libera;
-  devolución no restaura. `consumir_codigo_descuento` también cuenta retenciones.
+  solo se libera sin oportunidad de pago, o vencida (+15 min) Y verificada en Mercado
+  Pago con búsquedas completas (todas las páginas de pagos y preferencias) sin pago
+  aprobado ni abierto; ante cualquier duda queda retenida con su motivo. Mismo
+  `intento_id` = mismo link; un turno de preparación (45 s) evita dos preferencias y el
+  reintento recupera la que pudo quedar creada. Rechazo no libera; devolución no
+  restaura. `consumir_codigo_descuento` también cuenta retenciones.
+- **Conciliación:** la compra siguiente, el panel (Códigos → Ver/Revisar → "Revisar
+  estado", admin) y un cron diario (`/api/admin/cupones/conciliar`, `CRON_SECRET`).
+  El panel muestra consumidos, retenidos ("0 · apartado") y disponibles, y las
+  retenciones a revisar con su compra. No hay botón que libere sin consultar Mercado Pago.
+- **Despliegue:** primero la aplicación (los cupones limitados fallan cerrados con 503
+  hasta migrar), después la migración, que cubre las compras pendientes de antes
+  (`legado`). Rollback: aplicación anterior y luego `db/cupones-retencion.rollback.sql`
+  (las retenidas dejan de contar). Pruebas en navegador con Mercado Pago simulado:
+  `cupones-local` en `.claude/launch.json`.
 - **Códigos sin límite:** como siempre: se validan al crear la preferencia y se consumen
   en el webhook (Reserva solo si quedó activa; Gift Card tras el UPDATE condicional) o
   en el pedido si es 100 % bonificada.
