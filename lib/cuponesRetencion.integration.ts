@@ -44,35 +44,73 @@ async function main() {
   delete process.env.MARKETING_CONSENTIMIENTO_ENABLED;
   for (const k of ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "UPSTASH_REDIS_REST_KV_REST_API_URL", "UPSTASH_REDIS_REST_KV_REST_API_TOKEN"]) delete process.env[k];
 
+  let cookie: string | undefined;
   const rutaHeaders = require.resolve("next/headers");
   require.cache[rutaHeaders] = {
     id: rutaHeaders, filename: rutaHeaders, loaded: true,
-    exports: { cookies: async () => ({ get: () => undefined }), headers: async () => new Headers() },
+    exports: {
+      cookies: async () => ({ get: (n: string) => (cookie && n === "sim-admin-session" ? { name: n, value: cookie } : undefined) }),
+      headers: async () => new Headers(),
+    },
   } as unknown as NodeJS.Module;
 
   // ── Mercado Pago interceptado ─────────────────────────────────────────────
+  // Lo que usa la app de la API (y lo que dice su documentación): crear,
+  // obtener y buscar preferencias (paginado, con expires/expiration_date_to) y
+  // obtener y buscar pagos (paging.total). Modos para los fallos a probar.
   const { Preference, Payment } = await import("mercadopago");
-  const prefs: { id: string; body: Record<string, unknown> }[] = [];
-  let modoPref: "ok" | "falla" | "creada_sin_respuesta" = "ok";
+  const prefs: { id: string; init_point: string; body: Record<string, unknown> }[] = [];
+  let modoPref: "ok" | "falla" | "creada_sin_respuesta" | "colgada_tras_crear" | "colgada_antes" = "ok";
+  let demoraPref = 15; // ms: que los pedidos simultáneos se crucen
+  const nunca = new Promise<never>(() => {}); // un pedido que "murió" con el proceso
   (Preference.prototype as unknown as { create: (a: { body: Record<string, unknown> }) => Promise<unknown> }).create = async (a) => {
-    if (modoPref === "falla") throw new Error("Mercado Pago no disponible (simulado)");
+    const modo = modoPref;
+    if (modo === "falla") throw Object.assign(new Error("Mercado Pago no disponible (simulado)"), { status: 503 });
+    if (modo === "colgada_antes") return nunca;
     const n = prefs.length + 1;
-    const id = `pref-${RUN}-${n}`;
-    prefs.push({ id, body: a.body });
-    if (modoPref === "creada_sin_respuesta") throw new Error("tiempo agotado (simulado): la preferencia se creó, la respuesta no llegó");
-    await new Promise((r) => setTimeout(r, 15)); // que los pedidos simultáneos se crucen
-    return { id, init_point: `https://cupon.invalid/pagar/${n}`, sandbox_init_point: null };
+    const p = { id: `pref-${RUN}-${n}`, init_point: `https://cupon.invalid/pagar/${n}`, body: a.body };
+    prefs.push(p);
+    if (modo === "creada_sin_respuesta") throw new Error("tiempo agotado (simulado): la preferencia se creó, la respuesta no llegó");
+    if (modo === "colgada_tras_crear") return nunca;
+    await new Promise((r) => setTimeout(r, demoraPref));
+    return { id: p.id, init_point: p.init_point, sandbox_init_point: null };
+  };
+  let busquedaPrefs: "ok" | "falla" | "incompleta" = "ok";
+  const vistaPref = (p: (typeof prefs)[number]) => ({
+    id: p.id, external_reference: p.body.external_reference, expires: p.body.expires ?? false, expiration_date_to: p.body.expiration_date_to ?? null,
+  });
+  (Preference.prototype as unknown as { search: (a: { options: Record<string, unknown> }) => Promise<unknown> }).search = async ({ options }) => {
+    if (busquedaPrefs === "falla") throw Object.assign(new Error("búsqueda de preferencias caída (simulado)"), { status: 500 });
+    const todas = prefs.filter((p) => p.body.external_reference === options.external_reference);
+    const offset = Number(options.offset ?? 0);
+    const pagina = todas.slice(offset, offset + 30).map(vistaPref);
+    return { elements: busquedaPrefs === "incompleta" ? [] : pagina, total: todas.length + (busquedaPrefs === "incompleta" ? 1 : 0), next_offset: offset + pagina.length };
+  };
+  (Preference.prototype as unknown as { get: (a: { preferenceId: string }) => Promise<unknown> }).get = async ({ preferenceId }) => {
+    const p = prefs.find((x) => x.id === preferenceId);
+    if (!p) throw Object.assign(new Error("preferencia inexistente"), { status: 404 });
+    return { ...vistaPref(p), init_point: p.init_point, sandbox_init_point: null };
+  };
+  /** Pasa el tiempo para Mercado Pago: las preferencias de esa compra quedan vencidas. */
+  const vencerEnMp = (ref: string) => {
+    for (const p of prefs) if (p.body.external_reference === ref && p.body.expires === true) p.body.expiration_date_to = new Date(Date.now() - 60 * 60_000).toISOString();
   };
   const pagos: Record<string, Record<string, unknown>> = {};
   let mpNoResponde = false;
+  let pagosIncompletos = false;
   (Payment.prototype as unknown as { get: (a: { id: string }) => Promise<unknown> }).get = async ({ id }) => {
     const p = pagos[String(id)];
     if (!p) throw new Error(`pago ${id} inexistente`);
     return p;
   };
   (Payment.prototype as unknown as { search: (a: { options: Record<string, unknown> }) => Promise<unknown> }).search = async ({ options }) => {
-    if (mpNoResponde) throw new Error("Mercado Pago no responde (simulado)");
-    return { results: Object.values(pagos).filter((p) => p.external_reference === options.external_reference) };
+    if (mpNoResponde) throw Object.assign(new Error("Mercado Pago no responde (simulado)"), { status: 503 });
+    assert.ok(Number(options.limit) <= 50, "la búsqueda de pagos admite hasta 50 por página");
+    const todos = Object.values(pagos).filter((p) => p.external_reference === options.external_reference);
+    const offset = Number(options.offset ?? 0);
+    const limit = Number(options.limit ?? 30);
+    const results = pagosIncompletos ? todos.slice(offset, offset + limit).slice(0, 0) : todos.slice(offset, offset + limit);
+    return { results, paging: { total: todos.length + (pagosIncompletos ? 1 : 0), limit, offset } };
   };
   let nPago = 0;
   const pago = (ref: string, status: string, monto: number) => {
@@ -89,6 +127,29 @@ async function main() {
   const WH_GC = await import("@/app/api/gift-cards/webhook/route");
   const CATALOGO_GC = await import("@/app/api/gift-cards/catalogo/route");
   const { disponibilidadReservas } = await import("@/lib/reservasComercial");
+  const CONCILIAR = await import("@/app/api/admin/cupones/conciliar/route");
+  const CODIGOS = await import("@/app/api/codigos-descuento/route");
+  const RETENCIONES = await import("@/app/api/codigos-descuento/[id]/retenciones/route");
+  const { createSessionToken } = await import("@/lib/adminSession");
+  const admin = await createSessionToken("admin");
+  const staff = await createSessionToken("staff");
+  const { supabaseAdmin } = await import("@/lib/supabaseAdmin");
+  // "SIM recibe la preferencia pero falla al guardarla": la próxima escritura del
+  // link en la retención no llega a la base.
+  let fallarGuardadoDelLink = 0;
+  const rpcOriginal = supabaseAdmin.rpc.bind(supabaseAdmin);
+  (supabaseAdmin as unknown as { rpc: (fn: string, a?: Record<string, unknown>) => unknown }).rpc = (fn: string, a: Record<string, unknown> = {}) => {
+    if (fn === "codigo_retencion_vincular" && fallarGuardadoDelLink > 0 && (a.p_datos as Record<string, unknown>)?.preferencia_id) {
+      fallarGuardadoDelLink--;
+      return Promise.resolve({ data: null, error: { message: "simulado: la base no respondió", code: "08006" } });
+    }
+    return (rpcOriginal as unknown as (fn: string, a: Record<string, unknown>) => unknown)(fn, a);
+  };
+  const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const esperar = async (cond: () => boolean, que: string) => {
+    for (let i = 0; i < 100; i++) { if (cond()) return; await dormir(50); }
+    assert.fail(`no pasó: ${que}`);
+  };
 
   let ip = 0;
   const unaIp = () => `198.20.${Math.floor(++ip / 250)}.${(ip % 250) + 1}`;
@@ -127,9 +188,16 @@ async function main() {
   const usos = (c: string) => Number(sql(`select usos_actuales from public.codigos_descuento where codigo = ${lit(c)}`));
   const estados = (c: string) => sql(`select coalesce(string_agg(estado, ',' order by retenido_en), '') from public.codigo_retenciones where codigo = ${lit(c)}`);
   const registrosDeUso = (c: string) => Number(sql(`select count(*) from public.usos_codigos_descuento where codigo = ${lit(c)}`));
-  /** Pasa el tiempo para las retenciones de c: venció la preferencia y la gracia del intento. */
-  const vencer = (c: string) => sql(`update public.codigo_retenciones set vence_en = now() - interval '1 second', retenido_en = now() - interval '1 hour'
-                                     where codigo = ${lit(c)} and estado = 'retenido'`);
+  /**
+   * Pasa el tiempo para las retenciones de c: venció la gracia del intento, el
+   * vence_en de la base y, en Mercado Pago, las preferencias de esas compras.
+   */
+  const vencer = (c: string) => {
+    const refs = sql(`select coalesce(string_agg(external_reference, ','), '') from public.codigo_retenciones where codigo = ${lit(c)} and estado = 'retenido'`);
+    for (const ref of refs.split(",").filter(Boolean)) vencerEnMp(ref);
+    sql(`update public.codigo_retenciones set vence_en = now() - interval '1 second', retenido_en = now() - interval '1 hour', preparando_hasta = null
+         where codigo = ${lit(c)} and estado = 'retenido'`);
+  };
   const retencion = (c: string, extra = "") => JSON.parse(sql(`select row_to_json(r) from public.codigo_retenciones r where codigo = ${lit(c)} ${extra} order by retenido_en desc limit 1`) || "null") as Record<string, unknown> | null;
 
   const disp = await disponibilidadReservas({ ahora: new Date() });
@@ -503,6 +571,224 @@ async function main() {
     assert.equal(usos(L), 1, "el consumo de siempre");
   }
   console.log("OK — 15: sin cupón o con cupón sin límite, todo igual que antes (sin retención ni vencimiento).");
+
+  // ── 16. Operaciones incompletas: nunca una segunda oportunidad de pago ────
+  {
+    // (a) Mercado Pago creó la preferencia pero SIM perdió la respuesta.
+    const C = codigo(10, 1);
+    const body = reserva({ codigo_descuento: C });
+    modoPref = "creada_sin_respuesta";
+    assert.equal((await post(MP.POST, "/api/mercadopago/preference", body)).status, 500);
+    modoPref = "ok";
+    const perdida = prefs[prefs.length - 1];
+    const antes = prefs.length;
+    const r = await post(MP.POST, "/api/mercadopago/preference", body);
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.init_point, perdida.init_point, "el reintento recupera ESA preferencia (Buscar en preferencias)");
+    assert.equal(prefs.length, antes, "no se creó otra");
+    assert.equal(retencion(C)!.preferencia_id, perdida.id);
+
+    // (b) SIM recibió la preferencia pero no pudo guardarla.
+    const C2 = codigo(10, 1);
+    const body2 = giftCard({ codigo_descuento: C2 });
+    fallarGuardadoDelLink = 1;
+    assert.equal((await post(GC.POST, "/api/gift-cards/preference", body2)).status, 500, "sin link guardado, no se entrega");
+    const sinGuardar = prefs[prefs.length - 1];
+    const antes2 = prefs.length;
+    const r2 = await post(GC.POST, "/api/gift-cards/preference", body2);
+    assert.equal(r2.status, 200, JSON.stringify(r2.json));
+    assert.equal(r2.json.init_point, sinGuardar.init_point, "se recupera la que quedó sin guardar");
+    assert.equal(prefs.length, antes2);
+
+    // (c) El navegador reintenta mientras el primer pedido sigue en Mercado Pago.
+    const C3 = codigo(10, 1);
+    const body3 = reserva({ codigo_descuento: C3 });
+    demoraPref = 1500;
+    const primero = post(MP.POST, "/api/mercadopago/preference", body3);
+    await esperar(() => sql(`select coalesce((select (preparando_hasta > now())::text from public.codigo_retenciones where codigo = ${lit(C3)}), 'no')`) === "true", "el primero tomó el turno");
+    // Aunque ya hubiera pasado la gracia del intento, el turno de preparación lo frena.
+    sql(`update public.codigo_retenciones set retenido_en = now() - interval '1 hour' where codigo = ${lit(C3)}`);
+    const mientras = await post(MP.POST, "/api/mercadopago/preference", body3);
+    assert.equal(mientras.json.codigo, "intento_en_curso", JSON.stringify(mientras.json));
+    const r3 = await primero;
+    demoraPref = 15;
+    assert.equal(r3.status, 200);
+    const despues = await post(MP.POST, "/api/mercadopago/preference", body3);
+    assert.equal(despues.json.init_point, r3.json.init_point, "y después recibe el mismo link");
+    assert.equal(prefs.filter((p) => p.body.external_reference === `reserva_${r3.json.reserva_id}`).length, 1, "una sola preferencia");
+
+    // (d) El proceso del servidor se cae entre los pasos.
+    //   · Después de que Mercado Pago creó la preferencia, antes de guardarla:
+    const C4 = codigo(10, 1);
+    const body4 = reserva({ codigo_descuento: C4 });
+    modoPref = "colgada_tras_crear";
+    const enPrefs = prefs.length;
+    void post(MP.POST, "/api/mercadopago/preference", body4); // nunca vuelve: "murió"
+    await esperar(() => prefs.length === enPrefs + 1, "Mercado Pago creó la preferencia");
+    modoPref = "ok";
+    const huerfana = prefs[prefs.length - 1];
+    // Reinicio: el turno del pedido muerto vence (45 s; acá se adelanta el reloj).
+    sql(`update public.codigo_retenciones set preparando_hasta = now() - interval '1 second', retenido_en = now() - interval '1 hour' where codigo = ${lit(C4)}`);
+    const tras = await post(MP.POST, "/api/mercadopago/preference", body4);
+    assert.equal(tras.status, 200, JSON.stringify(tras.json));
+    assert.equal(tras.json.init_point, huerfana.init_point, "se recupera la preferencia del pedido muerto");
+    assert.equal(prefs.length, enPrefs + 1, "sin otra");
+    //   · Antes de que Mercado Pago creara nada:
+    const C5 = codigo(10, 1);
+    const body5 = giftCard({ codigo_descuento: C5 });
+    modoPref = "colgada_antes";
+    void post(GC.POST, "/api/gift-cards/preference", body5);
+    await esperar(() => sql(`select coalesce((select con_pago::text from public.codigo_retenciones where codigo = ${lit(C5)}), 'no')`) === "true", "la oportunidad de pago quedó anotada");
+    modoPref = "ok";
+    sql(`update public.codigo_retenciones set preparando_hasta = now() - interval '1 second', retenido_en = now() - interval '1 hour' where codigo = ${lit(C5)}`);
+    const enPrefs5 = prefs.length;
+    const tras5 = await post(GC.POST, "/api/gift-cards/preference", body5);
+    assert.equal(tras5.status, 200, JSON.stringify(tras5.json));
+    assert.equal(prefs.length, enPrefs5 + 1, "no había ninguna: se crea una (la única)");
+    assert.equal(estados(C5), "retenido", "una sola retención");
+  }
+  console.log("OK — 16: respuesta perdida, link sin guardar, reintento en curso y caída del proceso: se recupera la preferencia existente, nunca una segunda.");
+
+  // ── 17. Ante la duda, la retención se conserva (con su motivo) ────────────
+  {
+    const C = codigo(10, 1);
+    const a = await post(GC.POST, "/api/gift-cards/preference", giftCard({ codigo_descuento: C }));
+    assert.equal(a.status, 200);
+    const ref = `gift_card_${a.json.grupo_compra_id}`;
+    vencer(C);
+    const motivo = () => sql(`select revision_motivo from public.codigo_retenciones where external_reference = ${lit(ref)}`);
+    const otro = () => post(GC.POST, "/api/gift-cards/preference", giftCard({ codigo_descuento: C }));
+    pagosIncompletos = true;
+    assert.equal((await otro()).json.codigo, "en_uso");
+    assert.equal(motivo(), "consulta_de_pagos_incompleta", "paginación pendiente no es 'no hay pagos'");
+    pagosIncompletos = false;
+    mpNoResponde = true;
+    assert.equal((await otro()).json.codigo, "en_uso");
+    assert.match(motivo(), /^mercado_pago_no_responde/);
+    mpNoResponde = false;
+    busquedaPrefs = "incompleta";
+    assert.equal((await otro()).json.codigo, "en_uso");
+    assert.equal(motivo(), "consulta_de_preferencias_incompleta");
+    busquedaPrefs = "falla";
+    assert.equal((await otro()).json.codigo, "en_uso");
+    assert.match(motivo(), /^mercado_pago_no_responde/);
+    busquedaPrefs = "ok";
+    const suya = prefs.find((p) => p.body.external_reference === ref)!;
+    suya.body.expires = false;
+    assert.equal((await otro()).json.codigo, "en_uso");
+    assert.equal(motivo(), "preferencia_sin_vencimiento", "un link que no vence sigue siendo pagable");
+    suya.body.expires = true;
+    suya.body.expiration_date_to = new Date(Date.now() + 10 * 60_000).toISOString();
+    assert.equal((await otro()).json.codigo, "en_uso");
+    assert.equal(motivo(), "preferencia_vigente");
+    suya.body.expiration_date_to = new Date(Date.now() - 5 * 60_000).toISOString();
+    assert.equal((await otro()).json.codigo, "en_uso", "vencida hace menos que el margen: todavía no");
+    vencerEnMp(ref);
+    const ahora = await otro();
+    assert.equal(ahora.status, 200, "cerrada de verdad: se libera");
+    assert.equal(sql(`select estado || '|' || motivo_liberacion || '|' || revisiones from public.codigo_retenciones where external_reference = ${lit(ref)}`), "liberado|sin_pago_tras_vencer|8", "ocho revisiones registradas, una por consulta");
+  }
+  console.log("OK — 17: consulta incompleta, Mercado Pago caído o link pagable: se conserva con su motivo; solo se libera con todo confirmado.");
+
+  // ── 18. Conciliación operativa: cron con secreto y panel con sesión ───────
+  {
+    process.env.CRON_SECRET = randomBytes(24).toString("hex");
+    const cron = (auth?: string) => (CONCILIAR.GET as (r: Request) => Promise<Response>)(new Request(`${ORIGEN}/api/admin/cupones/conciliar`, { headers: auth ? { authorization: auth } : {} }));
+    const panel = async (body: unknown, origen = ORIGEN) => {
+      const res = await (CONCILIAR.POST as (r: Request) => Promise<Response>)(new Request(`${ORIGEN}/api/admin/cupones/conciliar`, {
+        method: "POST", headers: { "content-type": "application/json", origin: origen, "x-real-ip": unaIp() }, body: JSON.stringify(body),
+      }));
+      return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+    };
+    assert.equal((await cron()).status, 401, "sin secreto");
+    assert.equal((await cron("Bearer otro")).status, 401, "con otro secreto");
+    cookie = undefined;
+    assert.equal((await panel({})).status, 401, "sin sesión");
+    cookie = staff;
+    assert.equal((await panel({})).status, 403, "staff no concilia");
+    cookie = admin;
+    assert.equal((await panel({}, "https://ajeno.example")).status, 403, "desde un origen ajeno");
+
+    // Una abandonada (sin pagos, preferencia vencida) y una con pago en proceso.
+    const C1 = codigo(10, 1);
+    const g1 = await post(GC.POST, "/api/gift-cards/preference", giftCard({ codigo_descuento: C1 }));
+    const C2 = codigo(10, 1);
+    const g2 = await post(GC.POST, "/api/gift-cards/preference", giftCard({ codigo_descuento: C2 }));
+    pago(`gift_card_${g2.json.grupo_compra_id}`, "in_process", 1);
+    vencer(C1);
+    vencer(C2);
+    const r = await cron(`Bearer ${process.env.CRON_SECRET}`);
+    assert.equal(r.status, 200);
+    const j = (await r.json()) as { resultados: { id: string; resultado: string; motivo: string }[] };
+    const de = (ref: string) => j.resultados.find((x) => x.id === sql(`select id from public.codigo_retenciones where external_reference = ${lit(ref)}`));
+    assert.equal(de(`gift_card_${g1.json.grupo_compra_id}`)?.resultado, "liberada", "la abandonada, confirmada en Mercado Pago");
+    assert.deepEqual(de(`gift_card_${g2.json.grupo_compra_id}`), { id: de(`gift_card_${g2.json.grupo_compra_id}`)!.id, resultado: "retenida", motivo: "pago_abierto" });
+    // Repetir es seguro: nada cambia de más.
+    const again = (await (await cron(`Bearer ${process.env.CRON_SECRET}`)).json()) as { resultados: { id: string; resultado: string }[] };
+    assert.ok(!again.resultados.some((x) => x.resultado === "liberada" && x.id === de(`gift_card_${g2.json.grupo_compra_id}`)!.id));
+    // Desde el panel, una sola retención.
+    const id2 = de(`gift_card_${g2.json.grupo_compra_id}`)!.id;
+    const p = await panel({ retencion_id: id2 });
+    assert.equal(p.status, 200, JSON.stringify(p.json));
+    assert.deepEqual((p.json.resultados as { resultado: string }[]).map((x) => x.resultado), ["retenida"]);
+    assert.equal((await panel({ retencion_id: "no-es-uuid" })).status, 400);
+    assert.ok(Number(sql(`select revisiones from public.codigo_retenciones where id = ${lit(id2)}`)) >= 3, "cada revisión queda registrada");
+    assert.equal(sql(`select estado from public.codigo_retenciones where id = ${lit(id2)}`), "retenido");
+  }
+  console.log("OK — 18: el cron (con secreto) y el panel (admin) concilian; nunca liberan algo pagable; cada revisión queda registrada.");
+
+  // ── 19. Panel de Códigos: consumidos, retenidos, a revisar, sin datos sensibles ─
+  {
+    const C = codigo(10, 1);
+    const a = await post(GC.POST, "/api/gift-cards/preference", giftCard({ codigo_descuento: C }));
+    assert.equal(a.status, 200);
+    const id = Number(sql(`select id from public.codigos_descuento where codigo = ${lit(C)}`));
+    const listar = async () => {
+      const res = await (CODIGOS.GET as () => Promise<Response>)();
+      return { status: res.status, json: (await res.json()) as { codigos: { codigo: string; usos_actuales: number; usos_maximos: number; retenciones: { retenidas: number; a_revisar: number } | null }[]; retenciones_instaladas: boolean } };
+    };
+    cookie = staff;
+    assert.equal((await listar()).status, 403, "el panel de Códigos sigue siendo de admin");
+    cookie = admin;
+    let l = await listar();
+    assert.equal(l.json.retenciones_instaladas, true);
+    let fila = l.json.codigos.find((c) => c.codigo === C)!;
+    assert.deepEqual([fila.usos_actuales, fila.usos_maximos, fila.retenciones?.retenidas, fila.retenciones?.a_revisar], [0, 1, 1, 0], "0 consumidos, 1 retenido: no disponible");
+    vencer(C);
+    l = await listar();
+    fila = l.json.codigos.find((c) => c.codigo === C)!;
+    assert.equal(fila.retenciones?.a_revisar, 1, "vencida sin confirmar: a revisar");
+    const det = await (RETENCIONES.GET as (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>)(
+      new Request(`${ORIGEN}/api/codigos-descuento/${id}/retenciones`), { params: Promise.resolve({ id: String(id) }) });
+    assert.equal(det.status, 200);
+    const texto = await det.clone().text();
+    const dj = (await det.json()) as { retenciones: { estado: string; producto: string; compra: { tipo: string; estado: string; tarjetas: number }; requiere_revision: string | null; external_reference: string }[] };
+    assert.equal(dj.retenciones.length, 1);
+    assert.deepEqual([dj.retenciones[0].estado, dj.retenciones[0].producto, dj.retenciones[0].compra.tipo, dj.retenciones[0].compra.estado, dj.retenciones[0].compra.tarjetas],
+      ["retenido", "gift_card", "gift_card", "pendiente_pago", 1]);
+    assert.equal(dj.retenciones[0].requiere_revision, "vencida_sin_confirmar");
+    for (const k of ["intento", "huella", "init_point", "preparando_por", "cupon.invalid", "3519990102", "Comprador"]) assert.ok(!texto.includes(k), `sin ${k}`);
+    cookie = staff;
+    assert.equal((await (RETENCIONES.GET as (r: Request, c: { params: Promise<{ id: string }> }) => Promise<Response>)(
+      new Request(`${ORIGEN}/api/codigos-descuento/${id}/retenciones`), { params: Promise.resolve({ id: String(id) }) })).status, 403);
+    cookie = undefined;
+  }
+  console.log("OK — 19: el panel distingue consumidos, retenidos y a revisar, con la compra vinculada y sin datos de la persona ni el link.");
+
+  // ── 20. El intento no autoriza nada ───────────────────────────────────────
+  {
+    const C = codigo(10, 1);
+    const body = reserva({ codigo_descuento: C });
+    const a = await post(MP.POST, "/api/mercadopago/preference", body);
+    assert.equal(a.status, 200);
+    const ajeno = await post(MP.POST, "/api/mercadopago/preference", { ...body, nombre: `Reserva ${MARCA} otra`, telefono: "3519990777" });
+    assert.equal(ajeno.status, 409);
+    assert.deepEqual(Object.keys(ajeno.json).sort(), ["codigo", "error"], "solo el error: ni reserva, ni link, ni datos");
+    assert.equal(ajeno.json.codigo, "intento_con_otro_pedido");
+    const otraCompra = await post(GC.POST, "/api/gift-cards/preference", { ...giftCard({ codigo_descuento: C }), intento_id: body.intento_id });
+    assert.deepEqual(Object.keys(otraCompra.json).sort(), ["codigo", "error"], "ni con otro producto");
+  }
+  console.log("OK — 20: el mismo intento con otro pedido no devuelve la compra anterior ni datos de nadie.");
 }
 
 function limpiar() {

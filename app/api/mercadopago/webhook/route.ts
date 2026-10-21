@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import MercadoPagoConfig, { Payment } from "mercadopago";
+import { mercadoPago } from "@/lib/mercadoPagoApi";
 import { verifyMpWebhook } from "@/lib/mercadopago";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { logSecurityEvent } from "@/lib/apiError";
@@ -7,10 +7,6 @@ import type { PagoMpFinanzas } from "@/lib/mercadopagoPagos";
 import { procesarPagoAprobadoReserva } from "@/lib/reservasWebhook";
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
-
-const client = new MercadoPagoConfig({
-  accessToken: accessToken!,
-});
 
 export async function POST(req: Request) {
   try {
@@ -38,8 +34,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
     }
 
-    const payment = new Payment(client);
-    const paymentData = await payment.get({ id: paymentId });
+    const paymentData = await mercadoPago.obtenerPago(String(paymentId));
 
     if (paymentData.status !== "approved") {
       return NextResponse.json({ received: true }, { status: 200 });

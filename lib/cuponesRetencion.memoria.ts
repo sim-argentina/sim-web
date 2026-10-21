@@ -13,7 +13,7 @@ type Fila = Record<string, unknown>;
 type Resp = { data: unknown; error: { message: string; code?: string } | null };
 
 const GRACIA_MS = 2 * 60_000;
-const MARGEN_MS = 5 * 60_000;
+const MARGEN_MS = 15 * 60_000;
 
 /**
  * Devuelve un manejador: (fn, args) → Promise de la respuesta de la RPC, o null
@@ -54,7 +54,8 @@ export function rpcRetencionesEnMemoria(tabla: (t: string) => Fila[], reloj: () 
         estado: "retenido", reserva_id: null, grupo_compra_id: null, external_reference: null, con_pago: false,
         preferencia_id: null, init_point: null, total_original: null, descuento: null, total_final: null, pago_id: null, nota: null,
         retenido_en: ahora.toISOString(), vence_en: new Date(ahora.getTime() + GRACIA_MS).toISOString(),
-        consumido_en: null, liberado_en: null, motivo_liberacion: null,
+        consumido_en: null, liberado_en: null, motivo_liberacion: null, preparando_por: null, preparando_hasta: null,
+        revisiones: 0, revisada_en: null, revision_resultado: null, revision_motivo: null,
       };
       ret().push(nueva);
       return ok({ ok: true, reutilizada: false, retencion: { ...nueva }, codigo: { ...c } });
@@ -65,6 +66,13 @@ export function rpcRetencionesEnMemoria(tabla: (t: string) => Fila[], reloj: () 
       if (!r) return falla("retencion_inexistente", "P0002");
       if (r.estado !== "retenido") return falla("retencion_no_retenida", "55000");
       const d = (a.p_datos ?? {}) as Fila;
+      const libreTurno = () => !r.preparando_hasta || Date.parse(String(r.preparando_hasta)) <= ahora.getTime();
+      if (d.soltar && r.preparando_por === d.soltar) Object.assign(r, { preparando_por: null, preparando_hasta: null });
+      if (d.preparar) {
+        const p = d.preparar as { token: string; segundos: number };
+        if (!libreTurno() && r.preparando_por !== p.token) return falla("preparacion_en_curso", "55000");
+        Object.assign(r, { preparando_por: p.token, preparando_hasta: new Date(ahora.getTime() + p.segundos * 1000).toISOString() });
+      }
       for (const k of ["reserva_id", "grupo_compra_id", "external_reference", "total_original", "descuento", "total_final"]) {
         if (!(k in d)) continue;
         const v = ["total_original", "descuento", "total_final", "reserva_id"].includes(k) ? Number(d[k]) : d[k];
@@ -80,8 +88,8 @@ export function rpcRetencionesEnMemoria(tabla: (t: string) => Fila[], reloj: () 
         if (vence > Date.parse(String(r.vence_en))) r.vence_en = new Date(vence).toISOString();
       }
       if (d.preferencia_id || d.init_point) {
-        r.preferencia_id = d.preferencia_id;
-        r.init_point = d.init_point;
+        if (!r.preparando_por || r.preparando_por !== d.preparacion) return falla("preparacion_perdida", "55000");
+        Object.assign(r, { preferencia_id: d.preferencia_id, init_point: d.init_point, preparando_por: null, preparando_hasta: null });
       }
       return ok({ ...r });
     }
@@ -91,6 +99,11 @@ export function rpcRetencionesEnMemoria(tabla: (t: string) => Fila[], reloj: () 
       if (!r) return falla("retencion_inexistente", "P0002");
       if (r.estado === "consumido") return ok({ resultado: "ya_consumida", pago_id: r.pago_id });
       const c = codigos().find((x) => x.id === r.codigo_id)!;
+      const pago = a.p_pago_id ? String(a.p_pago_id) : null;
+      if (tabla("usos_codigos_descuento").some((u) => u.codigo_id === c.id && ((pago && u.mercado_pago_payment_id === pago) || (r.reserva_id != null && u.reserva_id === r.reserva_id)))) {
+        Object.assign(r, { estado: "consumido", consumido_en: ahora.toISOString(), pago_id: pago ?? r.pago_id, nota: "ya_contado" });
+        return ok({ resultado: "ya_contado" });
+      }
       let nota: string | null = null;
       if (r.estado === "liberado") {
         const max = c.usos_maximos as number | null;
@@ -110,13 +123,20 @@ export function rpcRetencionesEnMemoria(tabla: (t: string) => Fila[], reloj: () 
       return ok({ resultado: nota ?? "consumida" });
     }
 
+    if (fn === "codigo_retencion_anotar_revision") {
+      const r = ret().find((x) => x.id === a.p_id);
+      if (r) Object.assign(r, { revisiones: Number(r.revisiones ?? 0) + 1, revisada_en: ahora.toISOString(), revision_resultado: a.p_resultado, revision_motivo: a.p_motivo });
+      return ok(null);
+    }
+
     if (fn === "codigo_retencion_liberar") {
       const r = ret().find((x) => x.id === a.p_id);
       if (!r) return falla("retencion_inexistente", "P0002");
       if (r.estado === "liberado") return ok({ resultado: "ya_liberada" });
       if (r.estado === "consumido") return ok({ resultado: "consumida" });
       if (a.p_motivo === "sin_oportunidad_de_pago" && r.con_pago) return falla("retencion_con_pago", "55000");
-      if (a.p_motivo === "sin_pago_tras_vencer" && (!r.con_pago || ahora.getTime() < Date.parse(String(r.vence_en)))) return falla("retencion_vigente", "55000");
+      const turno = r.preparando_hasta && Date.parse(String(r.preparando_hasta)) > ahora.getTime();
+      if (a.p_motivo === "sin_pago_tras_vencer" && (!r.con_pago || ahora.getTime() < Date.parse(String(r.vence_en)) || turno)) return falla("retencion_vigente", "55000");
       Object.assign(r, { estado: "liberado", liberado_en: ahora.toISOString(), motivo_liberacion: a.p_motivo });
       return ok({ resultado: "liberada" });
     }

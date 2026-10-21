@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import MercadoPagoConfig, { Payment } from "mercadopago";
+import { mercadoPago } from "@/lib/mercadoPagoApi";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
 import { consumirRetencionDeCompra } from "@/lib/cuponesRetencion";
@@ -16,10 +16,6 @@ import { registrarPagoWebSeguro, type PagoMpFinanzas } from "@/lib/mercadopagoPa
 // la retención de la compra (idempotente; también se asegura con una
 // notificación repetida). Un rechazo o una cancelación NO la liberan: con la
 // misma preferencia se puede volver a pagar hasta que vence.
-
-const client = new MercadoPagoConfig({
-  accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN!,
-});
 
 export async function POST(req: Request) {
   try {
@@ -44,8 +40,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Firma inválida" }, { status: 401 });
     }
 
-    const payment = new Payment(client);
-    const paymentData = await payment.get({ id: paymentId });
+    const paymentData = await mercadoPago.obtenerPago(String(paymentId));
 
     const extRef = paymentData.external_reference || "";
 

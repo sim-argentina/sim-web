@@ -23,6 +23,13 @@ declare
   v_r         text;
   v_r2        text;
   v_n         integer;
+  v_t1        uuid := gen_random_uuid();
+  v_t2        uuid := gen_random_uuid();
+  v_res       bigint;
+  v_res2      bigint;
+  v_res3      bigint;
+  v_g         uuid := gen_random_uuid();
+  v_g2        uuid := gen_random_uuid();
 begin
   begin
     -- ── Utilidades temporales (se van con el ROLLBACK) ─────────────────────
@@ -112,8 +119,14 @@ begin
                               and pg_temp.vincular(v_a, jsonb_build_object('descuento', 2999)) like '55000:retencion_ya_vinculada%'
                               and pg_temp.vincular(v_a, jsonb_build_object('grupo_compra_id', '00000000-0000-4000-8000-000000000002')) like '55000:retencion_ya_vinculada%'
                               and pg_temp.vincular(v_a, jsonb_build_object('estado', 'liberado')) like '22023:campo_desconocido:estado%'
-                              and pg_temp.vincular(v_a, jsonb_build_object('preferencia_id', 'pref-1', 'init_point', 'https://mp.invalid/1')) = 'ok'
-                           then 'R4 ' else 'FALLA:R4 ' end;
+                           then 'R4a ' else 'FALLA:R4a ' end;
+    -- Guardar el link exige el turno de preparación (y lo devuelve).
+    v_r := pg_temp.vincular(v_a, jsonb_build_object('preferencia_id', 'pref-1', 'init_point', 'https://mp.invalid/1'));
+    v_r2 := pg_temp.vincular(v_a, jsonb_build_object('preparar', jsonb_build_object('token', v_t1, 'segundos', 30)));
+    v_j := to_jsonb(pg_temp.vincular(v_a, jsonb_build_object('preferencia_id', 'pref-1', 'init_point', 'https://mp.invalid/1', 'preparacion', v_t1)));
+    v_log := v_log || case when v_r like '55000:preparacion_perdida%' and v_r2 = 'ok' and v_j = '"ok"'::jsonb
+                              and (select preferencia_id || '|' || coalesce(preparando_por::text, 'libre') from public.codigo_retenciones where id = v_a) = 'pref-1|libre'
+                           then 'R4b ' else 'FALLA:R4b ' end;
 
     -- R5 · con oportunidad de pago no se libera antes de vence_en, por ningún motivo.
     v_log := v_log || case when pg_temp.liberar(v_a, 'sin_oportunidad_de_pago') like '55000:retencion_con_pago%'
@@ -187,6 +200,75 @@ begin
                                                                from public.codigos_descuento where codigo = 'ZZRET-DOS'$q$)) like '23505:%'
                            then 'R12 ' else 'FALLA:R12 ' end;
 
+    -- R14 · turno de preparación: uno a la vez; guardar el link exige el turno; soltar lo devuelve.
+    insert into public.codigos_descuento (codigo, descripcion, tipo_descuento, valor_descuento, usos_maximos, usos_actuales, activo, creado_para)
+    values ('ZZRET-TURNO', 'verificación', 'porcentaje', 10, 1, 0, true, 'zz');
+    v_x := (pg_temp.retener(gen_random_uuid(), 'ZZRET-TURNO', 'gift_card', 'h-t') -> 'retencion' ->> 'id')::uuid;
+    perform public.codigo_retencion_vincular(v_x, jsonb_build_object('grupo_compra_id', v_g, 'external_reference', 'gift_card_' || v_g,
+             'con_pago', true, 'expira', clock_timestamp() + interval '30 minutes', 'preparar', jsonb_build_object('token', v_t1, 'segundos', 60)));
+    v_r := pg_temp.vincular(v_x, jsonb_build_object('preparar', jsonb_build_object('token', v_t2, 'segundos', 60)));
+    v_r2 := pg_temp.vincular(v_x, jsonb_build_object('preferencia_id', 'pref-t2', 'init_point', 'https://mp.invalid/t2', 'preparacion', v_t2));
+    update public.codigo_retenciones set vence_en = clock_timestamp() - interval '1 second' where id = v_x;
+    v_log := v_log || case when v_r like '55000:preparacion_en_curso%' and v_r2 like '55000:preparacion_perdida%'
+                              and pg_temp.liberar(v_x, 'sin_pago_tras_vencer') like '55000:retencion_vigente%'
+                              and pg_temp.vincular(v_x, jsonb_build_object('soltar', v_t2)) = 'ok'
+                              and (select preparando_por from public.codigo_retenciones where id = v_x) = v_t1
+                              and pg_temp.vincular(v_x, jsonb_build_object('soltar', v_t1)) = 'ok'
+                              and pg_temp.vincular(v_x, jsonb_build_object('preparar', jsonb_build_object('token', v_t2, 'segundos', 60))) = 'ok'
+                              and pg_temp.vincular(v_x, jsonb_build_object('preparar', jsonb_build_object('token', v_t2, 'segundos', 999))) like '22023:campo_invalido:preparar%'
+                              and pg_temp.vincular(v_x, jsonb_build_object('soltar', v_t2)) = 'ok'
+                              and pg_temp.liberar(v_x, 'sin_pago_tras_vencer') = 'liberada'
+                           then 'R14 ' else 'FALLA:R14 ' end;
+
+    -- R15 · compras anteriores sin retención: se cubren (una vez) al retener ese código.
+    insert into public.codigos_descuento (codigo, descripcion, tipo_descuento, valor_descuento, usos_maximos, usos_actuales, activo, creado_para)
+    values ('ZZRET-LEGADO', 'verificación', 'porcentaje', 10, 1, 0, true, 'zz'),
+           ('ZZRET-LEGADO-GC', 'verificación', 'porcentaje', 10, 1, 0, true, 'zz');
+    insert into public.reservas (nombre, telefono, fecha, hora, simuladores, cantidad_turnos, total, total_original, descuento_aplicado, estado, codigo_descuento, created_at)
+    values ('zz verificación', '3519990000', '2026-12-01', '10:00', '[]'::jsonb, 1, 9000, 10000, 1000, 'pendiente_pago', 'zzret-legado', now() - interval '1 hour')
+    returning id into v_res;
+    insert into public.reservas (nombre, telefono, fecha, hora, simuladores, cantidad_turnos, total, total_original, descuento_aplicado, estado, codigo_descuento)
+    values ('zz verificación', '3519990000', '2026-12-01', '11:00', '[]'::jsonb, 1, 9000, 10000, 1000, 'pendiente_pago', 'ZZRET-LEGADO')
+    returning id into v_res2;
+    insert into public.reservas (nombre, telefono, fecha, hora, simuladores, cantidad_turnos, total, total_original, descuento_aplicado, estado, codigo_descuento, mercado_pago_payment_id, created_at)
+    values ('zz verificación', '3519990000', '2026-12-01', '12:00', '[]'::jsonb, 1, 9000, 10000, 1000, 'activa', 'ZZRET-LEGADO', 'PAGO-VIEJO', now() - interval '1 hour')
+    returning id into v_res3;
+    insert into public.gift_cards (codigo_unico, comprador_nombre, comprador_telefono, duracion_minutos, monto, monto_original, descuento_aplicado,
+                                   estado_pago, codigo_descuento, grupo_compra_id, mercado_pago_preference_id, created_at)
+    values ('ZZRET-GC-1', 'zz verificación', '3519990000', 20, 9000, 10000, 1000, 'rechazado', 'ZZRET-LEGADO-GC', v_g2, 'pref-vieja', now() - interval '1 hour'),
+           ('ZZRET-GC-2', 'zz verificación', '3519990000', 20, 9000, 10000, 1000, 'rechazado', 'ZZRET-LEGADO-GC', v_g2, 'pref-vieja', now() - interval '1 hour');
+    v_j := pg_temp.retener(gen_random_uuid(), 'ZZRET-LEGADO', 'reserva', 'h-l');
+    v_j2 := pg_temp.retener(gen_random_uuid(), 'ZZRET-LEGADO-GC', 'gift_card', 'h-l');
+    v_log := v_log || case when v_j ->> 'motivo' = 'en_uso' and jsonb_array_length(v_j -> 'vencidas') = 1
+                              and (select nota || '|' || con_pago || '|' || external_reference from public.codigo_retenciones where reserva_id = v_res) = 'legado|true|reserva_' || v_res
+                              and not exists (select 1 from public.codigo_retenciones where reserva_id in (v_res2, v_res3))
+                              and v_j2 ->> 'motivo' = 'en_uso'
+                              and (select count(*) || '|' || max(preferencia_id) || '|' || max(total_final) from public.codigo_retenciones where grupo_compra_id = v_g2 and nota = 'legado') = '1|pref-vieja|18000'
+                              and public.codigo_retenciones_cubrir_legado((select id from public.codigos_descuento where codigo = 'ZZRET-LEGADO'), interval '0') = 1
+                              and public.codigo_retenciones_cubrir_legado((select id from public.codigos_descuento where codigo = 'ZZRET-LEGADO'), interval '0') = 0
+                           then 'R15 ' else 'FALLA:R15 ' end;
+
+    -- R16 · el uso que ya contó el camino anterior (mismo pago o misma reserva) no se suma dos veces.
+    insert into public.codigos_descuento (codigo, descripcion, tipo_descuento, valor_descuento, usos_maximos, usos_actuales, activo, creado_para)
+    values ('ZZRET-DOBLE', 'verificación', 'porcentaje', 10, 2, 1, true, 'zz');
+    v_x := (pg_temp.retener(gen_random_uuid(), 'ZZRET-DOBLE', 'gift_card', 'h-d') -> 'retencion' ->> 'id')::uuid;
+    insert into public.usos_codigos_descuento (codigo_id, codigo, mercado_pago_payment_id)
+    select id, codigo, 'PAGO-YA-CONTADO' from public.codigos_descuento where codigo = 'ZZRET-DOBLE';
+    v_r := pg_temp.consumir(v_x, 'PAGO-YA-CONTADO');
+    v_log := v_log || case when v_r = 'ya_contado' and pg_temp.usos('ZZRET-DOBLE') = '1|true'
+                              and (select estado || '|' || nota || '|' || pago_id from public.codigo_retenciones where id = v_x) = 'consumido|ya_contado|PAGO-YA-CONTADO'
+                              and (select count(*) from public.usos_codigos_descuento where codigo = 'ZZRET-DOBLE') = 1
+                              and pg_temp.consumir(v_x, 'PAGO-YA-CONTADO') = 'ya_consumida'
+                           then 'R16 ' else 'FALLA:R16 ' end;
+
+    -- R17 · registro de revisión: suma y anota, sin cambiar el estado.
+    perform public.codigo_retencion_anotar_revision(v_x, 'retenida', 'pago_abierto');
+    perform public.codigo_retencion_anotar_revision(v_x, 'retenida', 'mercado_pago_no_responde');
+    v_log := v_log || case when (select revisiones || '|' || revision_resultado || '|' || revision_motivo || '|' || estado || '|' || (revisada_en is not null)
+                                   from public.codigo_retenciones where id = v_x) = '2|retenida|mercado_pago_no_responde|consumido|true'
+                              and pg_temp.intentar(format($q$select public.codigo_retencion_anotar_revision(%L, 'inventado', 'x')$q$, v_x)) like '22023:resultado_invalido%'
+                           then 'R17 ' else 'FALLA:R17 ' end;
+
     -- R13 · permisos: service_role solo lee la tabla; anon no ejecuta nada.
     execute 'set local role service_role';
     v_r := pg_temp.intentar($q$update public.codigo_retenciones set estado = 'consumido'$q$);
@@ -197,8 +279,12 @@ begin
     if pg_temp.intentar($q$select public.codigo_retener(gen_random_uuid(), 'ZZRET-DOS', 'reserva', 'h')$q$) like '42501:%' then v_n := v_n + 1; end if;
     if pg_temp.intentar($q$select count(*) from public.codigo_retenciones$q$) like '42501:%' then v_n := v_n + 1; end if;
     if pg_temp.intentar($q$select public.consumir_codigo_descuento('ZZRET-DOS')$q$) like '42501:%' then v_n := v_n + 1; end if;
+    if pg_temp.intentar($q$select public.codigo_retencion_anotar_revision(gen_random_uuid(), 'retenida', 'x')$q$) like '42501:%' then v_n := v_n + 1; end if;
     execute 'reset role';
-    v_log := v_log || case when v_r like '42501:%' and v_r2 = 'ok' and v_n = 3 then 'R13 ' else 'FALLA:R13 ' end;
+    execute 'set local role service_role';
+    if pg_temp.intentar($q$select public.codigo_retenciones_cubrir_legado(1, interval '0')$q$) like '42501:%' then v_n := v_n + 1; end if;
+    execute 'reset role';
+    v_log := v_log || case when v_r like '42501:%' and v_r2 = 'ok' and v_n = 5 then 'R13 ' else 'FALLA:R13 ' end;
 
     raise exception 'CUPONES-RETENCION|%', v_log;
   exception when others then

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import MercadoPagoConfig, { Preference } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   productoGiftCardDe,
@@ -17,9 +16,10 @@ import {
   evaluarCodigoDescuento,
 } from "@/lib/codigosDescuento";
 import {
-  consumirRetencion, huellaIntento, intentoDe, liberarRetencion, pasoReintento, retencionDeIntento, retenerCupon, vencimientoPreferencia,
-  vincularRetencion, type EstadoCompraIntento, type FalloCupon, type Retencion,
+  CONSUMO_OK, consumirRetencion, huellaIntento, intentoDe, liberarRetencion, pasoReintento, prepararPagoConRetencion,
+  retencionDeIntento, retenerCupon, vincularRetencion, type EstadoCompraIntento, type FalloCupon, type Retencion,
 } from "@/lib/cuponesRetencion";
+import { mercadoPago } from "@/lib/mercadoPagoApi";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
@@ -36,7 +36,6 @@ import { registrarPromosCheckout } from "@/lib/marketing/checkoutPromos";
 // Con un cupón de usos limitados la compra entera tiene UNA retención.
 
 const falloCuponJson = (f: FalloCupon) => NextResponse.json({ error: f.error, codigo: f.codigo }, { status: f.status });
-const USADO = new Set(["consumida", "ya_consumida", "consumida_tras_liberar"]);
 
 /** Estado de la compra de un intento que se reintenta. */
 async function estadoGrupoDelIntento(r: Retencion): Promise<EstadoCompraIntento> {
@@ -54,7 +53,6 @@ async function estadoGrupoDelIntento(r: Retencion): Promise<EstadoCompraIntento>
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
 
-const client = new MercadoPagoConfig({ accessToken: accessToken! });
 
 function isInvalidBaseUrl(url: string) {
   return url.includes("localhost") || url.includes("127.0.0.1");
@@ -76,7 +74,6 @@ export async function POST(req: Request) {
   let grupoId: string | null = null;
   // Cupón de usos limitados: retenido ANTES de habilitar el pago con descuento.
   let retencion: Retencion | null = null;
-  let conPagoMarcado = false;
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -185,7 +182,7 @@ export async function POST(req: Request) {
         }
         if (paso.paso === "completada") {
           if (!h.retencion.grupo_compra_id) return falloCuponJson({ ok: false, status: 409, error: "Este intento de pago venció. Volvé a armar tu compra.", codigo: "intento_vencido" });
-          if (h.retencion.estado === "retenido" && !USADO.has(await consumirRetencion(h.retencion.id, null))) {
+          if (h.retencion.estado === "retenido" && !CONSUMO_OK.has(await consumirRetencion(h.retencion.id, null))) {
             return falloCuponJson({ ok: false, status: 409, error: "El código de descuento ya no está disponible", codigo: "agotado" });
           }
           // Si el pedido anterior murió entre el consumo y la activación, se
@@ -301,7 +298,7 @@ export async function POST(req: Request) {
         await vincularRetencion(retencion.id, {
           grupo_compra_id: grupoId, total_original: montoOriginal, descuento: descuentoAplicado, total_final: 0,
         });
-        if (!USADO.has(await consumirRetencion(retencion.id, null, { nombre: comprador_nombre, telefono: comprador_telefono }))) {
+        if (!CONSUMO_OK.has(await consumirRetencion(retencion.id, null, { nombre: comprador_nombre, telefono: comprador_telefono }))) {
           retencion = null;
           await supabaseAdmin
             .from("gift_cards")
@@ -360,47 +357,54 @@ export async function POST(req: Request) {
         ? `${cantidad} Gift Cards SIM · ${producto.duracion} min${modo_uso === "juntas" ? " (juntas)" : ""}`
         : `Gift Card SIM Argentina · ${producto.duracion} min`;
 
-    // La oportunidad de pago se anota en la retención ANTES de pedirle la
-    // preferencia a Mercado Pago (si la respuesta no llega, la retención igual
-    // sabe que pudo existir un pago hasta `expira`).
-    const vencimiento = retencion ? vencimientoPreferencia(new Date()) : null;
-    if (retencion && vencimiento) {
-      await vincularRetencion(retencion.id, {
-        grupo_compra_id: grupoId, external_reference: `gift_card_${grupoId}`,
-        total_original: montoOriginal, descuento: descuentoAplicado, total_final: montoFinal,
-        con_pago: true, expira: vencimiento.expira,
-      });
-      conPagoMarcado = true;
-    }
-
-    const preference = new Preference(client);
-    const result = await preference.create({
-      body: {
-        items: [
-          {
-            id: `gift-card-${grupoId}`,
-            title: titulo,
-            quantity: 1,
-            unit_price: montoFinal,
-            currency_id: "ARS",
-          },
-        ],
-        external_reference: `gift_card_${grupoId}`,
-        back_urls: {
-          success: `${baseUrl}/gift-cards/exito`,
-          failure: `${baseUrl}/gift-cards/error`,
-          pending: `${baseUrl}/gift-cards/pendiente`,
+    const cuerpo = (extra: Record<string, unknown> = {}) => ({
+      items: [
+        {
+          id: `gift-card-${grupoId}`,
+          title: titulo,
+          quantity: 1,
+          unit_price: montoFinal,
+          currency_id: "ARS",
         },
-        notification_url: `${baseUrl}/api/gift-cards/webhook`,
-        // Con cupón limitado la preferencia vence: es lo que acota la retención.
-        ...(vencimiento ? vencimiento.campos : {}),
+      ],
+      external_reference: `gift_card_${grupoId}`,
+      back_urls: {
+        success: `${baseUrl}/gift-cards/exito`,
+        failure: `${baseUrl}/gift-cards/error`,
+        pending: `${baseUrl}/gift-cards/pendiente`,
       },
+      notification_url: `${baseUrl}/api/gift-cards/webhook`,
+      ...extra,
     });
 
-    // El link queda en la retención: un reintento del mismo intento recibe ESTE
-    // link y no uno nuevo. Si no se puede guardar, no se entrega.
+    let result: { id: string; init_point?: string | null; sandbox_init_point?: string | null };
     if (retencion) {
-      await vincularRetencion(retencion.id, { preferencia_id: String(result.id), init_point: String(result.init_point) });
+      // Turno + oportunidad de pago anotada ANTES de pedirle la preferencia a
+      // Mercado Pago, con vencimiento (es lo que acota la retención), y el link
+      // guardado en la retención: un reintento recibe ESTE link, no otro. En un
+      // reintento, primero se recupera la que pudo quedar creada.
+      const pago = await prepararPagoConRetencion({
+        retencion,
+        reintento: rehacer,
+        vinculo: {
+          grupo_compra_id: grupoId, external_reference: `gift_card_${grupoId}`,
+          total_original: montoOriginal, descuento: descuentoAplicado, total_final: montoFinal,
+        },
+        crear: (campos) => mercadoPago.crearPreferencia(cuerpo(campos)),
+      });
+      if (!pago.ok) {
+        if (pago.fallo.codigo === "verificando_pago") {
+          await supabaseAdmin
+            .from("gift_cards")
+            .update({ estado_pago: "cancelado", updated_at: nowIso })
+            .eq("grupo_compra_id", grupoId)
+            .is("mercado_pago_payment_id", null);
+        }
+        return falloCuponJson(pago.fallo);
+      }
+      result = { ...pago.preferencia, sandbox_init_point: null };
+    } else {
+      result = await mercadoPago.crearPreferencia(cuerpo());
     }
 
     await supabaseAdmin
@@ -428,10 +432,10 @@ export async function POST(req: Request) {
         .eq("grupo_compra_id", grupoId)
         .is("mercado_pago_payment_id", null);
     }
-    // Sin oportunidad de pago anotada, nada pudo cobrarse con este cupón. Con
-    // ella, la preferencia pudo crearse aunque no llegó la respuesta: la
-    // retención queda hasta su vencimiento y la verificación en Mercado Pago.
-    if (retencion && !conPagoMarcado) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
+    // Sin oportunidad de pago anotada, nada pudo cobrarse con este cupón y se
+    // libera. Con ella, la preferencia pudo crearse aunque no llegó la respuesta:
+    // la base se niega a liberar y la retención queda hasta vencer y verificarse.
+    if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
     return failResponse(500, "No se pudo crear la preferencia de Gift Card", {
       logContext: "pref-gift",
       error,

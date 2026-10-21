@@ -10,7 +10,7 @@ import {
   evaluarCodigoDescuento,
 } from "@/lib/codigosDescuento";
 import {
-  consumirRetencion, huellaIntento, intentoDe, liberarRetencion, pasoReintento, retencionDeIntento, retenerCupon, vincularRetencion,
+  CONSUMO_OK, consumirRetencion, huellaIntento, intentoDe, liberarRetencion, pasoReintento, retencionDeIntento, retenerCupon, vincularRetencion,
   type FalloCupon, type Retencion,
 } from "@/lib/cuponesRetencion";
 import { getCurrentAdminRole } from "@/lib/adminGuards";
@@ -90,7 +90,6 @@ const falloJson = (f: Fallo) =>
     { status: f.status },
   );
 const falloCuponJson = (f: FalloCupon) => NextResponse.json({ error: f.error, codigo: f.codigo }, { status: f.status });
-const USADO = new Set(["consumida", "ya_consumida", "consumida_tras_liberar"]);
 
 // POST: SOLO crea reservas 100% bonificadas (gratis). Con saldo > 0 se exige
 // pago online. Precio recalculado server-side; turno reservado con garantía DB.
@@ -176,7 +175,7 @@ export async function POST(req: Request) {
         if (paso.paso === "rechazar") return falloCuponJson(paso.fallo);
         if (paso.paso === "completada") {
           if (!previa) return falloCuponJson({ ok: false, status: 409, error: "Este intento de pago venció. Volvé a armar tu compra.", codigo: "intento_vencido" });
-          if (h.retencion.estado === "retenido" && !USADO.has(await consumirRetencion(h.retencion.id, null))) {
+          if (h.retencion.estado === "retenido" && !CONSUMO_OK.has(await consumirRetencion(h.retencion.id, null))) {
             return falloCuponJson({ ok: false, status: 409, error: "El código de descuento ya no está disponible", codigo: "agotado" });
           }
           return NextResponse.json({ ...previa, promos: "no_solicitada" }, { status: 201 });
@@ -264,7 +263,7 @@ export async function POST(req: Request) {
       const r = await consumirRetencion(retencion.id, null, {
         nombre: data.nombre, telefono: data.telefono, fecha_reserva: data.fecha, hora_reserva: data.hora,
       });
-      if (!USADO.has(r)) {
+      if (!CONSUMO_OK.has(r)) {
         await supabaseAdmin.from("reservas").delete().eq("id", data.id);
         reservaCreadaId = null;
         return NextResponse.json(
