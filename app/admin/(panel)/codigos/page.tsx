@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import EmpresasTab from "./EmpresasTab";
+import RetencionesCodigo from "./RetencionesCodigo";
 
 type CodigoDescuento = {
   id: number;
@@ -20,7 +21,18 @@ type CodigoDescuento = {
   activo: boolean;
   creado_para?: string | null;
   created_at: string;
+  /** Cupones limitados: usos apartados por compras en curso (null = sin la migración). */
+  retenciones?: { retenidas: number; a_revisar: number; sin_cupo: number } | null;
 };
+
+/**
+ * Lo que queda para usar: máximo − consumidos − retenidos. Un código con 0
+ * consumidos pero apartado por una compra en curso NO está disponible.
+ */
+function disponibles(c: CodigoDescuento): number | null {
+  if (c.usos_maximos === null || c.usos_maximos === undefined) return null;
+  return Math.max(0, Number(c.usos_maximos) - Number(c.usos_actuales || 0) - Number(c.retenciones?.retenidas || 0));
+}
 
 // (B9) Duraciones elegibles para un código NUEVO según la modalidad VIGENTE: las
 // resuelve el servidor (GET /api/codigos-descuento), nunca el bundle ni el reloj.
@@ -106,6 +118,8 @@ export default function AdminCodigosPage() {
   // Vista Promocionales | Empresas. Empresas es admin-only (UI + backend).
   const [role, setRole] = useState<string | null>(null);
   const [vista, setVista] = useState<"promocionales" | "empresas">("promocionales");
+  const [retencionesInstaladas, setRetencionesInstaladas] = useState(true);
+  const [abierto, setAbierto] = useState<number | null>(null);
 
   async function cargarCodigos() {
     try {
@@ -123,6 +137,7 @@ export default function AdminCodigosPage() {
       }
 
       setCodigos(data.codigos || []);
+      setRetencionesInstaladas(data.retenciones_instaladas !== false);
       if (data.catalogo) setCatalogo(data.catalogo as CatalogoCodigos);
     } catch (error) {
       console.error(error);
@@ -286,17 +301,31 @@ export default function AdminCodigosPage() {
           <EmpresasTab />
         ) : (
         <>
-        <div className="mb-6 grid gap-3 md:grid-cols-3">
+        <div className="mb-6 grid gap-3 md:grid-cols-5">
           <CardResumen titulo="Códigos creados" valor={codigos.length} />
           <CardResumen titulo="Activos" valor={codigosActivos} />
           <CardResumen
-            titulo="Usos acumulados"
+            titulo="Usos consumidos"
             valor={codigos.reduce(
               (acc, codigo) => acc + Number(codigo.usos_actuales || 0),
               0
             )}
           />
+          <CardResumen
+            titulo="Retenidos (compras en curso)"
+            valor={codigos.reduce((acc, c) => acc + Number(c.retenciones?.retenidas || 0), 0)}
+          />
+          <CardResumen
+            titulo="Retenciones a revisar"
+            valor={codigos.reduce((acc, c) => acc + Number(c.retenciones?.a_revisar || 0), 0)}
+          />
         </div>
+        {!retencionesInstaladas && (
+          <p className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+            Las retenciones de cupones todavía no están instaladas en esta base: los usos retenidos no se pueden mostrar y
+            los cupones con límite de usos no se aceptan en el checkout hasta aplicar la migración.
+          </p>
+        )}
 
         <form
           onSubmit={crearCodigo}
@@ -526,23 +555,26 @@ export default function AdminCodigosPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[1200px] space-y-2">
-                <div className="grid grid-cols-[1.1fr_1.2fr_1fr_90px_90px_95px_95px_110px_96px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
+              <div className="min-w-[1420px] space-y-2">
+                <div className="grid grid-cols-[1.1fr_1.1fr_0.9fr_80px_115px_105px_115px_95px_95px_110px_120px_96px] gap-2 px-3 text-xs font-black uppercase tracking-[0.15em] text-white/35">
                   <span>Código</span>
                   <span>Para</span>
                   <span>Tipo</span>
                   <span>Valor</span>
-                  <span>Usos</span>
+                  <span>Consumidos</span>
+                  <span>Retenidos</span>
+                  <span>Disponibles</span>
                   <span>Inicio</span>
                   <span>Fin</span>
                   <span>Estado</span>
+                  <span>Retenciones</span>
                   <span>Eliminar</span>
                 </div>
 
                 {codigos.map((codigo) => (
+                  <div key={codigo.id}>
                   <div
-                    key={codigo.id}
-                    className={`grid grid-cols-[1.1fr_1.2fr_1fr_90px_90px_95px_95px_110px_96px] items-center gap-2 rounded-xl border px-3 py-3 text-sm ${
+                    className={`grid grid-cols-[1.1fr_1.1fr_0.9fr_80px_115px_105px_115px_95px_95px_110px_120px_96px] items-center gap-2 rounded-xl border px-3 py-3 text-sm ${
                       codigo.activo
                         ? "border-white/10 bg-black"
                         : "border-white/5 bg-white/[0.02] opacity-50"
@@ -573,6 +605,20 @@ export default function AdminCodigosPage() {
                       {codigo.usos_maximos ? `/${codigo.usos_maximos}` : ""}
                     </span>
 
+                    <span className={Number(codigo.retenciones?.retenidas || 0) > 0 ? "font-black text-amber-300" : "text-white/60"}>
+                      {codigo.retenciones ? codigo.retenciones.retenidas : "-"}
+                    </span>
+
+                    <span>
+                      {disponibles(codigo) === null ? (
+                        <span className="text-white/60">Sin límite</span>
+                      ) : disponibles(codigo) === 0 && Number(codigo.retenciones?.retenidas || 0) > 0 ? (
+                        <span className="font-black text-amber-300">0 · apartado</span>
+                      ) : (
+                        <span className={disponibles(codigo) === 0 ? "text-white/40" : "font-black"}>{disponibles(codigo)}</span>
+                      )}
+                    </span>
+
                     <span>{codigo.fecha_inicio || "-"}</span>
                     <span>{codigo.fecha_fin || "-"}</span>
 
@@ -590,15 +636,37 @@ export default function AdminCodigosPage() {
 
                     <button
                       type="button"
+                      onClick={() => setAbierto(abierto === codigo.id ? null : codigo.id)}
+                      aria-expanded={abierto === codigo.id}
+                      className={`rounded-xl border px-3 py-2 text-xs font-black uppercase transition ${
+                        Number(codigo.retenciones?.a_revisar || 0) > 0
+                          ? "border-amber-500/60 text-amber-300 hover:bg-amber-500/10"
+                          : "border-white/15 text-white/70 hover:bg-white/10"
+                      }`}
+                    >
+                      {Number(codigo.retenciones?.a_revisar || 0) > 0 ? `Revisar (${codigo.retenciones?.a_revisar})` : abierto === codigo.id ? "Ocultar" : "Ver"}
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => eliminarCodigo(codigo)}
                       className="rounded-xl border border-red-500/40 px-3 py-2 text-xs font-black uppercase text-red-400 transition hover:bg-red-600 hover:text-white"
                     >
                       Eliminar
                     </button>
                   </div>
+                  </div>
                 ))}
               </div>
             </div>
+          )}
+          {abierto !== null && codigos.some((c) => c.id === abierto) && (
+            <RetencionesCodigo
+              key={abierto}
+              codigoId={abierto}
+              codigo={codigos.find((c) => c.id === abierto)!.codigo}
+              onCambio={cargarCodigos}
+            />
           )}
         </div>
         </>

@@ -11,6 +11,8 @@ import {
   CircleAlert,
 } from "lucide-react";
 import TeamCard from "@/components/TeamCard";
+import { guardarPagoPendiente, intentoParaPedido, intentoTerminado, olvidarIntento, olvidarPagoPendiente } from "@/lib/intentoCompra";
+import PagoPendiente from "@/components/PagoPendiente";
 import OptInPromos, { mensajePromosTrasCompra, type OptInPromosValor } from "@/components/OptInPromos";
 import {
   gaEvent, setPendingPurchase,
@@ -235,7 +237,6 @@ export default function ReservasPage() {
   const ofertaRef = useRef<Oferta | null>(null);
   // Cada carga tiene un número: una respuesta vieja nunca pisa a una nueva.
   const solicitudRef = useRef(0);
-  const intentoRef = useRef<{ clave: string; cuerpo: string } | null>(null);
 
   const [selectedDate, setSelectedDate] = useState<string>("");
   const [selectedTime, setSelectedTime] = useState<string>("");
@@ -690,14 +691,11 @@ export default function ReservasPage() {
       ...(promos ? { promos } : {}),
     };
 
-    // Clave del intento: la MISMA en cada reintento de este pedido (con un cupón
-    // limitado el servidor devuelve el mismo link de pago en vez de abrir otro);
-    // cambia si cambia el pedido.
-    const cuerpoIntento = JSON.stringify(payload);
-    if (!intentoRef.current || intentoRef.current.cuerpo !== cuerpoIntento) {
-      intentoRef.current = { clave: crypto.randomUUID(), cuerpo: cuerpoIntento };
-    }
-    const intento_id = intentoRef.current.clave;
+    // Clave del intento: la MISMA para este pedido aunque se recargue la página o
+    // se vuelva desde Mercado Pago (con un cupón limitado el servidor devuelve el
+    // mismo link en vez de abrir otro); otra en cuanto cambia el pedido. La casilla
+    // de promociones trae un token nuevo en cada carga: no cuenta como cambio.
+    const intento_id = intentoParaPedido("reserva", { ...payload, promos: undefined });
 
     // Lo elegido, para conservarlo si hay que recargar la oferta.
     const pedidoActual = { fecha: selectedDate, duracion };
@@ -729,7 +727,7 @@ export default function ReservasPage() {
         const result = await response.json().catch(() => null);
 
         if (!response.ok) {
-          if (result?.codigo === "intento_vencido" || result?.codigo === "intento_con_otro_pedido") intentoRef.current = null;
+          if (intentoTerminado(result?.codigo)) olvidarIntento("reserva");
           if (esCatalogoActualizado(response, result)) {
             await cargarOferta(pedidoActual, "catalogo_actualizado", preferencia);
             return;
@@ -757,7 +755,8 @@ export default function ReservasPage() {
             mensajePromosTrasCompra(result?.promos)].filter(Boolean).join(" ")
         );
 
-        intentoRef.current = null;
+        olvidarIntento("reserva");
+        olvidarPagoPendiente("reserva");
         setName("");
         setPhone("");
         setSelectedTeams([]);
@@ -794,7 +793,7 @@ export default function ReservasPage() {
       const result = await response.json().catch(() => null);
 
       if (!response.ok) {
-        if (result?.codigo === "intento_vencido" || result?.codigo === "intento_con_otro_pedido") intentoRef.current = null;
+        if (intentoTerminado(result?.codigo)) olvidarIntento("reserva");
         // La oferta cambió (corte de modalidad o precio nuevo): no es un error
         // técnico. No se creó reserva ni preferencia; se muestra la vigente.
         if (esCatalogoActualizado(response, result)) {
@@ -833,6 +832,12 @@ export default function ReservasPage() {
         transaction_id: result?.reserva_id ? `reserva_${result.reserva_id}` : null,
       });
       setPendingPurchase({ value: totalFinal, currency: "ARS", type: "reserva" });
+      // Si vuelve desde Mercado Pago, la página ofrece continuar ESTE pago.
+      guardarPagoPendiente("reserva", {
+        link: paymentUrl,
+        descripcion: `Reserva del ${selectedDate.split("-").reverse().slice(0, 2).join("/")} a las ${selectedTime} · ${selectedTeams.join(", ")} · $ ${totalFinal.toLocaleString("es-AR")}`,
+        conCupon: Boolean(codigoAplicado),
+      });
 
       window.location.href = paymentUrl;
     } catch (error) {
@@ -878,6 +883,7 @@ export default function ReservasPage() {
   return (
     <main className="min-h-screen bg-black text-white">
       <section className="mx-auto max-w-7xl px-4 py-8 md:px-6 lg:px-8">
+        <PagoPendiente flujo="reserva" />
         <div className="overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-r from-red-950/40 via-zinc-950 to-zinc-900">
           <div className="grid gap-8 p-6 md:p-10 lg:grid-cols-[1.5fr_0.9fr]">
             <div>

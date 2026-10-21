@@ -18,6 +18,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["scripts/pruebas/next-local.mjs", "start", "--port", "3100"],
       "port": 3100
+    },
+    {
+      "name": "cupones-local",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/pruebas/next-local.mjs", "dev", "--port", "3110", "--mp-simulado"],
+      "port": 3110
     }
   ]
 }

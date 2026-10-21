@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Gift, ArrowLeft, ShieldCheck, CircleAlert } from "lucide-react";
 import { GIFT_CARD_CONDICIONES, GIFT_CARD_MAX_CANTIDAD } from "@/lib/giftCards";
+import { guardarPagoPendiente, intentoParaPedido, intentoTerminado, olvidarIntento, olvidarPagoPendiente } from "@/lib/intentoCompra";
+import PagoPendiente from "@/components/PagoPendiente";
 import OptInPromos, { type OptInPromosValor } from "@/components/OptInPromos";
 import {
   gaEvent, setPendingPurchase,
@@ -60,7 +62,6 @@ export default function GiftCardsPage() {
   const [acepto, setAcepto] = useState(false);
   // Casilla VOLUNTARIA de promociones, aparte de las condiciones. null = no marcada.
   const [promos, setPromos] = useState<OptInPromosValor>(null);
-  const intentoRef = useRef<{ clave: string; cuerpo: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -206,14 +207,11 @@ export default function GiftCardsPage() {
       // Solo si la persona marcó la casilla de promociones. La compra no depende de esto.
       ...(promos ? { promos } : {}),
     };
-    // Clave del intento: la MISMA en cada reintento de este pedido (con un cupón
-    // limitado el servidor devuelve el mismo link de pago en vez de abrir otro);
-    // cambia si cambia el pedido.
-    const cuerpoIntento = JSON.stringify(payload);
-    if (!intentoRef.current || intentoRef.current.cuerpo !== cuerpoIntento) {
-      intentoRef.current = { clave: crypto.randomUUID(), cuerpo: cuerpoIntento };
-    }
-    const intento_id = intentoRef.current.clave;
+    // Clave del intento: la MISMA para este pedido aunque se recargue la página o
+    // se vuelva desde Mercado Pago (con un cupón limitado el servidor devuelve el
+    // mismo link en vez de abrir otro); otra en cuanto cambia el pedido. La casilla
+    // de promociones trae un token nuevo en cada carga: no cuenta como cambio.
+    const intento_id = intentoParaPedido("gift_card", { ...payload, promos: undefined });
     try {
       const res = await fetch("/api/gift-cards/preference", {
         method: "POST",
@@ -221,7 +219,7 @@ export default function GiftCardsPage() {
         body: JSON.stringify({ ...payload, intento_id }),
       });
       const data = await res.json().catch(() => ({}));
-      if (data?.codigo === "intento_vencido" || data?.codigo === "intento_con_otro_pedido") intentoRef.current = null;
+      if (intentoTerminado(data?.codigo)) olvidarIntento("gift_card");
       if (res.status === 409 && data?.codigo === "catalogo_actualizado") {
         // Cambió el catálogo (el corte): no se creó nada. Los datos personales
         // quedan; la Gift Card elegida y el código se limpian y se vuelve a elegir.
@@ -240,6 +238,8 @@ export default function GiftCardsPage() {
       // Gift Card 100% bonificada: salta Mercado Pago. La conversión (purchase value 0)
       // se emite en /gift-cards/exito con external_reference estable (dedupe).
       if (data.free && data.grupo_compra_id) {
+        olvidarIntento("gift_card");
+        olvidarPagoPendiente("gift_card");
         setPendingPurchase({ value: 0, currency: "ARS", type: "gift_card" });
         window.location.href = `/gift-cards/exito?external_reference=gift_card_${data.grupo_compra_id}`;
         return;
@@ -259,6 +259,12 @@ export default function GiftCardsPage() {
         transaction_id: data.grupo_compra_id ? `gift_card_${data.grupo_compra_id}` : null,
       });
       setPendingPurchase({ value: totalFinal, currency: "ARS", type: "gift_card" });
+      // Si vuelve desde Mercado Pago, la página ofrece continuar ESTE pago.
+      guardarPagoPendiente("gift_card", {
+        link: url,
+        descripcion: `${cantidad} Gift Card${cantidad > 1 ? "s" : ""} de ${producto.duracion} min · $ ${totalFinal.toLocaleString("es-AR")}`,
+        conCupon: Boolean(codigoAplicado),
+      });
       window.location.href = url;
     } catch {
       setError("Error de conexión. Intentá de nuevo.");
@@ -273,6 +279,7 @@ export default function GiftCardsPage() {
   return (
     <main className="min-h-screen bg-black text-white">
       <section className="mx-auto max-w-6xl px-4 py-10 md:px-6 lg:px-8">
+        <PagoPendiente flujo="gift_card" />
         <Link
           href="/vivi-sim"
           className="mb-8 inline-flex items-center gap-2 text-sm font-bold text-zinc-400 transition hover:text-white"
