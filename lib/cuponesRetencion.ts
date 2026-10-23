@@ -188,6 +188,12 @@ export async function retenerCupon(args: {
     }
     const r = data as RespuestaRetener;
     if (r.ok) return { ok: true, retencion: r.retencion, fila: r.codigo, reutilizada: r.reutilizada };
+    // Nuevas retenciones pausadas (codigo_retenciones_control): falla cerrada,
+    // igual que sin la migración. Lo que ya estaba retenido sigue su curso.
+    if (r.motivo === "pausado") {
+      logSecurityEvent("cupon_limitado_pausado", { producto: args.producto });
+      return falloCupon("no_disponible");
+    }
     if (r.motivo === "en_uso" && vuelta === 0 && r.vencidas?.length) {
       let alguna = false;
       for (const id of r.vencidas) {

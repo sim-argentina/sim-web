@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/adminGuards";
 import { failResponse } from "@/lib/apiError";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { catalogoCodigosVigente, prepararDuracionesAlta } from "@/lib/codigosComercial";
-import { resumenRetencionesPorCodigo } from "@/lib/cuponesRetencionPanel";
+import { pausaDeRetenciones, resumenRetencionesPorCodigo } from "@/lib/cuponesRetencionPanel";
 
 function generarCodigo() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -37,8 +37,9 @@ export async function GET() {
   // Cupones limitados: usos retenidos por compras en curso y los que piden
   // revisión (lib/cuponesRetencionPanel.ts). Sin la migración, null.
   let resumen: Awaited<ReturnType<typeof resumenRetencionesPorCodigo>> = null;
+  let pausa: Awaited<ReturnType<typeof pausaDeRetenciones>> = null;
   try {
-    resumen = await resumenRetencionesPorCodigo();
+    [resumen, pausa] = await Promise.all([resumenRetencionesPorCodigo(), pausaDeRetenciones()]);
   } catch (error) {
     return failResponse(500, "Error cargando las retenciones", { logContext: "codigos-descuento GET retenciones", error });
   }
@@ -47,7 +48,7 @@ export async function GET() {
   // (B9) Con la lista va el catálogo VIGENTE: el formulario ofrece sus duraciones
   // (legacy 15/30, v2 10/20/30) y nunca una lista fija del bundle.
   return NextResponse.json(
-    { codigos, catalogo: await catalogoCodigosVigente(), retenciones_instaladas: resumen !== null },
+    { codigos, catalogo: await catalogoCodigosVigente(), retenciones_instaladas: resumen !== null, retenciones_pausa: pausa },
     { headers: { "Cache-Control": "no-store, max-age=0" } }
   );
 }

@@ -119,6 +119,7 @@ export default function AdminCodigosPage() {
   const [role, setRole] = useState<string | null>(null);
   const [vista, setVista] = useState<"promocionales" | "empresas">("promocionales");
   const [retencionesInstaladas, setRetencionesInstaladas] = useState(true);
+  const [pausa, setPausa] = useState<{ motivo: string | null; desde: string } | null>(null);
   const [abierto, setAbierto] = useState<number | null>(null);
 
   async function cargarCodigos() {
@@ -138,6 +139,7 @@ export default function AdminCodigosPage() {
 
       setCodigos(data.codigos || []);
       setRetencionesInstaladas(data.retenciones_instaladas !== false);
+      setPausa(data.retenciones_pausa?.pausadas ? { motivo: data.retenciones_pausa.motivo ?? null, desde: data.retenciones_pausa.desde } : null);
       if (data.catalogo) setCatalogo(data.catalogo as CatalogoCodigos);
     } catch (error) {
       console.error(error);
@@ -324,6 +326,13 @@ export default function AdminCodigosPage() {
           <p className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
             Las retenciones de cupones todavía no están instaladas en esta base: los usos retenidos no se pueden mostrar y
             los cupones con límite de usos no se aceptan en el checkout hasta aplicar la migración.
+          </p>
+        )}
+        {pausa && (
+          <p className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+            Retenciones nuevas en pausa desde {new Date(pausa.desde).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" })}
+            {pausa.motivo ? ` (${pausa.motivo})` : ""}: las compras nuevas con un cupón con límite de usos no se aceptan. Las que ya
+            estaban en curso siguen: se pueden pagar, se consumen y se concilian.
           </p>
         )}
 

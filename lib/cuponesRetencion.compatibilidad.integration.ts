@@ -8,6 +8,10 @@ import { readFileSync } from "node:fs";
 
 // Cupones · COMPATIBILIDAD del despliegue de db/cupones-retencion.sql, contra
 // el stack LOCAL. Recorre el orden de despliegue documentado:
+//   R. Rollback: se niega sin la pausa de nuevas retenciones o con alguna
+//      retención vigente (sin cambiar nada); durante la pausa, lo nuevo con cupón
+//      limitado falla cerrado y lo existente sigue (mismo link, webhook consume);
+//      con 0 retenidas se aplica y conserva el registro.
 //   A. Aplicación nueva + base SIN la migración (estado real de Producción hoy,
 //      que se arma con db/cupones-retencion.rollback.sql y sin la tabla):
 //      los cupones limitados fallan cerrados (503) sin crear nada; sin cupón o
@@ -174,12 +178,62 @@ async function main() {
   });
   const empresasAntes = sql(`select md5(coalesce(string_agg(md5(e::text), '' order by e.id), '')) from public.empresa_codigos e`);
 
-  // ═══ A. Aplicación nueva, base SIN la migración ═══════════════════════════
+  // ═══ R. El rollback se niega mientras haya algo que preservar ═════════════
+  // Base limpia de retenciones de otras suites (solo stack local), sin pausa.
   sql(`begin; set local session_replication_role = replica; delete from public.codigo_retenciones; commit;`);
-  aplicar("db/cupones-retencion.rollback.sql");
-  sql(`drop table if exists public.codigo_retenciones;`);
+  sql(`select public.codigo_retenciones_pausar(false, null);`);
+  const intentarRollback = (): string => {
+    try { aplicar("db/cupones-retencion.rollback.sql"); return "ok"; } catch (e) { return String((e as { stderr?: string }).stderr ?? e); }
+  };
+  const rpcsIntactas = () =>
+    sql(`select to_regprocedure('public.codigo_retener(uuid,text,text,text)') is not null
+               and to_regprocedure('public.codigo_retencion_consumir(uuid,text,jsonb)') is not null
+               and position('codigo_retenciones' in pg_get_functiondef('public.consumir_codigo_descuento(text)'::regprocedure)) > 0`);
+  {
+    // R1. Sin pausa: bloqueado y sin cambios.
+    assert.match(intentarRollback(), /rollback_bloqueado: las nuevas retenciones no están pausadas/);
+    assert.equal(rpcsIntactas(), "t", "R1: nada cambió");
+
+    // R2. Una compra con cupón limitado que todavía puede pagarse; se pausa.
+    const V = codigo(10, 1);
+    const cuerpo = reserva({ codigo_descuento: V });
+    const abierta = await post(MP.POST, "/api/mercadopago/preference", cuerpo);
+    assert.equal(abierta.status, 200, JSON.stringify(abierta.json));
+    sql(`select public.codigo_retenciones_pausar(true, 'prueba de rollback');`);
+    //   Pedido NUEVO con cupón limitado: falla cerrado (503), sin crear compra.
+    const P = codigo(10, 1);
+    const nueva = await post(GC.POST, "/api/gift-cards/preference", giftCard({ codigo_descuento: P }));
+    assert.deepEqual([nueva.status, nueva.json.codigo], [503, "no_disponible"], JSON.stringify(nueva.json));
+    assert.equal(sql(`select count(*) from public.gift_cards where codigo_descuento = ${lit(P)}`), "0");
+    //   Lo existente sigue: el reintento del mismo pedido recibe el MISMO link.
+    const reintento = await post(MP.POST, "/api/mercadopago/preference", cuerpo);
+    assert.equal(reintento.status, 200, JSON.stringify(reintento.json));
+    assert.equal(reintento.json.init_point, abierta.json.init_point, "mismo link durante la pausa");
+    //   Sin cupón y con cupón sin límite, la pausa no cambia nada.
+    assert.equal((await post(GC.POST, "/api/gift-cards/preference", giftCard({ codigo_descuento: codigo(10, null) }))).status, 200);
+    //   Con la retención vigente (una oportunidad de pago abierta): bloqueado.
+    assert.match(intentarRollback(), /rollback_bloqueado: quedan 1 retenciones vigentes/);
+    assert.equal(rpcsIntactas(), "t", "R2: nada cambió");
+
+    // R3. Se paga: el webhook consume durante la pausa, la retención se cierra y
+    // el rollback recién ahí pasa.
+    const pid = pago(`reserva_${abierta.json.reserva_id}`, "approved", Number(abierta.json.total_final));
+    assert.equal(await notificarReserva(pid), 200);
+    assert.equal(sql(`select estado from public.codigo_retenciones where codigo = ${lit(V)}`), "consumido");
+    assert.equal(usos(V), 1);
+    assert.equal(intentarRollback(), "ok", "R3: con pausa y 0 retenidas, el rollback se aplica");
+    assert.equal(sql(`select to_regprocedure('public.codigo_retener(uuid,text,text,text)') is null
+                           and position('codigo_retenciones' in pg_get_functiondef('public.consumir_codigo_descuento(text)'::regprocedure)) = 0`), "t");
+    assert.equal(sql(`select count(*) from public.codigo_retenciones where codigo = ${lit(V)}`), "1", "el registro se conserva");
+    assert.equal(sql(`select nuevas_pausadas from public.codigo_retenciones_control`), "t", "la pausa queda puesta");
+  }
+  console.log("OK — R: el rollback se niega sin pausa o con retenciones vigentes; durante la pausa lo existente sigue y lo nuevo falla cerrado.");
+
+  // ═══ A. Aplicación nueva, base SIN la migración ═══════════════════════════
+  // Como Producción hoy: ni la tabla ni el control.
+  sql(`drop table if exists public.codigo_retenciones; drop table if exists public.codigo_retenciones_control;`);
   await esquema(false);
-  console.log("A · base sin la migración (rollback aplicado y sin tabla).");
+  console.log("A · base sin la migración (rollback aplicado y sin tablas).");
 
   // A1. Cupón limitado: falla cerrado, sin crear nada.
   {
@@ -201,6 +255,7 @@ async function main() {
   // A2. Sin cupón y con cupón sin límite: como siempre. Y compras "viejas":
   // creadas con un código sin límite que después pasa a tener límite = lo que
   // dejaría la aplicación anterior (compra con cupón limitado y sin retención).
+  const prefsAntesDeA2 = prefs.length;
   const VIEJA_R = codigo(10, null);
   const viejaR = await post(MP.POST, "/api/mercadopago/preference", reserva({ codigo_descuento: VIEJA_R }));
   const VIEJA_G = codigo(10, null);
@@ -213,7 +268,7 @@ async function main() {
   const viejaDoble = await post(GC.POST, "/api/gift-cards/preference", giftCard({ codigo_descuento: VIEJA_DOBLE }));
   const sinCodigo = await post(GC.POST, "/api/gift-cards/preference", giftCard());
   for (const r of [viejaR, viejaG, viejaSinPago, viejaPaga, viejaDoble, sinCodigo]) assert.equal(r.status, 200, JSON.stringify(r.json));
-  for (const p of prefs) assert.equal(p.body.expires, undefined, "como la aplicación anterior: preferencias sin vencimiento");
+  for (const p of prefs.slice(prefsAntesDeA2)) assert.equal(p.body.expires, undefined, "como la aplicación anterior: preferencias sin vencimiento");
   limitar(VIEJA_R, 1);
   limitar(VIEJA_G, 1);
   limitar(VIEJA_SIN_PAGO, 1);
@@ -328,6 +383,7 @@ function limpiar() {
 /** Pase lo que pase, la base local queda con la migración aplicada. */
 function restaurar() {
   aplicar("db/cupones-retencion.sql");
+  sql(`select public.codigo_retenciones_pausar(false, null);`);
   sql(`notify pgrst, 'reload schema';`);
 }
 

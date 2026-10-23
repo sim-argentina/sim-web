@@ -30,6 +30,8 @@ declare
   v_res3      bigint;
   v_g         uuid := gen_random_uuid();
   v_g2        uuid := gen_random_uuid();
+  v_p1        uuid := gen_random_uuid();
+  v_p2        uuid := gen_random_uuid();
 begin
   begin
     -- ── Utilidades temporales (se van con el ROLLBACK) ─────────────────────
@@ -268,6 +270,31 @@ begin
                                    from public.codigo_retenciones where id = v_x) = '2|retenida|mercado_pago_no_responde|consumido|true'
                               and pg_temp.intentar(format($q$select public.codigo_retencion_anotar_revision(%L, 'inventado', 'x')$q$, v_x)) like '22023:resultado_invalido%'
                            then 'R17 ' else 'FALLA:R17 ' end;
+
+    -- R18 · pausa de nuevas retenciones: un pedido nuevo con cupón limitado no
+    -- entra ('pausado'), el mismo intento recupera la suya, un código sin límite
+    -- sigue igual y reanudar deja entrar otra vez. service_role no puede pausar.
+    insert into public.codigos_descuento (codigo, descripcion, tipo_descuento, valor_descuento, usos_maximos, usos_actuales, activo, creado_para)
+    values ('ZZRET-PAUSA', 'verificación', 'porcentaje', 15, 3, 0, true, 'zz');
+    v_j := pg_temp.retener(v_p1, 'ZZRET-PAUSA', 'reserva', 'h-p1');
+    perform public.codigo_retenciones_pausar(true, 'verificación de la pausa');
+    v_j2 := pg_temp.retener(v_p2, 'ZZRET-PAUSA', 'reserva', 'h-p2');
+    v_r := pg_temp.retener(v_p1, 'ZZRET-PAUSA', 'reserva', 'h-p1') ->> 'reutilizada';
+    v_r2 := pg_temp.retener(gen_random_uuid(), 'ZZRET-LIBRE', 'reserva', 'h-libre') ->> 'motivo';
+    v_n := 0;
+    if pg_temp.intentar($q$select public.codigo_retenciones_pausar(true, ' ')$q$) like '22023:datos_invalidos%' then v_n := v_n + 1; end if;
+    if (select nuevas_pausadas and motivo = 'verificación de la pausa' from public.codigo_retenciones_control) then v_n := v_n + 1; end if;
+    execute 'set local role service_role';
+    if pg_temp.intentar($q$select public.codigo_retenciones_pausar(false, null)$q$) like '42501:%' then v_n := v_n + 1; end if;
+    if pg_temp.intentar($q$update public.codigo_retenciones_control set nuevas_pausadas = false$q$) like '42501:%' then v_n := v_n + 1; end if;
+    execute 'reset role';
+    perform public.codigo_retenciones_pausar(false, null);
+    v_log := v_log || case when (v_j ->> 'ok')::boolean
+                              and not (v_j2 ->> 'ok')::boolean and v_j2 ->> 'motivo' = 'pausado'
+                              and v_r = 'true' and v_r2 = 'sin_limite' and v_n = 4
+                              and (pg_temp.retener(v_p2, 'ZZRET-PAUSA', 'reserva', 'h-p2') ->> 'ok')::boolean
+                              and (select not nuevas_pausadas and motivo is null from public.codigo_retenciones_control)
+                           then 'R18 ' else 'FALLA:R18 ' end;
 
     -- R13 · permisos: service_role solo lee la tabla; anon no ejecuta nada.
     execute 'set local role service_role';

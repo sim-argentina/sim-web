@@ -43,6 +43,17 @@ export async function resumenRetencionesPorCodigo(): Promise<Map<number, Resumen
   return m;
 }
 
+/** ¿Están pausadas las retenciones NUEVAS (codigo_retenciones_control)? null = sin la migración. */
+export async function pausaDeRetenciones(): Promise<{ pausadas: boolean; motivo: string | null; desde: string } | null> {
+  const { data, error } = await supabaseAdmin.from("codigo_retenciones_control").select("nuevas_pausadas, motivo, cambiado_en").maybeSingle();
+  if (error) {
+    if (faltaMigracion(error)) return null;
+    throw new Error(`codigo_retenciones_control: ${error.message}`);
+  }
+  if (!data) return null;
+  return { pausadas: !!data.nuevas_pausadas, motivo: data.motivo ?? null, desde: data.cambiado_en };
+}
+
 export type RetencionPanel = {
   id: string;
   estado: Retencion["estado"];

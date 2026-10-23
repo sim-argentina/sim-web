@@ -44,9 +44,13 @@
 -- db/orden.txt DESPUÉS de esquema-base-permisos.sql (que da DML a service_role
 -- sobre todo public).
 --
+-- Pausa: codigo_retenciones_pausar(true, motivo) frena las retenciones NUEVAS sin
+-- tocar las existentes (sección 1b). Solo por SQL, con el rol dueño.
+--
 -- Aditivo e idempotente. Verificación sin huella:
 -- db/cupones-retencion.verificacion.sql (solo stack local).
--- Rollback: db/cupones-retencion.rollback.sql (ver docs/marketing/cupones-retencion.md).
+-- Rollback: db/cupones-retencion.rollback.sql, que exige pausa y 0 retenidas
+-- (ver docs/marketing/cupones-retencion.md).
 -- Los cuerpos de las funciones NO llevan comentarios: las explicaciones van arriba.
 -- ============================================================================
 
@@ -114,6 +118,49 @@ create unique index if not exists codigo_retenciones_reserva_key
   on public.codigo_retenciones (reserva_id) where reserva_id is not null;
 create unique index if not exists codigo_retenciones_grupo_key
   on public.codigo_retenciones (grupo_compra_id) where grupo_compra_id is not null;
+
+
+-- ── 1b. Pausa de NUEVAS retenciones (corrección hacia adelante) ─────────────
+-- Una sola fila. Con nuevas_pausadas, codigo_retener no aparta un cupón
+-- limitado para un pedido NUEVO (la aplicación responde 503, sin cobrar), pero
+-- todo lo que ya existe sigue: el mismo intento recupera su retención y su link,
+-- los webhooks consumen y la conciliación libera. Es el paso previo obligatorio
+-- del rollback (db/cupones-retencion.rollback.sql exige pausa y 0 retenidas) y
+-- la herramienta para frenar sin perder nada cuando hay que corregir algo.
+-- Volver a aplicar esta migración NO quita una pausa: hay que reanudar a propósito.
+create table if not exists public.codigo_retenciones_control (
+  id              boolean primary key default true,
+  nuevas_pausadas boolean not null default false,
+  motivo          text,
+  cambiado_en     timestamptz not null default now(),
+  constraint codigo_retenciones_control_unica check (id),
+  constraint codigo_retenciones_control_motivo check (motivo is null or char_length(motivo) between 3 and 300)
+);
+insert into public.codigo_retenciones_control (id) values (true) on conflict (id) do nothing;
+
+create or replace function public.codigo_retenciones_pausar(p_pausar boolean, p_motivo text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_c public.codigo_retenciones_control;
+begin
+  if p_pausar is null or (p_pausar and char_length(btrim(coalesce(p_motivo, ''))) < 3) then
+    raise exception 'datos_invalidos' using errcode = '22023';
+  end if;
+  update public.codigo_retenciones_control
+     set nuevas_pausadas = p_pausar,
+         motivo = case when p_pausar then btrim(p_motivo) else null end,
+         cambiado_en = clock_timestamp()
+   where id
+  returning * into v_c;
+  return jsonb_build_object(
+    'nuevas_pausadas', v_c.nuevas_pausadas, 'motivo', v_c.motivo, 'cambiado_en', v_c.cambiado_en,
+    'retenidas', (select count(*) from public.codigo_retenciones where estado = 'retenido'));
+end;
+$fn$;
 
 
 -- ── 2. Compras anteriores sin retención (legado) ────────────────────────────
@@ -225,6 +272,9 @@ begin
   end if;
   if v_c.usos_maximos is null then
     return jsonb_build_object('ok', false, 'motivo', 'sin_limite');
+  end if;
+  if exists (select 1 from public.codigo_retenciones_control where id and nuevas_pausadas) then
+    return jsonb_build_object('ok', false, 'motivo', 'pausado');
   end if;
 
   perform public.codigo_retenciones_cubrir_legado(v_c.id, interval '2 minutes');
@@ -565,7 +615,11 @@ $function$;
 alter table public.codigo_retenciones enable row level security;
 revoke all on table public.codigo_retenciones from public, anon, authenticated, service_role;
 grant select on table public.codigo_retenciones to service_role;
+alter table public.codigo_retenciones_control enable row level security;
+revoke all on table public.codigo_retenciones_control from public, anon, authenticated, service_role;
+grant select on table public.codigo_retenciones_control to service_role;
 
+revoke all on function public.codigo_retenciones_pausar(boolean, text) from public, anon, authenticated, service_role;
 revoke all on function public.codigo_retenciones_cubrir_legado(bigint, interval) from public, anon, authenticated, service_role;
 revoke all on function public.codigo_retener(uuid, text, text, text) from public, anon, authenticated;
 revoke all on function public.codigo_retencion_vincular(uuid, jsonb) from public, anon, authenticated;

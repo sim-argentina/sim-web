@@ -151,22 +151,60 @@ Producción al 21/10/2026 (consulta de solo lectura, solo conteos): 3 códigos d
 
 El orden inverso (migrar primero) deja un rato en el que la aplicación vieja crea compras **sin** retención y su webhook consume con la RPC de siempre. No se cuenta dos veces (B5), pero en ese rato la exclusividad es la de antes.
 
-## Rollback
+## Frenar, corregir hacia adelante o volver atrás
 
-1. **Volver a desplegar la aplicación anterior** y esperar a que el dominio la sirva.
-2. **Revisar las retenciones vigentes** (la consulta está al final de `db/cupones-retencion.rollback.sql`). Si se puede, conciliarlas antes desde el panel.
-3. **Correr `db/cupones-retencion.rollback.sql`.** Hace tres cosas:
-   - Restaura `consumir_codigo_descuento` (cuerpo de B9).
-   - Quita las RPCs nuevas: si quedara alguna instancia nueva, falla cerrada.
-   - **Conserva** `codigo_retenciones` como registro de solo lectura.
+Volver al comportamiento anterior **no** es la forma de frenar un problema. Mientras haya una retención en `retenido`, existe una compra que todavía puede aprobarse y cuyo cupo está apartado. Si se vuelve atrás con eso abierto:
+- ese pago puede superar el límite del cupón;
+- la retención no la resuelve nadie.
 
-**Limitación, cuando ya existen operaciones nuevas:** las retenciones en `retenido` dejan de contar.
+### 1. Pausar las retenciones nuevas (inmediato, sin despliegue, no pierde nada)
 
-- Si esas compras se pagan después, el webhook anterior consume con el contador de siempre.
-- Si el cupón ya llegó a su máximo, ese uso **no** se cuenta y la compra igual queda paga: es el comportamiento previo a esta versión.
-- Las preferencias creadas por la versión nueva siguen venciendo a los 30 minutos (eso lo aplica Mercado Pago).
+```sql
+select public.codigo_retenciones_pausar(true, 'motivo de la pausa');   -- reanudar: (false, null)
+```
 
-Volver atrás **solo la aplicación** (sin el SQL) no se recomienda: las retenciones no se resolverían nunca y el cupón quedaría apartado.
+| Qué | Durante la pausa |
+|---|---|
+| Compra **nueva** con cupón limitado | Falla cerrada: `503 no_disponible`, no se crea la compra ni se cobra. |
+| Reintento de una compra ya retenida | Recibe **el mismo** link (el intento existente sigue). |
+| Webhooks | Consumen como siempre. |
+| Conciliación (compra siguiente, panel, cron) | Libera lo vencido y verificado, como siempre. |
+| Sin cupón o con cupón sin límite | Igual que siempre. |
+
+- **Quién puede pausar:** solo por SQL, con el rol dueño. `service_role` no puede pausar ni reanudar; el panel solo muestra el aviso.
+- **Se ve en el panel de Códigos:** "Retenciones nuevas en pausa desde…".
+- **Volver a aplicar la migración no quita la pausa:** hay que reanudar a propósito.
+
+Lo prueban la verificación SQL (R18) y la suite de compatibilidad (R2).
+
+### 2. Corregir hacia adelante (lo normal)
+
+Con la pausa puesta, el esquema se mantiene y se despliega el arreglo. Esto corresponde cuando:
+- quedan retenciones vigentes;
+- hay pagos `pending`/`in_process`;
+- hay compras `legado` con un link que no vence (`preferencia_sin_vencimiento`, que pueden no resolverse nunca);
+- hay compras `aprobado_sin_cupo` para revisar;
+- el problema está en la aplicación y no en el esquema.
+
+En todos esos casos el registro de retenciones es lo que permite resolver bien.
+
+### 3. Rollback (solo con todo resuelto)
+
+1. **Pausar** las retenciones nuevas (paso 1).
+2. **Esperar a que se resuelvan** (conciliar desde el panel o esperar el cron). Cada link de la versión nueva vence a los 30 min y se puede liberar 15 min después; sus pagos se consumen. Si alguna no se resuelve (por ejemplo, un `legado` sin vencimiento), **no** corresponde el rollback: volver al punto 2.
+3. **Con 0 retenidas, volver a desplegar la aplicación anterior** y esperar a que el dominio la sirva. Contra esta base funciona igual que antes: sin retenciones vigentes, el consumo de siempre cuenta lo mismo.
+4. **Correr `db/cupones-retencion.rollback.sql`.** Es un solo bloque atómico:
+   - Toma `codigo_retenciones` y el control en modo `EXCLUSIVE`. Así ninguna retención nueva se cuela entre el chequeo y el cambio; las lecturas siguen.
+   - **Se niega** (`rollback_bloqueado`, sin cambiar nada) si las retenciones nuevas no están pausadas o si queda **alguna** en `retenido`.
+   - Si pasa: restaura `consumir_codigo_descuento` (cuerpo de B9) y quita las RPCs nuevas. Si quedara una instancia nueva, falla cerrada.
+   - **Conserva** `codigo_retenciones` (cada compra, pago, liberación y revisión) y el control con la pausa puesta.
+
+La suite de compatibilidad (R1–R3) lo comprueba:
+- **R1:** sin pausa, bloqueado.
+- **R2:** con pausa y una compra abierta, bloqueado; lo existente sigue y lo nuevo falla cerrado.
+- **R3:** al pagarse esa compra, el rollback se aplica y el registro queda.
+
+El paso 4 es opcional. Con 0 retenidas y la aplicación anterior, la base nueva no cambia nada. Volver atrás **solo la aplicación** con retenciones vigentes es justo lo que este procedimiento evita.
 
 ## Mercado Pago: lo verificado en la documentación oficial
 
@@ -205,10 +243,10 @@ Es la regla de siempre y **no cambió**:
 
 | Comando | Qué prueba |
 |---|---|
-| `node scripts/pruebas/cupones-retencion.mjs` | Las RPCs en SQL, 18 casos (turno, legado, conteo único y registro de revisión incluidos). La transacción se deshace. |
+| `node scripts/pruebas/cupones-retencion.mjs` | Las RPCs en SQL, 19 casos (turno, legado, conteo único, registro de revisión y pausa incluidos). La transacción se deshace. |
 | `npx tsx lib/cuponesRetencion.test.ts` | Reintentos, turno, fallo cerrado, marca de revisión, clave del navegador (sin datos personales) y guarda del simulador. |
 | `node scripts/pruebas/correr-mutantes.mjs lib/cuponesRetencion.integration.ts` | Rutas reales con **concurrencia real** y Mercado Pago interceptado, 21 bloques. Desde el 16: recuperación, consultas inciertas, cron y panel, API del panel e intento ajeno. |
-| `node scripts/pruebas/correr-mutantes.mjs lib/cuponesRetencion.compatibilidad.integration.ts` | Despliegue: base sin migración, compras previas, migración, dedupe y Empresas. Cambia el esquema local: correrla sola; deja la migración aplicada. |
+| `node scripts/pruebas/correr-mutantes.mjs lib/cuponesRetencion.compatibilidad.integration.ts` | Rollback bloqueado y pausa (R1–R3), despliegue: base sin migración, compras previas, migración, dedupe y Empresas. Cambia el esquema local: correrla sola; deja la migración aplicada. |
 | `node scripts/pruebas/next-local.mjs dev --port 3110 --mp-simulado` (o `cupones-local` en `.claude/launch.json`) | El sitio local con **Mercado Pago simulado** (`/pruebas/mercadopago`, 404 fuera del entorno local de pruebas) para probar en el navegador. |
 
 La corrida de control con el código anterior falla en el caso 1: las 5 reservas simultáneas pagan con el mismo cupón de un uso.

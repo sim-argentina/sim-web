@@ -200,21 +200,34 @@ async function main() {
   };
   const retencion = (c: string, extra = "") => JSON.parse(sql(`select row_to_json(r) from public.codigo_retenciones r where codigo = ${lit(c)} ${extra} order by retenido_en desc limit 1`) || "null") as Record<string, unknown> | null;
 
-  const disp = await disponibilidadReservas({ ahora: new Date() });
-  assert.ok(disp.ok, "disponibilidad local");
-  const d = disp.data;
   // Turnos que no se pisan entre sí: por simulador, inicios separados 60 minutos.
   const minutos = (h: string) => Number(h.slice(0, 2)) * 60 + Number(h.slice(3, 5));
-  const libresPorSim = new Map<string, number>();
-  const turnos: { hora: string; sim: string }[] = [];
-  for (const h of [...d.horarios].sort((a, b) => minutos(a.hora) - minutos(b.hora))) {
-    for (const sim of h.libres) {
-      const ultimo = libresPorSim.get(sim);
-      if (ultimo !== undefined && minutos(h.hora) - ultimo < 60) continue;
-      libresPorSim.set(sim, minutos(h.hora));
-      turnos.push({ hora: h.hora, sim });
+  const turnosDe = (horarios: { hora: string; libres: string[] }[]) => {
+    const libresPorSim = new Map<string, number>();
+    const lista: { hora: string; sim: string }[] = [];
+    for (const h of [...horarios].sort((a, b) => minutos(a.hora) - minutos(b.hora))) {
+      for (const sim of h.libres) {
+        const ultimo = libresPorSim.get(sim);
+        if (ultimo !== undefined && minutos(h.hora) - ultimo < 60) continue;
+        libresPorSim.set(sim, minutos(h.hora));
+        lista.push({ hora: h.hora, sim });
+      }
     }
+    return lista;
+  };
+  // El primer día de la ventana con turnos de sobra: hoy, según la hora, puede
+  // quedar con pocos.
+  const TURNOS_NECESARIOS = 40;
+  const { hoyEnSim, sumarDias } = await import("@/lib/agenda");
+  let disp = await disponibilidadReservas({ ahora: new Date() });
+  assert.ok(disp.ok, "disponibilidad local");
+  for (let i = 0; i < 10 && disp.ok && turnosDe(disp.data.horarios).length < TURNOS_NECESARIOS; i++) {
+    const otra = await disponibilidadReservas({ ahora: new Date(), fecha: sumarDias(hoyEnSim(), i + 1) });
+    if (otra.ok && turnosDe(otra.data.horarios).length > turnosDe(disp.data.horarios).length) disp = otra;
   }
+  assert.ok(disp.ok, "disponibilidad local");
+  const d = disp.data;
+  const turnos = turnosDe(d.horarios);
   let nTurno = 0;
   const turno = () => {
     const t = turnos[nTurno++];
