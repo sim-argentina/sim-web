@@ -89,6 +89,15 @@ export async function POST(req: Request) {
 
   const codigoFinal = codigo?.trim().toUpperCase() || generarCodigo();
 
+  // SIMU- es de los beneficios ficticios de las campañas simuladas (Marketing):
+  // ningún código real puede coincidir con uno. La base también lo impide.
+  if (codigoFinal.startsWith("SIMU-")) {
+    return NextResponse.json(
+      { error: "El prefijo SIMU- está reservado para las campañas simuladas" },
+      { status: 400 }
+    );
+  }
+
   if (!tipo_descuento || !valor_descuento) {
     return NextResponse.json(
       { error: "Falta tipo o valor de descuento" },

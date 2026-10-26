@@ -124,5 +124,11 @@ marketing-consentimiento.sql
 # Reemplaza consumir_codigo_descuento (codigos-b9) para que cuente retenciones.
 cupones-retencion.sql
 
+# ── 13e. Marketing: campañas (SIMULACIÓN persistente: cola, lotes, beneficios ficticios) ─
+# Mismo motivo que 13b: service_role solo lee (escribe por RPC). Necesita
+# marketing-consentimiento.sql (revisa consentimiento y bajas) y
+# mensualidad_normalizar_telefono. Reserva el prefijo SIMU- en codigos_descuento.
+marketing-campanias.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql
