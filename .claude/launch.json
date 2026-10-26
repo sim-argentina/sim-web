@@ -24,6 +24,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["scripts/pruebas/next-local.mjs", "dev", "--port", "3110", "--mp-simulado"],
       "port": 3110
+    },
+    {
+      "name": "marketing-local",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/pruebas/next-local.mjs", "dev", "--port", "3120", "--marketing-simulado"],
+      "port": 3120
     }
   ]
 }

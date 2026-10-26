@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { hoyEnSim } from "@/lib/agenda";
 import {
   CANALES_BAJA,
@@ -13,10 +14,15 @@ import {
   type Fuente,
   type TextoDto,
 } from "@/lib/marketing/consentimiento";
+import Campanias from "./Campanias";
+import { Campo, Seccion, Tarjeta, btnBorde, btnRojo, fecha, inp } from "./ui";
 
-// Marketing · consentimiento y bajas (Etapa 3). No envía mensajes ni crea códigos.
-//   · Staff: consulta un número y carga BAJAS pedidas por otro canal.
-//   · Admin: además carga ALTAS con evidencia escrita y publica o retira el texto.
+// Marketing. No envía mensajes ni crea códigos.
+//   · Consentimiento y bajas (Etapa 3):
+//     Staff consulta un número y carga BAJAS pedidas por otro canal; admin además
+//     carga ALTAS con evidencia escrita y publica o retira el texto.
+//   · Campañas (Campanias.tsx): en SIMULACIÓN. Admin crea, prepara y ejecuta;
+//     staff mira.
 // La autoridad la decide la API con la sesión firmada; esta pantalla solo oculta
 // lo que el rol no puede hacer.
 
@@ -32,8 +38,6 @@ type EstadoTel = {
 type Consulta = { telefono: string; estado: EstadoTel | null; historial: EventoDto[] };
 type Datos = { rol: "admin" | "staff"; modulo: Modulo; resumen?: Resumen; recientes?: EventoDto[]; consulta: Consulta | null };
 
-const FMT = new Intl.DateTimeFormat("es-AR", { timeZone: "America/Argentina/Cordoba", dateStyle: "short", timeStyle: "short" });
-const fecha = (iso: string | null | undefined) => (iso ? FMT.format(new Date(iso)) : "—");
 const etiquetaCanal = (v: string) => CANALES_BAJA.find((c) => c.valor === v)?.etiqueta ?? v;
 const etiquetaEvidencia = (v: string) => TIPOS_EVIDENCIA.find((t) => t.valor === v)?.etiqueta ?? v;
 
@@ -48,11 +52,34 @@ function evidenciaTexto(e: EventoDto): string {
   return partes.join(" · ") || "—";
 }
 
-const inp = "w-full rounded-xl border border-white/15 bg-black px-3 py-2 text-sm font-bold text-white outline-none placeholder:text-white/30 focus:border-red-500";
-const btnRojo = "rounded-xl bg-red-600 px-4 py-2 text-sm font-black uppercase text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40";
-const btnBorde = "rounded-xl border border-white/20 px-4 py-2 text-sm font-black uppercase text-white/80 transition hover:border-red-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
+type Pestania = "consentimiento" | "campanias";
 
 export default function AdminMarketingPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-black" />}>
+      <PaginaMarketing />
+    </Suspense>
+  );
+}
+
+function PaginaMarketing() {
+  const params = useSearchParams();
+  const [pestania, setPestania] = useState<Pestania>(() => (params.get("vista") === "campanias" || params.get("campania") ? "campanias" : "consentimiento"));
+  function elegir(p: Pestania) {
+    setPestania(p);
+    const u = new URL(window.location.href);
+    if (p === "campanias") u.searchParams.set("vista", "campanias");
+    else { u.searchParams.delete("vista"); u.searchParams.delete("campania"); }
+    window.history.replaceState(null, "", u);
+  }
+  return (
+    <Marco pestania={pestania} alElegir={elegir}>
+      {pestania === "campanias" ? <Campanias /> : <PanelConsentimiento />}
+    </Marco>
+  );
+}
+
+function PanelConsentimiento() {
   const [datos, setDatos] = useState<Datos | null>(null);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(true);
@@ -113,23 +140,23 @@ export default function AdminMarketingPage() {
     void cargar(t || null);
   }
 
-  if (cargando && !datos) return <Marco><p className="text-white/60">Cargando…</p></Marco>;
-  if (error && !datos) return <Marco><p className="rounded-2xl border border-red-500/40 bg-red-950/30 p-4 font-bold text-red-300">{error}</p></Marco>;
+  if (cargando && !datos) return <><p className="text-white/60">Cargando…</p></>;
+  if (error && !datos) return <><p className="rounded-2xl border border-red-500/40 bg-red-950/30 p-4 font-bold text-red-300">{error}</p></>;
   if (!datos) return null;
   if (!datos.modulo.instalado) {
     return (
-      <Marco>
+      <>
         <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-white/70">
           El registro de consentimiento todavía no está instalado en esta base (falta la migración
           <code className="mx-1 text-white">db/marketing-consentimiento.sql</code>).
         </p>
-      </Marco>
+      </>
     );
   }
 
   const r = datos.resumen;
   return (
-    <Marco>
+    <>
       {/* ── Estado: las dos llaves ───────────────────────────────────────── */}
       <div className="mb-6 grid gap-3 md:grid-cols-4">
         <Tarjeta titulo="Formulario público" valor={datos.modulo.formulario_publico ? "Encendido" : "Apagado"}
@@ -214,7 +241,7 @@ export default function AdminMarketingPage() {
           Este panel no envía mensajes ni crea códigos.
         </p>
       </Seccion>
-    </Marco>
+    </>
   );
 }
 
@@ -403,7 +430,13 @@ function Tabla({ eventos, conDetalle }: { eventos: EventoDto[]; conDetalle: bool
   );
 }
 
-function Marco({ children }: { children: React.ReactNode }) {
+function Marco({ children, pestania, alElegir }: { children: React.ReactNode; pestania: Pestania; alElegir: (p: Pestania) => void }) {
+  const tab = (p: Pestania, t: string) => (
+    <button type="button" role="tab" aria-selected={pestania === p} onClick={() => alElegir(p)}
+      className={`rounded-xl px-4 py-2 text-sm font-black uppercase transition ${pestania === p ? "bg-red-600 text-white" : "border border-white/15 text-white/60 hover:text-white"}`}>
+      {t}
+    </button>
+  );
   return (
     <main className="min-h-screen bg-black px-4 py-8 text-white md:px-6">
       <section className="mx-auto max-w-6xl">
@@ -411,9 +444,13 @@ function Marco({ children }: { children: React.ReactNode }) {
           <p className="mb-2 text-xs uppercase tracking-[0.3em] text-red-500">Admin SIM</p>
           <h1 className="text-3xl font-black uppercase md:text-5xl">Marketing</h1>
           <p className="mt-2 max-w-2xl text-sm text-white/60">
-            Consentimiento para promociones por WhatsApp: quién aceptó, quién pidió la baja y con qué evidencia.
+            Consentimiento para promociones por WhatsApp y campañas de recuperación del stand en simulación.
             No envía mensajes ni crea códigos.
           </p>
+          <div role="tablist" className="mt-4 flex flex-wrap gap-2">
+            {tab("consentimiento", "Consentimiento")}
+            {tab("campanias", "Campañas (simulación)")}
+          </div>
         </div>
         {children}
       </section>
@@ -421,30 +458,3 @@ function Marco({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Seccion({ titulo, children }: { titulo: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-6 rounded-3xl border border-white/10 bg-white/[0.03] p-4 md:p-5">
-      <h2 className="mb-4 text-xl font-black uppercase text-red-500">{titulo}</h2>
-      {children}
-    </div>
-  );
-}
-
-function Tarjeta({ titulo, valor, nota, alerta = false }: { titulo: string; valor: string; nota: string; alerta?: boolean }) {
-  return (
-    <div className={`rounded-2xl border p-4 ${alerta ? "border-yellow-500/30 bg-yellow-950/10" : "border-white/10 bg-white/[0.03]"}`}>
-      <p className="text-xs uppercase tracking-[0.18em] text-white/40">{titulo}</p>
-      <p className="mt-2 text-2xl font-black text-white">{valor}</p>
-      <p className="mt-1 text-xs text-white/50">{nota}</p>
-    </div>
-  );
-}
-
-function Campo({ etiqueta, children }: { etiqueta: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-white/40">{etiqueta}</span>
-      {children}
-    </label>
-  );
-}

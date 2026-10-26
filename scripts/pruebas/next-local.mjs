@@ -72,6 +72,16 @@ if (process.argv.includes("--mp-simulado")) {
   console.log("Mercado Pago SIMULADO: los pagos se hacen en /pruebas/mercadopago (sin dinero ni red).");
 }
 
+// 5 · Opcional: campañas de Marketing en SIMULACIÓN (lib/marketing/campaniasServer.ts).
+// Con el proveedor de WhatsApp FALSO y esta base loopback, el panel puede guardar,
+// preparar y ejecutar campañas con datos sintéticos (scripts/pruebas/marketing-campanias-demo.mjs).
+// No hay proveedor real: nada sale a WhatsApp.
+if (process.argv.includes("--marketing-simulado")) {
+  Object.assign(env, { MARKETING_WHATSAPP_PROVIDER: "fake" });
+  if (!env.CRON_SECRET) env.CRON_SECRET = randomBytes(24).toString("hex");
+  console.log("Campañas en SIMULACIÓN: proveedor de WhatsApp falso, solo esta base local.");
+}
+
 console.log(`Next ${modo} contra ${e.url} (NODE_ENV=test: no se carga .env.local).`);
 const args = modo === "build" ? ["build"] : [modo, "-p", puerto];
 const hijo = spawn(process.execPath, [resolve(RAIZ, "node_modules/next/dist/bin/next"), ...args], { env, stdio: "inherit", cwd: RAIZ });
