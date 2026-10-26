@@ -246,7 +246,52 @@ seguido; citá URL y fecha):
   aplicar la migración y encender la captación. El webhook de WhatsApp todavía no
   registra bajas por "BAJA" ni por `user_preferences`: eso llega con la Cloud API.
 
+## Campañas en SIMULACIÓN (en el repo; migración SIN aplicar en Producción)
+
+Doc: `docs/marketing/campanias.md`. Panel: Admin → Marketing → "Campañas (simulación)"
+(admin crea, prepara y ejecuta; staff mira). Base: `db/marketing-campanias.sql` (13e).
+- **Configurar:** nombre, objetivo, ventana 14/21, filtros de `audiencia.ts`, mensaje con
+  `{nombre} {beneficio} {codigo} {vence} {productos} {baja}` (otras se rechazan), productos,
+  beneficio (porcentaje o monto fijo + días de vigencia; arranca VACÍO, la propuesta 15 %/7
+  días solo se carga a mano y rotulada), límite, tarifa, moneda y presupuesto.
+  `capacidadesCodigos()` dice qué hace cumplir el módulo de Códigos: productos solo si son
+  los dos; cantidad de Gift Cards, tope en $ y atado al teléfono NO.
+- **Vista previa:** lectura en cualquier base (candidatos, elegibles, exclusiones por motivo,
+  filtros, fecha, seleccionados tras topes, mensaje y condiciones con datos de ejemplo,
+  costo con la tarifa, muestra enmascarada). Consentimiento registrado ≠ control del
+  teléfono verificado (siempre 0: decisión pendiente).
+- **Escribir** (guardar, preparar, ejecutar) solo si `evaluarEntornoCampanias`: base
+  loopback, fuera de Vercel y `MARKETING_WHATSAPP_PROVIDER=fake`; si no, 403
+  `solo_simulacion_local`. `modo='simulacion'` es el único que admite la tabla.
+- **Beneficios ficticios** `SIMU-XXXXXXXX`, únicos y estables, que NO existen en
+  `codigos_descuento`; el prefijo `SIMU-` está reservado (constraint + alta de Códigos).
+  `codigo_id` queda para la etapa real.
+- **Cola persistente** (`mkt_campania_destinatarios`, sin borrado): unique por teléfono y
+  campaña, exclusividad entre campañas en curso, creación idempotente por clave (con lock),
+  versión optimista, `tomar_lote` con la campaña bloqueada + `SKIP LOCKED` y turno; turno
+  vencido → `incierto` (no se reenvía a ciegas); transitorio → reintento con espera, máx.
+  3; definitivo → fallido; incierto lo decide un admin; consentimiento y bajas revisados al
+  preparar y al tomar; topes al preparar y al tomar; pausa/cancelación sin borrar historial.
+- **Ejecutor:** `ejecutarLote` (breve, reanudable) con `crearProveedorSimulado`
+  (determinístico por `campaña:teléfono`, sin estado). Disparadores: acciones del panel y
+  `POST /api/admin/marketing/campanias/ejecutar` con `Bearer CRON_SECRET` (NO programado:
+  Hobby solo admite crons diarios; candidato para la etapa real: Supabase Cron +
+  `pg_net`, a confirmar en el plan).
+- **Resultados:** conteos por estado y motivo, costo simulado = entregados × tarifa, y
+  `mkt_campania_atribucion` (compra pagada reserva / Gift Card por separado; regreso al
+  stand por teléfono desde el envío).
+- **Pruebas:** `node scripts/pruebas/marketing-campanias.mjs` (SQL K1–K14),
+  `npx tsx lib/marketing/campanias.test.ts`, integración
+  `lib/marketing/campanias.integration.ts` (con `correr-mutantes`). Demo:
+  `node scripts/pruebas/marketing-campanias-demo.mjs` (+ `--limpiar` antes de las suites)
+  y `marketing-local` en `.claude/launch.json`.
+
 ## Diseño de la primera versión (propuesta; lo que no está arriba no existe todavía)
+
+Lo que falta para la campaña REAL (lo simulado ya está arriba): grupo de control y
+ventana de atribución, flag estricto de envío, proveedor de la Cloud API, webhook de
+estados (131050 → baja, error de plantilla → pausar), códigos reales de uso único por
+destinatario y el disparador de servidor.
 
 - **Consentimiento y bajas:** hecho en la Etapa 3. Falta la fuente "mensaje entrante de
   WhatsApp" (QR → wa.me al número de la API), que depende de la Cloud API.
