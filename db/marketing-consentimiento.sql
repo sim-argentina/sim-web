@@ -39,8 +39,10 @@
 --     dos casos; volver a suscribirse exige un texto mostrado después de la baja.
 --   · Fuentes: formulario_web (alta y baja, público), checkout_reserva y
 --     checkout_gift_card (alta desde la casilla voluntaria de esas compras,
---     público), admin_evidencia (alta con evidencia escrita, solo admin) y
---     admin_pedido (baja pedida por otro canal, staff o admin).
+--     público), admin_evidencia (alta con evidencia escrita, solo admin),
+--     admin_pedido (baja pedida por otro canal, staff o admin) y whatsapp
+--     (SOLO baja, del propio titular por la Cloud API; la escribe
+--     mkt_wa_registrar_baja, sección 6b, nunca la RPC general).
 --   · Idempotente por clave: el mismo pedido devuelve el evento original; la
 --     misma clave con otro contenido, conflicto.
 --
@@ -159,13 +161,14 @@ create table if not exists public.mkt_consentimiento_eventos (
   constraint mkt_eventos_clave_unica unique (idempotency_key),
   constraint mkt_eventos_telefono_canonico check (telefono ~ '^(11[0-9]{8}|[23][0-9]{9})$'),
   constraint mkt_eventos_tipo check (tipo in ('alta', 'baja')),
-  constraint mkt_eventos_fuente check (fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card', 'admin_evidencia', 'admin_pedido')),
+  constraint mkt_eventos_fuente check (fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card', 'admin_evidencia', 'admin_pedido', 'whatsapp')),
   constraint mkt_eventos_actor check (actor_rol in ('publico', 'staff', 'admin')),
   constraint mkt_eventos_combinacion check (
        (fuente = 'formulario_web' and actor_rol = 'publico')
     or (fuente in ('checkout_reserva', 'checkout_gift_card') and tipo = 'alta' and actor_rol = 'publico')
     or (fuente = 'admin_evidencia' and tipo = 'alta' and actor_rol = 'admin')
-    or (fuente = 'admin_pedido' and tipo = 'baja' and actor_rol in ('staff', 'admin'))),
+    or (fuente = 'admin_pedido' and tipo = 'baja' and actor_rol in ('staff', 'admin'))
+    or (fuente = 'whatsapp' and tipo = 'baja' and actor_rol = 'publico')),
   constraint mkt_eventos_solicitud check (
     ((actor_rol = 'publico' and tipo = 'alta') = (solicitado_en is not null))
     and (solicitado_en is null or ocurrido_en = solicitado_en)),
@@ -183,13 +186,14 @@ create table if not exists public.mkt_consentimiento_eventos (
 alter table public.mkt_consentimiento_eventos add column if not exists solicitado_en timestamptz;
 alter table public.mkt_consentimiento_eventos drop constraint if exists mkt_eventos_fuente;
 alter table public.mkt_consentimiento_eventos add constraint mkt_eventos_fuente
-  check (fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card', 'admin_evidencia', 'admin_pedido'));
+  check (fuente in ('formulario_web', 'checkout_reserva', 'checkout_gift_card', 'admin_evidencia', 'admin_pedido', 'whatsapp'));
 alter table public.mkt_consentimiento_eventos drop constraint if exists mkt_eventos_combinacion;
 alter table public.mkt_consentimiento_eventos add constraint mkt_eventos_combinacion check (
        (fuente = 'formulario_web' and actor_rol = 'publico')
     or (fuente in ('checkout_reserva', 'checkout_gift_card') and tipo = 'alta' and actor_rol = 'publico')
     or (fuente = 'admin_evidencia' and tipo = 'alta' and actor_rol = 'admin')
-    or (fuente = 'admin_pedido' and tipo = 'baja' and actor_rol in ('staff', 'admin')));
+    or (fuente = 'admin_pedido' and tipo = 'baja' and actor_rol in ('staff', 'admin'))
+    or (fuente = 'whatsapp' and tipo = 'baja' and actor_rol = 'publico'));
 alter table public.mkt_consentimiento_eventos drop constraint if exists mkt_eventos_solicitud;
 alter table public.mkt_consentimiento_eventos add constraint mkt_eventos_solicitud check (
     ((actor_rol = 'publico' and tipo = 'alta') = (solicitado_en is not null))
@@ -623,6 +627,57 @@ as $fn$
 $fn$;
 
 
+-- ── 6b. Bajas recibidas por WhatsApp (webhook de la Cloud API) ──────────────
+-- Fuente 'whatsapp', siempre de BAJA y del propio titular (actor 'publico'):
+--   origen 'texto'            el mensaje entero es un pedido inequívoco (BAJA, STOP…)
+--   origen 'boton'            tocó el botón de baja de una plantilla
+--   origen 'preferencia_meta' webhook user_preferences con value 'stop'
+--   origen 'error_131050'     Meta informó que la persona frenó el marketing
+-- p_telefono: el wa_id de Meta (549 + número) o cualquier forma que normalice.
+-- p_referencia: el id del mensaje o del evento de Meta; con el origen arma la
+-- clave de idempotencia (el mismo evento reintentado no duplica la baja).
+-- p_ocurrido_en: la fecha que informa Meta (su timestamp). Con el orden de la
+-- vista, una baja vieja que llega tarde no pisa un alta del titular posterior a
+-- ella, y nada de esta función da un alta: un 'resume' de Meta o un mensaje
+-- común NO son consentimiento. Meta reintenta hasta 7 días: se admite hasta 40.
+create or replace function public.mkt_wa_registrar_baja(p_telefono text, p_origen text, p_referencia text, p_ocurrido_en timestamptz)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_tel   text := public.mensualidad_normalizar_telefono(p_telefono);
+  v_clave uuid;
+  v_ev    public.mkt_consentimiento_eventos;
+begin
+  if coalesce(p_origen, '') not in ('texto', 'boton', 'preferencia_meta', 'error_131050')
+     or coalesce(p_referencia, '') !~ '^[A-Za-z0-9._:=+/-]{1,200}$'
+     or p_ocurrido_en is null
+     or p_ocurrido_en > clock_timestamp() + interval '2 minutes'
+     or p_ocurrido_en < clock_timestamp() - interval '40 days' then
+    raise exception 'datos_invalidos' using errcode = '22023';
+  end if;
+  if v_tel is null then
+    return jsonb_build_object('ok', false, 'motivo', 'telefono_no_normalizable');
+  end if;
+  v_clave := md5('wa-baja:' || p_origen || ':' || p_referencia)::uuid;
+  perform pg_advisory_xact_lock(hashtext('mkt_consentimiento'), hashtext(v_clave::text));
+  select * into v_ev from public.mkt_consentimiento_eventos where idempotency_key = v_clave;
+  if found then
+    return jsonb_build_object('ok', true, 'repetida', true, 'telefono', v_ev.telefono,
+      'estado', (select estado from public.mkt_consentimiento_estado where telefono = v_ev.telefono));
+  end if;
+  insert into public.mkt_consentimiento_eventos (idempotency_key, huella, telefono, tipo, fuente, actor_rol, evidencia, ocurrido_en)
+  values (v_clave, md5('whatsapp|baja|' || v_tel || '|' || p_origen || '|' || p_referencia), v_tel, 'baja', 'whatsapp', 'publico',
+          jsonb_build_object('canal', 'whatsapp', 'origen', p_origen, 'referencia', p_referencia), p_ocurrido_en)
+  returning * into v_ev;
+  return jsonb_build_object('ok', true, 'repetida', false, 'telefono', v_tel,
+    'estado', (select estado from public.mkt_consentimiento_estado where telefono = v_tel));
+end;
+$fn$;
+
+
 -- ── 7. Permisos ─────────────────────────────────────────────────────────────
 alter table public.mkt_textos_consentimiento enable row level security;
 alter table public.mkt_consentimiento_eventos enable row level security;
@@ -642,7 +697,9 @@ revoke all on function public.mkt_consentimiento_registrar(uuid, jsonb, text) fr
 revoke all on function public.mkt_texto_publicar(text, text) from public, anon, authenticated;
 revoke all on function public.mkt_texto_retirar(text, text) from public, anon, authenticated;
 revoke all on function public.mkt_consentimiento_resumen(timestamptz) from public, anon, authenticated;
+revoke all on function public.mkt_wa_registrar_baja(text, text, text, timestamptz) from public, anon, authenticated;
 
+grant execute on function public.mkt_wa_registrar_baja(text, text, text, timestamptz) to service_role;
 grant execute on function public.mkt_consentimiento_registrar(uuid, jsonb, text) to service_role;
 grant execute on function public.mkt_texto_publicar(text, text) to service_role;
 grant execute on function public.mkt_texto_retirar(text, text) to service_role;

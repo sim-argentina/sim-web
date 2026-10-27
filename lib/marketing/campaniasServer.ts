@@ -42,6 +42,7 @@ import {
   errorDeRpcCampanias,
   faltantesParaPreparar,
   renderizarMensaje,
+  parametrosPlantilla,
   valoresMensaje,
   variablesDelMensaje,
   type DatosCampania,
@@ -52,6 +53,7 @@ import {
 } from "@/lib/marketing/campanias";
 import { ETIQUETA_FUENTE, type Fuente } from "@/lib/marketing/consentimiento";
 import { leerRegistroParaAudiencia } from "@/lib/marketing/registroLectura";
+import { procesarEventos } from "@/lib/marketing/whatsappServer";
 import {
   crearProveedorSimulado,
   decidirEntregaSimulada,
@@ -539,6 +541,10 @@ export async function ejecutarLote(campaniaId: string, opts: {
     interrumpidos: 0, descartados: 0, completada: c.valor.estado === "completada",
   };
 
+  // 0 · Novedades del webhook que quedaron sin procesar (bajas, estados): así
+  // una baja recibida mientras el proceso estaba caído excluye antes de tomar.
+  await procesarEventos(100);
+
   // 1 · Entregas de lo aceptado en lotes anteriores (en la etapa real, webhook).
   const e1 = await simularEntregas(c.valor, sim);
   if (!e1.ok) return e1;
@@ -567,12 +573,23 @@ export async function ejecutarLote(campaniaId: string, opts: {
     try {
       const r = await conTiempo(proveedor.enviarPlantilla({
         destino: `549${t.telefono}`, plantilla: "simulacion_recuperacion_stand", idioma: "es_AR",
-        variables: [valores.nombre, valores.beneficio, valores.codigo, valores.vence, valores.productos],
+        variables: parametrosPlantilla(valores),
         codigoCupon: t.beneficio_codigo, claveIdempotencia: clave(campaniaId, t.telefono), intento: t.intentos,
+        referencia: `${t.id}:${t.intentos}`,
       }), tiempo);
       if (r.ok) { resultado = "aceptado"; datos = { wamid: r.wamid }; }
+      else if (r.incierto) { resultado = "incierto"; datos = { codigo: r.codigo, detalle: r.detalle }; }
       else if (r.transitorio) { resultado = "transitorio"; datos = { codigo: r.codigo, detalle: r.detalle, reintentar_en_s: opts.esperaReintentoS ?? ESPERA_REINTENTO_S }; }
-      else { resultado = "fallido"; datos = { codigo: r.codigo, detalle: r.detalle }; }
+      else {
+        resultado = "fallido";
+        datos = { codigo: r.codigo, detalle: r.detalle };
+        // 131050: la persona frenó el marketing en WhatsApp. Es una baja.
+        if (r.codigo === "131050") {
+          await supabaseAdmin.rpc("mkt_wa_registrar_baja", {
+            p_telefono: `549${t.telefono}`, p_origen: "error_131050", p_referencia: `api:${t.id}:${t.intentos}`, p_ocurrido_en: new Date().toISOString(),
+          });
+        }
+      }
     } catch (err) {
       // Sin respuesta (tiempo agotado, corte de red): no se sabe si salió.
       resultado = "incierto";

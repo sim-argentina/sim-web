@@ -27,18 +27,28 @@ export type MensajePlantilla = {
   variables: readonly string[];
   /** Cupón del botón "copiar código", si la plantilla lo tiene. */
   codigoCupon?: string | null;
-  /** Un envío por destinatario y campaña: p. ej. `${campania}:${telefono}`. */
+  /**
+   * Clave LOCAL de un envío por destinatario y campaña (`${campania}:${telefono}`).
+   * Evita que SIM pida dos veces en el flujo normal; NO es una garantía de envío
+   * único del lado de Meta (la Cloud API no documenta idempotencia para /messages).
+   */
   claveIdempotencia: string;
-  /** Número de intento (1 = el primero). Solo lo usa el proveedor simulado. */
+  /** Número de intento (1 = el primero). */
   intento?: number;
+  /** "<destinatario>:<intento>": la Cloud API la puede devolver en los webhooks de estado (biz_opaque_callback_data). */
+  referencia?: string;
 };
 
+/**
+ * ok = la API ACEPTÓ el pedido (todavía no hay entrega ni lectura: eso llega por
+ * webhook). incierto = no se sabe si salió: se conserva así y no se reenvía solo.
+ */
 export type ResultadoEnvio =
-  | { ok: true; wamid: string; repetido: boolean }
-  | { ok: false; codigo: string; transitorio: boolean; detalle: string };
+  | { ok: true; wamid: string; repetido: boolean; estadoMeta?: string }
+  | { ok: false; codigo: string; transitorio: boolean; detalle: string; incierto?: true };
 
 export interface ProveedorWhatsapp {
-  readonly nombre: "falso";
+  readonly nombre: "falso" | "cloud";
   enviarPlantilla(mensaje: MensajePlantilla): Promise<ResultadoEnvio>;
 }
 
@@ -148,7 +158,7 @@ export function crearProveedorSimulado(s: SimulacionEnvio): ProveedorWhatsapp {
         case "incierto":
           throw new SinRespuestaSimulada();
         default:
-          return { ok: true, wamid: wamidSimulado(m.claveIdempotencia), repetido: false };
+          return { ok: true, wamid: wamidSimulado(`${m.claveIdempotencia}:${m.intento ?? 1}`), repetido: false };
       }
     },
   };
@@ -156,6 +166,7 @@ export function crearProveedorSimulado(s: SimulacionEnvio): ProveedorWhatsapp {
 
 export const CODIGO_SIN_PROVEEDOR = "whatsapp_sin_proveedor";
 export const CODIGO_REAL_NO_DISPONIBLE = "whatsapp_cloud_api_no_disponible";
+export const CODIGO_CLOUD_SIN_CAMPANIAS = "whatsapp_cloud_solo_adaptador";
 export const CODIGO_FALSO_EN_PRODUCCION = "whatsapp_falso_en_vercel_production";
 export const CODIGO_FALSO_VERCEL_INDETERMINADO = "whatsapp_falso_en_vercel_indeterminado";
 export const CODIGO_FALSO_DESTINO_NO_LOOPBACK = "whatsapp_falso_con_destino_no_loopback";
@@ -173,8 +184,14 @@ export function evaluarProveedorWhatsapp(
   if (!pedido) {
     return { ok: false, codigo: CODIGO_SIN_PROVEEDOR, motivo: "MARKETING_WHATSAPP_PROVIDER no está definido: no se envía nada." };
   }
+  if (pedido === "cloud") {
+    // El adaptador existe (lib/marketing/whatsappCloud.ts) pero en esta etapa
+    // ninguna campaña puede usarlo: la base solo admite modo simulacion y los
+    // envíos reales tienen su propio bloqueo, apagado por defecto.
+    return { ok: false, codigo: CODIGO_CLOUD_SIN_CAMPANIAS, motivo: "La Cloud API está implementada pero las campañas solo corren en simulación; los envíos reales siguen bloqueados." };
+  }
   if (pedido !== "fake") {
-    return { ok: false, codigo: CODIGO_REAL_NO_DISPONIBLE, motivo: `El proveedor "${pedido}" no existe todavía: solo hay proveedor falso.` };
+    return { ok: false, codigo: CODIGO_REAL_NO_DISPONIBLE, motivo: `El proveedor "${pedido}" no existe: los valores son "fake" o "cloud".` };
   }
 
   const vercelEnv = (entorno.VERCEL_ENV || "").toLowerCase();

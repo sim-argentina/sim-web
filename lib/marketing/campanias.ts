@@ -264,6 +264,21 @@ export function valoresMensaje(d: Pick<DatosCampania, "beneficio_tipo" | "benefi
   };
 }
 
+/**
+ * Contrato de la plantilla de marketing de SIM (la que hay que hacer aprobar en
+ * Meta; ver docs/marketing/whatsapp-cloud-api.md). Cuerpo con 4 parámetros
+ * POSICIONALES, en este orden, y un botón "copiar código" con el cupón:
+ *   {{1}} saludo ("Hola Ana" o "Hola": Meta no admite parámetros vacíos)
+ *   {{2}} beneficio  {{3}} vence (dd/mm)  {{4}} productos
+ * El texto del panel es el BORRADOR de esa plantilla; lo que sale es lo aprobado.
+ */
+export const PARAMETROS_PLANTILLA = ["saludo", "beneficio", "vence", "productos"] as const;
+
+export function parametrosPlantilla(v: ValoresMensaje): string[] {
+  const saludo = v.nombre.trim() ? `Hola ${v.nombre.trim()}` : "Hola";
+  return [saludo, v.beneficio, v.vence, v.productos];
+}
+
 /** Las condiciones como las leería el destinatario. */
 export function condicionesParaDestinatario(d: Pick<DatosCampania, "beneficio_tipo" | "beneficio_valor" | "beneficio_vigencia_dias" | "productos">, hoy: string): string[] {
   return [

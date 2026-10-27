@@ -434,6 +434,7 @@ function limpiar() {
   const tels = Array.from({ length: 16 }, (_, i) => lit(tel(i))).join(", ");
   sql(`begin;
        set local session_replication_role = replica;
+       delete from public.mkt_whatsapp_envios where campania_id in (select id from public.mkt_campanias where id in (${ids}) or nombre like ${lit(`%${MARCA}%`)});
        delete from public.mkt_campania_eventos where campania_id in (select id from public.mkt_campanias where id in (${ids}) or nombre like ${lit(`%${MARCA}%`)});
        delete from public.mkt_campania_destinatarios where campania_id in (select id from public.mkt_campanias where id in (${ids}) or nombre like ${lit(`%${MARCA}%`)});
        delete from public.mkt_campanias where id in (${ids}) or nombre like ${lit(`%${MARCA}%`)};
@@ -443,6 +444,7 @@ function limpiar() {
        ${vigentePrevio ? `update public.mkt_textos_consentimiento set estado = 'vigente', retirado_en = null, retirado_por_rol = null where version = ${lit(vigentePrevio)};` : ""}
        commit;`);
   assert.equal(sql(`select count(*) from public.mkt_campanias where nombre like ${lit(`%${MARCA}%`)}`), "0");
+  assert.equal(sql(`select count(*) from public.mkt_whatsapp_envios e where not exists (select 1 from public.mkt_campania_destinatarios d where d.id = e.destinatario_id)`), "0", "sin intentos huérfanos");
   assert.equal(sql(`select count(*) from public.mkt_consentimiento_eventos where telefono in (${tels})`), "0");
 }
 

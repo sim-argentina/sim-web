@@ -143,7 +143,7 @@ async function main() {
     const p = crearProveedorSimulado({ fallo_definitivo_pct: 0, fallo_transitorio_pct: 0, incierto_pct: 100, no_entregado_pct: 0 });
     const m = { destino: "5493511234567", plantilla: "p", idioma: "es_AR", variables: [], claveIdempotencia: "c:1", intento: 1 };
     await assert.rejects(() => p.enviarPlantilla(m), SinRespuestaSimulada, "incierto = sin respuesta (el ejecutor lo marca incierto)");
-    assert.deepEqual(await p.enviarPlantilla({ ...m, intento: 2 }), { ok: true, wamid: wamidSimulado("c:1"), repetido: false });
+    assert.deepEqual(await p.enviarPlantilla({ ...m, intento: 2 }), { ok: true, wamid: wamidSimulado("c:1:2"), repetido: false });
     assert.equal((await p.enviarPlantilla({ ...m, destino: "351" })).ok, false);
   }
 
@@ -157,7 +157,8 @@ async function main() {
     assert.equal(no({ ...local, NEXT_PUBLIC_SUPABASE_URL: "https://bcmoewwhsyxsiyvroarj.supabase.co" }), "campanias_base_no_local");
     assert.equal(no({ ...local, NEXT_PUBLIC_SUPABASE_URL: "http://usuario:clave@127.0.0.1:55321" }), "campanias_base_no_local");
     assert.equal(no({ ...local, MARKETING_WHATSAPP_PROVIDER: undefined }), "whatsapp_sin_proveedor");
-    assert.equal(no({ ...local, MARKETING_WHATSAPP_PROVIDER: "cloud" }), "whatsapp_cloud_api_no_disponible");
+    assert.equal(no({ ...local, MARKETING_WHATSAPP_PROVIDER: "cloud" }), "whatsapp_cloud_solo_adaptador", "la Cloud API no escribe campañas");
+    assert.equal(no({ ...local, MARKETING_WHATSAPP_PROVIDER: "cloud_api" }), "whatsapp_cloud_api_no_disponible");
   }
 
   // ── 7. Errores de la base → errores de la API, sin detalle interno ─────────

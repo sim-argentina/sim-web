@@ -40,6 +40,7 @@ function limpiar() {
   const tels = TELS.map(lit).join(", ");
   sql(`begin;
     set local session_replication_role = replica;
+    delete from public.mkt_whatsapp_envios where campania_id in (select id from public.mkt_campanias where nombre like 'Demo%');
     delete from public.mkt_campania_eventos where campania_id in (select id from public.mkt_campanias where nombre like 'Demo%');
     delete from public.mkt_campania_destinatarios where campania_id in (select id from public.mkt_campanias where nombre like 'Demo%');
     delete from public.mkt_campanias where nombre like 'Demo%';

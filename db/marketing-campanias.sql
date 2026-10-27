@@ -176,6 +176,49 @@ create table if not exists public.mkt_campania_destinatarios (
 
 create index if not exists mkt_dest_cola_idx on public.mkt_campania_destinatarios (campania_id, estado, orden);
 create index if not exists mkt_dest_telefono_idx on public.mkt_campania_destinatarios (telefono);
+alter table public.mkt_campania_destinatarios add column if not exists leido_en timestamptz;
+
+
+-- ── 2b. Intentos de envío y su estado en Meta ───────────────────────────────
+-- Una fila por intento (destinatario + número de intento), con el resultado que
+-- informó el ejecutor y, después, lo que digan los webhooks de estado de Meta.
+--   origen 'simulado'  la cola de una campaña en simulación (proveedor simulado)
+--   origen 'real'      un envío por la Cloud API; SOLO estas filas reciben
+--                      estados de webhooks (un wamid SIMULADO nunca coincide)
+-- estado_meta avanza y no retrocede: sin_estado → enviado → entregado → leido;
+-- 'fallido' solo si todavía no estaba entregado. Un estado repetido o tardío
+-- deja la fecha que ya tenía (coalesce) y no cuenta dos veces.
+-- cobrable: lo que Meta marca como cobrable en el webhook de entrega
+-- (pricing.type 'regular'); una aceptación de la API NO es un cobro.
+create table if not exists public.mkt_whatsapp_envios (
+  id               uuid primary key default gen_random_uuid(),
+  destinatario_id  uuid not null references public.mkt_campania_destinatarios (id),
+  campania_id      uuid not null references public.mkt_campanias (id),
+  intento          integer not null,
+  origen           text not null,
+  resultado        text not null,
+  wamid            text,
+  estado_meta      text not null default 'sin_estado',
+  error_codigo     text,
+  cobrable         boolean,
+  pricing_categoria text,
+  pricing_tipo     text,
+  aceptado_en      timestamptz,
+  enviado_en       timestamptz,
+  entregado_en     timestamptz,
+  leido_en         timestamptz,
+  fallido_en       timestamptz,
+  creado_en        timestamptz not null default clock_timestamp(),
+  actualizado_en   timestamptz not null default clock_timestamp(),
+  constraint mkt_envios_intento_unico unique (destinatario_id, intento),
+  constraint mkt_envios_origen check (origen in ('simulado', 'real')),
+  constraint mkt_envios_resultado check (resultado in ('aceptado', 'fallido', 'transitorio', 'incierto')),
+  constraint mkt_envios_estado check (estado_meta in ('sin_estado', 'enviado', 'entregado', 'leido', 'fallido')),
+  constraint mkt_envios_intento check (intento between 1 and 10),
+  constraint mkt_envios_wamid check (wamid is null or wamid ~ '^[A-Za-z0-9._:=+/-]{1,200}$')
+);
+create unique index if not exists mkt_envios_wamid_key on public.mkt_whatsapp_envios (wamid) where wamid is not null;
+create index if not exists mkt_envios_campania_idx on public.mkt_whatsapp_envios (campania_id, origen);
 
 
 -- ── 3. Historial ────────────────────────────────────────────────────────────
@@ -220,6 +263,37 @@ create trigger mkt_dest_sin_truncate before truncate on public.mkt_campania_dest
 drop trigger if exists mkt_campania_eventos_sin_truncate on public.mkt_campania_eventos;
 create trigger mkt_campania_eventos_sin_truncate before truncate on public.mkt_campania_eventos
   for each statement execute function public.mkt_campanias_sin_borrar();
+drop trigger if exists mkt_envios_sin_borrar on public.mkt_whatsapp_envios;
+create trigger mkt_envios_sin_borrar before delete on public.mkt_whatsapp_envios
+  for each row execute function public.mkt_campanias_sin_borrar();
+drop trigger if exists mkt_envios_sin_truncate on public.mkt_whatsapp_envios;
+create trigger mkt_envios_sin_truncate before truncate on public.mkt_whatsapp_envios
+  for each statement execute function public.mkt_campanias_sin_borrar();
+
+-- Una baja (de cualquier fuente: web, panel o WhatsApp) que deja el teléfono en
+-- 'baja' excluye en el acto a sus destinatarios PENDIENTES de toda campaña, aunque
+-- los envíos estén apagados. Lo que ya está en vuelo ('enviando') no se puede
+-- frenar; tomar_lote igual vuelve a revisar el consentimiento de cada uno.
+create or replace function public.mkt_campanias_baja_excluye()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+begin
+  if new.tipo = 'baja' and exists (
+       select 1 from public.mkt_consentimiento_estado e where e.telefono = new.telefono and e.estado = 'baja') then
+    update public.mkt_campania_destinatarios
+       set estado = 'excluido', motivo = 'baja_posterior', terminado_en = clock_timestamp(), actualizado_en = clock_timestamp()
+     where telefono = new.telefono and estado = 'pendiente';
+  end if;
+  return null;
+end;
+$fn$;
+
+drop trigger if exists mkt_campanias_baja_excluye on public.mkt_consentimiento_eventos;
+create trigger mkt_campanias_baja_excluye after insert on public.mkt_consentimiento_eventos
+  for each row execute function public.mkt_campanias_baja_excluye();
 
 
 -- ── 4. Guardar un borrador (crear o editar) ─────────────────────────────────
@@ -500,11 +574,20 @@ begin
     raise exception 'campania_inexistente' using errcode = 'P0002';
   end if;
 
-  update public.mkt_campania_destinatarios
-     set estado = 'incierto', motivo = 'ejecutor_interrumpido', ultimo_codigo = 'sin_respuesta',
-         tomado_hasta = null, actualizado_en = clock_timestamp()
-   where campania_id = p_id and estado = 'enviando' and tomado_hasta < clock_timestamp();
-  get diagnostics v_interr = row_count;
+  with interr as (
+    update public.mkt_campania_destinatarios
+       set estado = 'incierto', motivo = 'ejecutor_interrumpido', ultimo_codigo = 'sin_respuesta',
+           tomado_hasta = null, actualizado_en = clock_timestamp()
+     where campania_id = p_id and estado = 'enviando' and tomado_hasta < clock_timestamp()
+    returning id, campania_id, intentos
+  ), ins as (
+    insert into public.mkt_whatsapp_envios (destinatario_id, campania_id, intento, origen, resultado, error_codigo)
+    select i.id, i.campania_id, i.intentos, case when v_c.modo = 'simulacion' then 'simulado' else 'real' end, 'incierto', 'sin_respuesta'
+      from interr i
+    on conflict (destinatario_id, intento) do nothing
+    returning 1
+  )
+  select count(*) into v_interr from interr;
 
   if v_c.estado <> 'ejecutando' then
     if v_interr > 0 then
@@ -589,6 +672,8 @@ declare
   v_codigo  text := left(nullif(btrim(coalesce(p_datos ->> 'codigo', '')), ''), 60);
   v_detalle text := left(nullif(btrim(coalesce(p_datos ->> 'detalle', '')), ''), 300);
   v_espera  integer := least(greatest(coalesce((p_datos ->> 'reintentar_en_s')::integer, 30), 1), 3600);
+  v_intento integer;
+  v_origen  text;
 begin
   if p_destinatario is null or p_ejecutor is null or p_datos is null or jsonb_typeof(p_datos) <> 'object'
      or coalesce(p_resultado, '') not in ('aceptado', 'fallido', 'transitorio', 'incierto') then
@@ -610,6 +695,19 @@ begin
   if not (v_d.estado = 'enviando' or (v_d.estado = 'incierto' and v_d.motivo = 'ejecutor_interrumpido')) then
     return jsonb_build_object('ok', false, 'motivo', 'estado_' || v_d.estado, 'estado', v_d.estado);
   end if;
+  v_intento := v_d.intentos;
+  select case when c.modo = 'simulacion' then 'simulado' else 'real' end into v_origen
+    from public.mkt_campanias c where c.id = v_d.campania_id;
+  insert into public.mkt_whatsapp_envios (destinatario_id, campania_id, intento, origen, resultado, wamid, error_codigo, aceptado_en)
+  values (v_d.id, v_d.campania_id, v_intento, v_origen, p_resultado,
+          case when p_resultado = 'aceptado' then v_wamid end, v_codigo,
+          case when p_resultado = 'aceptado' then clock_timestamp() end)
+  on conflict (destinatario_id, intento) do update
+     set resultado = excluded.resultado,
+         wamid = coalesce(public.mkt_whatsapp_envios.wamid, excluded.wamid),
+         error_codigo = coalesce(excluded.error_codigo, public.mkt_whatsapp_envios.error_codigo),
+         aceptado_en = coalesce(public.mkt_whatsapp_envios.aceptado_en, excluded.aceptado_en),
+         actualizado_en = clock_timestamp();
 
   if p_resultado = 'aceptado' then
     update public.mkt_campania_destinatarios
@@ -656,6 +754,9 @@ begin
   if not found then
     raise exception 'destinatario_inexistente' using errcode = 'P0002';
   end if;
+  if (select c.modo from public.mkt_campanias c where c.id = v_d.campania_id) <> 'simulacion' then
+    raise exception 'entrega_real_solo_por_webhook' using errcode = '42501';
+  end if;
   if v_d.estado = p_estado then
     return jsonb_build_object('ok', true, 'repetida', true, 'estado', v_d.estado);
   end if;
@@ -670,6 +771,13 @@ begin
          ultimo_codigo = case when p_estado = 'no_entregado' then left(nullif(btrim(coalesce(p_codigo, '')), ''), 60) end,
          actualizado_en = clock_timestamp()
    where d.id = p_destinatario returning * into v_d;
+  update public.mkt_whatsapp_envios
+     set estado_meta = case when p_estado = 'entregado' then 'entregado' else 'fallido' end,
+         entregado_en = case when p_estado = 'entregado' then clock_timestamp() end,
+         fallido_en = case when p_estado = 'no_entregado' then clock_timestamp() end,
+         error_codigo = coalesce(error_codigo, case when p_estado = 'no_entregado' then left(nullif(btrim(coalesce(p_codigo, '')), ''), 60) end),
+         cobrable = (p_estado = 'entregado'), actualizado_en = clock_timestamp()
+   where wamid = v_d.wamid and origen = 'simulado' and estado_meta = 'sin_estado';
   return jsonb_build_object('ok', true, 'repetida', false, 'estado', v_d.estado);
 end;
 $fn$;
@@ -808,8 +916,12 @@ grant select on table public.mkt_campanias to service_role;
 grant select on table public.mkt_campania_destinatarios to service_role;
 grant select on table public.mkt_campania_eventos to service_role;
 grant select on table public.mkt_campania_atribucion to service_role;
+alter table public.mkt_whatsapp_envios enable row level security;
+revoke all on table public.mkt_whatsapp_envios from public, anon, authenticated, service_role;
+grant select on table public.mkt_whatsapp_envios to service_role;
 
 revoke all on function public.mkt_campanias_sin_borrar() from public, anon, authenticated, service_role;
+revoke all on function public.mkt_campanias_baja_excluye() from public, anon, authenticated, service_role;
 revoke all on function public.mkt_campania_guardar(uuid, integer, uuid, jsonb, text) from public, anon, authenticated;
 revoke all on function public.mkt_campania_preparar(uuid, integer, jsonb, jsonb, text) from public, anon, authenticated;
 revoke all on function public.mkt_campania_cambiar(uuid, text, text) from public, anon, authenticated;

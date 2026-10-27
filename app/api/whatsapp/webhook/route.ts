@@ -2,18 +2,32 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 import { logSecurityEvent } from "@/lib/apiError";
-import {
-  isWhatsappConfigured,
-  whatsappVerifyToken,
-  esNumeroAutorizado,
-  verificarFirma,
-  enviarTexto,
-} from "@/lib/whatsapp";
+import { isWhatsappConfigured, whatsappVerifyToken, esNumeroAutorizado, enviarTexto } from "@/lib/whatsapp";
 import { interpretarMensaje, resumenPlan, guardarPlan, type Plan } from "@/lib/finanzasWhatsapp";
+import {
+  TAMANO_MAXIMO_WEBHOOK,
+  leerConfigWebhook,
+  leerWebhook,
+  tokenVerificacionValido,
+  verificarFirmaMeta,
+} from "@/lib/marketing/whatsappWebhook";
+import { anotar, procesarEventos, registrarEventos } from "@/lib/marketing/whatsappServer";
 
-// Webhook de WhatsApp Cloud API para carga de Finanzas por texto (MVP).
-// GET: verificación de Meta. POST: recepción de mensajes con confirmación OK/CANCELAR.
-// Si faltan variables, el módulo queda desactivado sin romper la app.
+// Webhook de WhatsApp Cloud API (Meta). Dos usos sobre el mismo número:
+//   · Marketing: estados de entrega de los envíos reales, bajas por WhatsApp
+//     (texto inequívoco, botón de baja, user_preferences) → bandeja persistente
+//     de db/marketing-whatsapp.sql. No envía nada.
+//   · Finanzas (MVP de siempre): carga de movimientos por texto desde números
+//     autorizados, con confirmación OK/CANCELAR. Sin cambios en su lógica.
+// GET: verificación de la suscripción (hub.mode, hub.verify_token, hub.challenge).
+// POST: solo se procesa con la configuración completa (secreto de la app, número
+// y cuenta) y una firma X-Hub-Signature-256 válida sobre los BYTES recibidos.
+// Solo eventos de la cuenta (entry.id) y el número (metadata.phone_number_id) de
+// SIM. Las novedades de marketing se GUARDAN antes de responder 200: si la base
+// falla se responde 500 y Meta reintenta (hasta 7 días). Ver
+// docs/marketing/whatsapp-cloud-api.md.
+
+export const dynamic = "force-dynamic";
 
 const RE_OK = /^(ok|s[ií]|dale|confirmar|guardar|guarda)\b/i;
 const RE_CANCEL = /^(cancelar|cancela|no|cancel)\b/i;
@@ -25,83 +39,87 @@ export async function GET(req: Request) {
   const token = url.searchParams.get("hub.verify_token");
   const challenge = url.searchParams.get("hub.challenge");
 
-  if (!isWhatsappConfigured()) {
+  const esperado = whatsappVerifyToken();
+  if (!esperado) {
     return NextResponse.json({ error: "WhatsApp no configurado" }, { status: 503 });
   }
-  if (mode === "subscribe" && token && token === whatsappVerifyToken()) {
-    return new Response(challenge || "", { status: 200, headers: { "Content-Type": "text/plain" } });
+  if (mode === "subscribe" && tokenVerificacionValido(token, esperado) && challenge && /^[A-Za-z0-9_-]{1,100}$/.test(challenge)) {
+    await anotar("webhook_verificado");
+    return new Response(challenge, { status: 200, headers: { "Content-Type": "text/plain" } });
   }
+  logSecurityEvent("whatsapp_verificacion_invalida", { ip: clientIp(req) });
   return NextResponse.json({ error: "Token de verificación inválido" }, { status: 403 });
 }
 
-// ── POST: mensajes entrantes ──────────────────────────────────────────────────
+// ── POST: eventos ─────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
-  // Meta reintenta si no recibe 200: respondemos 200 salvo firma inválida.
   if (!(await rateLimit(`wa:${clientIp(req)}`, 120, 60_000))) {
     return NextResponse.json({ error: "rate limit" }, { status: 429 });
   }
 
-  const raw = await req.text();
-
-  if (!isWhatsappConfigured()) {
-    // Módulo desactivado: no procesamos, pero no rompemos.
-    return NextResponse.json({ ok: false, disabled: true }, { status: 200 });
+  const cfg = leerConfigWebhook();
+  if (!cfg.ok) {
+    // Sin secreto, número o cuenta no se puede autenticar ni filtrar: no se procesa.
+    await anotar("rechazo:sin_configuracion");
+    return NextResponse.json({ error: "WhatsApp no configurado" }, { status: 503 });
   }
 
-  // Validación de firma (si hay APP_SECRET). null = no configurada → se omite.
-  const firma = verificarFirma(raw, req.headers.get("x-hub-signature-256"));
-  if (firma === false) {
+  const crudo = new Uint8Array(await req.arrayBuffer());
+  if (crudo.byteLength > TAMANO_MAXIMO_WEBHOOK) {
+    await anotar("rechazo:cuerpo_demasiado_grande");
+    return NextResponse.json({ error: "cuerpo demasiado grande" }, { status: 413 });
+  }
+  if (!verificarFirmaMeta(crudo, req.headers.get("x-hub-signature-256"), cfg.config.appSecret)) {
     logSecurityEvent("whatsapp_firma_invalida", { ip: clientIp(req) });
+    await anotar("rechazo:firma_invalida");
     return NextResponse.json({ error: "firma inválida" }, { status: 401 });
   }
 
   let body: unknown;
   try {
-    body = JSON.parse(raw);
+    body = JSON.parse(Buffer.from(crudo).toString("utf8"));
   } catch {
+    // Firmado pero ilegible: reintentarlo no lo arregla.
+    await anotar("rechazo:cuerpo_invalido");
     return NextResponse.json({ ok: true }, { status: 200 });
   }
 
-  try {
-    const mensajes = extraerMensajes(body);
-    for (const m of mensajes) {
-      await procesarMensaje(m.from, m.id, m.text, m.type);
+  const lectura = leerWebhook(body, cfg.config);
+  for (const [motivo, n] of Object.entries(lectura.rechazos)) {
+    if (n) {
+      if (motivo !== "evento_malformado") logSecurityEvent("whatsapp_evento_ajeno", { motivo, n });
+      await anotar(`rechazo:${motivo}`);
     }
-  } catch (e) {
-    console.error("[whatsapp] error procesando", e);
+  }
+
+  // Marketing: guardar ANTES de responder. Sin la migración, no hay nada que guardar.
+  if (lectura.eventos.length) {
+    const r = await registrarEventos(lectura.eventos);
+    if (!r.ok && r.instalado) {
+      console.error("[whatsapp] no se pudo guardar el webhook:", r.causa.slice(0, 200));
+      return NextResponse.json({ error: "no se pudo guardar; reintentar" }, { status: 500 });
+    }
+    if (r.ok) {
+      const p = await procesarEventos(100);
+      if (!p.ok) console.error("[whatsapp] procesamiento pendiente:", p.causa.slice(0, 200));
+    }
+  }
+
+  // Finanzas: el flujo de siempre, solo para eventos ya autenticados de la cuenta de SIM.
+  if (isWhatsappConfigured()) {
+    try {
+      for (const m of lectura.finanzas) {
+        await procesarMensaje(m.from, m.id, m.text, m.type);
+      }
+    } catch (e) {
+      console.error("[whatsapp] error procesando", e);
+    }
   }
 
   return NextResponse.json({ ok: true }, { status: 200 });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-type Entrante = { from: string; id: string; text: string; type: string };
-
-function extraerMensajes(body: unknown): Entrante[] {
-  const out: Entrante[] = [];
-  const entry = (body as { entry?: unknown[] })?.entry;
-  if (!Array.isArray(entry)) return out;
-  for (const e of entry) {
-    const changes = (e as { changes?: unknown[] })?.changes;
-    if (!Array.isArray(changes)) continue;
-    for (const c of changes) {
-      const value = (c as { value?: { messages?: unknown[] } })?.value;
-      const messages = value?.messages;
-      if (!Array.isArray(messages)) continue;
-      for (const msg of messages) {
-        const mm = msg as { from?: string; id?: string; type?: string; text?: { body?: string } };
-        out.push({
-          from: String(mm.from || ""),
-          id: String(mm.id || ""),
-          type: String(mm.type || ""),
-          text: String(mm.text?.body || "").trim(),
-        });
-      }
-    }
-  }
-  return out;
-}
+// ── Finanzas: helpers (sin cambios) ───────────────────────────────────────────
 
 async function procesarMensaje(from: string, messageId: string, texto: string, type: string) {
   if (!from || !messageId) return;

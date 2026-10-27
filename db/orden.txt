@@ -130,5 +130,10 @@ cupones-retencion.sql
 # mensualidad_normalizar_telefono. Reserva el prefijo SIMU- en codigos_descuento.
 marketing-campanias.sql
 
+# ── 13f. Marketing: WhatsApp Cloud API (bandeja del webhook, estados y bajas) ──
+# Mismo motivo que 13b. Necesita marketing-campanias.sql (envíos y destinatarios)
+# y marketing-consentimiento.sql (mkt_wa_registrar_baja). No envía nada.
+marketing-whatsapp.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql

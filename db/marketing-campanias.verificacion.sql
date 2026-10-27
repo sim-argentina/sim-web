@@ -149,13 +149,16 @@ begin
                               and (select count(*) from public.mkt_campania_eventos where campania_id = v_c and tipo = 'iniciar') = 1
                            then 'K6 ' else 'FALLA:K6 ' end;
 
-    -- K7 · tomar: una baja posterior a preparar excluye al destinatario; cada uno lo toma un solo ejecutor.
+    -- K7 · una baja posterior a preparar excluye al destinatario EN EL ACTO (antes de cualquier lote);
+    -- cada uno lo toma un solo ejecutor.
     perform pg_temp.baja('3519980002');
+    v_r := pg_temp.estado_de(v_c, '3519980002');
     v_j := public.mkt_campania_tomar_lote(v_c, v_e1, 10, 60);
     v_j2 := public.mkt_campania_tomar_lote(v_c, v_e2, 10, 60);
     v_d := (select id from public.mkt_campania_destinatarios where campania_id = v_c and telefono = '3519980001');
-    v_log := v_log || case when jsonb_array_length(v_j -> 'tomados') = 1 and v_j -> 'tomados' -> 0 ->> 'telefono' = '3519980001'
-                              and (v_j -> 'excluidos' ->> 'baja_posterior')::integer = 1
+    v_log := v_log || case when v_r = 'excluido|baja_posterior'
+                              and jsonb_array_length(v_j -> 'tomados') = 1 and v_j -> 'tomados' -> 0 ->> 'telefono' = '3519980001'
+                              and (v_j -> 'excluidos' ->> 'baja_posterior')::integer = 0
                               and jsonb_array_length(v_j2 -> 'tomados') = 0
                               and pg_temp.estado_de(v_c, '3519980002') = 'excluido|baja_posterior'
                               and (select estado || '|' || tomado_por || '|' || intentos from public.mkt_campania_destinatarios where id = v_d) = 'enviando|' || v_e1 || '|1'
@@ -260,6 +263,34 @@ begin
                               and not (v_j ->> 'beneficio_ficticio')::boolean
                               and v_j2 ->> 'regreso_turno_id' is null and (v_j2 ->> 'beneficio_ficticio')::boolean
                            then 'K13 ' else 'FALLA:K13 ' end;
+
+    -- K15 · intentos: cada resultado queda por destinatario e intento (simulado); un turno vencido deja su
+    -- intento 'incierto'; la respuesta tardía actualiza ESE intento; la entrega simulada lo marca cobrable.
+    v_n := 0;
+    if (select count(*) from public.mkt_whatsapp_envios where origen <> 'simulado') = 0 then v_n := v_n + 1; end if;
+    if (select resultado || '|' || estado_meta || '|' || cobrable from public.mkt_whatsapp_envios
+          where destinatario_id = (select id from public.mkt_campania_destinatarios where campania_id = v_c and telefono = '3519980001')) = 'aceptado|entregado|true' then v_n := v_n + 1; end if;
+    if (select string_agg(intento || ':' || resultado, ',' order by intento) from public.mkt_whatsapp_envios e
+          join public.mkt_campania_destinatarios d on d.id = e.destinatario_id where d.telefono = '3519980005') = '1:transitorio,2:transitorio,3:transitorio' then v_n := v_n + 1; end if;
+    if (select string_agg(e.resultado || '|' || coalesce(e.wamid, '-'), ',' order by d.telefono, e.intento) from public.mkt_whatsapp_envios e
+          join public.mkt_campania_destinatarios d on d.id = e.destinatario_id where d.telefono in ('3519980006', '3519980007'))
+       = 'aceptado|wamid.TARDE,incierto|-,incierto|-' then v_n := v_n + 1; end if;
+    if pg_temp.intentar(format('delete from public.mkt_whatsapp_envios where destinatario_id = %L', v_d)) like '55000:historial_inmutable%' then v_n := v_n + 1; end if;
+    v_log := v_log || case when v_n = 5 then 'K15 ' else 'FALLA:K15:' || v_n || ' ' end;
+
+    -- K16 · una baja excluye los PENDIENTES de todas las campañas y no toca lo ya enviado; un alta no excluye.
+    v_j := public.mkt_campania_guardar(null, null, gen_random_uuid(), v_datos || '{"nombre": "Baja inmediata", "limite_destinatarios": null, "presupuesto_maximo": null}', 'admin');
+    v_c2 := (v_j -> 'campania' ->> 'id')::uuid;
+    perform pg_temp.alta('3519980009');
+    perform pg_temp.alta('3519980010');
+    perform public.mkt_campania_preparar(v_c2, 1, v_aud, jsonb_build_array(pg_temp.dest('3519980009'), pg_temp.dest('3519980010')), 'admin');
+    v_r := pg_temp.estado_de(v_c2, '3519980009');
+    perform pg_temp.baja('3519980009');
+    perform pg_temp.baja('3519980001');
+    v_log := v_log || case when v_r = 'pendiente|' and pg_temp.estado_de(v_c2, '3519980009') = 'excluido|baja_posterior'
+                              and pg_temp.estado_de(v_c2, '3519980010') = 'pendiente|'
+                              and pg_temp.estado_de(v_c, '3519980001') = 'entregado|'
+                           then 'K16 ' else 'FALLA:K16 ' end;
 
     -- K14 · permisos: service_role solo lee; anon no ve ni ejecuta nada.
     execute 'set local role service_role';

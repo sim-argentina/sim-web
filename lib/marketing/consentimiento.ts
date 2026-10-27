@@ -22,7 +22,9 @@ import { enmascararTelefono } from "@/lib/marketing/audiencia";
 export const RUTA_ALTA = "/promos";
 export const RUTA_BAJA = "/promos/baja";
 
-export const FUENTES = ["formulario_web", "checkout_reserva", "checkout_gift_card", "admin_evidencia", "admin_pedido"] as const;
+// "whatsapp" es SOLO de baja y la escribe el webhook de la Cloud API
+// (mkt_wa_registrar_baja); ninguna ruta del panel ni pública la elige.
+export const FUENTES = ["formulario_web", "checkout_reserva", "checkout_gift_card", "admin_evidencia", "admin_pedido", "whatsapp"] as const;
 export type Fuente = (typeof FUENTES)[number];
 
 export const ETIQUETA_FUENTE: Record<Fuente, string> = {
@@ -31,6 +33,7 @@ export const ETIQUETA_FUENTE: Record<Fuente, string> = {
   checkout_gift_card: "Casilla en Gift Cards",
   admin_evidencia: "Panel, con evidencia",
   admin_pedido: "Panel, a pedido",
+  whatsapp: "WhatsApp (baja)",
 };
 
 export const TIPOS_EVIDENCIA = [

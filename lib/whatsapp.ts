@@ -2,9 +2,12 @@
 // MVP solo texto. Si faltan variables, el módulo queda desactivado (isWhatsappConfigured=false)
 // y la app sigue funcionando: el webhook responde con un error claro sin romper nada.
 
-import crypto from "crypto";
-
-const GRAPH_VERSION = "v21.0";
+// Versión de la Graph API: la explícita de WHATSAPP_GRAPH_VERSION si es válida
+// (la misma que usa el adaptador de marketing); si no, la de siempre de este MVP.
+function graphVersion(): string {
+  const v = (process.env.WHATSAPP_GRAPH_VERSION || "").trim();
+  return /^v\d{2,3}\.\d$/.test(v) ? v : "v21.0";
+}
 
 export function isWhatsappConfigured(): boolean {
   return Boolean(
@@ -39,22 +42,8 @@ export function esNumeroAutorizado(phone: string): boolean {
   return numerosAutorizados().some((a) => a === p || a.slice(-10) === cola);
 }
 
-// Verifica la firma X-Hub-Signature-256 (HMAC-SHA256 del body crudo con APP_SECRET).
-// Si no hay APP_SECRET configurado, no se puede validar → devuelve null (el caller decide).
-export function verificarFirma(rawBody: string, signatureHeader: string | null): boolean | null {
-  const secret = process.env.WHATSAPP_APP_SECRET;
-  if (!secret) return null;
-  if (!signatureHeader) return false;
-  const esperado =
-    "sha256=" + crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
-  try {
-    const a = Buffer.from(signatureHeader);
-    const b = Buffer.from(esperado);
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
-}
+// La firma del webhook la valida lib/marketing/whatsappWebhook.ts (verificarFirmaMeta):
+// sin WHATSAPP_APP_SECRET el webhook no procesa nada.
 
 // Envía un mensaje de texto por la Cloud API. No lanza: loguea y devuelve ok/err.
 export async function enviarTexto(to: string, body: string): Promise<{ ok: boolean; error?: string }> {
@@ -62,7 +51,7 @@ export async function enviarTexto(to: string, body: string): Promise<{ ok: boole
   const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const token = process.env.WHATSAPP_ACCESS_TOKEN;
   try {
-    const res = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${phoneId}/messages`, {
+    const res = await fetch(`https://graph.facebook.com/${graphVersion()}/${phoneId}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({
