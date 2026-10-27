@@ -153,15 +153,30 @@ no se muestra en el Turnero y su §2 no menciona los datos del stand.
 
 ## WhatsApp (estado real)
 
-- Existe un MVP de **Finanzas por texto**: `lib/whatsapp.ts` (Cloud API, Graph `v21.0`,
-  solo texto libre, que solo vale dentro de la ventana de 24 h), `app/api/whatsapp/webhook/route.ts`
-  (lista blanca `WHATSAPP_ALLOWED_NUMBERS`), tabla `fin_whatsapp_pendientes` (0 filas).
-  No hay plantillas, ni estados de entrega, ni bajas, ni `user_preferences`.
+- **Integración preparada, envíos reales BLOQUEADOS** (rama `marketing-etapa1-simulacion`,
+  sin migrar ni desplegar; guía: `docs/marketing/whatsapp-cloud-api.md`):
+  - Adaptador `lib/marketing/whatsappCloud.ts`: plantillas por `/<versión>/<phone_id>/messages`
+    (o `/marketing_messages` con `MARKETING_WHATSAPP_ENDPOINT`), versión explícita
+    `WHATSAPP_GRAPH_VERSION`, 10 s, validación local, clasificación (transitorios 2, 4,
+    130429, 131000, 131016, 131056; 131050 = baja; 1 o 5xx sin código = INCIERTO). Una
+    respuesta OK es "aceptado", nunca "entregado". Sin respuesta → incierto, no se reenvía.
+    La idempotencia es LOCAL: Meta no documenta clave para /messages.
+  - Bloqueo `MARKETING_WHATSAPP_ENVIOS_REALES` (literal "true"), comprobado en cada envío antes
+    de la red; credenciales solas no habilitan. Ninguna campaña puede usar el adaptador
+    (la base solo admite modo 'simulacion').
+  - Webhook `app/api/whatsapp/webhook/route.ts`: firma HMAC sobre los bytes obligatoria (sin
+    `WHATSAPP_APP_SECRET`, número o `WHATSAPP_BUSINESS_ACCOUNT_ID` → 503; firma mala → 401),
+    solo la cuenta y el número de SIM, bandeja persistente idempotente
+    (`db/marketing-whatsapp.sql`, 500 si la base falla → Meta reintenta hasta 7 días),
+    estados que no retroceden, sin textos guardados. Finanzas (MVP por texto, lista blanca
+    `WHATSAPP_ALLOWED_NUMBERS`) sigue igual, ahora solo con eventos firmados.
+  - Bajas por WhatsApp (fuente `whatsapp`, solo baja, `mkt_wa_registrar_baja`): texto
+    inequívoco entero (BAJA, STOP…), botón de baja, `user_preferences` stop y 131050. Excluyen
+    al instante los pendientes de toda campaña (trigger). `resume` de Meta queda aparte y NO
+    revierte la baja local. Un mensaje común no es autorización.
+  - Diagnóstico: Admin → Marketing → WhatsApp (sin configurar / incompleta / presente sin
+    verificar / verificada solo si Meta llamó).
 - En Producción el GET del webhook responde **503 "WhatsApp no configurado"** (19/10/2026).
-- Si falta `WHATSAPP_APP_SECRET`, `verificarFirma` devuelve `null` y el POST **se acepta
-  sin firma**. Para marketing la firma tiene que ser obligatoria.
-- Un mensaje de un cliente cae hoy en `whatsapp_numero_no_autorizado`. Hay que enrutar
-  respuestas, estados y bajas sin romper Finanzas.
 - Número comercial publicado: `siteConfig.whatsapp` en `data/site.ts`. La Tienda usa
   otro número (`app/tienda/page.tsx`).
 
@@ -274,9 +289,14 @@ Doc: `docs/marketing/campanias.md`. Panel: Admin → Marketing → "Campañas (s
   preparar y al tomar; topes al preparar y al tomar; pausa/cancelación sin borrar historial.
 - **Ejecutor:** `ejecutarLote` (breve, reanudable) con `crearProveedorSimulado`
   (determinístico por `campaña:teléfono`, sin estado). Disparadores: acciones del panel y
-  `POST /api/admin/marketing/campanias/ejecutar` con `Bearer CRON_SECRET` (NO programado:
-  Hobby solo admite crons diarios; candidato para la etapa real: Supabase Cron +
-  `pg_net`, a confirmar en el plan).
+  `POST /api/admin/marketing/campanias/ejecutar` con `Bearer CRON_SECRET` (procesa primero
+  la bandeja de WhatsApp; NO programado: Hobby solo admite crons diarios). Producción
+  (verificado en solo lectura el 27/10/2026): Postgres 17.6, `pg_cron` 1.6.4 y `pg_net`
+  0.20.0 disponibles y NO instalados, Vault instalado. Plantilla sin activar:
+  `db/marketing-campanias-cron.plantilla.sql` (lee URL y secreto de Vault).
+- **Intentos:** `mkt_whatsapp_envios`, uno por destinatario e intento, origen simulado o
+  real; solo los reales reciben estados de webhooks. Costo real = entregados cobrables
+  (`pricing.type = regular`) × tarifa de referencia, como estimado.
 - **Resultados:** conteos por estado y motivo, costo simulado = entregados × tarifa, y
   `mkt_campania_atribucion` (compra pagada reserva / Gift Card por separado; regreso al
   stand por teléfono desde el envío).
@@ -288,10 +308,12 @@ Doc: `docs/marketing/campanias.md`. Panel: Admin → Marketing → "Campañas (s
 
 ## Diseño de la primera versión (propuesta; lo que no está arriba no existe todavía)
 
-Lo que falta para la campaña REAL (lo simulado ya está arriba): grupo de control y
-ventana de atribución, flag estricto de envío, proveedor de la Cloud API, webhook de
-estados (131050 → baja, error de plantilla → pausar), códigos reales de uso único por
-destinatario y el disparador de servidor.
+Lo que falta para la campaña REAL (lo simulado y la integración ya están arriba): grupo
+de control y ventana de atribución, modo real de campañas en la base (hoy solo
+`simulacion`), credenciales y plantilla aprobada de Meta, decisión de número (nuevo o
+coexistencia con proveedor), códigos reales de uso único por destinatario (`codigo_id`),
+pausar la campaña ante un error de plantilla (132015/132016), activar Supabase Cron, las
+condiciones comerciales y la confirmación del control del teléfono.
 
 - **Consentimiento y bajas:** hecho en la Etapa 3. Falta la fuente "mensaje entrante de
   WhatsApp" (QR → wa.me al número de la API), que depende de la Cloud API.
