@@ -15,6 +15,7 @@ import {
   type TextoDto,
 } from "@/lib/marketing/consentimiento";
 import Campanias from "./Campanias";
+import Whatsapp from "./Whatsapp";
 import { Campo, Seccion, Tarjeta, btnBorde, btnRojo, fecha, inp } from "./ui";
 
 // Marketing. No envía mensajes ni crea códigos.
@@ -52,7 +53,7 @@ function evidenciaTexto(e: EventoDto): string {
   return partes.join(" · ") || "—";
 }
 
-type Pestania = "consentimiento" | "campanias";
+type Pestania = "consentimiento" | "campanias" | "whatsapp";
 
 export default function AdminMarketingPage() {
   return (
@@ -64,17 +65,19 @@ export default function AdminMarketingPage() {
 
 function PaginaMarketing() {
   const params = useSearchParams();
-  const [pestania, setPestania] = useState<Pestania>(() => (params.get("vista") === "campanias" || params.get("campania") ? "campanias" : "consentimiento"));
+  const [pestania, setPestania] = useState<Pestania>(() =>
+    params.get("vista") === "whatsapp" ? "whatsapp" : params.get("vista") === "campanias" || params.get("campania") ? "campanias" : "consentimiento");
   function elegir(p: Pestania) {
     setPestania(p);
     const u = new URL(window.location.href);
-    if (p === "campanias") u.searchParams.set("vista", "campanias");
-    else { u.searchParams.delete("vista"); u.searchParams.delete("campania"); }
+    if (p !== "consentimiento") u.searchParams.set("vista", p);
+    else u.searchParams.delete("vista");
+    if (p !== "campanias") u.searchParams.delete("campania");
     window.history.replaceState(null, "", u);
   }
   return (
     <Marco pestania={pestania} alElegir={elegir}>
-      {pestania === "campanias" ? <Campanias /> : <PanelConsentimiento />}
+      {pestania === "campanias" ? <Campanias /> : pestania === "whatsapp" ? <Whatsapp /> : <PanelConsentimiento />}
     </Marco>
   );
 }
@@ -450,6 +453,7 @@ function Marco({ children, pestania, alElegir }: { children: React.ReactNode; pe
           <div role="tablist" className="mt-4 flex flex-wrap gap-2">
             {tab("consentimiento", "Consentimiento")}
             {tab("campanias", "Campañas (simulación)")}
+            {tab("whatsapp", "WhatsApp")}
           </div>
         </div>
         {children}
