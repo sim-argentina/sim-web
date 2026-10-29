@@ -2,14 +2,19 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { getConsent, setConsent } from "@/lib/analytics";
 import { RUTAS_LEGALES } from "@/data/legal";
 
 // Banner de consentimiento de cookies analíticas. Barra inferior discreta (no es
 // un popup que bloquee el sitio). Recuerda la elección (localStorage) vía
 // getConsent/setConsent, que además actualizan Consent Mode v2.
+// No se ofrece en la interfaz comercial del CRM: es interna y no se mide
+// (lib/analytics.ts), así que no hay nada que aceptar ahí.
 export default function CookieConsent() {
+  const pathname = usePathname();
   const [visible, setVisible] = useState(false);
+  const interna = pathname === "/comercial" || pathname.startsWith("/comercial/");
 
   useEffect(() => {
     // Se difiere para no llamar a setState de forma síncrona dentro del efecto
@@ -20,7 +25,7 @@ export default function CookieConsent() {
     return () => clearTimeout(t);
   }, []);
 
-  if (!visible) return null;
+  if (!visible || interna) return null;
 
   const decidir = (valor: "granted" | "denied") => {
     setConsent(valor);

@@ -38,6 +38,12 @@ assert.equal(analyticsAllowedFor("simexperience.com.ar", "/admin/turnero"), fals
 assert.equal(analyticsAllowedFor("simexperience.com.ar", "/administracion"), true);
 assert.equal(analyticsAllowedFor("www.simexperience.com.ar", "/adminx"), true);
 
+// La interfaz comercial del CRM tampoco se mide; "/comerciales" (otra ruta) sí.
+assert.equal(analyticsAllowedFor("simexperience.com.ar", "/comercial"), false);
+assert.equal(analyticsAllowedFor("simexperience.com.ar", "/comercial/ingresar"), false);
+assert.equal(analyticsAllowedFor("www.simexperience.com.ar", "/comercial/"), false);
+assert.equal(analyticsAllowedFor("simexperience.com.ar", "/comerciales"), true);
+
 // Hostname productivo pero mayúsculas / otro host → bloqueado (allowlist estricta).
 assert.equal(analyticsAllowedFor("SIMEXPERIENCE.COM.AR", "/"), false);
 assert.equal(analyticsAllowedFor("preview.simexperience.com.ar", "/"), false);
