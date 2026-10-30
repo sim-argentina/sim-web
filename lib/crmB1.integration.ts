@@ -560,8 +560,20 @@ async function main() {
     // ANTES del commit. Sin ella, la primera transacción confirma en milisegundos y
     // las demás (que llegan con unos ms de desfase) ya la ven: la prueba pasaría
     // aunque no hubiera protección. Con la ventana, todas compiten de verdad.
-    const reaplicarB1 = () => execFileSync("docker", ["exec", "-i", CONTENEDOR, "psql", "-U", "postgres", "-d", "postgres", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", "-"],
-      { input: readFileSync("db/crm-b1-prospeccion.sql", "utf8"), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+    // Restaura SOLO lo que tocan la ventana y el control (el bloqueo del negocio, la
+    // auditoría y el índice), copiado de la migración de B1. Reaplicar el archivo
+    // entero pisaría lo que B2 redefine encima (visitas, auditoría ampliada).
+    const reaplicarB1 = () => {
+      const b1 = readFileSync("db/crm-b1-prospeccion.sql", "utf8").replace(/\r\n/g, "\n");
+      const fn = (nombre: string) => {
+        const ini = b1.indexOf(`create or replace function public.${nombre}(`);
+        assert.ok(ini >= 0, nombre);
+        return b1.slice(ini, b1.indexOf("\n$fn$;", ini) + 6);
+      };
+      const indice = b1.split("\n").find((l) => l.startsWith("create unique index if not exists crm_oportunidades_una_abierta_uidx"));
+      assert.ok(indice, "índice de una abierta");
+      sql(`${fn("crm_empresa_para_actor")}\n${fn("crm_auditar_entidad")}\n${indice}`);
+    };
     const abrirVentana = () => sql(`create or replace function public.crm_auditar_entidad(p_rol text, p_usuario uuid, p_entidad text, p_id uuid, p_accion text, p_datos jsonb)
       returns void language plpgsql volatile set search_path = public as $fn$
       begin
@@ -612,8 +624,8 @@ async function main() {
           end $fn$;`);
         control = await carrera(NCTRL, 7);
       } finally {
-        // Se cierran las duplicadas del control y se reaplica la migración
-        // (idempotente): vuelven el índice, el bloqueo y la auditoría sin espera.
+        // Se cierran las duplicadas del control y se restauran el índice, el bloqueo y
+        // la auditoría sin espera (copiados de la migración).
         sql(`update public.crm_oportunidades set cerrada_en = now(), cierre_motivo = 'origen_anulado'
               where empresa_id = ${lit(NCTRL)} and cerrada_en is null
                 and id <> (select id from public.crm_oportunidades where empresa_id = ${lit(NCTRL)} and cerrada_en is null order by lead_en limit 1);`);
