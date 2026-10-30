@@ -142,7 +142,8 @@ export type VisitaDto = {
 
 export type OportunidadDto = {
   id: string;
-  estado: "contacto" | "interesado";
+  /** Estados de B2 (lib/crmB2.ts). Al comercial solo le llega este resumen. */
+  estado: "contacto" | "conversacion" | "interesado" | "negociacion" | "pausada" | "perdida";
   abierta: boolean;
   cierre_motivo: string | null;
   lead_en: string;
@@ -213,7 +214,8 @@ export type ResultadoVisita =
     empresa_creada: boolean;
     contacto_id: string | null;
     contacto_creado: boolean;
-    oportunidad: { id: string; estado: "contacto" | "interesado"; creada: boolean; origen_es_esta_visita: boolean } | null;
+    /** Con estado "perdida": la visita quedó ligada a la oportunidad perdida (no la reabre). */
+    oportunidad: { id: string; estado: OportunidadDto["estado"]; creada: boolean; origen_es_esta_visita: boolean } | null;
     tarea: { id: string; vence_el: string | null } | null;
   };
 
@@ -326,6 +328,16 @@ const ERRORES: Record<string, Omit<ErrorCrm, "codigo">> = {
   contacto_sin_canal: { status: 400, error: "Para marcar el contacto como útil hace falta un teléfono." },
   revisita_fecha_pasada: { status: 400, error: "La fecha de la revisita ya pasó." },
   km_final_menor: { status: 400, error: "Los km finales no pueden ser menores que los iniciales." },
+  // B2 (seguimiento de Administración)
+  oportunidad_no_encontrada: { status: 404, error: "La oportunidad no existe." },
+  oportunidad_perdida: { status: 409, error: "La oportunidad está perdida: reabrila para registrar gestiones o programar acciones." },
+  oportunidad_pausada: { status: 409, error: "La oportunidad está en pausa: retomala antes de avanzar o programar." },
+  oportunidad_no_pausada: { status: 409, error: "La oportunidad no está en pausa." },
+  oportunidad_no_perdida: { status: 409, error: "Solo se puede reabrir una oportunidad perdida." },
+  seguimiento_pendiente: { status: 409, error: "Ya hay una próxima acción pendiente: resolvela con la gestión o reprogramala." },
+  seguimiento_no_vigente: { status: 409, error: "La próxima acción cambió mientras la mirabas. Recargá." },
+  otra_oportunidad_abierta: { status: 409, error: "El negocio ya tiene otra oportunidad abierta: no se puede reabrir esta sin cerrar la otra." },
+  oportunidad_gestionada: { status: 409, error: "Esa oportunidad ya tiene gestión de Administración: reasigná el origen o marcala como perdida antes de anular la visita." },
 };
 
 const CAMPOS: Record<string, string> = {
@@ -333,6 +345,9 @@ const CAMPOS: Record<string, string> = {
   contacto: "el contacto", necesidad_otra: "la necesidad «Otra»", revisita_para: "la fecha de revisita", motivo: "el motivo", empresa: "el negocio",
   km_inicial: "los km iniciales", km_final: "los km finales", combustible_unidad: "la unidad del combustible", rubro_detalle: "el rubro",
   nuevo_origen: "la visita de origen", responsable_ausente: "«el responsable no estaba» junto con «habló con el responsable»",
+  tipo: "el tipo de gestión", observacion: "la observación", ocurrida_en: "el momento de la gestión (no futuro ni anterior al lead)",
+  estado: "el estado", resolver: "la acción a resolver (una nota no la completa)", vence_el: "la fecha de la próxima acción",
+  retomar_el: "la fecha para retomar (desde mañana)", detalle: "el detalle del motivo", contacto_id: "el contacto",
 };
 
 /** Error conocido de una RPC, o null (la ruta contesta 500 genérico). Nunca pasa detalles de Postgres. */

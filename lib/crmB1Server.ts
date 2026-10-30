@@ -21,10 +21,10 @@ import {
 export type ActorRpc = { rol: "admin" } | { rol: "comercial"; usuarioId: string };
 export type R<T> = { ok: true; valor: T } | { ok: false; e: ErrorCrm | null; causa?: string };
 
-const actorRpc = (a: ActorRpc) => ({ p_actor_rol: a.rol, p_actor_usuario: a.rol === "comercial" ? a.usuarioId : null });
+export const actorRpc = (a: ActorRpc) => ({ p_actor_rol: a.rol, p_actor_usuario: a.rol === "comercial" ? a.usuarioId : null });
 const esComercial = (a: ActorRpc): a is { rol: "comercial"; usuarioId: string } => a.rol === "comercial";
 
-async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<R<T>> {
+export async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<R<T>> {
   const { data, error } = await supabaseAdmin.rpc(fn, args);
   if (error) {
     const e = errorDeRpcCrm(error);
@@ -33,13 +33,13 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<R<T>> 
   return { ok: true, valor: data as T };
 }
 
-function revisar<T>(r: { data: T | null; error: { code?: string | null; message?: string | null } | null }, que: string): T {
+export function revisar<T>(r: { data: T | null; error: { code?: string | null; message?: string | null } | null }, que: string): T {
   if (r.error) throw new Error(`${que}: ${causaPg(r.error)}`);
   return r.data as T;
 }
 
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
-const trozos = <T,>(xs: T[], n = 100): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+export const trozos = <T,>(xs: T[], n = 100): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
 // ── Catálogo y nombres ──────────────────────────────────────────────────────
 export async function catalogo(soloActivos: boolean): Promise<Catalogo> {
@@ -60,7 +60,7 @@ export async function usuariosComerciales(): Promise<Array<{ id: string; nombre:
   return (revisar(r, "usuarios") ?? []) as Array<{ id: string; nombre: string; activo: boolean }>;
 }
 
-async function nombres(actor: ActorRpc): Promise<Map<string, string>> {
+export async function nombres(actor: ActorRpc): Promise<Map<string, string>> {
   if (esComercial(actor)) return new Map();
   return new Map((await usuariosComerciales()).map((u) => [u.id, u.nombre]));
 }
@@ -150,13 +150,13 @@ export async function listarEmpresas(actor: ActorRpc, f: FiltrosEmpresas = {}): 
 }
 
 // ── Visitas (DTO) ───────────────────────────────────────────────────────────
-const COLS_VISITA = "id, empresa_id, jornada_id, oportunidad_id, realizada_por_usuario, registrada_por_rol, registrada_por_usuario, ocurrida_en, fecha, cerrado, hablo_con_empleado, hablo_con_responsable, responsable_ausente, contacto_id, contacto_obtenido, hablo_con_contacto, contacto_util, decisor_contactado, interes, necesidades, necesidad_otra, pack_potencial, volver_otro_dia, revisita_para, observacion, anulada_en, anulada_motivo, version";
-type FilaVisita = Record<string, unknown> & {
+export const COLS_VISITA = "id, empresa_id, jornada_id, oportunidad_id, realizada_por_usuario, registrada_por_rol, registrada_por_usuario, ocurrida_en, fecha, cerrado, hablo_con_empleado, hablo_con_responsable, responsable_ausente, contacto_id, contacto_obtenido, hablo_con_contacto, contacto_util, decisor_contactado, interes, necesidades, necesidad_otra, pack_potencial, volver_otro_dia, revisita_para, observacion, anulada_en, anulada_motivo, version";
+export type FilaVisita = Record<string, unknown> & {
   id: string; empresa_id: string; jornada_id: string; oportunidad_id: string | null; realizada_por_usuario: string; registrada_por_rol: string;
   registrada_por_usuario: string | null; contacto_id: string | null; anulada_en: string | null; anulada_motivo: string | null;
 };
 
-async function armarVisitas(actor: ActorRpc, filas: FilaVisita[], mapa: Map<string, string>, conEmpresa: boolean): Promise<VisitaDto[]> {
+export async function armarVisitas(actor: ActorRpc, filas: FilaVisita[], mapa: Map<string, string>, conEmpresa: boolean): Promise<VisitaDto[]> {
   const ids = filas.map((v) => v.id);
   const contactoIds = [...new Set(filas.map((v) => v.contacto_id).filter((x): x is string => !!x))];
   const empresaIds = [...new Set(filas.map((v) => v.empresa_id))];
@@ -213,7 +213,9 @@ export async function fichaEmpresa(actor: ActorRpc, id: string): Promise<FichaEm
   let qv = supabaseAdmin.from("crm_visitas").select(COLS_VISITA).eq("empresa_id", id).order("ocurrida_en", { ascending: false }).limit(100);
   if (esComercial(actor)) qv = qv.is("anulada_en", null);
   let qo = supabaseAdmin.from("crm_oportunidades").select("id, estado, cerrada_en, cierre_motivo, lead_en, interesado_en, origen_usuario_id, origen_visita_id").eq("empresa_id", id).order("creada_en", { ascending: false });
-  if (esComercial(actor)) qo = qo.is("cerrada_en", null);
+  // Comercial: resumen de la abierta y de las perdidas (estado, origen); nunca las
+  // cerradas por anulación ni nada del seguimiento de Administración.
+  if (esComercial(actor)) qo = qo.or("cerrada_en.is.null,cierre_motivo.eq.perdida");
   const [c, v, o, t, s, cat, mapa] = await Promise.all([
     qc, qv, qo,
     supabaseAdmin.from("crm_tareas").select("id, empresa_id, vence_el, estado, version, responsable_id").eq("empresa_id", id).eq("estado", "pendiente").maybeSingle(),
@@ -229,7 +231,8 @@ export async function fichaEmpresa(actor: ActorRpc, id: string): Promise<FichaEm
     })) as ContactoDto[],
     visitas,
     oportunidades: (revisar(o, "oportunidades") ?? []).map((x) => ({
-      id: x.id, estado: x.estado, abierta: !x.cerrada_en, cierre_motivo: x.cierre_motivo, lead_en: x.lead_en, interesado_en: x.interesado_en,
+      id: x.id, estado: x.estado, abierta: !x.cerrada_en, cierre_motivo: x.cierre_motivo, lead_en: x.lead_en,
+      interesado_en: esComercial(actor) ? null : x.interesado_en,
       origen: autorDe(actor, "comercial", x.origen_usuario_id, mapa), origen_visita_id: x.origen_visita_id,
     })) as OportunidadDto[],
     revisita: tarea && (!esComercial(actor) || tarea.responsable_id === actor.usuarioId)
