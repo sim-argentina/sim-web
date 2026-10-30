@@ -165,9 +165,13 @@ async function main() {
   assert.ok(dinamicos.every((x) => x === "volver.href"), `<Link> con destino no literal: ${dinamicos.join(", ")}`);
   const rutasProps = comerciales.flatMap((f) => [...leer(f).matchAll(/(?:volver=\{\{ href:|baseNegocio=|baseJornada=|rutaNuevo=|rutaNuevaVisita=|apiBase=)\s*\{?["'`]([^"'`]+)/g)].map((m) => m[1]));
   assert.ok(rutasProps.length >= 10 && rutasProps.every(destinoArea), `rutas que el área pasa a los componentes: ${rutasProps.join(", ")}`);
-  // Seguimiento.tsx (B2) es solo de administración: el área comercial no lo importa.
-  assert.ok(comerciales.every((f) => !leer(f).includes("crm/Seguimiento")), "el área comercial no usa el seguimiento de Administración");
-  const compartidos = walk("components/crm").filter((f) => f !== "components/crm/Seguimiento.tsx");
+  // Seguimiento (B2) y ventas (B3) son solo de administración: ni el área comercial
+  // ni los componentes compartidos los importan (la ficha de admin inyecta las compras).
+  const SOLO_ADMIN = ["Seguimiento", "Ventas", "DetalleVenta", "RegistrarVenta", "ComprasNegocio"];
+  const soloAdmin = new RegExp(`crm/(${SOLO_ADMIN.join("|")})["']|\\./(${SOLO_ADMIN.join("|")})["']`);
+  assert.ok(comerciales.every((f) => !soloAdmin.test(leer(f))), "el área comercial no usa pantallas de Administración");
+  const compartidos = walk("components/crm").filter((f) => !SOLO_ADMIN.some((n) => f === `components/crm/${n}.tsx`));
+  assert.ok(compartidos.every((f) => !soloAdmin.test(leer(f))), `los componentes compartidos no importan pantallas de Administración: ${compartidos.filter((f) => soloAdmin.test(leer(f))).join(", ")}`);
   assert.ok(compartidos.every((f) => !/<Link[^>]*?href=\{?["'`]\//.test(leer(f))), "los componentes compartidos no tienen rutas <Link> fijas");
   const destinosRouter = comerciales.flatMap((f) => [...leer(f).matchAll(/router\.(?:push|replace)\(\s*["'`]([^"'`]+)/g)].map((m) => m[1]));
   assert.ok(destinosRouter.length > 0 && destinosRouter.every((d) => d === "/comercial" || d.startsWith("/comercial/")), "dentro del área, el router solo navega al área");

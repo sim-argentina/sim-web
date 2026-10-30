@@ -106,7 +106,8 @@ async function main() {
     assert.equal(B.estadoTrasActividad("negociacion", "cambio_estado", "interesado"), "interesado");
     assert.ok(B.esRetroceso("negociacion", "interesado") && !B.esRetroceso("contacto", "interesado") && !B.esRetroceso("pausada", "contacto"));
     assert.deepEqual([B.rangoEtapa("contacto"), B.rangoEtapa("negociacion"), B.rangoEtapa("pausada"), B.rangoEtapa("ganada")], [1, 4, null, null]);
-    assert.ok(!B.ESTADOS_OPORTUNIDAD.some((e) => (e.valor as string) === "ganada"), "«Ganado» queda para B3");
+    assert.ok(B.ESTADOS_OPORTUNIDAD.some((e) => e.valor === "ganada"), "B3 agrega «Ganado»");
+    assert.ok(!(B.ETAPAS as readonly string[]).includes("ganada"), "«Ganado» no es una etapa: se llega registrando la venta");
     assert.equal(B.MOTIVOS_PERDIDA.length, 10);
   }
 

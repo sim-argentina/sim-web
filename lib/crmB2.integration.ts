@@ -378,8 +378,21 @@ async function main() {
 
       // Carrera real: varias pestañas programan a la vez con la misma versión.
       // Ventana: la auditoría de la programación espera 1 s ANTES del commit.
-      const reaplicarB2 = () => execFileSync("docker", ["exec", "-i", CONTENEDOR, "psql", "-U", "postgres", "-d", "postgres", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", "-"],
-        { input: readFileSync("db/crm-b2-seguimiento.sql", "utf8"), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+      // Se restaura SOLO lo que tocan la ventana y el control, con la definición
+      // VIGENTE: la del último archivo de la cadena (db/orden.txt) que la define. B3
+      // redefine la gestión; reaplicar el archivo de B2 entero pisaría eso.
+      const cadena = readFileSync("db/orden.txt", "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => /^crm-[a-z0-9-]+\.sql$/.test(l));
+      const vigente = (nombre: string) => {
+        for (const archivo of [...cadena].reverse()) {
+          const t = readFileSync(`db/${archivo}`, "utf8").replace(/\r\n/g, "\n");
+          const ini = t.indexOf(`create or replace function public.${nombre}(`);
+          if (ini >= 0) return t.slice(ini, t.indexOf("\n$fn$;", ini) + 6);
+        }
+        throw new Error(`sin definición de ${nombre}`);
+      };
+      const indicePendiente = readFileSync("db/crm-b2-seguimiento.sql", "utf8").split(/\r?\n/)
+        .find((l) => l.startsWith("create unique index if not exists crm_seguimientos_un_pendiente_uidx"));
+      assert.ok(indicePendiente, "índice de una pendiente");
       const b1 = readFileSync("db/crm-b1-prospeccion.sql", "utf8").replace(/\r\n/g, "\n");
       const auditarB1 = b1.slice(b1.indexOf("create or replace function public.crm_auditar_entidad("), b1.indexOf("\n$fn$;", b1.indexOf("create or replace function public.crm_auditar_entidad(")) + 6);
       const ventana = () => sql(`create or replace function public.crm_auditar_entidad(p_rol text, p_usuario uuid, p_entidad text, p_id uuid, p_accion text, p_datos jsonb)
@@ -404,9 +417,7 @@ async function main() {
         protegido = await carrera(L1.op);
         // Control negativo: la misma función sin el FOR UPDATE de la oportunidad y sin
         // el índice de una pendiente por oportunidad.
-        const b2 = readFileSync("db/crm-b2-seguimiento.sql", "utf8").replace(/\r\n/g, "\n");
-        const ini = b2.indexOf("create or replace function public.crm_oportunidad_gestionar(");
-        const fn = b2.slice(ini, b2.indexOf("\n$fn$;", ini) + 6);
+        const fn = vigente("crm_oportunidad_gestionar");
         const sinBloqueo = fn.replace("select * into o from public.crm_oportunidades where id = p_oportunidad for update;", "select * into o from public.crm_oportunidades where id = p_oportunidad;")
           .replace("s.oportunidad_id = o.id and s.estado = 'pendiente'));", "s.oportunidad_id = o.id and s.estado = 'pendiente' limit 1));");
         assert.notEqual(sinBloqueo, fn, "el control quita el bloqueo");
@@ -416,8 +427,8 @@ async function main() {
       } finally {
         sql(`update public.crm_seguimientos s set estado = 'cancelada', cancelada_motivo = 'pausa', cerrada_en = now()
               where s.oportunidad_id = ${lit(L3.op)} and s.estado = 'pendiente'
-                and s.id <> (select id from public.crm_seguimientos where oportunidad_id = ${lit(L3.op)} and estado = 'pendiente' order by creada_en limit 1);\n${auditarB1}`);
-        reaplicarB2();
+                and s.id <> (select id from public.crm_seguimientos where oportunidad_id = ${lit(L3.op)} and estado = 'pendiente' order by creada_en limit 1);
+              ${auditarB1}\n${vigente("crm_oportunidad_gestionar")}\n${indicePendiente}`);
       }
       console.log(`  carrera de 6 programaciones simultáneas: protegida → ${protegido!.pendientes} pendiente (${protegido!.status.join(",")}); `
         + `control sin bloqueo ni índice → ${control!.pendientes} pendientes (${control!.ms} ms)`);
