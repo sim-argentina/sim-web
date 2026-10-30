@@ -8,7 +8,7 @@ export default async function CrmNegocioPage({ params }: { params: Promise<{ id:
   return (
     <>
       <Link href="/admin/crm/negocios" className="mb-3 inline-flex min-h-11 items-center text-sm font-semibold text-white/70 hover:text-white">← Negocios</Link>
-      <FichaNegocio modo="admin" apiBase="/api/admin/crm" id={id} baseJornada="/admin/crm/jornadas/" />
+      <FichaNegocio modo="admin" apiBase="/api/admin/crm" id={id} baseJornada="/admin/crm/jornadas/" baseSeguimiento="/admin/crm/seguimiento?op=" />
     </>
   );
 }

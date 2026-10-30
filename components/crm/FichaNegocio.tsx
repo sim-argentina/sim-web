@@ -14,6 +14,7 @@ import { Archive, MessageSquarePlus, Pencil, Plus, RotateCcw, Undo2 } from "luci
 import { Aviso, Boton, Cargando, Chips, ChipsMultiples, Dialogo, Etiqueta, Panel } from "@/app/admin/(panel)/interacciones/ui";
 import { hoyEnSim } from "@/lib/agenda";
 import { DECISOR, INTERESES, NECESIDADES, PACKS, texto, type Catalogo, type FichaEmpresaDto, type Interes, type Necesidad, type Pack, type VisitaDto } from "@/lib/crmB1";
+import { textoEstado } from "@/lib/crmB2";
 import { enviar, pedir } from "./api";
 import {
   CamposContacto, CamposEmpresa, INPUT, OTRO_RUBRO, ResumenVisita, Selector, TelefonoContacto, contactoVacio, datosContacto, datosEmpresa,
@@ -24,13 +25,15 @@ import FormularioVisita from "./FormularioVisita";
 type Comercial = { id: string; nombre: string; activo: boolean };
 type CatalogoAdmin = Catalogo & { usuarios?: Comercial[] };
 
-export default function FichaNegocio({ modo, apiBase, id, rutaNuevaVisita, baseJornada }: {
+export default function FichaNegocio({ modo, apiBase, id, rutaNuevaVisita, baseJornada, baseSeguimiento }: {
   modo: "comercial" | "admin";
   apiBase: string;
   id: string;
   rutaNuevaVisita?: string;
   /** Prefijo del detalle de jornada: se le agrega el id. */
   baseJornada: string;
+  /** Solo administración: prefijo de la oportunidad en Seguimiento (B2). */
+  baseSeguimiento?: string;
 }) {
   const [ficha, setFicha] = useState<FichaEmpresaDto | null>(null);
   const [catalogo, setCatalogo] = useState<CatalogoAdmin | null>(null);
@@ -131,13 +134,17 @@ export default function FichaNegocio({ modo, apiBase, id, rutaNuevaVisita, baseJ
         <h2 className="text-lg font-black">Seguimiento</h2>
         {oportunidad ? (
           <div className="rounded-2xl border border-green-500/30 bg-green-950/20 p-4 text-sm">
-            <p className="font-bold">Lead para Administración · {oportunidad.estado === "interesado" ? "Interesado" : "Contacto conseguido"}</p>
+            <p className="font-bold">Lead para Administración · {textoEstado(oportunidad.estado)}</p>
             <p className="text-white/70">Originado por {oportunidad.origen.nombre} el {fechaHora(oportunidad.lead_en)}.</p>
+            {baseSeguimiento ? <Link href={`${baseSeguimiento}${oportunidad.id}`} className="mt-1 inline-flex min-h-11 items-center font-bold underline">Gestionar en Seguimiento</Link> : null}
           </div>
         ) : <p className="text-sm text-white/60">Sin lead abierto: se crea cuando una visita registra un contacto útil.</p>}
-        {modo === "admin" ? ficha.oportunidades.filter((o) => !o.abierta).map((o) => (
-          <p key={o.id} className="text-xs text-white/50">Lead cerrado ({o.cierre_motivo === "origen_anulado" ? "se anuló la visita que lo originó" : o.cierre_motivo}) · {fechaHora(o.lead_en)}</p>
-        )) : null}
+        {ficha.oportunidades.filter((o) => !o.abierta).map((o) => (
+          <p key={o.id} className="text-xs text-white/50">
+            {o.cierre_motivo === "perdida" ? "Lead perdido" : "Lead cerrado (se anuló la visita que lo originó)"} · originado el {fechaHora(o.lead_en)}
+            {baseSeguimiento && o.cierre_motivo === "perdida" ? <> · <Link href={`${baseSeguimiento}${o.id}`} className="underline">ver en Seguimiento</Link></> : null}
+          </p>
+        ))}
         {ficha.revisita ? (
           <Revisita key={`${ficha.revisita.id}-${ficha.revisita.version}`} apiBase={apiBase} revisita={ficha.revisita} onHecho={(t) => { setAviso({ tipo: "exito", texto: t }); recargar(); }} onError={(t) => setAviso({ tipo: "error", texto: t })} />
         ) : null}

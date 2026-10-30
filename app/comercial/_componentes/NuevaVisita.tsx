@@ -11,6 +11,7 @@ import { sumarDias } from "@/lib/agenda";
 import { pedir } from "@/components/crm/api";
 import { fechaCorta } from "@/components/crm/campos";
 import FormularioVisita, { type VisitaGuardada } from "@/components/crm/FormularioVisita";
+import { textoEstado } from "@/lib/crmB2";
 import type { Catalogo, FichaEmpresaDto, InicioDto } from "@/lib/crmB1";
 
 export default function NuevaVisita({ usuarioId, negocioId }: { usuarioId: string; negocioId: string | null }) {
@@ -57,8 +58,9 @@ export default function NuevaVisita({ usuarioId, negocioId }: { usuarioId: strin
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-white/80">
             {r.empresa_creada ? <li>Se creó el negocio y quedó asignado a vos.</li> : null}
             {r.contacto_creado ? <li>Se guardó el contacto en la ficha.</li> : null}
-            {r.oportunidad?.creada ? <li>Contacto útil: quedó un lead para el seguimiento de Administración ({r.oportunidad.estado === "interesado" ? "interesado" : "contacto conseguido"}).</li> : null}
-            {r.oportunidad && !r.oportunidad.creada ? <li>El negocio ya tenía un lead abierto: la visita se sumó a ese seguimiento.</li> : null}
+            {r.oportunidad?.creada ? <li>Contacto útil: quedó un lead para el seguimiento de Administración ({textoEstado(r.oportunidad.estado).toLowerCase()}).</li> : null}
+            {r.oportunidad && !r.oportunidad.creada && r.oportunidad.estado !== "perdida" ? <li>El negocio ya tenía un lead abierto: la visita se sumó a ese seguimiento.</li> : null}
+            {r.oportunidad?.estado === "perdida" ? <li>El negocio tiene un lead perdido: la visita quedó en su historial y no lo reabre (eso lo decide Administración). Un contacto nuevo cargado en la visita sí abre un lead nuevo.</li> : null}
             {r.tarea ? <li>Revisita programada{r.tarea.vence_el ? ` para el ${fechaCorta(r.tarea.vence_el)}` : " (sin fecha)"}.</li> : null}
             {r.repetida ? <li>Este envío ya había llegado: no se duplicó.</li> : null}
           </ul>

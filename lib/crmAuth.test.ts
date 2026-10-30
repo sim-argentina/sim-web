@@ -141,7 +141,7 @@ async function main() {
   const sidebar = leer("components/AdminSidebar.tsx");
   const enlace = /label: "CRM",\s*href: "([^"]+)",\s*roles: (\[[^\]]*\])/.exec(sidebar);
   assert.ok(enlace, "existe el enlace CRM");
-  assert.equal(enlace![1], "/admin/crm/negocios");
+  assert.equal(enlace![1], "/admin/crm/seguimiento");
   assert.equal(enlace![2], '["admin"]', "el enlace CRM es solo para admin");
   // La interfaz comercial no usa el menú del panel.
   const comerciales = walk("app/comercial");
@@ -165,7 +165,9 @@ async function main() {
   assert.ok(dinamicos.every((x) => x === "volver.href"), `<Link> con destino no literal: ${dinamicos.join(", ")}`);
   const rutasProps = comerciales.flatMap((f) => [...leer(f).matchAll(/(?:volver=\{\{ href:|baseNegocio=|baseJornada=|rutaNuevo=|rutaNuevaVisita=|apiBase=)\s*\{?["'`]([^"'`]+)/g)].map((m) => m[1]));
   assert.ok(rutasProps.length >= 10 && rutasProps.every(destinoArea), `rutas que el área pasa a los componentes: ${rutasProps.join(", ")}`);
-  const compartidos = walk("components/crm");
+  // Seguimiento.tsx (B2) es solo de administración: el área comercial no lo importa.
+  assert.ok(comerciales.every((f) => !leer(f).includes("crm/Seguimiento")), "el área comercial no usa el seguimiento de Administración");
+  const compartidos = walk("components/crm").filter((f) => f !== "components/crm/Seguimiento.tsx");
   assert.ok(compartidos.every((f) => !/<Link[^>]*?href=\{?["'`]\//.test(leer(f))), "los componentes compartidos no tienen rutas <Link> fijas");
   const destinosRouter = comerciales.flatMap((f) => [...leer(f).matchAll(/router\.(?:push|replace)\(\s*["'`]([^"'`]+)/g)].map((m) => m[1]));
   assert.ok(destinosRouter.length > 0 && destinosRouter.every((d) => d === "/comercial" || d.startsWith("/comercial/")), "dentro del área, el router solo navega al área");

@@ -94,10 +94,10 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin"],
     },
     {
-      // CRM B2B: negocios, jornadas y configuración (usuarios comerciales, rubros y
-      // zonas). Solo admin; los comerciales usan su propia interfaz (/comercial).
+      // CRM B2B: seguimiento (entrada principal), negocios, jornadas y configuración.
+      // Solo admin; los comerciales usan su propia interfaz (/comercial).
       label: "CRM",
-      href: "/admin/crm/negocios",
+      href: "/admin/crm/seguimiento",
       roles: ["admin"],
     },
     {
