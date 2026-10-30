@@ -16,6 +16,10 @@ export default function CookieConsent() {
   const pathname = usePathname();
   const [visible, setVisible] = useState(false);
   const interna = esAreaComercial(pathname);
+  // En /admin/crm los paneles de gestión (capa 60) tienen que quedar por encima del
+  // aviso: en el celular el aviso (capa 90) tapaba sus acciones. Ahí va debajo de los
+  // paneles y sigue visible y respondible sobre la página. En el resto del sitio, igual.
+  const capa = pathname === "/admin/crm" || pathname?.startsWith("/admin/crm/") ? "z-[55]" : "z-[90]";
 
   useEffect(() => {
     // Se difiere para no llamar a setState de forma síncrona dentro del efecto
@@ -34,7 +38,7 @@ export default function CookieConsent() {
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[90] px-3 pb-3 sm:px-4 sm:pb-4">
+    <div className={`fixed inset-x-0 bottom-0 ${capa} px-3 pb-3 sm:px-4 sm:pb-4`}>
       <div className="mx-auto flex max-w-4xl flex-col gap-3 rounded-2xl border border-white/10 bg-zinc-950/95 p-4 shadow-[0_10px_40px_rgba(0,0,0,0.6)] backdrop-blur sm:flex-row sm:items-center sm:gap-4 sm:p-5">
         <p className="flex-1 text-xs leading-5 text-zinc-300 sm:text-sm">
           Usamos cookies analíticas (Google Analytics) para entender cómo se usa el sitio y

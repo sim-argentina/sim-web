@@ -171,6 +171,11 @@ async function main() {
   assert.ok(compartidos.every((f) => !/<Link[^>]*?href=\{?["'`]\//.test(leer(f))), "los componentes compartidos no tienen rutas <Link> fijas");
   const destinosRouter = comerciales.flatMap((f) => [...leer(f).matchAll(/router\.(?:push|replace)\(\s*["'`]([^"'`]+)/g)].map((m) => m[1]));
   assert.ok(destinosRouter.length > 0 && destinosRouter.every((d) => d === "/comercial" || d.startsWith("/comercial/")), "dentro del área, el router solo navega al área");
+  // Aviso de cookies: capa 90 en todo el sitio; solo en /admin/crm queda por debajo de los
+  // paneles de gestión (capa 60) para no tapar sus acciones en el celular.
+  const aviso = leer("components/analytics/CookieConsent.tsx");
+  assert.match(aviso, /const capa = pathname === "\/admin\/crm" \|\| pathname\?\.startsWith\("\/admin\/crm\/"\) \? "z-\[55\]" : "z-\[90\]";/, "aviso: capa propia solo en /admin/crm");
+  assert.ok(leer("app/admin/(panel)/interacciones/ui.tsx").includes("fixed inset-0 z-[60]"), "los paneles siguen en la capa 60");
   const gtm = leer("components/analytics/GoogleTagManager.tsx");
   assert.ok(gtm.includes("<CargadorGtm") && gtm.includes("<NoscriptGtm") && !gtm.includes('from "next/script"'), "GTM se carga por CargadorGtm/NoscriptGtm");
   const carga = leer("components/analytics/GoogleTagManagerCarga.tsx");
