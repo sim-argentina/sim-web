@@ -4,14 +4,15 @@ Prospección presencial de packs corporativos (Tobías) y seguimiento, venta y c
 admin). Objetivo del MVP: registrar → seguir → vender → medir.
 
 Este documento resume el diseño acordado y las correcciones que se aplican a los bloques
-posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md).
+posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md) y
+[b1-prospeccion.md](b1-prospeccion.md).
 
 ## Bloques
 
 | Bloque | Alcance | Estado |
 |---|---|---|
 | B0 | Identidad comercial: usuarios individuales, sesión propia, administración de usuarios (+ B0.1: límite con respaldo, aislamiento de la analítica) | Implementado y verificado en local; sin migrar ni publicar |
-| B1 | Empresas, contactos, jornadas y visitas desde el celular | Pendiente |
+| B1 | Negocios, contactos, jornadas y visitas desde el celular; oportunidad al obtener un contacto útil; revisitas | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar |
 | B2 | Oportunidades, bandeja de seguimiento, tareas y transiciones | Pendiente |
 | B3 | Ventas, cobros, saldo y comisiones; vínculo de solo lectura con Empresas | Pendiente |
 | B4 | Métricas y tablero | Pendiente |
@@ -47,12 +48,15 @@ integración automática con Finanzas.
    asignar. Cualquier excepción de asignación se define explícitamente antes de B1. El aviso
    de posible duplicado muestra solo lo mínimo para no duplicar (nombre, zona, rubro y si está
    asignada a otra persona): nunca contactos, notas ni importes, y no permite modificar la
-   empresa ajena.
+   empresa ajena. *B1: así quedó implementado, sin excepciones de asignación.*
 4. **La ventana de 48 h para editar o anular visitas es una propuesta técnica**, no una regla
-   comercial aprobada. Queda pendiente para B1.
+   comercial aprobada. *Resuelto en B1: no hay ventana. Tobías no edita ni anula visitas;
+   agrega notas cuando quiera. Corregir y anular es de la administración, con motivo y
+   auditoría.*
 5. **Teléfono compartido.** Varios contactos de una misma empresa pueden tener el mismo número
    (por ejemplo, el central del local para el encargado y el dueño). No hay unicidad por
-   teléfono; a lo sumo, un aviso informativo.
+   teléfono; a lo sumo, un aviso informativo. *B1: un solo campo de teléfono/WhatsApp por
+   contacto, guardado tal como se escribió y normalizado; sin unicidad.*
 6. **Caja y contribución comercial se definen por separado antes de B4.** "Cobrado − comisión
    generada − movilidad" mezcla cobros con obligaciones devengadas y no se usa. Se definirán,
    con fechas y conceptos coherentes: un movimiento de caja (cobros, comisiones pagadas,
