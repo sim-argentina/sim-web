@@ -57,14 +57,24 @@
 alter table public.crm_auditoria drop constraint if exists crm_auditoria_entidad_chk;
 alter table public.crm_auditoria add constraint crm_auditoria_entidad_chk check (entidad in (
   'crm_usuarios', 'crm_rubros', 'crm_zonas', 'crm_empresas', 'crm_contactos', 'crm_jornadas',
-  'crm_visitas', 'crm_oportunidades', 'crm_tareas', 'crm_actividades', 'crm_seguimientos'));
+  'crm_visitas', 'crm_oportunidades', 'crm_tareas', 'crm_actividades', 'crm_seguimientos')) not valid;
 alter table public.crm_auditoria drop constraint if exists crm_auditoria_accion_chk;
 alter table public.crm_auditoria add constraint crm_auditoria_accion_chk check (accion in (
   'alta', 'desactivacion', 'reactivacion', 'restablecimiento_contrasena', 'revocacion_sesiones', 'ingreso', 'cierre_sesion',
   'creacion', 'actualizacion', 'asignacion', 'archivo', 'desarchivo', 'apertura', 'cierre', 'registro', 'correccion',
   'anulacion', 'nota', 'reprogramacion', 'cancelacion', 'reasignacion_origen', 'cierre_por_anulacion',
   'gestion', 'cambio_estado', 'retroceso', 'pausa', 'reanudacion', 'perdida', 'reapertura',
-  'seguimiento_programado', 'seguimiento_reprogramado', 'seguimiento_resuelto', 'seguimiento_cancelado', 'contacto_principal'));
+  'seguimiento_programado', 'seguimiento_reprogramado', 'seguimiento_resuelto', 'seguimiento_cancelado', 'contacto_principal')) not valid;
+-- Mismo patrón que B1 (ver su sección 0): NOT VALID + intento de validación; el
+-- último bloque de la cadena deja estas restricciones validadas.
+do $$
+begin
+  alter table public.crm_auditoria validate constraint crm_auditoria_entidad_chk;
+  alter table public.crm_auditoria validate constraint crm_auditoria_accion_chk;
+exception when check_violation then
+  raise notice 'crm_auditoria: quedan NOT VALID hasta el bloque siguiente (hay filas de bloques posteriores)';
+end
+$$;
 
 -- ── 1. Oportunidad: estados de B2, ciclo e hitos ───────────────────────────
 -- Hitos del ciclo vigente (primera vez que llegó a cada etapa, con el momento de
@@ -115,12 +125,23 @@ alter table public.crm_oportunidades add constraint crm_oportunidades_estado_b2_
   and (perdida_motivo is null or perdida_motivo in ('precio', 'sin_presupuesto', 'sin_utilidad', 'no_le_interesa', 'otro_sistema',
        'no_prioridad', 'sin_decisor', 'dejo_de_responder', 'condiciones', 'otro'))
   and (perdida_motivo is distinct from 'otro' or perdida_detalle is not null)
-  and (perdida_detalle is null or (perdida_motivo is not null and char_length(perdida_detalle) between 1 and 300)));
+  and (perdida_detalle is null or (perdida_motivo is not null and char_length(perdida_detalle) between 1 and 300))) not valid;
 alter table public.crm_oportunidades drop constraint if exists crm_oportunidades_cierre_b2_chk;
 alter table public.crm_oportunidades add constraint crm_oportunidades_cierre_b2_chk check (
   (cerrada_en is null) = (cierre_motivo is null)
   and (cierre_motivo is null or cierre_motivo in ('origen_anulado', 'perdida'))
-  and ((estado = 'perdida') = (cierre_motivo is not distinct from 'perdida')));
+  and ((estado = 'perdida') = (cierre_motivo is not distinct from 'perdida'))) not valid;
+-- Estados y cierres los amplía un bloque posterior (B3 agrega "ganada"): mismo patrón
+-- que la auditoría. Si el bloque siguiente ya reemplazó estas restricciones, al
+-- reaplicar la cadena quedan NOT VALID hasta que ese bloque vuelve a correr y las quita.
+do $$
+begin
+  alter table public.crm_oportunidades validate constraint crm_oportunidades_estado_b2_chk;
+  alter table public.crm_oportunidades validate constraint crm_oportunidades_cierre_b2_chk;
+exception when check_violation then
+  raise notice 'crm_oportunidades: restricciones de B2 NOT VALID hasta el bloque siguiente (hay estados de bloques posteriores)';
+end
+$$;
 create index if not exists crm_oportunidades_perdidas_idx on public.crm_oportunidades (empresa_id, perdida_en desc) where cierre_motivo = 'perdida';
 
 comment on column public.crm_oportunidades.lead_en is

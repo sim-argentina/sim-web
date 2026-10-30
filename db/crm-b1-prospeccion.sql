@@ -45,8 +45,13 @@
 -- ============================================================================
 
 -- ── 0. Auditoría: las entidades y acciones de B1 ───────────────────────────
--- NOT VALID: B2 (crm-b2-seguimiento.sql) amplía la lista y la vuelve a validar;
--- así reaplicar la cadena completa no falla por filas de bloques posteriores.
+-- Patrón de la cadena CRM para restricciones que un bloque posterior amplía: se
+-- agregan NOT VALID (rigen para toda fila nueva o modificada) y se intenta
+-- validarlas. En una base nueva la validación pasa; al reaplicar la cadena sobre
+-- una base con filas de bloques posteriores falla, la restricción queda NOT VALID
+-- un instante y el bloque siguiente la reemplaza por su superconjunto y la valida.
+-- Al terminar la cadena no queda ninguna sin validar
+-- (db/crm-cadena.verificacion.sql lo comprueba).
 alter table public.crm_auditoria drop constraint if exists crm_auditoria_entidad_chk;
 alter table public.crm_auditoria add constraint crm_auditoria_entidad_chk check (entidad in (
   'crm_usuarios', 'crm_rubros', 'crm_zonas', 'crm_empresas', 'crm_contactos', 'crm_jornadas',
@@ -56,6 +61,14 @@ alter table public.crm_auditoria add constraint crm_auditoria_accion_chk check (
   'alta', 'desactivacion', 'reactivacion', 'restablecimiento_contrasena', 'revocacion_sesiones', 'ingreso', 'cierre_sesion',
   'creacion', 'actualizacion', 'asignacion', 'archivo', 'desarchivo', 'apertura', 'cierre', 'registro', 'correccion',
   'anulacion', 'nota', 'reprogramacion', 'cancelacion', 'reasignacion_origen', 'cierre_por_anulacion')) not valid;
+do $$
+begin
+  alter table public.crm_auditoria validate constraint crm_auditoria_entidad_chk;
+  alter table public.crm_auditoria validate constraint crm_auditoria_accion_chk;
+exception when check_violation then
+  raise notice 'crm_auditoria: quedan NOT VALID hasta el bloque siguiente (hay filas de bloques posteriores)';
+end
+$$;
 
 -- ── 1. Funciones internas de normalización (sin EXECUTE para nadie) ────────
 -- Texto para comparar: minúsculas, sin acentos, solo letras/dígitos y espacios simples.
