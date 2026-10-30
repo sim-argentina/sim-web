@@ -1,5 +1,5 @@
 -- ============================================================================
--- Verificación de la CADENA del CRM (B0 → B1 → B2 …), después de aplicarla entera.
+-- Verificación de la CADENA del CRM (B0 → B1 → B2 → B3 …), después de aplicarla entera.
 -- ----------------------------------------------------------------------------
 -- Las restricciones que un bloque posterior amplía se agregan NOT VALID y se
 -- intenta validarlas (ver la sección 0 de crm-b1-prospeccion.sql). Esta
@@ -24,7 +24,9 @@ declare
     -- B1
     'crm_rubros', 'crm_zonas', 'crm_empresas', 'crm_contactos', 'crm_jornadas', 'crm_visitas', 'crm_oportunidades', 'crm_tareas',
     -- B2
-    'crm_actividades', 'crm_seguimientos'];
+    'crm_actividades', 'crm_seguimientos',
+    -- B3
+    'crm_productos', 'crm_ventas', 'crm_cobros', 'crm_comision_pagos'];
   acciones text[] := array[
     -- B0
     'alta', 'desactivacion', 'reactivacion', 'restablecimiento_contrasena', 'revocacion_sesiones', 'ingreso', 'cierre_sesion',
@@ -33,7 +35,9 @@ declare
     'anulacion', 'nota', 'reprogramacion', 'cancelacion', 'reasignacion_origen', 'cierre_por_anulacion',
     -- B2
     'gestion', 'cambio_estado', 'retroceso', 'pausa', 'reanudacion', 'perdida', 'reapertura',
-    'seguimiento_programado', 'seguimiento_reprogramado', 'seguimiento_resuelto', 'seguimiento_cancelado', 'contacto_principal'];
+    'seguimiento_programado', 'seguimiento_reprogramado', 'seguimiento_resuelto', 'seguimiento_cancelado', 'contacto_principal',
+    -- B3
+    'ganada', 'cobro', 'pago_comision', 'entrega', 'vinculo_campania'];
 begin
   -- ── T1. Ninguna restricción sin validar en las tablas del CRM ──────────────
   select string_agg(c.conrelid::regclass::text || '.' || c.conname, ', ') into v_sin_validar

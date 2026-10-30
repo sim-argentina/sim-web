@@ -128,5 +128,9 @@ crm-b1-prospeccion.sql
 # Necesita crm-b1-prospeccion.sql (oportunidades, visitas, contactos). Mismo patrón de permisos.
 crm-b2-seguimiento.sql
 
+# ── 13j. CRM B2B · B3: ventas, cobros, comisiones y recompras ────────────────
+# Necesita crm-b2-seguimiento.sql. Lee (no escribe) empresa_campanias/empresa_codigos de Empresas.
+crm-b3-ventas.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql
