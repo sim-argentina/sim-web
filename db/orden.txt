@@ -124,5 +124,9 @@ crm-b0-identidad.sql
 # Necesita crm-b0-identidad.sql (usuarios y auditoría). Mismo patrón de permisos.
 crm-b1-prospeccion.sql
 
+# ── 13i. CRM B2B · B2: seguimiento comercial de Administración ───────────────
+# Necesita crm-b1-prospeccion.sql (oportunidades, visitas, contactos). Mismo patrón de permisos.
+crm-b2-seguimiento.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql

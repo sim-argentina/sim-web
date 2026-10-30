@@ -45,15 +45,17 @@
 -- ============================================================================
 
 -- ── 0. Auditoría: las entidades y acciones de B1 ───────────────────────────
+-- NOT VALID: B2 (crm-b2-seguimiento.sql) amplía la lista y la vuelve a validar;
+-- así reaplicar la cadena completa no falla por filas de bloques posteriores.
 alter table public.crm_auditoria drop constraint if exists crm_auditoria_entidad_chk;
 alter table public.crm_auditoria add constraint crm_auditoria_entidad_chk check (entidad in (
   'crm_usuarios', 'crm_rubros', 'crm_zonas', 'crm_empresas', 'crm_contactos', 'crm_jornadas',
-  'crm_visitas', 'crm_oportunidades', 'crm_tareas'));
+  'crm_visitas', 'crm_oportunidades', 'crm_tareas')) not valid;
 alter table public.crm_auditoria drop constraint if exists crm_auditoria_accion_chk;
 alter table public.crm_auditoria add constraint crm_auditoria_accion_chk check (accion in (
   'alta', 'desactivacion', 'reactivacion', 'restablecimiento_contrasena', 'revocacion_sesiones', 'ingreso', 'cierre_sesion',
   'creacion', 'actualizacion', 'asignacion', 'archivo', 'desarchivo', 'apertura', 'cierre', 'registro', 'correccion',
-  'anulacion', 'nota', 'reprogramacion', 'cancelacion', 'reasignacion_origen', 'cierre_por_anulacion'));
+  'anulacion', 'nota', 'reprogramacion', 'cancelacion', 'reasignacion_origen', 'cierre_por_anulacion')) not valid;
 
 -- ── 1. Funciones internas de normalización (sin EXECUTE para nadie) ────────
 -- Texto para comparar: minúsculas, sin acentos, solo letras/dígitos y espacios simples.
