@@ -11,24 +11,29 @@ import { hoyEnSim } from "@/lib/agenda";
 import { canonico, type ContactoDto, type Interes, type Necesidad, type Pack, type VisitaDto } from "@/lib/crmB1";
 import { COLS_VISITA, actorRpc, armarVisitas, catalogo, nombres, revisar, rpc, trozos, type FilaVisita, type R } from "@/lib/crmB1Server";
 import {
-  advertenciasDe, contar, filtrar, grupoDe, ordenar,
+  ORIGEN_ADMIN, advertenciasDe, contar, filtrar, grupoDe, ordenar,
   type EstadoOportunidad, type Etapa, type FilaBandeja, type FiltrosBandeja, type Grupo, type Pendiente,
 } from "@/lib/crmB2";
+import { ventaDeOportunidad } from "@/lib/crmB3Server";
+import type { VentaFila } from "@/lib/crmB3";
 
 const ADMIN = { rol: "admin" } as const;
 const COLS_OPP = "id, empresa_id, estado, estado_previo, version, ciclo, contacto_id, origen_usuario_id, origen_visita_id, lead_en, gestionada_en, "
   + "perdida_en, perdida_motivo, perdida_detalle, retomar_el, cerrada_en, cierre_motivo, ciclo_inicio_en, ciclo_estado_inicial, conversacion_en, "
-  + "interesado_en, propuesta_en, negociacion_en, pausada_en, estado_al_perder";
+  + "interesado_en, propuesta_en, negociacion_en, pausada_en, estado_al_perder, origen_tipo, ganada_en, estado_al_ganar";
+/** Origen de una recompra creada por Administración (B3): no hay visita ni comercial. */
+const ORIGEN_RECOMPRA = "Administración (recompra)";
 
 type FilaOpp = {
   id: string; empresa_id: string; estado: EstadoOportunidad; estado_previo: Etapa | null; version: number; ciclo: number; contacto_id: string | null;
-  origen_usuario_id: string; origen_visita_id: string; lead_en: string; gestionada_en: string | null; perdida_en: string | null;
+  origen_usuario_id: string | null; origen_visita_id: string | null; lead_en: string; gestionada_en: string | null; perdida_en: string | null;
   perdida_motivo: string | null; perdida_detalle: string | null; retomar_el: string | null; cerrada_en: string | null; cierre_motivo: string | null;
   ciclo_inicio_en: string; ciclo_estado_inicial: Etapa; conversacion_en: string | null; interesado_en: string | null; propuesta_en: string | null;
   negociacion_en: string | null; pausada_en: string | null; estado_al_perder: Etapa | null;
+  origen_tipo: "visita" | "recompra_admin"; ganada_en: string | null; estado_al_ganar: Etapa | null;
 };
 
-export type Vista = "abiertas" | "perdidas";
+export type Vista = "abiertas" | "perdidas" | "ganadas";
 
 export type BandejaDto = {
   hoy: string;
@@ -112,7 +117,7 @@ async function armarFilas(opps: FilaOpp[], hoy: string): Promise<FilaBandeja[]> 
       necesidades, necesidad_otra: [...new Set(vs.map((v) => v.necesidad_otra).filter((x): x is string => !!x))],
       interes: vs.find((v) => v.interes)?.interes ?? null, pack: vs.find((v) => v.pack_potencial)?.pack_potencial ?? null,
       nota_comercial: textos[0] ?? null,
-      origen: { usuario_id: o.origen_usuario_id, nombre: mapa.get(o.origen_usuario_id) ?? "Comercial", lead_en: o.lead_en },
+      origen: { usuario_id: o.origen_usuario_id, nombre: o.origen_usuario_id ? mapa.get(o.origen_usuario_id) ?? "Comercial" : ORIGEN_RECOMPRA, lead_en: o.lead_en },
       ultima_gestion: ua ? { tipo: ua.tipo, ocurrida_en: ua.ocurrida_en, estado_despues: ua.estado_despues } : null,
       pendiente, gestionada: !!o.gestionada_en,
       grupo: abierta ? grupoDe({ pendiente, gestionada: !!o.gestionada_en }, hoy) : "sin_proxima",
@@ -128,22 +133,26 @@ async function armarFilas(opps: FilaOpp[], hoy: string): Promise<FilaBandeja[]> 
 /**
  * Bandeja "Contactos para seguir". Vista general = oportunidades abiertas (incluye
  * pausadas y las de negocios archivados, con advertencia); vista "perdidas" = las
- * cerradas por pérdida. Los contadores salen de la MISMA lista filtrada que las
+ * cerradas por pérdida; vista "ganadas" (B3) = las cerradas por una venta, que salen
+ * del seguimiento pero siguen a mano. Los contadores salen de la MISMA lista filtrada que las
  * filas (contar(filtrar(...))); el grupo elegido solo recorta las filas.
  */
 export async function bandeja(vista: Vista, f: FiltrosBandeja): Promise<BandejaDto> {
   const hoy = hoyEnSim();
   let q = supabaseAdmin.from("crm_oportunidades").select(COLS_OPP).order("lead_en").limit(1000);
-  q = vista === "perdidas" ? q.eq("cierre_motivo", "perdida") : q.is("cerrada_en", null);
+  q = vista === "abiertas" ? q.is("cerrada_en", null) : q.eq("cierre_motivo", vista === "perdidas" ? "perdida" : "ganada");
   const opps = (revisar(await q, "oportunidades") ?? []) as unknown as FilaOpp[];
   const todas = await armarFilas(opps, hoy);
   const filtradas = filtrar(todas, { ...f, grupo: undefined }, hoy);
   const conteos = contar(vista === "abiertas" ? filtradas : []);
+  const ganadaEn = new Map(opps.map((o) => [o.id, o.ganada_en ?? ""]));
   const filas = vista === "perdidas"
     ? [...filtradas].sort((a, b) => (b.perdida?.en ?? "").localeCompare(a.perdida?.en ?? ""))
-    : ordenar(f.grupo ? filtradas.filter((o) => o.grupo === f.grupo) : filtradas);
+    : vista === "ganadas" ? [...filtradas].sort((a, b) => ganadaEn.get(b.id)!.localeCompare(ganadaEn.get(a.id)!))
+      : ordenar(f.grupo ? filtradas.filter((o) => o.grupo === f.grupo) : filtradas);
   const [cat, mapa] = await Promise.all([catalogo(false), nombres(ADMIN)]);
-  const origenes = [...new Set(todas.map((o) => o.origen.usuario_id))].map((id) => ({ id, nombre: mapa.get(id) ?? "Comercial" }));
+  const origenes = [...new Set(todas.map((o) => o.origen.usuario_id))]
+    .map((id) => (id ? { id, nombre: mapa.get(id) ?? "Comercial" } : { id: ORIGEN_ADMIN, nombre: ORIGEN_RECOMPRA }));
   return {
     hoy, vista, conteos, total: filtradas.length, filas,
     opciones: { origenes, rubros: cat.rubros.map((r) => ({ id: r.id, nombre: r.nombre })), zonas: cat.zonas.map((z) => ({ id: z.id, nombre: z.nombre })) },
@@ -168,7 +177,10 @@ export type DetalleOportunidadDto = {
   hoy: string;
   fila: FilaBandeja;
   oportunidad: Pick<FilaOpp, "lead_en" | "ciclo_inicio_en" | "ciclo_estado_inicial" | "conversacion_en" | "interesado_en" | "propuesta_en"
-    | "negociacion_en" | "pausada_en" | "retomar_el" | "gestionada_en" | "estado_al_perder" | "cerrada_en" | "cierre_motivo" | "origen_visita_id">;
+    | "negociacion_en" | "pausada_en" | "retomar_el" | "gestionada_en" | "estado_al_perder" | "cerrada_en" | "cierre_motivo" | "origen_visita_id"
+    | "origen_tipo" | "ganada_en" | "estado_al_ganar">;
+  /** B3: la venta vigente de una oportunidad ganada (resumen; el detalle está en «Ventas»). */
+  venta: VentaFila | null;
   contactos: ContactoDto[];
   visitas: VisitaDto[];
   actividades: ActividadDto[];
@@ -180,7 +192,7 @@ export async function detalleOportunidad(id: string): Promise<DetalleOportunidad
   const o = revisar(await supabaseAdmin.from("crm_oportunidades").select(COLS_OPP).eq("id", id).maybeSingle(), "oportunidad") as unknown as FilaOpp | null;
   if (!o) return null;
   const hoy = hoyEnSim();
-  const [filas, c, v, a, s, ci, mapa] = await Promise.all([
+  const [filas, c, v, a, s, ci, mapa, venta] = await Promise.all([
     armarFilas([o], hoy),
     supabaseAdmin.from("crm_contactos").select("id, nombre, cargo, telefono, telefono_normalizado, tiene_whatsapp, es_decisor, archivado_en, version")
       .eq("empresa_id", o.empresa_id).order("creado_en"),
@@ -192,6 +204,7 @@ export async function detalleOportunidad(id: string): Promise<DetalleOportunidad
     supabaseAdmin.from("crm_oportunidad_ciclos").select("ciclo, inicio_en, estado_inicial, conversacion_en, interesado_en, propuesta_en, negociacion_en, estado_al_perder, perdida_en, perdida_motivo, perdida_detalle, reabierta_en, reapertura_motivo")
       .eq("oportunidad_id", id).order("ciclo"),
     nombres(ADMIN),
+    o.estado === "ganada" ? ventaDeOportunidad(id) : Promise.resolve(null),
   ]);
   const contactos = ((revisar(c, "contactos") ?? []) as Array<ContactoDto & { archivado_en: string | null }>).map((x) => ({
     id: x.id, nombre: x.nombre, cargo: x.cargo, telefono: x.telefono, telefono_normalizado: x.telefono_normalizado, tiene_whatsapp: x.tiene_whatsapp,
@@ -204,8 +217,9 @@ export async function detalleOportunidad(id: string): Promise<DetalleOportunidad
       lead_en: o.lead_en, ciclo_inicio_en: o.ciclo_inicio_en, ciclo_estado_inicial: o.ciclo_estado_inicial, conversacion_en: o.conversacion_en,
       interesado_en: o.interesado_en, propuesta_en: o.propuesta_en, negociacion_en: o.negociacion_en, pausada_en: o.pausada_en, retomar_el: o.retomar_el,
       gestionada_en: o.gestionada_en, estado_al_perder: o.estado_al_perder, cerrada_en: o.cerrada_en, cierre_motivo: o.cierre_motivo,
-      origen_visita_id: o.origen_visita_id,
+      origen_visita_id: o.origen_visita_id, origen_tipo: o.origen_tipo, ganada_en: o.ganada_en, estado_al_ganar: o.estado_al_ganar,
     },
+    venta,
     contactos,
     visitas: await armarVisitas(ADMIN, (revisar(v, "visitas") ?? []) as FilaVisita[], mapa, false),
     actividades: ((revisar(a, "actividades") ?? []) as Array<Omit<ActividadDto, "contacto"> & { contacto_id: string | null }>).map(({ contacto_id, ...x }) => ({

@@ -9,11 +9,11 @@
 //     visitas con motivo, y registrar una visita realizada por un comercial.
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Archive, MessageSquarePlus, Pencil, Plus, RotateCcw, Undo2 } from "lucide-react";
 import { Aviso, Boton, Cargando, Chips, ChipsMultiples, Dialogo, Etiqueta, Panel } from "@/app/admin/(panel)/interacciones/ui";
 import { hoyEnSim } from "@/lib/agenda";
-import { DECISOR, INTERESES, NECESIDADES, PACKS, texto, type Catalogo, type FichaEmpresaDto, type Interes, type Necesidad, type Pack, type VisitaDto } from "@/lib/crmB1";
+import { DECISOR, INTERESES, NECESIDADES, PACKS, texto, type Catalogo, type ContactoDto, type FichaEmpresaDto, type Interes, type Necesidad, type Pack, type VisitaDto } from "@/lib/crmB1";
 import { textoEstado } from "@/lib/crmB2";
 import { enviar, pedir } from "./api";
 import {
@@ -25,7 +25,10 @@ import FormularioVisita from "./FormularioVisita";
 type Comercial = { id: string; nombre: string; activo: boolean };
 type CatalogoAdmin = Catalogo & { usuarios?: Comercial[] };
 
-export default function FichaNegocio({ modo, apiBase, id, rutaNuevaVisita, baseJornada, baseSeguimiento }: {
+/** Lo que la ficha le pasa a una sección que agrega la página (B3: compras, solo administración). */
+export type ContextoSeccion = { contactos: ContactoDto[]; recarga: number; onCambio: (texto: string) => void };
+
+export default function FichaNegocio({ modo, apiBase, id, rutaNuevaVisita, baseJornada, baseSeguimiento, seccionCompras }: {
   modo: "comercial" | "admin";
   apiBase: string;
   id: string;
@@ -34,6 +37,8 @@ export default function FichaNegocio({ modo, apiBase, id, rutaNuevaVisita, baseJ
   baseJornada: string;
   /** Solo administración: prefijo de la oportunidad en Seguimiento (B2). */
   baseSeguimiento?: string;
+  /** Solo administración: la sección de compras (B3) la agrega la página de admin; la ficha comercial no la conoce. */
+  seccionCompras?: (c: ContextoSeccion) => ReactNode;
 }) {
   const [ficha, setFicha] = useState<FichaEmpresaDto | null>(null);
   const [catalogo, setCatalogo] = useState<CatalogoAdmin | null>(null);
@@ -138,17 +143,19 @@ export default function FichaNegocio({ modo, apiBase, id, rutaNuevaVisita, baseJ
             <p className="text-white/70">Originado por {oportunidad.origen.nombre} el {fechaHora(oportunidad.lead_en)}.</p>
             {baseSeguimiento ? <Link href={`${baseSeguimiento}${oportunidad.id}`} className="mt-1 inline-flex min-h-11 items-center font-bold underline">Gestionar en Seguimiento</Link> : null}
           </div>
-        ) : <p className="text-sm text-white/60">Sin lead abierto: se crea cuando una visita registra un contacto útil.</p>}
+        ) : <p className="text-sm text-white/60">Sin lead abierto: se crea cuando una visita registra un contacto útil{modo === "admin" ? " (o, si ya compró, con «Nueva oportunidad de recompra»)" : ""}.</p>}
         {ficha.oportunidades.filter((o) => !o.abierta).map((o) => (
           <p key={o.id} className="text-xs text-white/50">
-            {o.cierre_motivo === "perdida" ? "Lead perdido" : "Lead cerrado (se anuló la visita que lo originó)"} · originado el {fechaHora(o.lead_en)}
-            {baseSeguimiento && o.cierre_motivo === "perdida" ? <> · <Link href={`${baseSeguimiento}${o.id}`} className="underline">ver en Seguimiento</Link></> : null}
+            {o.cierre_motivo === "perdida" ? "Lead perdido" : o.cierre_motivo === "ganada" ? "Ganado (venta registrada)" : "Lead cerrado (se anuló la visita que lo originó)"} · originado el {fechaHora(o.lead_en)}
+            {baseSeguimiento && (o.cierre_motivo === "perdida" || o.cierre_motivo === "ganada") ? <> · <Link href={`${baseSeguimiento}${o.id}`} className="underline">ver en Seguimiento</Link></> : null}
           </p>
         ))}
         {ficha.revisita ? (
           <Revisita key={`${ficha.revisita.id}-${ficha.revisita.version}`} apiBase={apiBase} revisita={ficha.revisita} onHecho={(t) => { setAviso({ tipo: "exito", texto: t }); recargar(); }} onError={(t) => setAviso({ tipo: "error", texto: t })} />
         ) : null}
       </section>
+
+      {modo === "admin" && seccionCompras ? seccionCompras({ contactos: ficha.contactos, recarga, onCambio: (t) => { setAviso({ tipo: "exito", texto: t }); recargar(); } }) : null}
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">

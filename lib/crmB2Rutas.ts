@@ -12,7 +12,7 @@ const NO_OPP = "La oportunidad no existe.";
 
 export async function seguimientoGet(req: Request): Promise<NextResponse> {
   const p = new URL(req.url).searchParams;
-  const vista: S.Vista = p.get("vista") === "perdidas" ? "perdidas" : "abiertas";
+  const vista: S.Vista = p.get("vista") === "perdidas" ? "perdidas" : p.get("vista") === "ganadas" ? "ganadas" : "abiertas";
   const texto = (k: string) => {
     const v = p.get(k)?.trim();
     return v ? v.slice(0, 80) : undefined;

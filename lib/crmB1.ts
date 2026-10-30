@@ -142,8 +142,8 @@ export type VisitaDto = {
 
 export type OportunidadDto = {
   id: string;
-  /** Estados de B2 (lib/crmB2.ts). Al comercial solo le llega este resumen. */
-  estado: "contacto" | "conversacion" | "interesado" | "negociacion" | "pausada" | "perdida";
+  /** Estados de B2/B3 (lib/crmB2.ts). Al comercial solo le llega este resumen (nunca una ganada ni su venta). */
+  estado: "contacto" | "conversacion" | "interesado" | "negociacion" | "pausada" | "perdida" | "ganada";
   abierta: boolean;
   cierre_motivo: string | null;
   lead_en: string;
@@ -338,6 +338,30 @@ const ERRORES: Record<string, Omit<ErrorCrm, "codigo">> = {
   seguimiento_no_vigente: { status: 409, error: "La próxima acción cambió mientras la mirabas. Recargá." },
   otra_oportunidad_abierta: { status: 409, error: "El negocio ya tiene otra oportunidad abierta: no se puede reabrir esta sin cerrar la otra." },
   oportunidad_gestionada: { status: 409, error: "Esa oportunidad ya tiene gestión de Administración: reasigná el origen o marcala como perdida antes de anular la visita." },
+  // B3 (ventas, cobros y comisiones)
+  oportunidad_ganada: { status: 409, error: "La oportunidad ya está ganada: su venta se gestiona desde «Ventas». Solo admite notas." },
+  oportunidad_cerrada: { status: 409, error: "La oportunidad está cerrada." },
+  confirmar_importe: { status: 409, error: "El importe no es el de lista: confirmá que es el acordado." },
+  confirmar_comision: { status: 409, error: "La comisión se aparta de la regla estándar: revisala y confirmala." },
+  comision_origen: { status: 409, error: "En una venta nueva la comisión es del comercial que originó el lead." },
+  comision_recompra: { status: 409, error: "Es una recompra: elegí «recompra trabajada» (con la intervención del comercial) o «espontánea»." },
+  comision_no_es_recompra: { status: 409, error: "No es una recompra: el negocio no tiene compras anteriores." },
+  cobro_excede_saldo: { status: 409, error: "El cobro supera el saldo de la venta." },
+  comision_no_generada: { status: 409, error: "La comisión todavía no está generada: la venta tiene que estar cobrada por completo." },
+  comision_no_corresponde: { status: 409, error: "Esta venta no lleva comisión." },
+  comision_a_revisar: { status: 409, error: "La comisión está a revisar (los pagos no coinciden con lo pactado): corregila antes de registrar otro pago." },
+  pago_excede_comision: { status: 409, error: "El pago supera lo que falta pagar de la comisión." },
+  importe_menor_que_cobrado: { status: 409, error: "El importe no puede quedar por debajo de lo ya cobrado." },
+  venta_con_cobros: { status: 409, error: "La venta tiene cobros vigentes: anulalos (con motivo) antes de anular la venta." },
+  venta_con_pagos_comision: { status: 409, error: "La venta tiene pagos de comisión vigentes: anulalos (con motivo) antes de anular la venta." },
+  venta_no_encontrada: { status: 404, error: "La venta no existe." },
+  venta_anulada: { status: 409, error: "La venta está anulada: no admite cambios." },
+  cobro_no_encontrado: { status: 404, error: "El cobro no existe en esta venta." },
+  pago_no_encontrado: { status: 404, error: "El pago no existe en esta venta." },
+  campania_no_encontrada: { status: 404, error: "La campaña no existe en Empresas." },
+  campania_vinculada: { status: 409, error: "Esa campaña ya está vinculada a otra venta vigente." },
+  sin_compras_previas: { status: 409, error: "El negocio no tiene compras: una venta nueva nace de la prospección, no de una recompra." },
+  visita_con_venta: { status: 409, error: "Esa visita sostiene una venta vigente (origen o intervención de la comisión): no se puede anular." },
 };
 
 const CAMPOS: Record<string, string> = {
@@ -348,6 +372,14 @@ const CAMPOS: Record<string, string> = {
   tipo: "el tipo de gestión", observacion: "la observación", ocurrida_en: "el momento de la gestión (no futuro ni anterior al lead)",
   estado: "el estado", resolver: "la acción a resolver (una nota no la completa)", vence_el: "la fecha de la próxima acción",
   retomar_el: "la fecha para retomar (desde mañana)", detalle: "el detalle del motivo", contacto_id: "el contacto",
+  // B3
+  producto: "el producto", fecha_acuerdo: "la fecha del acuerdo (no futura ni anterior al inicio del ciclo)", experiencias: "la cantidad de experiencias",
+  importe: "el importe (hasta 2 decimales, mayor que cero)", comision: "la comisión", comision_tipo: "el tipo de comisión",
+  comision_fundamento: "el fundamento de la comisión", comision_importe: "el importe de la comisión (mayor que cero y no mayor que la venta)",
+  comision_beneficiario: "quién cobra la comisión", comision_intervencion: "la intervención del comercial (una visita suya o una gestión de esta oportunidad)",
+  comision_detalle: "el detalle del acuerdo especial", comision_no_corresponde: "la comisión (sin comisión no lleva importe ni beneficiario)",
+  fecha_efectiva: "la fecha efectiva del cobro (entre el acuerdo y hoy)", medio: "el medio y el concepto del cobro", fecha: "la fecha (entre el acuerdo y hoy)",
+  precio: "el precio", comision_estandar: "la comisión de lista", campania_id: "la campaña", cambios: "los cambios",
 };
 
 /** Error conocido de una RPC, o null (la ruta contesta 500 genérico). Nunca pasa detalles de Postgres. */

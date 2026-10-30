@@ -12,9 +12,11 @@ export const ESTADOS_OPORTUNIDAD = [
   { valor: "negociacion", texto: "Negociación" },
   { valor: "pausada", texto: "Retomar más adelante" },
   { valor: "perdida", texto: "Perdido" },
+  // B3: solo se llega registrando la venta (crm_venta_registrar), nunca a mano.
+  { valor: "ganada", texto: "Ganado" },
 ] as const;
 export type EstadoOportunidad = (typeof ESTADOS_OPORTUNIDAD)[number]["valor"];
-/** Etapas con orden de avance (pausa y pérdida no son etapas). */
+/** Etapas con orden de avance (pausa, pérdida y ganada no son etapas). */
 export const ETAPAS = ["contacto", "conversacion", "interesado", "negociacion"] as const;
 export type Etapa = (typeof ETAPAS)[number];
 
@@ -147,7 +149,8 @@ export type FilaBandeja = {
   interes: Interes | null;
   pack: Pack | null;
   nota_comercial: { texto: string; en: string } | null;
-  origen: { usuario_id: string; nombre: string; lead_en: string };
+  /** usuario_id null: oportunidad de recompra creada por Administración (B3), sin visita de origen. */
+  origen: { usuario_id: string | null; nombre: string; lead_en: string };
   ultima_gestion: { tipo: string; ocurrida_en: string; estado_despues: string | null } | null;
   pendiente: Pendiente | null;
   gestionada: boolean;
@@ -160,6 +163,9 @@ export type FiltrosBandeja = {
   q?: string; estado?: string; origen?: string; interes?: string; rubro?: string; zona?: string; proxima?: string; grupo?: string;
 };
 
+/** Valor del filtro «Originado por» para las recompras creadas por Administración. */
+export const ORIGEN_ADMIN = "admin";
+
 const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 /** Filtros de la bandeja (todos opcionales). La búsqueda mira negocio y contacto. */
@@ -168,7 +174,7 @@ export function filtrar(filas: FilaBandeja[], f: FiltrosBandeja, hoy: string): F
   return filas.filter((o) =>
     (!q || normalizar(o.empresa.nombre).includes(q) || normalizar(o.contacto?.nombre ?? "").includes(q))
     && (!f.estado || o.estado === f.estado)
-    && (!f.origen || o.origen.usuario_id === f.origen)
+    && (!f.origen || (f.origen === ORIGEN_ADMIN ? o.origen.usuario_id === null : o.origen.usuario_id === f.origen))
     && (!f.interes || (f.interes === "no_evaluado" ? o.interes === null : o.interes === f.interes))
     && (!f.rubro || (f.rubro === "sin_clasificar" ? o.empresa.rubro_id === null : o.empresa.rubro_id === f.rubro))
     && (!f.zona || o.empresa.zona_id === f.zona)

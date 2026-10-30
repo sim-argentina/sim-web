@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { CalendarClock, MessageCircle, Phone, Search, TriangleAlert } from "lucide-react";
+import { BadgeCheck, CalendarClock, MessageCircle, Phone, Search, TriangleAlert } from "lucide-react";
 import { Aviso, Boton, Cargando, Chips, Etiqueta, Panel, Plegable, cx } from "@/app/admin/(panel)/interacciones/ui";
 import { pedir, enviar } from "@/components/crm/api";
 import { INPUT, fechaCorta, fechaHora, hechosVisita } from "@/components/crm/campos";
@@ -22,9 +22,12 @@ import {
   type FilaBandeja, type Grupo,
 } from "@/lib/crmB2";
 import type { BandejaDto, DetalleOportunidadDto } from "@/lib/crmB2Server";
+import { formatoPesos } from "@/lib/crmB3";
+import RegistrarVenta from "@/components/crm/RegistrarVenta";
+import { EtiquetaCobro, EtiquetaComision } from "@/components/crm/ventasCampos";
 
 const API = "/api/admin/crm";
-const tonoEstado = (e: string) => (e === "perdida" ? "gris" : e === "pausada" ? "ambar" : e === "negociacion" ? "verde" : e === "interesado" ? "rojo" : "neutro");
+const tonoEstado = (e: string) => (e === "ganada" ? "verde" : e === "perdida" ? "gris" : e === "pausada" ? "ambar" : e === "negociacion" ? "verde" : e === "interesado" ? "rojo" : "neutro");
 
 // ── Bandeja ─────────────────────────────────────────────────────────────────
 export default function Seguimiento() {
@@ -32,7 +35,7 @@ export default function Seguimiento() {
   const pathname = usePathname();
   const params = useSearchParams();
   const op = params.get("op");
-  const [vista, setVista] = useState<"abiertas" | "perdidas">("abiertas");
+  const [vista, setVista] = useState<"abiertas" | "perdidas" | "ganadas">("abiertas");
   const [grupo, setGrupo] = useState<Grupo | "">("");
   const [q, setQ] = useState("");
   const [f, setF] = useState({ estado: "", origen: "", interes: "", rubro: "", zona: "", proxima: "" });
@@ -81,10 +84,10 @@ export default function Seguimiento() {
       </div>
 
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Vista">
-        {(["abiertas", "perdidas"] as const).map((v) => (
+        {(["abiertas", "perdidas", "ganadas"] as const).map((v) => (
           <button key={v} type="button" role="tab" aria-selected={vista === v} onClick={() => { setVista(v); setGrupo(""); }}
             className={cx("min-h-11 rounded-xl px-4 text-sm font-bold", vista === v ? "bg-white text-black" : "border border-white/15 text-white/80 hover:border-white/40")}>
-            {v === "abiertas" ? "Para seguir" : "Perdidas"}
+            {v === "abiertas" ? "Para seguir" : v === "perdidas" ? "Perdidas" : "Ganadas"}
           </button>
         ))}
       </div>
@@ -97,7 +100,7 @@ export default function Seguimiento() {
         <Plegable titulo="Filtros" abierto={verFiltros} onAlternar={() => setVerFiltros((x) => !x)} resumen={filtrosActivos ? `${filtrosActivos} activo${filtrosActivos > 1 ? "s" : ""}` : "ninguno"}>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <FiltroSelect etiqueta="Estado" valor={f.estado} onCambio={(v) => setF({ ...f, estado: v })}
-              opciones={ESTADOS_OPORTUNIDAD.filter((e) => (vista === "perdidas" ? e.valor === "perdida" : e.valor !== "perdida")).map((e) => ({ valor: e.valor, texto: e.texto }))} />
+              opciones={ESTADOS_OPORTUNIDAD.filter((e) => (vista === "perdidas" ? e.valor === "perdida" : vista === "ganadas" ? e.valor === "ganada" : e.valor !== "perdida" && e.valor !== "ganada")).map((e) => ({ valor: e.valor, texto: e.texto }))} />
             <FiltroSelect etiqueta="Originado por" valor={f.origen} onCambio={(v) => setF({ ...f, origen: v })} opciones={(datos?.opciones.origenes ?? []).map((o) => ({ valor: o.id, texto: o.nombre }))} />
             <FiltroSelect etiqueta="Interés" valor={f.interes} onCambio={(v) => setF({ ...f, interes: v })}
               opciones={[...INTERESES.map((i) => ({ valor: i.valor, texto: i.texto })), { valor: "no_evaluado", texto: "No evaluado" }]} />
@@ -114,8 +117,9 @@ export default function Seguimiento() {
       </div>
 
       {error ? <Aviso tipo="error">{error}</Aviso> : null}
-      {!datos ? <Cargando /> : vista === "perdidas" ? (
-        <ListaFilas filas={datos.filas} hoy={datos.hoy} onAbrir={abrir} vacio="No hay oportunidades perdidas con estos filtros." />
+      {!datos ? <Cargando /> : vista !== "abiertas" ? (
+        <ListaFilas filas={datos.filas} hoy={datos.hoy} onAbrir={abrir}
+          vacio={vista === "perdidas" ? "No hay oportunidades perdidas con estos filtros." : "No hay oportunidades ganadas con estos filtros. Las ventas, sus cobros y comisiones están en «Ventas»."} />
       ) : (
         <>
           <div className="flex flex-wrap gap-2" aria-label="Grupos">
@@ -189,7 +193,7 @@ function ListaFilas({ filas, hoy, onAbrir, vacio }: { filas: FilaBandeja[]; hoy:
             <span className="flex flex-wrap items-center gap-2">
               <span className="text-base font-black">{o.empresa.nombre}</span>
               <Etiqueta tono={tonoEstado(o.estado)}>{textoEstado(o.estado)}</Etiqueta>
-              {!o.gestionada && o.estado !== "perdida" ? <Etiqueta tono="rojo">Nuevo</Etiqueta> : null}
+              {!o.gestionada && o.estado !== "perdida" && o.estado !== "ganada" ? <Etiqueta tono="rojo">Nuevo</Etiqueta> : null}
               {o.ciclo > 1 ? <Etiqueta tono="gris">Reabierta</Etiqueta> : null}
               {o.advertencias.map((a) => <Etiqueta key={a} tono="ambar">{TEXTO_ADVERTENCIA[a]}</Etiqueta>)}
             </span>
@@ -206,7 +210,8 @@ function ListaFilas({ filas, hoy, onAbrir, vacio }: { filas: FilaBandeja[]; hoy:
             <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
               {o.perdida ? (
                 <span className="text-sm text-white/70">Perdida el {fechaHora(o.perdida.en)} · {textoMotivoPerdida(o.perdida.motivo)}{o.perdida.visitas_posteriores ? ` · ${o.perdida.visitas_posteriores} visita(s) después` : ""}</span>
-              ) : o.pendiente ? <VenceEtiqueta vence={o.pendiente.vence_el} hoy={hoy} tipo={o.pendiente.tipo} /> : <span className="text-sm text-white/50">Sin próxima acción</span>}
+              ) : o.estado === "ganada" ? <span className="text-sm text-green-200">Venta registrada · se sigue en «Ventas»</span>
+                : o.pendiente ? <VenceEtiqueta vence={o.pendiente.vence_el} hoy={hoy} tipo={o.pendiente.tipo} /> : <span className="text-sm text-white/50">Sin próxima acción</span>}
               <span className="text-xs text-white/50">
                 {o.ultima_gestion ? `Última gestión: ${textoActividad(o.ultima_gestion.tipo)} · ${fechaHora(o.ultima_gestion.ocurrida_en)}` : `Lead del ${fechaHora(o.origen.lead_en)} · ${o.origen.nombre}`}
               </span>
@@ -219,7 +224,7 @@ function ListaFilas({ filas, hoy, onAbrir, vacio }: { filas: FilaBandeja[]; hoy:
 }
 
 // ── Detalle de una oportunidad ──────────────────────────────────────────────
-type Modo = null | "gestion" | "programar" | "reprogramar" | "pausar" | "retomar" | "perder" | "reabrir" | "contacto";
+type Modo = null | "gestion" | "programar" | "reprogramar" | "pausar" | "retomar" | "perder" | "reabrir" | "contacto" | "venta";
 type Envio = { accion: string; datos: Record<string, unknown> };
 
 function DetalleOportunidad({ id, onCerrar, onCambio }: { id: string; onCerrar: () => void; onCambio: () => void }) {
@@ -282,9 +287,15 @@ function DetalleOportunidad({ id, onCerrar, onCambio }: { id: string; onCerrar: 
   const o = d.fila;
   const pausada = o.estado === "pausada";
   const perdida = o.estado === "perdida";
+  const ganada = o.estado === "ganada";
   const wa = o.contacto ? enlaceWhatsappManual(o.contacto.telefono) : null;
   const bloqueado = enviando || !!incierto;
-  const pie = perdida ? (
+  const pie = ganada ? (
+    <div className="flex flex-wrap gap-2">
+      {d.venta ? <Link href={`/admin/crm/ventas/${d.venta.id}`} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-red-600 px-4 text-sm font-bold text-white hover:bg-red-700">Ver la venta</Link> : null}
+      <Boton onClick={() => abrirModo("gestion")} disabled={bloqueado}>Agregar nota</Boton>
+    </div>
+  ) : perdida ? (
     <div className="flex flex-wrap gap-2">
       <Boton variante="primario" onClick={() => abrirModo("reabrir")} disabled={bloqueado}>Reabrir</Boton>
       <Boton onClick={() => abrirModo("gestion")} disabled={bloqueado}>Agregar nota</Boton>
@@ -292,6 +303,7 @@ function DetalleOportunidad({ id, onCerrar, onCambio }: { id: string; onCerrar: 
   ) : (
     <div className="flex flex-wrap gap-2">
       <Boton variante="primario" onClick={() => abrirModo("gestion")} disabled={bloqueado}>Registrar gestión</Boton>
+      <Boton onClick={() => abrirModo("venta")} disabled={bloqueado || pausada} title={pausada ? "Retomala para registrar la venta" : undefined}><BadgeCheck className="h-4 w-4" aria-hidden />Registrar venta</Boton>
       {pausada ? <Boton onClick={() => abrirModo("retomar")} disabled={bloqueado}>Retomar ahora</Boton> : <Boton onClick={() => abrirModo("pausar")} disabled={bloqueado}>Retomar más adelante</Boton>}
       <Boton variante="peligro" onClick={() => abrirModo("perder")} disabled={bloqueado}>Marcar perdida</Boton>
     </div>
@@ -304,7 +316,8 @@ function DetalleOportunidad({ id, onCerrar, onCambio }: { id: string; onCerrar: 
           <Etiqueta tono={tonoEstado(o.estado)}>{textoEstado(o.estado)}</Etiqueta>
           {pausada && o.estado_previo ? <span className="text-sm text-white/60">(estaba en {textoEstado(o.estado_previo)}; retomar el {fechaCorta(d.oportunidad.retomar_el)})</span> : null}
           {o.ciclo > 1 ? <Etiqueta tono="gris">Ciclo {o.ciclo}</Etiqueta> : null}
-          {!o.gestionada && !perdida ? <Etiqueta tono="rojo">Nuevo: sin gestión</Etiqueta> : null}
+          {!o.gestionada && !perdida && !ganada ? <Etiqueta tono="rojo">Nuevo: sin gestión</Etiqueta> : null}
+          {d.oportunidad.origen_tipo === "recompra_admin" ? <Etiqueta tono="gris">Recompra creada por Administración</Etiqueta> : null}
           <Link href={`/admin/crm/negocios/${o.empresa.id}`} className="ml-auto inline-flex min-h-11 items-center text-sm font-semibold text-white/70 underline-offset-2 hover:underline">Ver ficha del negocio</Link>
         </div>
 
@@ -338,7 +351,29 @@ function DetalleOportunidad({ id, onCerrar, onCambio }: { id: string; onCerrar: 
           </Aviso>
         ) : null}
 
-        {modo ? (
+        {ganada ? (
+          <Aviso tipo="exito" titulo={`Ganado el ${fechaHora(d.oportunidad.ganada_en)}`}>
+            {d.venta ? (
+              <div className="space-y-2">
+                <p>{d.venta.producto.nombre} · {formatoPesos(d.venta.importe)} acordados · cobrado según CRM {formatoPesos(d.venta.cobrado)} · saldo {formatoPesos(d.venta.saldo)}</p>
+                <p className="flex flex-wrap gap-1.5"><EtiquetaCobro estado={d.venta.estado_cobro} /><EtiquetaComision estado={d.venta.comision.estado} />
+                  <Etiqueta tono={d.venta.entrega.estado === "entregada" ? "verde" : "ambar"}>{d.venta.entrega.estado === "entregada" ? "Tarjetas entregadas" : "Tarjetas sin entregar"}</Etiqueta></p>
+                <p className="text-xs">Salió de los seguimientos abiertos: cobros, comisión y entrega se gestionan en la venta.</p>
+              </div>
+            ) : "La venta no se encontró."}
+          </Aviso>
+        ) : null}
+
+        {modo === "venta" ? (
+          <section className="rounded-2xl border border-green-500/40 bg-green-950/10 p-4">
+            <RegistrarVenta oportunidadId={o.id} onCancelar={() => setModo(null)} onRegistrada={(_ventaId, repetida) => {
+              setModo(null);
+              setAviso(repetida ? "Venta registrada (ya se había guardado: no se duplicó)." : "Venta registrada: la oportunidad pasó a Ganado.");
+              setRecarga((n) => n + 1);
+              onCambio();
+            }} />
+          </section>
+        ) : modo ? (
           <section className="rounded-2xl border border-red-500/40 bg-red-950/10 p-4">
             <FormularioAccion modo={modo} d={d} bloqueado={bloqueado} enviando={enviando} onCancelar={() => setModo(null)}
               onEnviar={(e, exito) => void enviarAccion(e, exito)} />
@@ -361,7 +396,7 @@ function DetalleOportunidad({ id, onCerrar, onCambio }: { id: string; onCerrar: 
                 <p className="text-xs text-white/50">Abrir WhatsApp no registra nada: si lo mandaste, registrá «WhatsApp enviado».</p>
               </div>
             ) : <p className="text-white/60">Sin contacto principal.</p>}
-            {!perdida && d.contactos.filter((c) => !c.archivado).length > 1 ? <Boton variante="fantasma" className="mt-1 px-0" onClick={() => abrirModo("contacto")}>Cambiar contacto principal</Boton> : null}
+            {!perdida && !ganada && d.contactos.filter((c) => !c.archivado).length > 1 ? <Boton variante="fantasma" className="mt-1 px-0" onClick={() => abrirModo("contacto")}>Cambiar contacto principal</Boton> : null}
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm">
             <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-white/60">De la visita</h3>
@@ -372,7 +407,7 @@ function DetalleOportunidad({ id, onCerrar, onCambio }: { id: string; onCerrar: 
           </div>
         </section>
 
-        {!perdida ? (
+        {ganada ? null : !perdida ? (
           <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
             <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-white/60">Próxima acción</h3>
             {o.pendiente ? (
@@ -433,7 +468,8 @@ function FormularioAccion({ modo, d, bloqueado, enviando, onCancelar, onEnviar }
 }) {
   const o = d.fila;
   const hoy = d.hoy || hoyEnSim();
-  const perdida = o.estado === "perdida";
+  // Perdida o ganada: solo se agregan notas (sin próxima acción ni cambio de estado).
+  const perdida = o.estado === "perdida" || o.estado === "ganada";
   const [tipo, setTipo] = useState<string | null>(perdida ? "nota" : null);
   const [destino, setDestino] = useState<string | null>(modo === "reabrir" ? d.oportunidad.estado_al_perder : null);
   const [motivo, setMotivo] = useState("");
@@ -650,7 +686,7 @@ function Historial({ d }: { d: DetalleOportunidadDto }) {
   for (const a of d.actividades) {
     const cambio = a.estado_despues ? `${textoEstado(a.estado_antes)} → ${textoEstado(a.estado_despues)}` : "";
     const titulo = a.tipo === "cambio_estado"
-      ? a.estado_despues === "pausada" ? "Pausa: retomar más adelante" : a.estado_despues === "perdida" ? "Marcada como perdida" : a.estado_antes === "perdida" ? "Reapertura" : a.estado_antes === "pausada" ? "Retomada" : "Cambio de estado"
+      ? a.estado_despues === "ganada" ? "Venta registrada" : a.estado_antes === "ganada" ? "Venta anulada" : a.estado_despues === "pausada" ? "Pausa: retomar más adelante" : a.estado_despues === "perdida" ? "Marcada como perdida" : a.estado_antes === "perdida" ? "Reapertura" : a.estado_antes === "pausada" ? "Retomada" : "Cambio de estado"
       : textoActividad(a.tipo);
     const desfase = Math.abs(new Date(a.registrada_en).getTime() - new Date(a.ocurrida_en).getTime()) > 5 * 60_000;
     items.push({
@@ -663,7 +699,7 @@ function Historial({ d }: { d: DetalleOportunidadDto }) {
   for (const s of d.seguimientos) {
     const que = s.tipo === "retomar" ? "Retomar" : s.descripcion ?? "Próxima acción";
     items.push({ en: s.creada_en, clave: `s${s.id}`, tono: "sistema", titulo: `${s.anterior_id ? "Reprogramada" : "Programada"}: ${que}`, detalle: `Para el ${fechaCorta(s.vence_el)}` });
-    if (s.estado === "cancelada" && s.cerrada_en) items.push({ en: s.cerrada_en, clave: `c${s.id}`, tono: "sistema", titulo: `Cancelada: ${que}`, detalle: s.cancelada_motivo === "pausa" ? "Por la pausa" : "Por la pérdida" });
+    if (s.estado === "cancelada" && s.cerrada_en) items.push({ en: s.cerrada_en, clave: `c${s.id}`, tono: "sistema", titulo: `Cancelada: ${que}`, detalle: s.cancelada_motivo === "pausa" ? "Por la pausa" : s.cancelada_motivo === "ganada" ? "Por la venta (Ganado)" : "Por la pérdida" });
     if (s.estado === "hecha" && s.cerrada_en) {
       const a = d.actividades.find((x) => x.id === s.resuelta_por_actividad_id);
       items.push({ en: s.cerrada_en, clave: `h${s.id}`, tono: "sistema", titulo: `Resuelta: ${que}`, detalle: a ? `Con «${a.tipo === "cambio_estado" ? "Retomar ahora" : textoActividad(a.tipo)}»` : undefined });

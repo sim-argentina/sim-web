@@ -182,7 +182,7 @@ export async function armarVisitas(actor: ActorRpc, filas: FilaVisita[], mapa: M
     }
   }
   for (const t of trozos(oppIds)) {
-    for (const o of revisar(await supabaseAdmin.from("crm_oportunidades").select("origen_visita_id").in("id", t), "oportunidades") ?? []) origenes.add(o.origen_visita_id);
+    for (const o of revisar(await supabaseAdmin.from("crm_oportunidades").select("origen_visita_id").in("id", t), "oportunidades") ?? []) if (o.origen_visita_id) origenes.add(o.origen_visita_id);
   }
   return filas.map((v) => ({
     id: v.id, empresa_id: v.empresa_id, ...(conEmpresa ? { empresa: empresas.get(v.empresa_id) ?? "" } : {}), jornada_id: v.jornada_id,
@@ -214,7 +214,8 @@ export async function fichaEmpresa(actor: ActorRpc, id: string): Promise<FichaEm
   if (esComercial(actor)) qv = qv.is("anulada_en", null);
   let qo = supabaseAdmin.from("crm_oportunidades").select("id, estado, cerrada_en, cierre_motivo, lead_en, interesado_en, origen_usuario_id, origen_visita_id").eq("empresa_id", id).order("creada_en", { ascending: false });
   // Comercial: resumen de la abierta y de las perdidas (estado, origen); nunca las
-  // cerradas por anulación ni nada del seguimiento de Administración.
+  // cerradas por anulación, las ganadas (B3: ventas, cobros y comisiones son de
+  // Administración) ni nada del seguimiento de Administración.
   if (esComercial(actor)) qo = qo.or("cerrada_en.is.null,cierre_motivo.eq.perdida");
   const [c, v, o, t, s, cat, mapa] = await Promise.all([
     qc, qv, qo,
@@ -233,7 +234,8 @@ export async function fichaEmpresa(actor: ActorRpc, id: string): Promise<FichaEm
     oportunidades: (revisar(o, "oportunidades") ?? []).map((x) => ({
       id: x.id, estado: x.estado, abierta: !x.cerrada_en, cierre_motivo: x.cierre_motivo, lead_en: x.lead_en,
       interesado_en: esComercial(actor) ? null : x.interesado_en,
-      origen: autorDe(actor, "comercial", x.origen_usuario_id, mapa), origen_visita_id: x.origen_visita_id,
+      // Una recompra creada por Administración (B3) no tiene visita ni comercial de origen.
+      origen: autorDe(actor, x.origen_usuario_id ? "comercial" : "admin", x.origen_usuario_id, mapa), origen_visita_id: x.origen_visita_id ?? undefined,
     })) as OportunidadDto[],
     revisita: tarea && (!esComercial(actor) || tarea.responsable_id === actor.usuarioId)
       ? { id: tarea.id, empresa_id: id, empresa: e.nombre_comercial, vence_el: tarea.vence_el, estado: tarea.estado, version: tarea.version,
