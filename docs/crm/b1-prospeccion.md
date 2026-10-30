@@ -84,7 +84,8 @@ optimista) y dejan auditoría con campos explícitos en `crm_auditoria` (sin tel
 
 ### Aplicación futura (no ejecutada)
 
-1. `crm-b0-identidad.sql` (si todavía no está) y luego `crm-b1-prospeccion.sql`, en ese orden.
+1. `crm-b0-identidad.sql` (si todavía no está), `crm-b1-prospeccion.sql` y `crm-b2-seguimiento.sql`, en ese orden
+   (B2 redefine funciones de visitas de B1 y amplía la auditoría).
 2. Correr `crm-b1-prospeccion.verificacion.sql` y exigir `OK`.
 3. Recién entonces publicar la aplicación. B1 no necesita variables nuevas además de las de B0.
 
@@ -113,6 +114,10 @@ reciben 403) y `/api/admin/crm/*` (solo admin; staff 403, cookie comercial 401).
 con control de origen, límite por IP y tamaño máximo.
 
 ## Contacto útil y oportunidad
+
+> Desde B2 la oportunidad tiene más estados (conversación, negociación, pausa, perdida) y una
+> visita en un negocio con una oportunidad perdida solo crea otra con un contacto útil nuevo:
+> ver [b2-seguimiento.md](b2-seguimiento.md#integración-con-b1). Lo de abajo sigue valiendo.
 
 - **Persona contactada** (`hablo_con_contacto`): hablaste con esa persona en la visita.
 - **Contacto obtenido** (`contacto_obtenido`): conseguiste cómo contactarla para el

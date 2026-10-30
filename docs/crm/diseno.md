@@ -4,8 +4,8 @@ Prospección presencial de packs corporativos (Tobías) y seguimiento, venta y c
 admin). Objetivo del MVP: registrar → seguir → vender → medir.
 
 Este documento resume el diseño acordado y las correcciones que se aplican a los bloques
-posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md) y
-[b1-prospeccion.md](b1-prospeccion.md).
+posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md),
+[b1-prospeccion.md](b1-prospeccion.md) y [b2-seguimiento.md](b2-seguimiento.md).
 
 ## Bloques
 
@@ -13,9 +13,9 @@ posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md) y
 |---|---|---|
 | B0 | Identidad comercial: usuarios individuales, sesión propia, administración de usuarios (+ B0.1: límite con respaldo, aislamiento de la analítica) | Implementado y verificado en local; sin migrar ni publicar |
 | B1 | Negocios, contactos, jornadas y visitas desde el celular; oportunidad al obtener un contacto útil; revisitas | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar |
-| B2 | Oportunidades, bandeja de seguimiento, tareas y transiciones | Pendiente |
-| B3 | Ventas, cobros, saldo y comisiones; vínculo de solo lectura con Empresas | Pendiente |
-| B4 | Métricas y tablero | Pendiente |
+| B2 | Bandeja "Contactos para seguir": estados (contacto, conversación, interesado, negociación, pausa, perdida), actividades manuales, próxima acción, pérdida con motivo y reapertura por ciclos | Implementado y verificado en local; sin migrar ni publicar |
+| B3 | Ventas (y recién ahí "Ganado"), cobros, saldo y comisiones; vínculo de solo lectura con Empresas | Pendiente |
+| B4 | Métricas y tablero (sobre los hitos y ciclos de B2, sin reescribir fechas) | Pendiente |
 
 Fuera de la V1: WhatsApp o emails automáticos, IA, scoring, mapas, propuestas automáticas e
 integración automática con Finanzas.
