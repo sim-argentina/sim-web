@@ -1,14 +1,13 @@
-import { redirect } from "next/navigation";
-import { getCurrentAdminRole } from "@/lib/adminGuards";
 import UsuariosComerciales from "./UsuariosComerciales";
+import CatalogoCrm from "./CatalogoCrm";
 
-// CRM · Configuración (B0): usuarios comerciales. Solo admin: el middleware ya
-// redirige al staff, pero se valida también acá server-side (defensa en
-// profundidad; las APIs usan requireAdmin).
-export default async function CrmConfiguracionPage() {
-  const role = await getCurrentAdminRole();
-  if (role !== "admin") {
-    redirect("/admin/calendario");
-  }
-  return <UsuariosComerciales />;
+// CRM · Configuración: usuarios comerciales (B0) y rubros y zonas (B1). Solo admin:
+// lo valida el layout de /admin/crm en el servidor y cada API con requireAdmin.
+export default function CrmConfiguracionPage() {
+  return (
+    <div className="space-y-12">
+      <UsuariosComerciales />
+      <CatalogoCrm />
+    </div>
+  );
 }

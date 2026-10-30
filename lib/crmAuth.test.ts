@@ -116,7 +116,8 @@ async function main() {
     assert.match(handler(leer(p), "POST"), /if \(!isAllowedOrigin\(req\)\) return forbiddenOrigin\(\)/, `${p} controla el origen`);
   }
   assert.match(leer("app/comercial/page.tsx"), /actorCrmActual\(\)[\s\S]*redirect\("\/comercial\/ingresar"\)/, "inicio comercial protegido en el servidor");
-  assert.match(leer("app/admin/(panel)/crm/configuracion/page.tsx"), /role !== "admin"[\s\S]*redirect/, "configuración: solo admin en el servidor");
+  assert.match(leer("app/admin/(panel)/crm/layout.tsx"), /getCurrentAdminRole\(\)\) !== "admin"\) redirect\(/, "todo /admin/crm: solo admin en el servidor");
+  assert.match(leer("middleware.ts"), /"\/admin\/crm"/, "/admin/crm sigue en la lista solo-admin del middleware");
 
   // Ninguna ruta o página fuera de las del CRM lee la sesión comercial.
   const walk = (d: string, out: string[] = []): string[] => {
@@ -140,7 +141,7 @@ async function main() {
   const sidebar = leer("components/AdminSidebar.tsx");
   const enlace = /label: "CRM",\s*href: "([^"]+)",\s*roles: (\[[^\]]*\])/.exec(sidebar);
   assert.ok(enlace, "existe el enlace CRM");
-  assert.equal(enlace![1], "/admin/crm/configuracion");
+  assert.equal(enlace![1], "/admin/crm/negocios");
   assert.equal(enlace![2], '["admin"]', "el enlace CRM es solo para admin");
   // La interfaz comercial no usa el menú del panel.
   const comerciales = walk("app/comercial");
@@ -153,7 +154,19 @@ async function main() {
   const entranPorRouter = fuera.filter((f) =>
     /<Link[^>]*href=\{?["'`]\/comercial|router\.(push|replace|prefetch)\(\s*["'`]\/comercial/.test(leer(f)));
   assert.deepEqual(entranPorRouter, [], `entran al área comercial con el router (usar <a>): ${entranPorRouter.join(", ")}`);
-  assert.ok(comerciales.every((f) => !/from "next\/link"/.test(leer(f))), "el área comercial sale con <a>, no con <Link>");
+  // Dentro del área se navega con <Link> (el layout comercial no carga GTM), pero
+  // todo <Link> del área apunta al área: se sale con <a>. Los componentes compartidos
+  // (components/crm) reciben las rutas por props y el área les pasa rutas propias.
+  const destinoArea = (d: string) => d === "/comercial" || d.startsWith("/comercial/") || d.startsWith("/comercial?");
+  const linksArea = comerciales.flatMap((f) => [...leer(f).matchAll(/<Link[^>]*?href=\{?["'`]([^"'`]*)/g)].map((m) => [f, m[1]] as const));
+  assert.ok(linksArea.length > 0, "el área usa <Link> internos");
+  for (const [f, d] of linksArea) assert.ok(destinoArea(d), `<Link> que sale del área en ${f}: ${d}`);
+  const dinamicos = comerciales.flatMap((f) => [...leer(f).matchAll(/<Link[^>]*?href=\{(?!["'`])([^}]+)\}/g)].map((m) => m[1]));
+  assert.ok(dinamicos.every((x) => x === "volver.href"), `<Link> con destino no literal: ${dinamicos.join(", ")}`);
+  const rutasProps = comerciales.flatMap((f) => [...leer(f).matchAll(/(?:volver=\{\{ href:|baseNegocio=|baseJornada=|rutaNuevo=|rutaNuevaVisita=|apiBase=)\s*\{?["'`]([^"'`]+)/g)].map((m) => m[1]));
+  assert.ok(rutasProps.length >= 10 && rutasProps.every(destinoArea), `rutas que el área pasa a los componentes: ${rutasProps.join(", ")}`);
+  const compartidos = walk("components/crm");
+  assert.ok(compartidos.every((f) => !/<Link[^>]*?href=\{?["'`]\//.test(leer(f))), "los componentes compartidos no tienen rutas <Link> fijas");
   const destinosRouter = comerciales.flatMap((f) => [...leer(f).matchAll(/router\.(?:push|replace)\(\s*["'`]([^"'`]+)/g)].map((m) => m[1]));
   assert.ok(destinosRouter.length > 0 && destinosRouter.every((d) => d === "/comercial" || d.startsWith("/comercial/")), "dentro del área, el router solo navega al área");
   const gtm = leer("components/analytics/GoogleTagManager.tsx");

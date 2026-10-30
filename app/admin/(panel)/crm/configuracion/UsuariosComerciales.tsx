@@ -182,8 +182,7 @@ export default function UsuariosComerciales() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 pb-16 md:px-8">
-      <p className="text-xs font-bold tracking-[0.3em] text-red-500">CRM · CONFIGURACIÓN</p>
+    <div>
       <h1 id="titulo-pagina" tabIndex={-1} className="mt-2 text-3xl font-black outline-none">Usuarios comerciales</h1>
       <p className="mt-2 max-w-3xl text-sm text-white/60">
         Cada usuario ingresa con su propio usuario y contraseña en <span className="font-mono text-white/80">/comercial/ingresar</span>.
