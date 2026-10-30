@@ -134,7 +134,7 @@ async function main() {
   assert.ok(!/crm/i.test(guards), "requireAdmin / requireStaffOrAdmin no conocen la sesión comercial");
   assert.ok(leer("lib/adminSession.ts").includes('data.role !== "admin" && data.role !== "staff"'), "verifySessionToken sigue admitiendo solo admin|staff");
   assert.ok(!leer("middleware.ts").includes("crmSesion") && !leer("middleware.ts").includes("CRM_COOKIE"), "el middleware no usa la sesión comercial");
-  assert.match(leer("middleware.ts"), /matcher: \["\/admin\/:path\*"\]/, "matcher sin cambios");
+  assert.match(leer("middleware.ts"), /matcher: \["\/admin\/:path\*", "\/comercial", "\/comercial\/:path\*"\]/, "matcher: /admin igual, más el área comercial (solo aislamiento)");
 
   // El enlace del CRM en el panel: solo admin.
   const sidebar = leer("components/AdminSidebar.tsx");
@@ -145,6 +145,29 @@ async function main() {
   // La interfaz comercial no usa el menú del panel.
   const comerciales = walk("app/comercial");
   assert.ok(comerciales.every((f) => !leer(f).includes("AdminSidebar")), "la interfaz comercial no usa el menú del panel");
+
+  // ── 5) Aislamiento de la analítica: navegación ──────────────────────────
+  // Se entra al área comercial con navegación de documento (el middleware cubre
+  // al router, pero ninguna página de afuera debería intentarlo) y se sale igual.
+  const fuera = [...walk("app"), ...walk("components")].filter((f) => !f.startsWith("app/comercial/"));
+  const entranPorRouter = fuera.filter((f) =>
+    /<Link[^>]*href=\{?["'`]\/comercial|router\.(push|replace|prefetch)\(\s*["'`]\/comercial/.test(leer(f)));
+  assert.deepEqual(entranPorRouter, [], `entran al área comercial con el router (usar <a>): ${entranPorRouter.join(", ")}`);
+  assert.ok(comerciales.every((f) => !/from "next\/link"/.test(leer(f))), "el área comercial sale con <a>, no con <Link>");
+  const destinosRouter = comerciales.flatMap((f) => [...leer(f).matchAll(/router\.(?:push|replace)\(\s*["'`]([^"'`]+)/g)].map((m) => m[1]));
+  assert.ok(destinosRouter.length > 0 && destinosRouter.every((d) => d === "/comercial" || d.startsWith("/comercial/")), "dentro del área, el router solo navega al área");
+  const gtm = leer("components/analytics/GoogleTagManager.tsx");
+  assert.ok(gtm.includes("<CargadorGtm") && gtm.includes("<NoscriptGtm") && !gtm.includes('from "next/script"'), "GTM se carga por CargadorGtm/NoscriptGtm");
+  const carga = leer("components/analytics/GoogleTagManagerCarga.tsx");
+  assert.equal((carga.match(/if \(esAreaComercial\(pathname\)\) return null;/g) ?? []).length, 2, "loader e iframe se omiten en el área comercial");
+  assert.ok(leer("app/comercial/layout.tsx").includes("<AislamientoAnalitica />"), "el layout comercial vigila que no haya GTM");
+
+  // ── 6) Límite de intentos propio del CRM; lib/rateLimit.ts sin cambios de uso ──
+  const ingreso = leer("app/comercial/api/ingresar/route.ts");
+  assert.ok(/controlarIp\(ip\)/.test(ingreso) && /controlarUsuario\(usuario\)/.test(ingreso) && /registrarFalloUsuario\(usuario\)/.test(ingreso), "el ingreso usa lib/crmLimite.ts");
+  assert.ok(!/\brateLimit\(/.test(ingreso), "el ingreso comercial no usa el limitador general");
+  assert.ok(!/crm/i.test(leer("lib/rateLimit.ts")), "lib/rateLimit.ts no conoce al CRM");
+  assert.match(leer("app/api/admin-login/route.ts"), /await rateLimit\(`login:\$\{clientIp\(req\)\}`, 8, 60_000\)/, "el login del panel sigue con su limitador de siempre");
 
   console.log("OK — crmAuth: matriz de cookies que conviven, falla cerrada y cableado de rutas, panel y menú.");
 }

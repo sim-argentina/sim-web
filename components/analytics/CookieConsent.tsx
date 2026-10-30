@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getConsent, setConsent } from "@/lib/analytics";
+import { esAreaComercial } from "@/lib/areaComercial";
 import { RUTAS_LEGALES } from "@/data/legal";
 
 // Banner de consentimiento de cookies analíticas. Barra inferior discreta (no es
@@ -14,7 +15,7 @@ import { RUTAS_LEGALES } from "@/data/legal";
 export default function CookieConsent() {
   const pathname = usePathname();
   const [visible, setVisible] = useState(false);
-  const interna = pathname === "/comercial" || pathname.startsWith("/comercial/");
+  const interna = esAreaComercial(pathname);
 
   useEffect(() => {
     // Se difiere para no llamar a setState de forma síncrona dentro del efecto

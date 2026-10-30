@@ -10,7 +10,7 @@ posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md).
 
 | Bloque | Alcance | Estado |
 |---|---|---|
-| B0 | Identidad comercial: usuarios individuales, sesión propia, administración de usuarios | Implementado en local, sin migrar |
+| B0 | Identidad comercial: usuarios individuales, sesión propia, administración de usuarios (+ B0.1: límite con respaldo, aislamiento de la analítica) | Implementado y verificado en local; sin migrar ni publicar |
 | B1 | Empresas, contactos, jornadas y visitas desde el celular | Pendiente |
 | B2 | Oportunidades, bandeja de seguimiento, tareas y transiciones | Pendiente |
 | B3 | Ventas, cobros, saldo y comisiones; vínculo de solo lectura con Empresas | Pendiente |

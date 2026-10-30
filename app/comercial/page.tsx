@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { actorCrmActual } from "@/lib/crmAuth";
 import { Aviso } from "@/app/admin/(panel)/interacciones/ui";
@@ -37,7 +36,8 @@ export default async function ComercialInicio() {
             {r.actor.tipo === "admin" ? (
               <Aviso tipo="alerta" titulo="Estás con la sesión de Administración">
                 Esta pantalla es para los usuarios comerciales. Los usuarios se administran en{" "}
-                <Link href="/admin/crm/configuracion" className="font-bold underline underline-offset-2">CRM · Configuración</Link>.
+                {/* <a> y no <Link>: salir del área comercial es una navegación de documento completo. */}
+                <a href="/admin/crm/configuracion" className="font-bold underline underline-offset-2">CRM · Configuración</a>.
               </Aviso>
             ) : null}
           </div>

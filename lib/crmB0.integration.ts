@@ -29,7 +29,11 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 // Ejecutar: node scripts/pruebas/correr-mutantes.mjs lib/crmB0.integration.ts
 
 const MARCA = `zzcrmb0${Date.now().toString(36)}`;
-const CONTENEDOR = "supabase_db_sim-web-pruebas";
+// Contenedor de la base LOCAL. Por defecto, el stack de pruebas del repositorio;
+// SIM_TEST_CONTENEDOR_DB permite correr la suite contra otra instancia local
+// descartable (por ejemplo, una sin los objetos de Marketing).
+const CONTENEDOR = process.env.SIM_TEST_CONTENEDOR_DB || "supabase_db_sim-web-pruebas";
+assert.match(CONTENEDOR, /^supabase_db_[a-z0-9-]+$/, "contenedor de base local inválido");
 const ORIGEN = "https://simexperience.com.ar";
 
 {
@@ -344,7 +348,7 @@ async function main() {
       console.log(`   (carrera en paralelo: ${emitidos.length} de 6 ingresos alcanzaron a emitir sesión antes del restablecimiento; todas quedaron revocadas)`);
     }
 
-    // ── 7) Límites de intentos (memoria del proceso; ver docs/crm/b0-identidad.md) ──
+    // ── 7) Límites de intentos (lib/crmLimite.ts; ver docs/crm/b0-identidad.md) ──
     {
       const mismaIp = "10.99.0.1";
       const r: number[] = [];
@@ -353,7 +357,26 @@ async function main() {
       const D = await crear("d", "Prueba D");
       const u: number[] = [];
       for (let i = 0; i < 11; i++) u.push((await ingresar(D.usuario, "Intento-incorrecto")).status);
-      assert.deepEqual(u, [...Array(10).fill(401), 429], "10 cada 15 minutos por usuario, aunque cambie la IP");
+      assert.deepEqual(u, [...Array(10).fill(401), 429], "10 fallos cada 15 minutos por usuario, aunque cambie la IP");
+
+      // Servicio remoto de límites caído (Upstash apuntando a un puerto cerrado del
+      // loopback): la ruta real sigue limitando con el respaldo y no da detalles.
+      process.env.UPSTASH_REDIS_REST_URL = "http://127.0.0.1:9";
+      process.env.UPSTASH_REDIS_REST_TOKEN = "token-de-prueba-que-no-debe-aparecer";
+      try {
+        const otraIp = "10.99.0.2";
+        const caido: Resp[] = [];
+        for (let i = 0; i < 9; i++) caido.push(await ingresar(`${MARCA}.caido${i}`, "Intento-incorrecto", { ip: otraIp }));
+        assert.deepEqual(caido.map((x) => x.status), [401, 401, 401, 401, 401, 401, 401, 401, 429], "con el remoto caído, el límite sigue");
+        const ultimo = caido[8];
+        assert.deepEqual(ultimo.json, { error: "Demasiados intentos. Esperá un momento e intentá de nuevo." }, "429 genérico");
+        assert.ok(!/127\.0\.0\.1:9|upstash|token-de-prueba|ECONN/i.test(caido.map((x) => x.texto).join(" ")), "sin detalles de infraestructura");
+        assert.ok(logs.some((l) => /crm_limite_respaldo_memoria motivo=(red|tiempo)/.test(l)), "se registró el uso del respaldo");
+        assert.ok(!logs.some((l) => l.includes("token-de-prueba-que-no-debe-aparecer")), "el token del servicio no se registra");
+      } finally {
+        delete process.env.UPSTASH_REDIS_REST_URL;
+        delete process.env.UPSTASH_REDIS_REST_TOKEN;
+      }
     }
 
     // ── 8) Endpoints existentes: la cookie comercial sola no abre nada ─────
@@ -381,6 +404,64 @@ async function main() {
       }
       const me = await http((await import("@/app/api/admin/me/route")).GET, "GET", "/api/admin/me", { cookies: comercial(tE) });
       assert.deepEqual(me.json, { role: null }, "/api/admin/me (público) no ve un rol del panel");
+
+      // La cookie comercial enviada A MANO (sin depender de Path=/comercial) a las
+      // mutaciones de administración de usuarios: 401.
+      const cuerpoAlta = { usuario: `${MARCA}.manual`, nombre: "Manual", contrasena: "Otra-clave-larga-9" };
+      assert.equal((await http(USUARIOS.POST, "POST", "/api/admin/crm/usuarios", { cookies: comercial(tE), body: cuerpoAlta })).status, 401, "POST con cookie comercial");
+      for (const a of ["desactivar", "reactivar", "revocar"]) {
+        assert.equal((await accion(E.id, a, {}, comercial(tE))).status, 401, `PATCH ${a} con cookie comercial`);
+      }
+      assert.equal((await accion(E.id, "restablecer", { contrasena: "Otra-clave-larga-8" }, comercial(tE))).status, 401, "PATCH restablecer con cookie comercial");
+    }
+
+    // ── 8b) Admin legítimo con cookies comerciales inválidas; identidad del formulario ──
+    {
+      const G = await crear("g", "Prueba G");
+      const tG = tokenDe(await ingresar(G.usuario, G.contrasena));
+      assert.equal((await accion(G.id, "desactivar")).status, 200);
+      const svA = await versionDe(A.id);
+      const invalidas: Array<[string, string]> = [
+        ["manipulada", tG.slice(0, -3) + "abc"],
+        ["vencida", crearTokenComercial(A.id, svA, Date.now() - 8 * 24 * 3600_000)],
+        ["de un usuario desactivado", tG],
+        ["de versión anterior", crearTokenComercial(A.id, Math.max(1, svA - 1))],
+      ];
+      for (const [nombre, t] of invalidas) {
+        const conAdmin = { ...comoAdmin, ...comercial(t) };
+        assert.equal((await http(USUARIOS.GET, "GET", "/api/admin/crm/usuarios", { cookies: conAdmin })).status, 200, `admin + comercial ${nombre}: listar`);
+        assert.equal((await accion(G.id, "revocar", {}, conAdmin)).status, 200, `admin + comercial ${nombre}: acción`);
+        const s = await sesion(conAdmin);
+        assert.deepEqual([s.status, (s.json.actor as Record<string, unknown>)?.tipo], [200, "admin"], `admin + comercial ${nombre} en /comercial: Administración`);
+        const sinAdmin = await sesion(comercial(t));
+        assert.equal(sinAdmin.status, 401, `comercial ${nombre} sola en /comercial: nunca Administración`);
+      }
+
+      // Rol e identidad nunca salen del formulario.
+      const intento = { usuario: `${MARCA}.forma`, nombre: "Forma", contrasena: "Clave-de-forma-77",
+        rol: "admin", p_actor_rol: "admin", actor: "admin", tipo: "admin" };
+      assert.equal((await http(USUARIOS.POST, "POST", "/api/admin/crm/usuarios", { cookies: comoStaff, body: intento })).status, 403, "staff que dice ser admin");
+      const idForzado = "11111111-1111-4111-8111-111111111111";
+      const alta = await http(USUARIOS.POST, "POST", "/api/admin/crm/usuarios", {
+        cookies: comoAdmin,
+        body: { ...intento, id: idForzado, activo: false, sesion_version: 99, password_hash: "scrypt$17$8$1$" + "A".repeat(22) + "$" + "B".repeat(43) },
+      });
+      assert.equal(alta.status, 201);
+      const H = alta.json.usuario as Record<string, unknown>;
+      assert.notEqual(H.id, idForzado, "el id no sale del cuerpo");
+      const { data: filaH } = await supabaseAdmin.from("crm_usuarios").select("rol, activo, sesion_version").eq("id", String(H.id)).single();
+      assert.deepEqual(filaH, { rol: "comercial", activo: true, sesion_version: 1 }, "rol, estado y versión los fija el servidor");
+      secretos.add("Clave-de-forma-77");
+      const okH = await ingresar(intento.usuario, "Clave-de-forma-77");
+      assert.equal(okH.status, 200, "la contraseña es la del campo contrasena, no un hash del cuerpo");
+      const engaño = await http(INGRESAR.POST, "POST", "/comercial/api/ingresar", {
+        body: { usuario: intento.usuario, contrasena: "Clave-de-forma-77", uid: A.id, sv: 999, rol: "admin", tipo: "admin", usuarioId: A.id },
+      });
+      const tH = tokenDe(engaño);
+      const quien = await sesion(comercial(tH));
+      assert.deepEqual(quien.json, { actor: { tipo: "comercial", nombre: "Forma" } }, "el ingreso ignora uid/rol del cuerpo");
+      const consulta = await http(SESION.GET, "GET", `/comercial/api/sesion?tipo=admin&usuarioId=${A.id}`);
+      assert.equal(consulta.status, 401, "ni la consulta ni el cuerpo eligen actor");
     }
 
     // ── 9) Errores de base: falla cerrada y sin detalles ──────────────────

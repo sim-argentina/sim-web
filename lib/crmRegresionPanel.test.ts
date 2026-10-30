@@ -4,7 +4,8 @@ import { NextRequest } from "next/server";
 // Ejecutar: npx tsx lib/crmRegresionPanel.test.ts
 // Regresión del PANEL tras el CRM B0, ejecutable y sin base:
 //   1) middleware: las redirecciones de /admin siguen iguales; /admin/crm es
-//      solo-admin; una cookie comercial, sola, no abre nada del panel.
+//      solo-admin; una cookie comercial, sola, no abre nada del panel; la entrada
+//      del router al área comercial desde otra página se vuelve de documento.
 //   2) login del panel (/api/admin-login): admin y staff ingresan igual que antes,
 //      con la misma cookie; una contraseña incorrecta sigue dando 401.
 // El panel no tiene logout propio (no existe ruta ni botón): no hay nada que
@@ -27,15 +28,17 @@ async function main() {
   const staff = await createSessionToken("staff");
   const comercial = crearTokenComercial("00000000-0000-4000-8000-000000000001", 1);
 
-  const pedir = async (ruta: string, cookies: Record<string, string> = {}) => {
+  const pedir = async (ruta: string, cookies: Record<string, string> = {}, extra: Record<string, string> = {}) => {
     const cookie = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join("; ");
-    const res = await middleware(new NextRequest(`${BASE}${ruta}`, { headers: cookie ? { cookie } : {} }));
+    const res = await middleware(new NextRequest(`${BASE}${ruta}`, { headers: { ...(cookie ? { cookie } : {}), ...extra } }));
     const destino = res.headers.get("location");
-    return destino ? new URL(destino).pathname : res.headers.get("x-middleware-next") === "1" ? "sigue" : `?${res.status}`;
+    if (destino) return new URL(destino).pathname;
+    if (res.headers.get("x-middleware-next") === "1") return "sigue";
+    return `${res.status}${res.headers.get("cache-control") === "no-store" ? " sin caché" : ""}`;
   };
 
   // ── 1) Middleware ───────────────────────────────────────────────────────
-  assert.deepEqual(config.matcher, ["/admin/:path*"], "el matcher no cambió: /comercial no pasa por el middleware");
+  assert.deepEqual(config.matcher, ["/admin/:path*", "/comercial", "/comercial/:path*"], "matcher: /admin igual que antes, más el área comercial");
   const casos: Array<[string, Record<string, string>, string]> = [
     ["/admin/login", {}, "sigue"],
     ["/admin", {}, "/admin/login"],
@@ -63,6 +66,38 @@ async function main() {
     assert.equal(await pedir(ruta, cookies), esperado, `${ruta} con ${Object.keys(cookies).join("+") || "nada"}`);
   }
 
+  // Área comercial: el middleware no autoriza (lo hacen sus páginas y rutas); solo
+  // convierte en navegación de documento completo la entrada del router desde una
+  // página que no es comercial. 204 sin cuerpo = el router de Next hace una
+  // navegación de documento (fetchServerResponse → doMpaNavigation). Next le
+  // quita al middleware la cabecera "rsc"; se usan "next-url" y "sec-fetch-dest".
+  const router = (desde?: string) => ({ "sec-fetch-dest": "empty", accept: "*/*", ...(desde ? { "next-url": desde } : {}) });
+  const documento = { "sec-fetch-dest": "document", accept: "text/html,application/xhtml+xml" };
+  const comerciales: Array<[string, Record<string, string>, Record<string, string>, string]> = [
+    ["/comercial/ingresar", {}, router("/"), "204 sin caché"],
+    ["/comercial/ingresar", {}, router("/reservas"), "204 sin caché"],
+    ["/comercial", { [ADMIN_COOKIE]: admin }, router("/admin/crm/configuracion"), "204 sin caché"],
+    ["/comercial", {}, router("/comerciales"), "204 sin caché"],
+    ["/comercial/ingresar", {}, router(), "204 sin caché"],
+    ["/comercial/ingresar", {}, { "next-url": "/" }, "204 sin caché"],
+    ["/comercial", {}, router("/comercial/ingresar"), "sigue"],
+    ["/comercial/ingresar", {}, router("/comercial"), "sigue"],
+    // Sin next-url (router.refresh, algunos prefetch): decide el Referer del mismo origen.
+    ["/comercial", {}, { ...router(), referer: `${BASE}/comercial` }, "sigue"],
+    ["/comercial", {}, { ...router(), referer: `${BASE}/` }, "204 sin caché"],
+    ["/comercial", {}, { ...router(), referer: "https://otro.example/comercial" }, "204 sin caché"],
+    ["/comercial", {}, { ...router("/"), referer: `${BASE}/comercial` }, "204 sin caché"],
+    ["/comercial/ingresar", {}, documento, "sigue"],
+    ["/comercial", { [ADMIN_COOKIE]: staff, [CRM_COOKIE]: comercial }, documento, "sigue"],
+    ["/comercial/ingresar", {}, { accept: "text/html" }, "sigue"],
+    ["/comercial/ingresar", {}, {}, "sigue"],
+    ["/comercial/api/sesion", { [CRM_COOKIE]: comercial }, router("/"), "sigue"],
+    ["/comercial/api/ingresar", {}, router(), "sigue"],
+  ];
+  for (const [ruta, cookies, extra, esperado] of comerciales) {
+    assert.equal(await pedir(ruta, cookies, extra), esperado, `${ruta} ${JSON.stringify(extra)}`);
+  }
+
   // ── 2) Login del panel ──────────────────────────────────────────────────
   const { POST } = await import("@/app/api/admin-login/route");
   const { verifySessionToken } = await import("@/lib/adminSession");
@@ -88,7 +123,7 @@ async function main() {
   assert.equal(mal.status, 401);
   assert.equal(mal.cookie, "", "sin cookie si falla");
 
-  console.log(`OK — regresión del panel: ${casos.length} redirecciones del middleware y login admin/staff sin cambios.`);
+  console.log(`OK — regresión del panel: ${casos.length} redirecciones de /admin sin cambios, ${comerciales.length} casos de aislamiento de /comercial y login admin/staff igual.`);
 }
 
 main().catch((e) => {

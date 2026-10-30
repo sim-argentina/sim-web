@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import Footer from "@/components/footer";
 import FooterMinimal from "@/components/FooterMinimal";
+import { esAreaComercial } from "@/lib/areaComercial";
 
 // El footer completo (Navegación / Legales / Contacto) se muestra únicamente en
 // la Home. El resto del sitio público lleva un footer mínimo (copyright + enlaces
@@ -11,7 +12,7 @@ import FooterMinimal from "@/components/FooterMinimal";
 export default function FooterWrapper() {
   const pathname = usePathname();
 
-  if (pathname.startsWith("/admin") || pathname === "/comercial" || pathname.startsWith("/comercial/")) {
+  if (pathname.startsWith("/admin") || esAreaComercial(pathname)) {
     return null;
   }
 
