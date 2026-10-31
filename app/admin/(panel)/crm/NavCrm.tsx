@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const SECCIONES = [
   { href: "/admin/crm/seguimiento", texto: "Seguimiento" },
   { href: "/admin/crm/ventas", texto: "Ventas" },
+  { href: "/admin/crm/metricas", texto: "Métricas" },
   { href: "/admin/crm/negocios", texto: "Negocios" },
   { href: "/admin/crm/jornadas", texto: "Jornadas" },
   { href: "/admin/crm/configuracion", texto: "Configuración" },

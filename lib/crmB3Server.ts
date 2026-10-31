@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { hoyEnSim } from "@/lib/agenda";
 import { canonico, esUuid } from "@/lib/crmB1";
-import { actorRpc, nombres, revisar, rpc, trozos, type R } from "@/lib/crmB1Server";
+import { actorRpc, nombres, revisar, rpc, todasLasFilas, trozos, type R } from "@/lib/crmB1Server";
 import { estadoEfectivo, metricasCampania } from "@/lib/empresas";
 import {
   PENDIENTES, aCentavos, anticipoEsperado, avisosCampania, comisionPropuesta, estadoCobro, estadoComision, filtrarVentas, pendientesDe,
@@ -111,15 +111,17 @@ export type VentasDto = {
   opciones: { productos: Array<{ codigo: string; nombre: string }> };
 };
 
-/** Lista de ventas. Los totales salen de la MISMA lista filtrada que se muestra (sin anuladas). */
+/** Lista de ventas. Los totales salen de la MISMA lista filtrada que se muestra (sin anuladas), con TODAS las filas. */
 export async function listarVentas(f: FiltrosVentas): Promise<VentasDto> {
-  let q = supabaseAdmin.from("crm_ventas").select(COLS_VENTA).order("fecha_acuerdo", { ascending: false }).order("registrada_en", { ascending: false }).limit(1000);
-  if (f.desde) q = q.gte("fecha_acuerdo", f.desde);
-  if (f.hasta) q = q.lte("fecha_acuerdo", f.hasta);
-  if (f.empresa) q = q.eq("empresa_id", f.empresa);
-  if (f.producto) q = q.eq("producto_codigo", f.producto);
-  if (!f.anuladas) q = q.is("anulada_en", null);
-  const filas = (revisar(await q, "ventas") ?? []) as unknown as FilaVenta[];
+  const filas = await todasLasFilas<FilaVenta>((a, b) => {
+    let q = supabaseAdmin.from("crm_ventas").select(COLS_VENTA).order("fecha_acuerdo", { ascending: false }).order("registrada_en", { ascending: false }).order("id");
+    if (f.desde) q = q.gte("fecha_acuerdo", f.desde);
+    if (f.hasta) q = q.lte("fecha_acuerdo", f.hasta);
+    if (f.empresa) q = q.eq("empresa_id", f.empresa);
+    if (f.producto) q = q.eq("producto_codigo", f.producto);
+    if (!f.anuladas) q = q.is("anulada_en", null);
+    return q.range(a, b);
+  }, "ventas");
   const [{ ventas }, prods] = await Promise.all([armarVentas(filas), productos()]);
   const lista = filtrarVentas(ventas, f);
   const base = filtrarVentas(ventas, { ...f, pendiente: undefined });

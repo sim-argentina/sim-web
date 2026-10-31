@@ -41,6 +41,22 @@ export function revisar<T>(r: { data: T | null; error: { code?: string | null; m
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 export const trozos = <T,>(xs: T[], n = 100): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
+/**
+ * TODAS las filas de una consulta, de a páginas (PostgREST corta en un máximo por
+ * respuesta). Para totales y métricas: nunca sumar sobre una página ni un límite.
+ * La consulta tiene que traer un orden estable (p. ej. por id).
+ */
+export async function todasLasFilas<T>(consulta: (desde: number, hasta: number) => PromiseLike<{ data: unknown[] | null; error: { message?: string | null } | null }>,
+  que: string, pagina = 1000): Promise<T[]> {
+  const out: T[] = [];
+  for (let desde = 0; ; desde += pagina) {
+    const { data, error } = await consulta(desde, desde + pagina - 1);
+    if (error) throw new Error(`${que}: ${error.message ?? "error"}`);
+    out.push(...((data ?? []) as T[]));
+    if (!data || data.length < pagina) return out;
+  }
+}
+
 // ── Catálogo y nombres ──────────────────────────────────────────────────────
 export async function catalogo(soloActivos: boolean): Promise<Catalogo> {
   const [r, z] = await Promise.all([
