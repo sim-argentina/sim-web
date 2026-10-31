@@ -44,6 +44,8 @@ export const diasEntre = (desde: string, hasta: string) => Math.round((aUTC(hast
 const primeroDeMes = (f: string) => `${f.slice(0, 8)}01`;
 const ultimoDeMes = (f: string) => { const [y, m] = f.split("-").map(Number); return deUTC(Date.UTC(y, m, 0)); };
 const enRango = (f: string | null, desde: string, hasta: string) => !!f && f >= desde && f <= hasta;
+/** "YYYY-MM-DD" → "DD/MM/AAAA" (para textos armados acá). */
+export const fechaTexto = (f: string) => f.split("-").reverse().join("/");
 
 // ── Período ────────────────────────────────────────────────────────────────
 export const PRESETS = [
@@ -313,7 +315,9 @@ export type Valor =
   | { tipo: "km"; v: number }
   /** Razón (num ÷ den). `v` null = sin datos. `porcentaje`: se muestra como %. */
   | { tipo: "razon"; num: number; den: number; v: number | null; porcentaje: boolean; dinero: boolean }
-  | { tipo: "no_aplica"; motivo: string };
+  | { tipo: "no_aplica"; motivo: string }
+  /** No hay ningún registro completo con el que calcular (no es 0). */
+  | { tipo: "sin_datos"; motivo: string };
 export const razon = (num: number, den: number, porcentaje = false, dinero = false): Valor =>
   ({ tipo: "razon", num, den, v: den > 0 ? num / den : null, porcentaje, dinero });
 
@@ -619,8 +623,11 @@ export function tablero(ctx: Contexto, periodo: Periodo, f: Filtros, ahora: Date
     cohorte_ventas: m("cohorte_ventas", razon(c.leads.filter((x) => x.venta).length, c.leads.length, true)),
     negocios_compradores: m("negocios_compradores", razon(c.cohorteNegocios.filter((x) => x.compro).length, c.cohorteNegocios.length, true)),
     jornadas: m("jornadas", conteo(js.length)),
-    km: m("km", negocio ? noAplica : { tipo: "km", v: suma(conKm, (j) => j.km!) }, negocio ? {} : { pendientes: fueraKm }),
-    movilidad: m("movilidad", negocio ? noAplica : dinero(suma(completas, (j) => j.movilidad!)), negocio ? {} : { pendientes: fueraMov, parcial: suma(js, (j) => j.movilidad_parcial) }),
+    // Sin ninguna jornada con el dato completo, la suma es desconocida: «Sin datos», nunca 0.
+    km: m("km", negocio ? noAplica : conKm.length ? { tipo: "km", v: suma(conKm, (j) => j.km!) } : { tipo: "sin_datos", motivo: "Ninguna jornada del período tiene los km cargados." },
+      negocio ? {} : { pendientes: fueraKm }),
+    movilidad: m("movilidad", negocio ? noAplica : completas.length ? dinero(suma(completas, (j) => j.movilidad!)) : { tipo: "sin_datos", motivo: "Ninguna jornada del período tiene los cuatro gastos cargados." },
+      negocio ? {} : { pendientes: fueraMov, parcial: suma(js, (j) => j.movilidad_parcial) }),
     visitas_por_jornada: m("visitas_por_jornada", negocio ? noAplica : razon(suma(js, (j) => j.visitas), js.length)),
     km_por_visita: m("km_por_visita", negocio ? noAplica : razon(suma(conKm, (j) => j.km!), suma(conKm, (j) => j.visitas)), negocio ? {} : { pendientes: fueraKm }),
     km_por_lead: m("km_por_lead", negocio ? noAplica : razon(suma(conKm, (j) => j.km!), suma(conKm, (j) => j.leads)), negocio ? {} : { pendientes: fueraKm }),
@@ -753,7 +760,7 @@ export function detalle(ctx: Contexto, periodo: Periodo, f: Filtros, id: string,
   const textoJornada = (j: string | null) => {
     if (!j) return "Sin jornada";
     const jj = ctx.jornada.get(j);
-    return jj ? `${jj.fecha} · ${ctx.usuario.get(jj.usuario_id) ?? "Comercial"}` : "Sin jornada";
+    return jj ? `${fechaTexto(jj.fecha)} · ${ctx.usuario.get(jj.usuario_id) ?? "Comercial"}` : "Sin jornada";
   };
   const filaVenta = (x: InfoVenta): FilaDetalle => ({
     id: x.v.id, href: hrefVenta(x.v.id), celdas: [x.v.fecha_acuerdo, nombreNegocio(ctx, x.v.empresa_id), x.v.producto_nombre, textoJornada(x.jornada), 1, x.v.experiencias,
@@ -830,7 +837,7 @@ export function detalle(ctx: Contexto, periodo: Periodo, f: Filtros, id: string,
       const j = js.find((x) => x.id === extra.jornada);
       if (!j) return null;
       const vs = ctx.visitas.filter((v) => v.jornada_id === j.id && visitaCumple(ctx, v, { ...f, comercial: null }));
-      return { ...armar(`Jornada del ${j.fecha} · ${j.comercial.nombre}`, colVisitas, vs.map(filaVisita)), definicion: null };
+      return { ...armar(`Jornada del ${fechaTexto(j.fecha)} · ${j.comercial.nombre}`, colVisitas, vs.map(filaVisita)), definicion: null };
     }
     default: return null;
   }

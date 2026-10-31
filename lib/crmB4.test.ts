@@ -217,6 +217,9 @@ async function main() {
     const dic = t(DIC);
     assert.equal(dic.jornadas[0].ventas, 1, "la recompra trabajada se atribuye a la jornada de su propia visita, no a la de la primera compra");
     assert.deepEqual(r(dic.metricas.km_por_visita.valor), [0, 0, null], "sin jornadas con km → «Sin datos», no 0");
+    assert.equal(dic.metricas.km.valor.tipo, "sin_datos", "km desconocidos no son 0 km");
+    assert.equal(c(dic.metricas.movilidad.valor), 3_000, "J5 tiene los cuatro gastos (aunque le falten los km)");
+    assert.equal(t(P("2026-10-11", "2026-10-11")).metricas.movilidad.valor.tipo, "sin_datos", "una jornada sin gastos cargados no es $ 0");
     const sinJornadas = t(P("2026-12-09", "2026-12-10"));
     assert.deepEqual(r(sinJornadas.metricas.visitas_por_jornada.valor), [0, 0, null]);
   }

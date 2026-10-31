@@ -31,6 +31,7 @@ export function textoValor(v: Valor): string {
     case "dinero": return formatoPesos(v.c);
     case "km": return `${F_NUM.format(v.v)} km`;
     case "no_aplica": return "No aplica con este filtro";
+    case "sin_datos": return "Sin datos";
     case "razon":
       if (v.v === null) return "Sin datos";
       return v.porcentaje ? F_PCT.format(v.v) : v.dinero ? formatoPesos(Math.round(v.v)) : F_NUM.format(Math.round(v.v * 100) / 100);
@@ -249,7 +250,7 @@ function notaExtra(r: ResultadoMetrica): string | null {
   if (e.pendientes) partes.push(`${e.pendientes} jornada${e.pendientes === 1 ? "" : "s"} fuera por información pendiente`);
   if (e.parcial) partes.push(`ya cargado en ellas: ${formatoPesos(e.parcial)} (parcial, no se suma)`);
   if (e.oportunidades !== undefined) partes.push(`${e.oportunidades} oportunidad${e.oportunidades === 1 ? "" : "es"} distinta${e.oportunidades === 1 ? "" : "s"}`);
-  if (r.valor.tipo === "no_aplica") partes.push(r.valor.motivo);
+  if (r.valor.tipo === "no_aplica" || r.valor.tipo === "sin_datos") partes.push(r.valor.motivo);
   return partes.length ? partes.join(" · ") : null;
 }
 
@@ -270,7 +271,7 @@ function Fila({ r, sub, onAbrir }: { r: ResultadoMetrica; sub?: string | null; o
         {nota ? <p className="text-xs text-amber-200/80">{nota}</p> : null}
       </div>
       <button type="button" onClick={onAbrir} className="min-h-11 text-right">
-        <span className={cx("block text-lg font-black", (r.valor.tipo === "no_aplica" || (r.valor.tipo === "razon" && r.valor.v === null)) && "text-base text-white/50")}>{textoValor(r.valor)}</span>
+        <span className={cx("block text-lg font-black", (r.valor.tipo === "no_aplica" || r.valor.tipo === "sin_datos" || (r.valor.tipo === "razon" && r.valor.v === null)) && "text-base text-white/50")}>{textoValor(r.valor)}</span>
         {base ? <span className="block text-xs text-white/50">{base}</span> : null}
         <span className="block text-xs font-semibold text-red-300">Detalle →</span>
       </button>
