@@ -148,7 +148,8 @@ export function generarInformePDF(d: InformeData) {
   y += 6;
   const kpis: Array<{ label: string; valor: string; acento?: boolean }> = [
     { label: "CONTRATADO", valor: String(m.turnos_contratados) },
-    { label: "UTILIZADO", valor: String(m.utilizados) },
+    // (B8) Experiencias usadas, no códigos agotados: con un código común no coinciden.
+    { label: "UTILIZADO", valor: String(m.turnos_utilizados) },
     { label: "RESTANTE", valor: String(m.turnos_restantes) },
     { label: "% UTILIZACIÓN", valor: `${m.pctUtilizacion}%`, acento: true },
   ];
@@ -198,15 +199,28 @@ export function generarInformePDF(d: InformeData) {
     ...dosCol,
   });
 
+  // (B8) Con código común se informan experiencias: «1 código disponible» no dice
+  // cuántas tarjetas quedan. «Usadas» = descontadas del cupo (reservas vigentes y
+  // canceladas sin liberar); de ellas, las retenidas no las usó nadie. Personas =
+  // usadas menos retenidas (una por simulador).
+  const retenidas = Number(m.turnos_retenidos) || 0;
+  const personas = String(Math.max(0, Number(m.turnos_utilizados) - retenidas));
   autoTable(doc, {
     head: [["Estado de utilización", ""]],
-    body: [
+    body: c.codigo_comun === true ? [
+      ["Código", `Común: uno para todas las tarjetas del pack (${m.generados} generado)`],
+      ["Experiencias usadas (descontadas del cupo)", String(m.turnos_utilizados)],
+      ["De ellas, retenidas por cancelaciones sin liberar", String(retenidas)],
+      ["Experiencias restantes", String(m.turnos_restantes)],
+      ["Personas que usaron el beneficio", personas],
+    ] : [
       ["Códigos generados", String(m.generados)],
       ["Usados", String(m.utilizados)],
       ["Disponibles", String(m.disponibles)],
       ["Vencidos", String(m.vencidos)],
       ["Cancelados", String(m.cancelados)],
-      ["Personas que usaron el beneficio", String(d.usos.length)],
+      ["Retenidas por cancelaciones sin liberar", String(retenidas)],
+      ["Personas que usaron el beneficio", personas],
     ],
     ...dosCol,
   });
@@ -273,7 +287,7 @@ export function generarInformeExcel(d: InformeData) {
     ["Campaña", tituloCampania(c)],
     ["Modalidad", c.modalidad === "mensual" ? "Pack mensual" : "Compra única"],
     ["Inicio", c.fecha_inicio], ["Vencimiento", c.fecha_vencimiento],
-    ["Contratado", m.turnos_contratados], ["Utilizado", m.utilizados], ["Restante", m.turnos_restantes],
+    ["Contratado", m.turnos_contratados], ["Utilizado", m.turnos_utilizados], ["Restante", m.turnos_restantes],
     ["Vencidos", m.vencidos], ["Cancelados", m.cancelados], ["% utilización", `${m.pctUtilizacion}%`],
     ["Minutos contratados", m.minutos_contratados], ["Minutos utilizados", m.minutos_utilizados],
     ["Neto", c.neto ?? c.precio_neto], ["IVA", c.iva], ["Total", c.total ?? c.precio_total],
