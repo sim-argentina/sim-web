@@ -522,9 +522,10 @@ integración (`integracion-crm-b8`) la combina con el CRM.
 | Pantallas, informes y CRM | **Corregidos** | Experiencias compradas, usadas y disponibles, sin las canceladas. El CRM las lee sin beneficiarios ni códigos. |
 | Tarjeta física | **Manual** | El sistema no la valida: la revisa el personal en el stand. |
 
-**Hallazgo de seguridad que B8 cierra:** `cancelar_reserva_empresa` (SECURITY DEFINER) era
-ejecutable por `anon` y `authenticated` en la cadena del repositorio. En Producción no se consultó
-(ver el documento de B8, prechequeos).
+**Permisos:** en la cadena del repositorio, `cancelar_reserva_empresa` (SECURITY DEFINER) era
+ejecutable por `anon` y `authenticated`. **En Producción no**: la consulta de solo lectura del
+31/10/2026 da que solo `postgres` y `service_role` ejecutan las cinco funciones de canje. B8 deja
+la réplica igual a Producción.
 
 **Quién hace qué**
 1. **El CRM registra y consulta:**
