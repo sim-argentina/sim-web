@@ -224,9 +224,13 @@ export type Entrega = (typeof ENTREGAS)[number]["valor"];
 export type CampaniaLectura = {
   id: string; empresa: string; nombre: string | null; estado: string; estado_pago: string; modalidad: string;
   cantidad_contratada: number; duracion_minutos: number; usos_por_codigo: number;
+  // (Empresas B8) Un solo código para todas las tarjetas del pack, con cantidad_contratada usos.
+  codigo_comun: boolean;
   fecha_inicio: string | null; fecha_vencimiento: string | null; eliminada: boolean;
   codigos: { generados: number; disponibles: number; utilizados: number; vencidos: number; cancelados: number };
+  // Experiencias usadas: una por simulador de cada canje no cancelado (la regla de Empresas).
   usos: number;
+  experiencias: { contratadas: number; usadas: number; restantes: number };
 };
 
 /**

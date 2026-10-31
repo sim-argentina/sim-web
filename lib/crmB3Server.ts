@@ -130,31 +130,35 @@ export async function listarVentas(f: FiltrosVentas): Promise<VentasDto> {
 }
 
 // ── Campaña de Empresas (solo lectura) ─────────────────────────────────────
-const COLS_CAMPANIA = "id, empresa, nombre_campania, estado, estado_pago, modalidad, cantidad_contratada, duracion_minutos, usos_por_codigo, fecha_inicio, fecha_vencimiento, deleted_at, created_at";
+const COLS_CAMPANIA = "id, empresa, nombre_campania, estado, estado_pago, modalidad, cantidad_contratada, duracion_minutos, usos_por_codigo, codigo_comun, fecha_inicio, fecha_vencimiento, deleted_at, created_at";
 type FilaCampania = {
   id: string; empresa: string; nombre_campania: string | null; estado: string; estado_pago: string; modalidad: string; cantidad_contratada: number;
-  duracion_minutos: number; usos_por_codigo: number; fecha_inicio: string | null; fecha_vencimiento: string | null; deleted_at: string | null; created_at: string;
+  duracion_minutos: number; usos_por_codigo: number; codigo_comun: boolean | null; fecha_inicio: string | null; fecha_vencimiento: string | null;
+  deleted_at: string | null; created_at: string;
 };
 
 export async function campaniaLectura(id: string): Promise<CampaniaLectura | null> {
   if (!esUuid(id)) return null;
   const k = revisar(await supabaseAdmin.from("empresa_campanias").select(COLS_CAMPANIA).eq("id", id).maybeSingle(), "campaña") as FilaCampania | null;
   if (!k) return null;
-  // De los códigos solo el estado y los usos; de los canjes, solo cuántos hay (no
-  // se leen beneficiarios ni los códigos en sí).
+  // De los códigos solo el estado y los usos; de los canjes, solo su estado y cuántas
+  // experiencias consumió cada uno (no se leen beneficiarios ni los códigos en sí). Con
+  // eso, las métricas de Empresas (B8) cuentan experiencias y dejan afuera las canceladas.
   const [cods, usos] = await Promise.all([
     supabaseAdmin.from("empresa_codigos").select("estado, usos_actuales, usos_maximos").eq("campania_id", id),
-    supabaseAdmin.from("empresa_codigo_usos").select("id", { count: "exact", head: true }).eq("campania_id", id),
+    todasLasFilas<{ estado: string; experiencias: number }>((a, b) =>
+      supabaseAdmin.from("empresa_codigo_usos").select("id, estado, experiencias").eq("campania_id", id).order("id").range(a, b), "canjes"),
   ]);
-  if (usos.error) throw new Error(`canjes: ${usos.error.message}`);
   const hoy = hoyEnSim();
-  const m = metricasCampania({ campania: k, codigos: (revisar(cods, "códigos") ?? []) as Array<{ estado: string; usos_actuales: number; usos_maximos: number }>, usos: Array.from({ length: usos.count ?? 0 }), hoy });
+  const m = metricasCampania({ campania: k, codigos: (revisar(cods, "códigos") ?? []) as Array<{ estado: string; usos_actuales: number; usos_maximos: number }>, usos, hoy });
   return {
     id: k.id, empresa: k.empresa, nombre: k.nombre_campania, estado: estadoEfectivo(k, hoy), estado_pago: k.estado_pago, modalidad: k.modalidad,
     cantidad_contratada: k.cantidad_contratada, duracion_minutos: k.duracion_minutos, usos_por_codigo: k.usos_por_codigo,
+    codigo_comun: k.codigo_comun === true,
     fecha_inicio: k.fecha_inicio, fecha_vencimiento: k.fecha_vencimiento, eliminada: !!k.deleted_at,
     codigos: { generados: m.generados, disponibles: m.disponibles, utilizados: m.utilizados, vencidos: m.vencidos, cancelados: m.cancelados },
     usos: m.usados,
+    experiencias: { contratadas: m.turnos_contratados, usadas: m.turnos_utilizados, restantes: m.turnos_restantes },
   };
 }
 

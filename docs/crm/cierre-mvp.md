@@ -479,125 +479,71 @@ el CRM solo lee la campaña vinculada.
    IVA y qué comprobante recibe la empresa.
 2. **Qué se le dice al cliente sobre devoluciones.** La forma de registrarlas en el sistema puede
    esperar a la primera devolución real; la respuesta al cliente, no.
-3. **Cómo se producen las tarjetas.** Si se imprimen con el código antes de la entrega, el código
-   tiene que existir antes del pago total (§9, cambio 5).
+3. **Las tarjetas se imprimen antes de la entrega** (definido el 31/10). Con B8, el código común se
+   genera antes del pago (§9).
 
 **Antes de entregar experiencias reales (la primera entrega de un pack)**
-1. **El cambio de Empresas para el código común y el cupo por experiencia (§9).** Sin ese cambio:
-   - con un código común, o el cupo se multiplica, o pantallas e informes muestran mal lo
-     comprado;
-   - una reserva puede dar varias experiencias por un solo uso.
-
-   Usar códigos individuales cuidaría el cupo, pero contradice la condición de §7.1.
+1. **Publicar Empresas B8** (§9 y el documento de B8). Sin B8, con un código común el cupo se
+   multiplica o se muestra mal, y una reserva de varios simuladores consume un solo uso.
 2. **El procedimiento de entrega del personal (§7.1):**
    - cobrar el saldo;
    - marcar la entrega en el CRM;
-   - marcar pagada la campaña con `fecha_inicio` = ese día y «Compra única» de 20 minutos;
-   - poner el código en las tarjetas;
+   - en Empresas, marcar pagada la campaña y cargar `fecha_inicio` = ese día;
    - revisar la tarjeta en el stand.
+
+**Orden de publicación con B8:** primero Empresas B8 (su SQL y después su código, en `main`);
+después el CRM desde `integracion-crm-b8`, siguiendo §4. El CRM de esta rama lee `codigo_comun` y
+`experiencias`, así que necesita B8 aplicado antes.
 
 **Antes de la primera liquidación con Tobías**
 1. El procedimiento de liquidación de la movilidad (§7.2).
 
-## 9. Compatibilidad del código común (Empresas y el vínculo del CRM)
+## 9. Código común: Empresas B8 y el vínculo del CRM
 
-Revisión del código local, sin cambiar su funcionamiento:
-- Empresas: `lib/empresas.ts` y `lib/empresasServer.ts`;
-- tablas: `db/esquema-base.sql`;
-- RPC vigentes de canje: `db/empresas-b7-modalidad.sql` y `db/empresas-b7-1-fecha.sql`;
-- canje público: `app/api/empresas/canje/route.ts` y `app/reservas-empresa/page.tsx`;
-- pantalla de Empresas: `app/admin/(panel)/codigos/EmpresasTab.tsx`;
-- vínculo del CRM: `lib/crmB3.ts`, `lib/crmB3Server.ts` y `components/crm/DetalleVenta.tsx`.
+**Antes de B8** ninguna configuración de Empresas daba a la vez un solo código, el cupo correcto
+y pantallas correctas:
+- 1 código × 10 usos se mostraba como «1 turno»;
+- 10 × 10 multiplicaba el cupo;
+- además, un canje de varios simuladores consumía un solo uso.
 
-**Cómo cuenta Empresas hoy**
-- La campaña tiene dos campos: `cantidad_contratada` («Cantidad contratada») y `usos_por_codigo`
-  («Usos por código (default 1)»).
-- **«Generar códigos» crea `cantidad_contratada` códigos**, cada uno con
-  `usos_maximos = usos_por_codigo`. El cupo real es `cantidad_contratada × usos_por_codigo`.
-- La pantalla, el informe y el CRM toman `cantidad_contratada` como «turnos contratados»:
-  - restantes = contratados − canjes;
-  - minutos = contratados × duración;
-  - «% uso» = códigos agotados ÷ códigos generados.
-- **Cada canje (una reserva) suma un uso** al código. Puede reservar de 1 a 4 simuladores: la web
-  pública manda uno, pero la API `/api/empresas/canje` acepta hasta 4.
-- **Un canje cancelado con «liberar código»** devuelve el uso al código, pero su fila de uso
-  (estado `cancelado`) sigue contando como «utilizado» en la pantalla, en el informe y en el
-  conteo de canjes que muestra el CRM.
+**Empresas B8** lo resuelve en la rama `empresas-codigo-comun` (`719c6e2`, `86f5e8b`, `15406f9`).
+Está sin publicar; el detalle, en `docs/empresas-b8-codigo-comun.md` de esa rama. Esta rama de
+integración (`integracion-crm-b8`) la combina con el CRM.
 
-**Configuraciones posibles para un Pack 10**
-
-| Configuración | Códigos que genera | Cupo real | Lo que muestran pantallas, informe y CRM | Resultado |
-|---|---|---|---|---|
-| Cantidad 10, usos 10 | 10 códigos distintos | 100 experiencias | «10 turnos contratados» | **Cupo multiplicado por 10**, y no es un código común. |
-| Cantidad 1, usos 10 | 1 código | 10 experiencias | «1 turno contratado», 20 minutos y «Restantes 0» después del primer canje. El CRM avisa: «La campaña tiene 1 turno contratado y la venta, 10 experiencias». | Cupo correcto, **representación incorrecta**. |
-| Cantidad 10, usos 1 (lo habitual hoy) | 10 códigos individuales | 10 experiencias | Correcto | Correcto, pero **no es un código común**. |
-
-**Conclusión: el código común no es compatible hoy.** Ninguna configuración da a la vez un solo
-código, el cupo correcto y pantallas e informes correctos.
-
-**Por requisito**
-
-| Requisito | Estado | Detalle |
+| Requisito | Estado con B8 | Cómo |
 |---|---|---|
-| Un código común por pack o campaña | **Pendiente de desarrollo** | Ver la tabla anterior. |
-| Cupo total de 10, 25 o una cantidad personalizada | **Soportado solo con códigos individuales**; con código común, pendiente | `cantidad_contratada` acepta cualquier cantidad. Con un código común, el cupo y su representación no coinciden. |
-| Experiencias de 20 minutos | **Soportado** | La campaña nueva toma la modalidad comercial vigente al crearla (`v2_10`: 10, 20 o 30 minutos). La RPC exige que la reserva dure lo que dice la campaña. El formulario propone 15 minutos, así que hay que cargar 20 a mano. |
-| Control del cupo ante reservas simultáneas | **Soportado por canje; pendiente por experiencia** | La RPC toma el código `FOR UPDATE`: dos canjes simultáneos del mismo código se serializan y el segundo ve el uso del primero (`lib/empresasCanje.integration.ts` lo prueba). Pero el control es por canje, no por experiencia: una reserva de 4 simuladores consume un solo uso. Con un código común en 10 tarjetas, cualquiera que lo conozca podría hacerlo por la API. |
-| Vigencia desde la activación acordada | **Manual** | Vencimiento = `fecha_inicio` + 60 días, en compra única. El personal carga `fecha_inicio` = día de entrega; tiene que caer entre el pago y 30 días después, así que cobrar el 100% ese día es compatible. No hay activación automática. Los códigos solo se generan con la campaña pagada. |
-| Presentación de la tarjeta física | **Manual** | El canje es por la web, con el código; el sistema no conoce las tarjetas. La revisión en el stand la hace el personal, que puede marcar ausente o cancelar. Con un código común, quien lo conozca puede reservar sin la tarjeta hasta agotar el cupo. |
+| Un código común por pack (10, 25 o personalizado), experiencias de 20 min | **Soportado** | Marca «Código común»: un código con `usos_maximos = cantidad_contratada`. 20 minutos: modalidad `v2_10`. |
+| Una reserva de varios simuladores consume esa cantidad | **Soportado** | Un uso por simulador (`empresa_codigo_usos.experiencias`); si no alcanza el cupo, se rechaza sin consumir. |
+| Reservas simultáneas sin pasar el cupo | **Soportado** | Código `FOR UPDATE` + CHECK `usos_actuales <= usos_maximos`. Probado: 12 de 1 simulador sobre 10 → 10; mezcla de 4 y de 1 ≤ 10. |
+| Cancelaciones y reintentos sin duplicar | **Soportado** | La reserva se toma `FOR UPDATE`; una ya cancelada no toca nada. Con «liberar» vuelve lo de esa reserva una vez; sin «liberar», nada. |
+| Código generado antes del pago, bloqueado hasta el 100% y la entrega | **Soportado, con dos registros manuales** | Se genera sin pago y sin fechas. Canjea solo con la campaña pagada (100%) y `fecha_inicio` (entrega) ≤ hoy, y en un pack esa fecha se carga recién pagada. |
+| 60 días desde la activación | **Soportado** | Vencimiento = `fecha_inicio` + 60; generar no fija fechas. |
+| Campañas existentes | **Sin cambios** | La marca nace en falso y sus usos valen 1. La única campaña de Producción (1 uso por código, cancelada) no cambia. |
+| Pantallas, informes y CRM | **Corregidos** | Experiencias compradas, usadas y disponibles, sin las canceladas. El CRM las lee sin beneficiarios ni códigos. |
+| Tarjeta física | **Manual** | El sistema no la valida: la revisa el personal en el stand. |
+
+**Hallazgo de seguridad que B8 cierra:** `cancelar_reserva_empresa` (SECURITY DEFINER) era
+ejecutable por `anon` y `authenticated` en la cadena del repositorio. En Producción no se consultó
+(ver el documento de B8, prechequeos).
 
 **Quién hace qué**
 1. **El CRM registra y consulta:**
-   - la venta: pack, experiencias, duración, importe, cobros 50/50, comisión y entrega con fecha;
-   - la campaña vinculada, en solo lectura: estado, pago en Empresas, cantidad, duración, usos por
-     código, códigos y canjes, y vencimiento;
-   - avisos de cantidad, duración y cobro.
+   - la venta, sus cobros 50/50, la comisión y la entrega con fecha;
+   - la campaña vinculada, en solo lectura: estado, pago en Empresas, tipo de código, experiencias
+     y vencimiento;
+   - avisos de cantidad, duración y cobro. Por ejemplo, avisa si el CRM ya tiene el 100% y Empresas
+     sigue pendiente.
 
    No crea campañas ni códigos, no activa nada y no valida tarjetas.
-2. **Empresas ejecuta:**
-   - la campaña y la generación de códigos (con la campaña pagada);
-   - el canje web con reserva atómica: código `FOR UPDATE`, idempotencia, horarios y bloqueos;
-   - el vencimiento calculado;
-   - la cancelación, la reprogramación y la marca de ausente desde Administración;
-   - los informes.
+2. **Empresas ejecuta:** la campaña, el código, el canje atómico, el vencimiento, la cancelación y
+   la reprogramación, y los informes.
 3. **Queda a cargo del personal:**
-   - marcar pagada la campaña al 100%, con `fecha_inicio` = entrega;
-   - elegir «Compra única» y 20 minutos;
-   - generar el código y ponerlo en las tarjetas;
-   - revisar la tarjeta física en el stand;
-   - cargar cobros y entrega en el CRM y vincular la campaña a la venta;
-   - comunicar la prohibición de reventa.
-4. **Necesita un cambio posterior:** el código común con cupo y representación correctos, un uso
-   por experiencia y los canjes cancelados fuera de «utilizados».
-
-**Cambio mínimo necesario (no implementado)**
-
-Va en el módulo Empresas, que hoy está en Producción y no es parte del CRM. Necesita su propia
-rama sobre `main`, una migración, pruebas y autorización. Antes de empezar hay que revisar, con
-autorización, si alguna campaña real usa `usos_por_codigo` > 1, para no cambiarle el sentido.
-1. **Código común:** una marca en la campaña (por ejemplo, `codigo_comun boolean not null
-   default false`). Con la marca, «Generar» crea **un** código con
-   `usos_maximos = cantidad_contratada`. Sin ella, todo sigue como hoy. `cantidad_contratada`
-   sigue siendo el cupo de experiencias, así que pantallas, informe y CRM quedan bien sin cambiar
-   su lectura.
-2. **Un uso por experiencia:** que la RPC de canje (v2 y legacy) y `reservarConCodigo` exijan un
-   simulador por canje, o que sumen un uso por simulador comprobando
-   `usos_actuales + n <= usos_maximos`. Reprogramar no puede cambiar la cantidad de simuladores.
-3. **Métricas (`metricasCampania`):**
-   - «turnos utilizados» = canjes no cancelados;
-   - «% uso» = canjes ÷ cantidad contratada, no códigos agotados ÷ códigos generados.
-
-   El conteo de canjes del CRM tiene que aplicar el mismo filtro.
-4. **CRM, solo visualización:** mostrar «código común» en lugar de «N usos por código».
-5. **Opcional, según cómo se impriman las tarjetas:** permitir generar el código antes de marcar
-   pagada la campaña. El canje ya exige pagada y `fecha_inicio`, así que el código no se podría
-   usar antes de tiempo.
-
-Pruebas del cambio:
-- `lib/empresas.test.ts`;
-- `lib/empresasCanje.integration.ts`, con código común de cupo 10 bajo concurrencia, rechazo de un
-  canje de varios simuladores y una cancelación con liberación;
-- regresión del vínculo de B3 en el CRM.
+   - crear la campaña con «Código común», compra única y 20 minutos;
+   - generar el código e imprimir las tarjetas;
+   - al entregar con el 100%, marcar pagada y cargar `fecha_inicio`;
+   - registrar cobros y entrega en el CRM y vincular la campaña;
+   - revisar la tarjeta física;
+   - decidir si una cancelación libera la experiencia.
 
 ## 10. Materiales fuera del repositorio
 

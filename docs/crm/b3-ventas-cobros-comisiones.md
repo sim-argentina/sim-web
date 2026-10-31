@@ -160,10 +160,13 @@ Tobías no las ve en la V1.
   - En Empresas, a mano: compra única, `fecha_inicio` = día de la entrega y campaña pagada solo
     con el 100%. Empresas calcula entonces el vencimiento.
   - Ni la marca de entrega del CRM ni el cobro del saldo activan nada.
-- **Código común por pack:** hoy Empresas no lo soporta de forma correcta. Con un solo código
-  el cupo es el correcto, pero pantallas e informes muestran «1 turno contratado». La alternativa
-  de 10 códigos de 10 usos multiplica el cupo. Detalle y cambio mínimo, sin implementar, en
-  [cierre-mvp.md](cierre-mvp.md), §9.
+- **Código común por pack:** lo soporta Empresas B8 (rama `empresas-codigo-comun`, integrada acá y
+  sin publicar), con un código de N usos y una experiencia por simulador reservado. El CRM muestra
+  de la campaña vinculada:
+  - si el código es común o son códigos individuales;
+  - las experiencias compradas, usadas y disponibles, sin las canceladas.
+
+  No lee los códigos ni los beneficiarios. Detalle en [cierre-mvp.md](cierre-mvp.md), §9.
 - La presentación de la tarjeta física se controla a mano en el stand. El sistema no valida
   tarjetas.
 - Avisos (solo informan, no modifican nada):

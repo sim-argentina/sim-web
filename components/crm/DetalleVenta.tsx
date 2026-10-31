@@ -173,8 +173,14 @@ export default function DetalleVenta({ id }: { id: string }) {
         {d.campania ? (
           <div className="col-span-full space-y-2 rounded-xl border border-white/10 p-3 text-sm">
             <p className="font-bold">{d.campania.empresa}{d.campania.nombre ? ` · ${d.campania.nombre}` : ""} <span className="font-normal text-white/60">(Empresas, solo lectura)</span></p>
-            <p className="text-white/80">Estado: {d.campania.estado.replace(/_/g, " ")} · pago en Empresas: {d.campania.estado_pago} · {d.campania.cantidad_contratada} turnos de {d.campania.duracion_minutos} min · {d.campania.usos_por_codigo} uso(s) por código</p>
-            <p className="text-white/80">Códigos: {d.campania.codigos.generados} generados · {d.campania.codigos.disponibles} disponibles · {d.campania.codigos.utilizados} utilizados{d.campania.codigos.vencidos ? ` · ${d.campania.codigos.vencidos} vencidos` : ""}{d.campania.codigos.cancelados ? ` · ${d.campania.codigos.cancelados} cancelados` : ""} · {d.campania.usos} canje(s)</p>
+            <p className="text-white/80">Estado: {d.campania.estado.replace(/_/g, " ")} · pago en Empresas: {d.campania.estado_pago} · experiencias de {d.campania.duracion_minutos} min · {d.campania.codigo_comun
+              ? `código común (${d.campania.codigos.generados ? "generado" : "sin generar"}, ${d.campania.cantidad_contratada} usos)`
+              : `${d.campania.codigos.generados} código(s) individual(es)`}</p>
+            {/* (Empresas B8) Experiencias, no códigos: con un código común «1 disponible» no dice cuántas tarjetas quedan. */}
+            <p className="text-white/80">Experiencias: {d.campania.experiencias.contratadas} compradas · {d.campania.experiencias.usadas} usadas · {d.campania.experiencias.restantes} {d.campania.estado === "vencida" ? "sin usar (vencidas)" : "disponibles"}</p>
+            {!d.campania.codigo_comun ? (
+              <p className="text-white/60">Códigos: {d.campania.codigos.generados} generados · {d.campania.codigos.disponibles} disponibles · {d.campania.codigos.utilizados} utilizados{d.campania.codigos.vencidos ? ` · ${d.campania.codigos.vencidos} vencidos` : ""}{d.campania.codigos.cancelados ? ` · ${d.campania.codigos.cancelados} cancelados` : ""}</p>
+            ) : null}
             {d.campania.avisos.length ? <Aviso tipo="alerta" titulo="No coincide con la venta">{d.campania.avisos.join(" ")} No se modifica nada: revisalo en Empresas o corregí la venta.</Aviso> : null}
             <Link href="/admin/codigos" className="inline-flex min-h-11 items-center font-semibold underline">Abrir Códigos → Empresas</Link>
           </div>
@@ -412,7 +418,7 @@ function FormularioCampania({ d, onCerrar, onListo }: { d: DetalleVentaDto; onCe
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <p className="font-bold">{k.empresa}{k.nombre ? ` · ${k.nombre}` : ""}</p>
-                      <p className="text-white/70">{k.cantidad_contratada} turnos de {k.duracion_minutos} min · {k.estado.replace(/_/g, " ")} · vence {k.fecha_vencimiento ? fechaCorta(k.fecha_vencimiento) : "sin definir"}</p>
+                      <p className="text-white/70">{k.cantidad_contratada} experiencias de {k.duracion_minutos} min · {k.estado.replace(/_/g, " ")} · vence {k.fecha_vencimiento ? fechaCorta(k.fecha_vencimiento) : "sin definir"}</p>
                       {otra ? <p className="text-amber-200">Ya vinculada a una venta vigente de {k.vinculada_a!.empresa}.</p> : null}
                       {k.cantidad_contratada !== d.venta.experiencias || k.duracion_minutos !== d.venta.duracion_minutos ? (
                         <p className="text-amber-200">No coincide con la venta ({d.venta.experiencias} × {d.venta.duracion_minutos} min).</p>
