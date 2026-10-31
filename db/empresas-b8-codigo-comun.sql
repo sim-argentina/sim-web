@@ -36,9 +36,10 @@
 --      devuelve dos veces. La liberación se decide en la cancelación efectiva;
 --      cancelar otra vez con «liberar» no devuelve lo que no se liberó.
 --   6. Las funciones legacy y cancelar fijan search_path = public, como las v2.
---      cancelar_reserva_empresa queda ejecutable SOLO por service_role: hasta
---      acá conservaba el EXECUTE por defecto de PUBLIC (anon y authenticated),
---      siendo SECURITY DEFINER. La aplicación la llama solo con service_role.
+--      cancelar_reserva_empresa queda ejecutable SOLO por service_role. En
+--      Producción ya era así (verificado el 31/10/2026); la cadena del
+--      repositorio la dejaba con el EXECUTE por defecto de PUBLIC porque el
+--      esquema base no copió su permiso. La aplicación la llama solo con service_role.
 --
 -- El resto de cada función es idéntico a su definición vigente: mismas firmas,
 -- owner y SECURITY DEFINER. Las crear_* vienen de db/empresas-b7-1-fecha.sql,

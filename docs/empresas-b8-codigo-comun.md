@@ -20,12 +20,12 @@ El módulo Empresas no tenía una configuración correcta para eso:
 - **Cancelar liberando el código** devolvía siempre 1 uso, y ese canje seguía contando como
   utilizado.
 - **Dos «Generar» simultáneos** podían emitir dos tandas.
-- `cancelar_reserva_empresa` es SECURITY DEFINER y, en la cadena del repositorio, la puede
-  **ejecutar `anon`/`authenticated`**: no tiene `revoke` propio y conserva el EXECUTE por defecto
-  de PUBLIC. Las demás funciones de canje sí lo tienen restringido.
-
-  En Producción no se consultó (no estaba autorizado). Si allá es igual, la clave pública de
-  Supabase alcanza para cancelar reservas de empresas por PostgREST. B8 lo cierra.
+- **Diferencia de permisos entre la réplica y Producción:** en la cadena del repositorio,
+  `cancelar_reserva_empresa` (SECURITY DEFINER) la podían ejecutar `anon` y `authenticated`,
+  porque `esquema-base.sql` no copió su permiso y conservaba el EXECUTE por defecto de PUBLIC.
+  - **Producción no está expuesta.** Se verificó con una consulta de solo lectura, autorizada el
+    31/10/2026: ACL `{postgres=X, service_role=X}`, igual que las otras cuatro funciones.
+  - B8 deja la réplica igual a Producción (solo `service_role`).
 
 ## Reglas que implementa
 
@@ -139,8 +139,9 @@ beneficiarios.
 1. **Prechequeos:**
    - comparar `pg_get_functiondef()` de las cinco funciones en Producción con
      `db/empresas-b8-codigo-comun.previo.sql`;
-   - con autorización, confirmar con una consulta de solo lectura si `cancelar_reserva_empresa`
-     es ejecutable por `anon` (`has_function_privilege`).
+   - permisos ya confirmados el 31/10/2026 (solo lectura): las cinco funciones son SECURITY
+     DEFINER, ejecutables solo por `postgres` y `service_role`. Las legacy y `cancelar` no fijan
+     `search_path`, y B8 se lo agrega.
 2. **Primero el SQL:** `db/empresas-b8-codigo-comun.sql` en SIM WEB por MCP. Con el código actual
    es inocuo: las columnas nacen con su valor por defecto, la web manda un simulador y un canje de
    1 consume 1, como hoy. Al revés no: el código nuevo escribe `codigo_comun` y fallaría sin la
