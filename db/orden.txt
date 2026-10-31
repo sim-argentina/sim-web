@@ -77,6 +77,8 @@ mensualidades-m8c1-fin-de-semana.sql
 # ── 8. Empresas (usan reserva_hhmm_a_minutos) ───────────────────────────────
 empresas-b7-modalidad.sql
 empresas-b7-1-fecha.sql
+# B8: código común por pack y un uso por experiencia (redefine crear_* y reprogramar_* de B7/B7.1).
+empresas-b8-codigo-comun.sql
 
 # ── 9. Gift cards administrativas (leen mensualidad_compras) ───────────────
 gift-cards-alta-administrativa.sql

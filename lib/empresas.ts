@@ -81,12 +81,53 @@ export function estadoCodigoEfectivo(cod: CodigoInput, estadoCampania: EstadoEfe
   return "disponible";
 }
 
+// ── Cupo y códigos (B8) ──────────────────────────────────────────────────────
+// El cupo de una campaña son sus EXPERIENCIAS contratadas (cantidad_contratada):
+// cada simulador reservado en un canje consume una. Dos formas de emitirlas:
+//   · código común: UN código para todas las tarjetas del pack, con
+//     usos_maximos = cantidad_contratada;
+//   · códigos individuales: cantidad_contratada códigos de un uso cada uno.
+// usos_por_codigo > 1 sin código común multiplicaba el cupo (N códigos × M usos)
+// y ya no se acepta en campañas nuevas.
+export type PlanCodigosInput = { codigo_comun?: boolean | null; cantidad_contratada?: number; usos_por_codigo?: number };
+export function planDeCodigos(c: PlanCodigosInput): { codigos: number; usosPorCodigo: number } {
+  const cantidad = Math.max(0, Math.trunc(Number(c.cantidad_contratada) || 0));
+  if (c.codigo_comun === true) return { codigos: cantidad > 0 ? 1 : 0, usosPorCodigo: cantidad };
+  return { codigos: cantidad, usosPorCodigo: Math.max(1, Math.trunc(Number(c.usos_por_codigo) || 1)) };
+}
+export const MENSAJE_USOS_POR_CODIGO =
+  "Con códigos individuales cada código es una experiencia (1 uso). Para que todas las tarjetas del pack compartan un código, marcá «Código común».";
+export function errorConfiguracionCupo(c: PlanCodigosInput): string | null {
+  if (c.codigo_comun !== true && Math.trunc(Number(c.usos_por_codigo) || 1) !== 1) return MENSAJE_USOS_POR_CODIGO;
+  return null;
+}
+// Un pack con código común se activa al ENTREGAR las tarjetas con el 100% cobrado: su
+// fecha de inicio (desde la que corren los 60 días) se carga recién con la campaña
+// pagada. Así el código, que existe antes para imprimir las tarjetas, no queda
+// habilitado por una fecha cargada de antemano.
+export const MENSAJE_INICIO_PACK =
+  "En un pack con código común, la fecha de inicio es la de la entrega de las tarjetas: se carga con la campaña pagada (100% cobrado).";
+export function errorInicioPack(c: { codigo_comun?: boolean | null; fecha_inicio?: string | null; estado_pago?: string | null }): string | null {
+  if (c.codigo_comun === true && c.fecha_inicio && c.estado_pago !== "pagado") return MENSAJE_INICIO_PACK;
+  return null;
+}
+
 // ── Métricas de campaña (derivadas de datos reales) ──────────────────────────
 export type MetricasInput = {
   campania: CampaniaEstadoInput & { cantidad_contratada?: number; duracion_minutos?: number };
   codigos: CodigoInput[];
+  // Canjes. Cada uno consumió `experiencias` (una por simulador; sin el dato, 1). Uno
+  // con estado 'cancelado' (reserva cancelada liberando el código) no cuenta: sus
+  // experiencias volvieron al código.
   usos: unknown[];
   hoy: string;
+};
+type UsoLectura = { estado?: unknown; experiencias?: unknown } | null | undefined;
+export const experienciasDeUso = (u: unknown): number => {
+  const x = u as UsoLectura;
+  if (x?.estado === "cancelado") return 0;
+  const n = Math.trunc(Number(x?.experiencias));
+  return n >= 1 ? n : 1;
 };
 export function metricasCampania({ campania, codigos, usos, hoy }: MetricasInput) {
   const est = estadoEfectivo(campania, hoy);
@@ -101,8 +142,10 @@ export function metricasCampania({ campania, codigos, usos, hoy }: MetricasInput
   const generados = codigos.length;
   const contratados = Number(campania.cantidad_contratada) || 0;
   const duracion = Number(campania.duracion_minutos) || 0;
-  const usados = usos.length; // canjes reales
-  const pctUtilizacion = generados > 0 ? Math.round((utilizados / generados) * 1000) / 10 : 0;
+  const usados = usos.reduce<number>((s, u) => s + experienciasDeUso(u), 0); // experiencias usadas (sin canjes cancelados)
+  // Sobre las experiencias contratadas, no sobre códigos agotados: con un código
+  // común, «1 de 1 código» no dice cuántas tarjetas se usaron.
+  const pctUtilizacion = contratados > 0 ? Math.round((usados / contratados) * 1000) / 10 : 0;
   return {
     estado: est,
     generados,
