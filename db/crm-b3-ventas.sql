@@ -434,7 +434,10 @@ begin
     if not p_es_recompra then
       raise exception 'comision_no_es_recompra' using errcode = '55000';
     end if;
-    if v_tipo <> 'pactada' or (v_vis is null and v_act is null) then
+    -- La intervención del comercial se prueba con una visita SUYA de esta
+    -- oportunidad. Las gestiones (crm_actividades) son de Administración: pueden
+    -- acompañarla como constancia, pero solas no prueban trabajo del comercial.
+    if v_tipo <> 'pactada' or v_vis is null then
       raise exception 'datos_invalidos:comision_intervencion' using errcode = '22023';
     end if;
     if v_vis is not null and not exists (select 1 from public.crm_visitas

@@ -376,7 +376,7 @@ const CAMPOS: Record<string, string> = {
   producto: "el producto", fecha_acuerdo: "la fecha del acuerdo (no futura ni anterior al inicio del ciclo)", experiencias: "la cantidad de experiencias",
   importe: "el importe (hasta 2 decimales, mayor que cero)", comision: "la comisión", comision_tipo: "el tipo de comisión",
   comision_fundamento: "el fundamento de la comisión", comision_importe: "el importe de la comisión (mayor que cero y no mayor que la venta)",
-  comision_beneficiario: "quién cobra la comisión", comision_intervencion: "la intervención del comercial (una visita suya o una gestión de esta oportunidad)",
+  comision_beneficiario: "quién cobra la comisión", comision_intervencion: "la intervención del comercial (una visita suya en esta oportunidad)",
   comision_detalle: "el detalle del acuerdo especial", comision_no_corresponde: "la comisión (sin comisión no lleva importe ni beneficiario)",
   fecha_efectiva: "la fecha efectiva del cobro (entre el acuerdo y hoy)", medio: "el medio y el concepto del cobro", fecha: "la fecha (entre el acuerdo y hoy)",
   precio: "el precio", comision_estandar: "la comisión de lista", campania_id: "la campaña", cambios: "los cambios",

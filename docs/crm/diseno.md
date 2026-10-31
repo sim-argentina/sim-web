@@ -81,7 +81,8 @@ integración automática con Finanzas.
    - los códigos son los de la campaña de Empresas;
    - un descuento o un personalizado exige confirmar la comisión;
    - la recompra espontánea no lleva comisión y la trabajada lleva la completa, con la
-     intervención confirmada por Administración y vinculada a una visita o gestión;
+     intervención confirmada por Administración y vinculada a una visita suya de esa
+     oportunidad (una gestión de Administración sola no alcanza: corregido en B4);
    - Tobías no ve comisiones en la V1.
 
    *Sigue pendiente* la movilidad (y las devoluciones reales, fuera de B3).

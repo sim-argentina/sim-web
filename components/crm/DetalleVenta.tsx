@@ -482,7 +482,7 @@ function FormularioCorreccion({ d, onCerrar, onListo }: { d: DetalleVentaDto; on
       tipo, fundamento, confirmada: comisionOk,
       ...(tipo === "pactada" ? { importe: com === null ? null : (com / 100).toFixed(2), beneficiario_id: benEfectivo } : {}),
       ...(fundamento === "acuerdo_especial" ? { detalle: detalle.trim() } : {}),
-      ...(fundamento === "recompra_trabajada" && i ? { [i.tipo === "visita" ? "intervencion_visita_id" : "intervencion_actividad_id"]: i.id } : {}),
+      ...(fundamento === "recompra_trabajada" && i ? { intervencion_visita_id: i.id } : {}),
     };
   }
   const falta = !motivo.trim() ? "El motivo es obligatorio." : !Object.keys(cambios).length ? "No hay cambios." : imp === null ? "Revisá el importe."
@@ -559,8 +559,8 @@ function FormularioCorreccion({ d, onCerrar, onListo }: { d: DetalleVentaDto; on
             {fundamento === "recompra_trabajada" ? (
               <label className="block space-y-1.5 text-sm font-semibold text-white/80">Intervención del comercial
                 <select className={INPUT} value={intervencion} onChange={(e) => { setIntervencion(e.target.value); setComisionOk(false); }}>
-                  <option value="">Elegí la visita o la gestión</option>
-                  {(form?.intervenciones ?? []).filter((i) => i.tipo === "actividad" || i.usuario_id === benEfectivo).map((i) => <option key={i.id} value={i.id}>{fechaHora(i.en)} · {i.descripcion}</option>)}
+                  <option value="">Elegí su visita</option>
+                  {(form?.intervenciones ?? []).filter((i) => i.usuario_id === benEfectivo).map((i) => <option key={i.id} value={i.id}>{fechaHora(i.en)} · {i.descripcion}</option>)}
                 </select>
               </label>
             ) : null}

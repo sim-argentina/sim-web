@@ -108,7 +108,7 @@ function Formulario({ d, onCancelar, onRegistrada, onRecargar }: {
   };
 
   const fundamentos = FUNDAMENTOS.filter((f) => (d.es_recompra ? f.valor !== "origen_comercial" : f.valor === "origen_comercial" || f.valor === "acuerdo_especial"));
-  const intervenciones = d.intervenciones.filter((i) => i.tipo === "actividad" || i.usuario_id === beneficiario);
+  const intervenciones = d.intervenciones.filter((i) => i.usuario_id === beneficiario);
   const pideImporteOk = !!p && requiereConfirmarImporte(p, imp);
   const pideComisionOk = !!p && !!fundamento && requiereConfirmarComision(p, imp, { tipo, fundamento, importe: com });
   const nombreBen = d.comerciales.find((u) => u.id === beneficiario)?.nombre ?? "—";
@@ -125,7 +125,7 @@ function Formulario({ d, onCancelar, onRegistrada, onRecargar }: {
     if (tipo === "pactada" && !beneficiario) return "Elegí quién cobra la comisión.";
     if (tipo === "pactada" && (com === null || com <= 0)) return "Cargá el importe de la comisión (si no corresponde, elegí «sin comisión»).";
     if (tipo === "pactada" && com !== null && com > imp) return "La comisión no puede superar el importe de la venta.";
-    if (fundamento === "recompra_trabajada" && !intervencion) return "Vinculá la visita o la gestión en la que intervino el comercial.";
+    if (fundamento === "recompra_trabajada" && !intervencion) return "Vinculá la visita en la que intervino el comercial.";
     if (fundamento === "acuerdo_especial" && !detalle.trim()) return "Describí el acuerdo especial.";
     if (pideComisionOk && !comisionOk) return "Confirmá la comisión.";
     return null;
@@ -142,7 +142,7 @@ function Formulario({ d, onCancelar, onRegistrada, onRecargar }: {
         tipo, fundamento,
         ...(tipo === "pactada" ? { importe: ((com ?? 0) / 100).toFixed(2), beneficiario_id: beneficiario } : {}),
         ...(fundamento === "acuerdo_especial" ? { detalle: detalle.trim() } : {}),
-        ...(fundamento === "recompra_trabajada" && i ? { [i.tipo === "visita" ? "intervencion_visita_id" : "intervencion_actividad_id"]: i.id } : {}),
+        ...(fundamento === "recompra_trabajada" && i ? { intervencion_visita_id: i.id } : {}),
         ...(pideComisionOk ? { confirmada: true } : {}),
       },
       ...(obs.trim() ? { observacion: obs.trim() } : {}),
@@ -213,7 +213,7 @@ function Formulario({ d, onCancelar, onRegistrada, onRecargar }: {
             <legend className="px-1 text-sm font-bold">Comisión comercial</legend>
             <p className="text-sm text-white/70">
               {d.es_recompra
-                ? "Recompra: sin comisión si fue espontánea; comisión completa si un comercial la trabajó (con su visita o una gestión de esta oportunidad)."
+                ? "Recompra: sin comisión si fue espontánea; comisión completa si un comercial la trabajó (con una visita suya en esta oportunidad)."
                 : d.oportunidad.origen
                   ? <>Venta nueva: la comisión es de <strong>{d.oportunidad.origen.nombre}</strong>, que originó el lead{d.empresa.responsable && d.empresa.responsable.id !== d.oportunidad.origen.id ? ` (aunque hoy el responsable sea ${d.empresa.responsable.nombre})` : ""}. Que cierre Administración no la cambia.</>
                   : "Esta oportunidad no tiene un comercial de origen."}
@@ -247,10 +247,10 @@ function Formulario({ d, onCancelar, onRegistrada, onRecargar }: {
             {fundamento === "recompra_trabajada" ? (
               <label className="block space-y-1.5 text-sm font-semibold text-white/80">Intervención del comercial
                 <select className={INPUT} value={intervencion} disabled={bloqueado || !beneficiario} onChange={(e) => { setIntervencion(e.target.value); setComisionOk(false); }}>
-                  <option value="">{beneficiario ? "Elegí la visita o la gestión" : "Primero elegí quién cobra"}</option>
+                  <option value="">{beneficiario ? (intervenciones.length ? "Elegí su visita" : "No tiene visitas en esta oportunidad") : "Primero elegí quién cobra"}</option>
                   {intervenciones.map((i) => <option key={i.id} value={i.id}>{fechaHora(i.en)} · {i.descripcion}</option>)}
                 </select>
-                <span className="block text-xs font-normal text-white/50">Solo visitas de esa persona o gestiones de esta oportunidad. Administración confirma la intervención.</span>
+                <span className="block text-xs font-normal text-white/50">Una visita de esa persona en esta oportunidad. Una gestión de Administración sola no prueba su trabajo.</span>
               </label>
             ) : null}
             {tipo === "no_corresponde" && fundamento ? <p className="text-sm text-white/70">Sin comisión. No se carga 0: queda registrado que no corresponde.</p> : null}

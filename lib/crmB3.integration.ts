@@ -379,6 +379,13 @@ async function main() {
       assert.equal((await registrar(R2, trabajada({}))).json.campo, "comision_intervencion", "sin intervención vinculada");
       assert.equal((await registrar(R2, trabajada({ intervencion_visita_id: L1.visita }))).json.campo, "comision_intervencion", "visita de otra oportunidad (id cruzado)");
       assert.equal((await registrar(R2, trabajada({ beneficiario_id: UA.id, intervencion_visita_id: visitaB }))).json.campo, "comision_intervencion", "visita de otra persona");
+      // Una gestión de Administración sola no prueba trabajo del comercial (las gestiones son siempre de Administración).
+      assert.equal((await gestion(R2, "gestion", { tipo: "llamada", observacion: "Llamada de seguimiento" })).status, 201);
+      const actR2 = sql(`select id from public.crm_actividades where oportunidad_id = ${lit(R2)} order by registrada_en desc limit 1`);
+      const soloGestion = await registrar(R2, { producto: "pack_10", comision: { tipo: "pactada", fundamento: "recompra_trabajada", importe: "40000.00", beneficiario_id: UB.id, intervencion_actividad_id: actR2 } });
+      assert.deepEqual([soloGestion.status, soloGestion.json.campo], [400, "comision_intervencion"], "gestión sola como intervención");
+      const fr = await http(A.venta.GET, "GET", `/api/admin/crm/oportunidades/${R2}/venta`, { cookies: comoAdmin, id: R2 });
+      assert.ok(arr(fr.json.intervenciones).every((x) => x.tipo === "visita"), "el formulario solo ofrece visitas");
       const r2 = await registrar(R2, trabajada({ intervencion_visita_id: visitaB }));
       assert.equal(r2.status, 201, r2.texto);
       V4 = String(o(r2.json.venta).id);

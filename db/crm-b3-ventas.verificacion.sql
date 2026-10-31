@@ -220,6 +220,11 @@ begin
   t := pg_temp.falla_vender(o2, jsonb_build_object('producto', 'pack_25',
     'comision', jsonb_build_object('tipo', 'pactada', 'fundamento', 'recompra_trabajada', 'importe', '90000.00', 'beneficiario_id', u2)));
   if t = 'datos_invalidos:comision_intervencion' then v_ok := v_ok + 1; else v_fallas := v_fallas || ' FALLA:T10 sin intervención ' || t; end if;
+  -- Una gestión de Administración sola no prueba trabajo del comercial.
+  t := pg_temp.falla_vender(o2, jsonb_build_object('producto', 'pack_25',
+    'comision', jsonb_build_object('tipo', 'pactada', 'fundamento', 'recompra_trabajada', 'importe', '90000.00', 'beneficiario_id', u2,
+      'intervencion_actividad_id', (select id from public.crm_actividades where oportunidad_id = o1 limit 1))));
+  if t = 'datos_invalidos:comision_intervencion' then v_ok := v_ok + 1; else v_fallas := v_fallas || ' FALLA:T10 gestión sola como intervención ' || t; end if;
   t := pg_temp.falla_vender(o2, jsonb_build_object('producto', 'pack_25',
     'comision', jsonb_build_object('tipo', 'pactada', 'fundamento', 'recompra_trabajada', 'importe', '90000.00', 'beneficiario_id', u,
       'intervencion_visita_id', vis)));

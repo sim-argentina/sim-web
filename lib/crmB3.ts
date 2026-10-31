@@ -205,7 +205,7 @@ export type ComisionPropuesta = { tipo: TipoComision; fundamento: Fundamento; be
  *     el de lista; en un personalizado o con descuento, el importe queda vacío para
  *     cargarlo a mano (nunca 0 como "sin definir");
  *   · recompra → espontánea, sin comisión. Si un comercial la trabajó, se elige
- *     «recompra trabajada» con su visita o gestión de esta oportunidad.
+ *     «recompra trabajada» con una visita suya en esta oportunidad.
  */
 export function comisionPropuesta(o: { esRecompra: boolean; origenUsuarioId: string | null },
   p: Pick<Producto, "codigo" | "precio" | "comision_estandar">, importe: Centavos | null): ComisionPropuesta {

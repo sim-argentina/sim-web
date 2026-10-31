@@ -81,7 +81,7 @@ registren después: cada venta guarda su foto (`producto_nombre`, cantidad, dura
 |---|---|
 | Venta nueva | Al comercial que **originó el lead** (`origen_usuario_id`), aunque cierre Administración o haya cambiado el responsable del negocio. A otra persona → `comision_origen`. |
 | Recompra espontánea | **No corresponde** (sin importe ni beneficiario; nunca 0). |
-| Recompra trabajada | Comisión completa a quien la trabajó, con la intervención **confirmada por Administración** y vinculada a una visita suya de esa oportunidad o a una gestión de esa oportunidad. Sin vínculo, o con una visita de otra persona u otra oportunidad → rechazo. |
+| Recompra trabajada | Comisión completa a quien la trabajó, con la intervención **confirmada por Administración** y vinculada a **una visita suya de esa oportunidad**. Una gestión de Administración puede acompañarla como constancia, pero **sola no alcanza** (las gestiones son siempre de Administración; corregido en B4). Sin visita, o con una visita de otra persona u otra oportunidad → rechazo. |
 | Personalizado | Comisión a mano (mayor que cero y no mayor que la venta) y confirmada. |
 | Acuerdo especial | Con o sin comisión, con detalle obligatorio y confirmación. |
 

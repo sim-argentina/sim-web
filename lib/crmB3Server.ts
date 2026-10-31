@@ -273,7 +273,8 @@ export type FormularioVentaDto = {
   venta_vigente: { id: string } | null;
   productos: Producto[];
   comerciales: Array<{ id: string; nombre: string; activo: boolean }>;
-  intervenciones: Array<{ tipo: "visita" | "actividad"; id: string; en: string; usuario_id: string | null; descripcion: string }>;
+  /** Visitas válidas de esta oportunidad: la intervención de una recompra trabajada es una visita del beneficiario. */
+  intervenciones: Array<{ tipo: "visita"; id: string; en: string; usuario_id: string; descripcion: string }>;
   propuestas: Record<string, ComisionPropuesta>;
 };
 
@@ -283,11 +284,10 @@ export async function formularioVenta(oportunidadId: string): Promise<Formulario
     .select("id, version, estado, cerrada_en, empresa_id, origen_tipo, origen_usuario_id, ciclo_inicio_en").eq("id", oportunidadId).maybeSingle(), "oportunidad") as
     { id: string; version: number; estado: string; cerrada_en: string | null; empresa_id: string; origen_tipo: "visita" | "recompra_admin"; origen_usuario_id: string | null; ciclo_inicio_en: string } | null;
   if (!o) return null;
-  const [e, vig, vis, act, prods, us] = await Promise.all([
+  const [e, vig, vis, prods, us] = await Promise.all([
     supabaseAdmin.from("crm_empresas").select("id, nombre_comercial, cliente_previo, responsable_id").eq("id", o.empresa_id).single(),
     supabaseAdmin.from("crm_ventas").select("id, oportunidad_id").eq("empresa_id", o.empresa_id).is("anulada_en", null),
     supabaseAdmin.from("crm_visitas").select("id, ocurrida_en, realizada_por_usuario, observacion").eq("oportunidad_id", o.id).is("anulada_en", null).order("ocurrida_en", { ascending: false }),
-    supabaseAdmin.from("crm_actividades").select("id, tipo, ocurrida_en, actor_usuario_id, observacion").eq("oportunidad_id", o.id).neq("tipo", "cambio_estado").order("ocurrida_en", { ascending: false }),
     productos(true),
     supabaseAdmin.from("crm_usuarios").select("id, nombre, activo").order("nombre"),
   ]);
@@ -311,16 +311,10 @@ export async function formularioVenta(oportunidadId: string): Promise<Formulario
     venta_vigente: vigentes.find((x) => x.oportunidad_id === o.id) ?? null,
     productos: prods,
     comerciales,
-    intervenciones: [
-      ...((revisar(vis, "visitas") ?? []) as Array<{ id: string; ocurrida_en: string; realizada_por_usuario: string; observacion: string | null }>).map((x) => ({
-        tipo: "visita" as const, id: x.id, en: x.ocurrida_en, usuario_id: x.realizada_por_usuario,
-        descripcion: `Visita de ${nombre.get(x.realizada_por_usuario) ?? "Comercial"}${x.observacion ? ` · «${x.observacion.slice(0, 80)}»` : ""}`,
-      })),
-      ...((revisar(act, "actividades") ?? []) as Array<{ id: string; tipo: string; ocurrida_en: string; actor_usuario_id: string | null; observacion: string | null }>).map((x) => ({
-        tipo: "actividad" as const, id: x.id, en: x.ocurrida_en, usuario_id: x.actor_usuario_id,
-        descripcion: `Gestión de Administración · ${x.tipo}${x.observacion ? ` · ${x.observacion.slice(0, 80)}` : ""}`,
-      })),
-    ],
+    intervenciones: ((revisar(vis, "visitas") ?? []) as Array<{ id: string; ocurrida_en: string; realizada_por_usuario: string; observacion: string | null }>).map((x) => ({
+      tipo: "visita" as const, id: x.id, en: x.ocurrida_en, usuario_id: x.realizada_por_usuario,
+      descripcion: `Visita de ${nombre.get(x.realizada_por_usuario) ?? "Comercial"}${x.observacion ? ` · «${x.observacion.slice(0, 80)}»` : ""}`,
+    })),
     propuestas: Object.fromEntries(prods.map((p) => [p.codigo, comisionPropuesta({ esRecompra, origenUsuarioId: o.origen_usuario_id }, p, p.precio)])),
   };
 }
