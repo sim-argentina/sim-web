@@ -5,8 +5,8 @@ admin). Objetivo del MVP: registrar → seguir → vender → medir.
 
 Este documento resume el diseño acordado y las correcciones que se aplican a los bloques
 posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md),
-[b1-prospeccion.md](b1-prospeccion.md), [b2-seguimiento.md](b2-seguimiento.md) y
-[b3-ventas-cobros-comisiones.md](b3-ventas-cobros-comisiones.md).
+[b1-prospeccion.md](b1-prospeccion.md), [b2-seguimiento.md](b2-seguimiento.md),
+[b3-ventas-cobros-comisiones.md](b3-ventas-cobros-comisiones.md) y [b4-metricas.md](b4-metricas.md).
 
 ## Bloques
 
@@ -16,7 +16,7 @@ posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md),
 | B1 | Negocios, contactos, jornadas y visitas desde el celular; oportunidad al obtener un contacto útil; revisitas | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar |
 | B2 | Bandeja "Contactos para seguir": estados (contacto, conversación, interesado, negociación, pausa, perdida), actividades manuales, próxima acción, pérdida con motivo y reapertura por ciclos | Implementado y verificado en local; sin migrar ni publicar |
 | B3 | Ventas (y recién ahí "Ganado"), cobros, saldo y comisiones; recompras; vínculo de solo lectura con Empresas; correcciones y anulaciones | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar. Integró al cierre las correcciones de seguridad vigentes de `main` (Next 16.4.3, React 19.2.9, sharp 0.35.5, webhooks de Mercado Pago) |
-| B4 | Métricas y tablero (sobre los hitos y ciclos de B2, sin reescribir fechas) | Pendiente |
+| B4 | Métricas y tablero (`/admin/crm/metricas`): prospección, conversión por cohorte, jornadas y eficiencia, segmentos y pérdidas, resultados económicos; una definición por métrica; solo lectura | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar. Corrigió la intervención de la recompra trabajada de B3 |
 
 Fuera de la V1: WhatsApp o emails automáticos, IA, scoring, mapas, propuestas automáticas e
 integración automática con Finanzas.
@@ -62,9 +62,12 @@ integración automática con Finanzas.
    generada − movilidad" mezcla cobros con obligaciones devengadas y no se usa. Se definirán,
    con fechas y conceptos coherentes: un movimiento de caja (cobros, comisiones pagadas,
    gastos pagados) y una contribución comercial (ventas, comisiones devengadas, movilidad del
-   período).
+   período). *B4 no las construye:* muestra solo «cobros menos comisiones pagadas» (flujos del
+   período, rotulado como tal, que no descuenta movilidad, experiencias, impuestos ni gastos fijos)
+   y la movilidad registrada sin restarla. Caja y contribución siguen pendientes.
 7. **Nombre de las conversiones.** Si el denominador son negocios únicos, la métrica se llama
-   conversión *de negocios* ("negocios visitados → ventas"), no de visitas.
+   conversión *de negocios* ("negocios visitados → ventas"), no de visitas. *B4: así quedó
+   («Visitas que generaron un lead» por visita; «Negocios visitados → compradores» por negocio).*
 8. **Historia B2B en Finanzas.** La auditoría buscó "empresa" y "pack" en descripciones y
    observaciones de `fin_movimientos`. Eso no demuestra que no haya operaciones B2B
    históricas: quedan *no identificadas con las comprobaciones realizadas*.
