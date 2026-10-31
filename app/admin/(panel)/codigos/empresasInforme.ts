@@ -199,15 +199,23 @@ export function generarInformePDF(d: InformeData) {
     ...dosCol,
   });
 
+  // (B8) Con código común se informan experiencias: «1 código disponible» no dice
+  // cuántas tarjetas quedan. Personas = experiencias usadas (una por simulador, sin
+  // canjes cancelados).
   autoTable(doc, {
     head: [["Estado de utilización", ""]],
-    body: [
+    body: c.codigo_comun === true ? [
+      ["Código", `Común: uno para todas las tarjetas del pack (${m.generados} generado)`],
+      ["Experiencias usadas", String(m.turnos_utilizados)],
+      ["Experiencias restantes", String(m.turnos_restantes)],
+      ["Personas que usaron el beneficio", String(m.turnos_utilizados)],
+    ] : [
       ["Códigos generados", String(m.generados)],
       ["Usados", String(m.utilizados)],
       ["Disponibles", String(m.disponibles)],
       ["Vencidos", String(m.vencidos)],
       ["Cancelados", String(m.cancelados)],
-      ["Personas que usaron el beneficio", String(d.usos.length)],
+      ["Personas que usaron el beneficio", String(m.turnos_utilizados)],
     ],
     ...dosCol,
   });

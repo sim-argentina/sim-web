@@ -1,32 +1,48 @@
 -- ============================================================================
--- Empresas B8 — código común por pack y un uso por experiencia.
+-- Empresas B8 — código común por pack; cupo en EXPERIENCIAS (una por simulador).
 -- ----------------------------------------------------------------------------
 -- Condición comercial vigente (31/10/2026): un pack corporativo tiene UN código
 -- común, compartido por sus tarjetas físicas. Cada tarjeta es una experiencia
 -- y el cupo total son las experiencias compradas.
 --
 -- Hasta acá no había una configuración correcta:
---   · «Generar» crea cantidad_contratada códigos de usos_por_codigo usos. Con
---     1 código × 10 usos el cupo era correcto, pero pantallas, informe y CRM
---     decían «1 turno contratado». Con 10 × 10, el cupo se multiplicaba.
---   · Un canje sumaba UN uso aunque reservara hasta 4 simuladores. La web
---     pública manda uno, pero la API aceptaba más: una reserva de 4 daba
---     4 experiencias por un solo uso.
+--   · «Generar» creaba cantidad_contratada códigos de usos_por_codigo usos.
+--     Con 1 × 10 el cupo era correcto, pero pantallas, informe y CRM decían
+--     «1 turno contratado». Con 10 × 10, el cupo se multiplicaba.
+--   · Un canje sumaba UN uso aunque reservara hasta 4 simuladores: una reserva
+--     de 4 daba 4 experiencias por un solo uso.
 --
 -- Cambios:
 --   1. empresa_campanias.codigo_comun (boolean, falso por defecto). Con la
 --      marca, la aplicación genera UN código con usos_maximos =
 --      cantidad_contratada. Sin ella, todo sigue como antes. Las campañas
 --      existentes quedan en falso: no cambian.
---   2. Un canje = un simulador = una experiencia: crear_reserva_empresa
---      (legacy) y crear_reserva_empresa_v2 exigen exactamente un simulador.
---   3. Reprogramar no cambia la cantidad de simuladores de la reserva
---      (reprogramar_reserva_empresa y reprogramar_reserva_empresa_v2). Una
---      reserva anterior de varios simuladores se puede mover con los mismos.
+--   2. empresa_codigo_usos.experiencias (1 a 4, por defecto 1): cuántas
+--      experiencias consumió el canje. Los usos existentes valen 1, que es lo
+--      que consumieron.
+--   3. Un canje consume UN uso por SIMULADOR reservado, sin pasar el cupo:
+--      crear_reserva_empresa (legacy) y crear_reserva_empresa_v2 rechazan,
+--      sin consumir nada, si usos_actuales + simuladores > usos_maximos. La v2
+--      sigue aceptando de 1 a 4; la legacy ya no acepta un canje sin simulador.
+--      El código se toma FOR UPDATE, así que los canjes simultáneos se
+--      serializan, y el CHECK usos_actuales <= usos_maximos es la segunda
+--      barrera.
+--   4. Reprogramar no cambia la cantidad de simuladores de la reserva:
+--      reprogramar_reserva_empresa y reprogramar_reserva_empresa_v2.
+--   5. cancelar_reserva_empresa, con «liberar», devuelve exactamente las
+--      experiencias de los usos vigentes de ESA reserva (antes, siempre 1) y
+--      los marca cancelados. La reserva se toma FOR UPDATE y una ya cancelada
+--      sale sin tocar nada: un reintento o una cancelación simultánea no
+--      devuelve dos veces. La liberación se decide en la cancelación efectiva;
+--      cancelar otra vez con «liberar» no devuelve lo que no se liberó.
+--   6. Las funciones legacy y cancelar fijan search_path = public, como las v2.
+--      cancelar_reserva_empresa queda ejecutable SOLO por service_role: hasta
+--      acá conservaba el EXECUTE por defecto de PUBLIC (anon y authenticated),
+--      siendo SECURITY DEFINER. La aplicación la llama solo con service_role.
 --
 -- El resto de cada función es idéntico a su definición vigente: mismas firmas,
--- owner, SECURITY DEFINER, search_path y permisos. Las crear_* vienen de
--- db/empresas-b7-1-fecha.sql y las reprogramar_* de db/empresas-b7-modalidad.sql.
+-- owner y SECURITY DEFINER. Las crear_* vienen de db/empresas-b7-1-fecha.sql,
+-- las reprogramar_* de db/empresas-b7-modalidad.sql y cancelar del esquema base.
 --
 -- Definiciones previas (para volver atrás a mano): db/empresas-b8-codigo-comun.previo.sql
 -- Verificación: db/empresas-b8-codigo-comun.verificacion.sql
@@ -37,12 +53,24 @@ alter table public.empresa_campanias add column if not exists codigo_comun boole
 comment on column public.empresa_campanias.codigo_comun is
   'B8: un solo código para todas las tarjetas del pack, con usos_maximos = cantidad_contratada (cupo en experiencias). Falso = un código por experiencia (como antes).';
 
--- ── 2. Canje: exactamente un simulador ───────────────────────────────────────
+alter table public.empresa_codigo_usos add column if not exists experiencias integer not null default 1;
+do $b8$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'empresa_codigo_usos_experiencias_check'
+                  and conrelid = 'public.empresa_codigo_usos'::regclass) then
+    alter table public.empresa_codigo_usos add constraint empresa_codigo_usos_experiencias_check check (experiencias between 1 and 4);
+  end if;
+end $b8$;
+comment on column public.empresa_codigo_usos.experiencias is
+  'B8: experiencias que consumió el canje (una por simulador reservado).';
+
+-- ── 3. Canje: un uso por simulador, sin pasar el cupo ────────────────────────
 
 CREATE OR REPLACE FUNCTION public.crear_reserva_empresa(p_codigo text, p_nombre text, p_apellido text, p_telefono text, p_email text, p_fecha date, p_hora text, p_duracion integer, p_simuladores text[], p_slots text[], p_idempotency_key text)
  RETURNS TABLE(reserva_id bigint, codigo_id uuid, campania_id uuid)
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
 DECLARE
   v_hoy date := (now() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date;
@@ -54,6 +82,7 @@ DECLARE
   v_ret_camp uuid;
   v_slot text;
   v_sim text;
+  v_n integer := coalesce(array_length(p_simuladores, 1), 0);
 BEGIN
   IF p_idempotency_key IS NOT NULL THEN
     SELECT u.reserva_id, u.codigo_id, u.campania_id INTO v_existente, v_ret_cod, v_ret_camp
@@ -76,9 +105,9 @@ BEGIN
      OR v_camp.fecha_inicio IS NULL OR v_camp.fecha_inicio > v_hoy
      OR v_camp.fecha_vencimiento IS NULL OR v_camp.fecha_vencimiento < v_hoy
      OR v_cod.estado <> 'disponible'
-     OR v_cod.usos_actuales >= v_cod.usos_maximos
+     OR v_cod.usos_actuales + v_n > v_cod.usos_maximos
      OR p_duracion <> v_camp.duracion_minutos
-     OR coalesce(array_length(p_simuladores, 1), 0) <> 1
+     OR v_n < 1
      OR coalesce(v_camp.modalidad_comercial, 'legacy') <> 'legacy' THEN
     RETURN;
   END IF;
@@ -89,7 +118,7 @@ BEGIN
      origen, empresa_campania_id, empresa_codigo_id, modalidad)
   VALUES
     (p_nombre, p_apellido, p_telefono, p_email, p_fecha, p_hora, to_jsonb(p_simuladores),
-     coalesce(array_length(p_simuladores, 1), 1),
+     v_n,
      0, 0, 0, 'activa', true, p_duracion, 'empresa', v_camp.id, v_cod.id, 'legacy')
   RETURNING id INTO v_reserva_id;
 
@@ -101,14 +130,14 @@ BEGIN
   END LOOP;
 
   UPDATE public.empresa_codigos
-     SET usos_actuales = usos_actuales + 1,
-         estado = CASE WHEN usos_actuales + 1 >= usos_maximos THEN 'utilizado' ELSE 'disponible' END,
+     SET usos_actuales = usos_actuales + v_n,
+         estado = CASE WHEN usos_actuales + v_n >= usos_maximos THEN 'utilizado' ELSE 'disponible' END,
          updated_at = now()
    WHERE id = v_cod.id;
 
   INSERT INTO public.empresa_codigo_usos
-    (codigo_id, campania_id, beneficiario_nombre, beneficiario_apellido, beneficiario_telefono, beneficiario_email, reserva_id, idempotency_key)
-  VALUES (v_cod.id, v_camp.id, p_nombre, p_apellido, p_telefono, p_email, v_reserva_id, p_idempotency_key);
+    (codigo_id, campania_id, beneficiario_nombre, beneficiario_apellido, beneficiario_telefono, beneficiario_email, reserva_id, idempotency_key, experiencias)
+  VALUES (v_cod.id, v_camp.id, p_nombre, p_apellido, p_telefono, p_email, v_reserva_id, p_idempotency_key, v_n);
 
   RETURN QUERY SELECT v_reserva_id, v_cod.id, v_camp.id;
 EXCEPTION WHEN unique_violation OR check_violation THEN
@@ -148,7 +177,7 @@ begin
   end if;
 
   v_n := coalesce(array_length(p_simuladores, 1), 0);
-  if v_n <> 1
+  if v_n < 1 or v_n > 4
      or v_n <> (select count(distinct s) from unnest(p_simuladores) s)
      or exists (select 1 from unnest(p_simuladores) s where s not in ('Ferrari','McLaren','Red Bull','Alpine'))
      or not public.reserva_horario_valido_v2(p_fecha, p_hora, p_duracion) then
@@ -166,7 +195,7 @@ begin
      or v_camp.fecha_inicio is null or v_camp.fecha_inicio > v_hoy
      or v_camp.fecha_vencimiento is null or v_camp.fecha_vencimiento < v_hoy
      or v_cod.estado <> 'disponible'
-     or v_cod.usos_actuales >= v_cod.usos_maximos
+     or v_cod.usos_actuales + v_n > v_cod.usos_maximos
      or v_camp.modalidad_comercial is distinct from 'v2_10'
      or p_duracion <> v_camp.duracion_minutos then
     return;
@@ -187,14 +216,14 @@ begin
   end loop;
 
   update public.empresa_codigos
-     set usos_actuales = usos_actuales + 1,
-         estado = case when usos_actuales + 1 >= usos_maximos then 'utilizado' else 'disponible' end,
+     set usos_actuales = usos_actuales + v_n,
+         estado = case when usos_actuales + v_n >= usos_maximos then 'utilizado' else 'disponible' end,
          updated_at = now()
    where id = v_cod.id;
 
   insert into public.empresa_codigo_usos
-    (codigo_id, campania_id, beneficiario_nombre, beneficiario_apellido, beneficiario_telefono, beneficiario_email, reserva_id, idempotency_key)
-  values (v_cod.id, v_camp.id, p_nombre, p_apellido, p_telefono, p_email, v_reserva_id, p_idempotency_key);
+    (codigo_id, campania_id, beneficiario_nombre, beneficiario_apellido, beneficiario_telefono, beneficiario_email, reserva_id, idempotency_key, experiencias)
+  values (v_cod.id, v_camp.id, p_nombre, p_apellido, p_telefono, p_email, v_reserva_id, p_idempotency_key, v_n);
 
   return query select v_reserva_id, v_cod.id, v_camp.id;
 exception when unique_violation or check_violation then
@@ -205,7 +234,7 @@ $function$;
 revoke all on function public.crear_reserva_empresa_v2(text, text, text, text, text, date, text, integer, text[], text) from public, anon, authenticated;
 grant execute on function public.crear_reserva_empresa_v2(text, text, text, text, text, date, text, integer, text[], text) to service_role;
 
--- ── 3. Reprogramar: la misma cantidad de simuladores ─────────────────────────
+-- ── 4. Reprogramar: la misma cantidad de simuladores ─────────────────────────
 
 create or replace function public.reprogramar_reserva_empresa_v2(p_reserva_id bigint, p_fecha date, p_hora text, p_simuladores text[])
 returns boolean
@@ -252,6 +281,7 @@ CREATE OR REPLACE FUNCTION public.reprogramar_reserva_empresa(p_reserva_id bigin
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
 DECLARE v_res public.reservas%ROWTYPE; v_slot text; v_sim text;
 BEGIN
@@ -278,3 +308,38 @@ $function$;
 
 revoke all on function public.reprogramar_reserva_empresa(bigint, date, text, text[], text[]) from public, anon, authenticated;
 grant execute on function public.reprogramar_reserva_empresa(bigint, date, text, text[], text[]) to service_role;
+
+-- ── 5 y 6. Cancelar: devuelve lo consumido, una vez; solo service_role ───────
+
+CREATE OR REPLACE FUNCTION public.cancelar_reserva_empresa(p_reserva_id bigint, p_liberar_codigo boolean)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE v_res public.reservas%ROWTYPE; v_exp integer;
+BEGIN
+  SELECT * INTO v_res FROM public.reservas WHERE id = p_reserva_id AND origen = 'empresa' FOR UPDATE;
+  IF NOT FOUND THEN RETURN false; END IF;
+  IF v_res.estado = 'cancelada' THEN RETURN true; END IF;
+  UPDATE public.reserva_slots SET estado = 'cancelada' WHERE reserva_id = p_reserva_id;
+  UPDATE public.reservas SET estado = 'cancelada' WHERE id = p_reserva_id;
+  IF p_liberar_codigo AND v_res.empresa_codigo_id IS NOT NULL THEN
+    -- (B8) Vuelven las experiencias que consumió ESTA reserva (sus usos vigentes).
+    SELECT coalesce(sum(experiencias), 0) INTO v_exp FROM public.empresa_codigo_usos
+     WHERE reserva_id = p_reserva_id AND estado <> 'cancelado';
+    IF v_exp > 0 THEN
+      UPDATE public.empresa_codigos
+         SET usos_actuales = greatest(usos_actuales - v_exp, 0),
+             estado = CASE WHEN estado = 'utilizado' THEN 'disponible' ELSE estado END,
+             updated_at = now()
+       WHERE id = v_res.empresa_codigo_id;
+      UPDATE public.empresa_codigo_usos SET estado = 'cancelado' WHERE reserva_id = p_reserva_id AND estado <> 'cancelado';
+    END IF;
+  END IF;
+  RETURN true;
+END;
+$function$;
+
+revoke all on function public.cancelar_reserva_empresa(bigint, boolean) from public, anon, authenticated;
+grant execute on function public.cancelar_reserva_empresa(bigint, boolean) to service_role;

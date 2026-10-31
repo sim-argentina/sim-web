@@ -113,7 +113,12 @@ function CampaniaFormModal({ form, set, editId, codigosGenerados, duraciones, ms
 
         <div className={secc}>Pago y activación</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="text-sm text-zinc-300">Fecha de inicio<input type="date" className={inp} value={form.fecha_inicio} onChange={(e) => set("fecha_inicio", e.target.value)} /></label>
+          {/* (B8) Pack con código común: la fecha de inicio es la de la entrega, con el 100% cobrado. */}
+          <label className="text-sm text-zinc-300">Fecha de inicio
+            <input type="date" className={inp} value={form.fecha_inicio} onChange={(e) => set("fecha_inicio", e.target.value)}
+              disabled={form.codigo_comun === "true" && form.estado_pago !== "pagado" && !form.fecha_inicio} />
+            {form.codigo_comun === "true" && <span className="block text-xs text-zinc-500">Pack: es el día de la entrega de las tarjetas, con el 100% cobrado. Desde ahí corren los 60 días.</span>}
+          </label>
           <label className="text-sm text-zinc-300">Estado de pago
             <select className={inp} value={form.estado_pago} onChange={(e) => set("estado_pago", e.target.value)}><option value="pendiente">Pendiente</option><option value="pagado">Pagado</option></select>
           </label>

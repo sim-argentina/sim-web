@@ -16,7 +16,8 @@ import { randomBytes } from "crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   calcularVencimiento, formatearCodigo, estadoEfectivo, estadoCodigoEfectivo,
-  metricasCampania, ivaDesglose, inicioValido, planDeCodigos, errorConfiguracionCupo, type Modalidad,
+  metricasCampania, ivaDesglose, inicioValido, planDeCodigos, errorConfiguracionCupo, errorInicioPack,
+  experienciasDeUso, type Modalidad,
 } from "@/lib/empresas";
 import { fechaValida, hoyEnSim } from "@/lib/agenda";
 import {
@@ -71,22 +72,22 @@ export async function listarCampanias(opts: { q?: string | null; estado?: string
   if (error) return fail(500, "No se pudieron cargar las campañas.");
   const hoy = hoyEnSim(ahora);
   // Conteo por campaña (barato) para el listado: códigos generados y (B8)
-  // experiencias usadas = canjes no cancelados, que con un código común no es lo
-  // mismo que códigos agotados.
+  // experiencias usadas (una por simulador de cada canje no cancelado), que con un
+  // código común no es lo mismo que códigos agotados.
   const ids = (data ?? []).map((c) => c.id);
   const conteos = new Map<string, { generados: number; utilizados: number }>();
-  const acumular = (id: string, campo: "generados" | "utilizados") => {
+  const acumular = (id: string, campo: "generados" | "utilizados", n = 1) => {
     const acc = conteos.get(id) ?? { generados: 0, utilizados: 0 };
-    acc[campo]++;
+    acc[campo] += n;
     conteos.set(id, acc);
   };
   if (ids.length) {
     const [{ data: cods }, { data: usos }] = await Promise.all([
       supabaseAdmin.from("empresa_codigos").select("campania_id").in("campania_id", ids),
-      supabaseAdmin.from("empresa_codigo_usos").select("campania_id, estado").in("campania_id", ids),
+      supabaseAdmin.from("empresa_codigo_usos").select("campania_id, estado, experiencias").in("campania_id", ids),
     ]);
     for (const c of cods ?? []) acumular(c.campania_id, "generados");
-    for (const u of usos ?? []) if (u.estado !== "cancelado") acumular(u.campania_id, "utilizados");
+    for (const u of usos ?? []) acumular(u.campania_id, "utilizados", experienciasDeUso(u));
   }
   const rows = (data ?? [])
     .map((c) => {
@@ -120,7 +121,8 @@ export async function crearCampania(body: Record<string, unknown>, createdBy: st
   const modalidadComercial = cat.catalogo.modalidad;
 
   const row = limpiarCampania(body);
-  const err = validarCampania(row) ?? errorConfiguracionCupo(row);
+  // (B8) Nace en estado_pago 'pendiente': un pack común no lleva fecha de inicio al crearse.
+  const err = validarCampania(row) ?? errorConfiguracionCupo(row) ?? errorInicioPack({ ...row, estado_pago: "pendiente" });
   if (err) return fail(400, err);
   if (!duracionEmpresaValida(modalidadComercial, row.duracion_minutos)) return fail(400, mensajeDuracionEmpresa(modalidadComercial));
   const modalidad = (row.modalidad as Modalidad) ?? "unica";
@@ -155,6 +157,8 @@ export async function actualizarCampania(id: string, body: Record<string, unknow
     const errCupo = errorConfiguracionCupo(merged);
     if (errCupo) return fail(400, errCupo);
   }
+  const errInicio = errorInicioPack(merged);
+  if (errInicio) return fail(400, errInicio);
   // (B7) modalidad_comercial no es editable (no está en CAMPOS_EDITABLES). Una
   // duración NUEVA se valida contra la modalidad GUARDADA de la campaña; la que
   // ya tenía se conserva siempre, aunque hoy no se venda.
@@ -205,6 +209,7 @@ export async function getCampania(id: string, ahora: Date = new Date()): Promise
   // Distribución por simulador (de reservas reales). Fuente real, no hardcodeada.
   const porSimulador: Record<string, number> = {};
   for (const u of usosDto) {
+    if (!experienciasDeUso(u)) continue; // (B8) un canje cancelado no usó simuladores
     const sims = Array.isArray((u.reserva as { simuladores?: unknown })?.simuladores) ? (u.reserva as { simuladores: string[] }).simuladores : [];
     for (const s of sims) porSimulador[String(s)] = (porSimulador[String(s)] || 0) + 1;
   }
@@ -277,12 +282,13 @@ export async function datosInforme(id: string, tipo: "parcial" | "definitivo"): 
   };
 
   // Evolución por día (dato real): fecha de la reserva si existe, si no la del canje.
-  // (B8) Sin los canjes cancelados, igual que las métricas.
+  // (B8) Experiencias (una por simulador), sin los canjes cancelados: igual que las métricas.
   const porDia: Record<string, number> = {};
   for (const u of data.usos) {
-    if (u.estado === "cancelado") continue;
+    const n = experienciasDeUso(u);
+    if (!n) continue;
     const d = String(u.reserva?.fecha ?? u.created_at ?? "").slice(0, 10);
-    if (d) porDia[d] = (porDia[d] || 0) + 1;
+    if (d) porDia[d] = (porDia[d] || 0) + n;
   }
   const evolucion = Object.entries(porDia).sort((a, b) => a[0].localeCompare(b[0])).map(([fecha, canjes]) => ({ fecha, canjes }));
 
@@ -296,7 +302,7 @@ export async function datosInforme(id: string, tipo: "parcial" | "definitivo"): 
 
 // ── Canje público ─────────────────────────────────────────────────────────────
 
-type CampaniaCanje = { duracion: number; modalidad: ReturnType<typeof modalidadGuardada>; vence: unknown };
+type CampaniaCanje = { duracion: number; modalidad: ReturnType<typeof modalidadGuardada>; vence: unknown; restantes: number };
 
 // El código y su campaña, si se pueden canjear ahora. Read-only. Mismo criterio
 // de siempre (estado efectivo, estado del código y usos); la RPC lo vuelve a
@@ -314,6 +320,8 @@ async function campaniaCanjeable(cod: string, ahora: Date): Promise<Resultado<Ca
     // (B7) La de la CAMPAÑA, fijada al crearla. Nunca la vigente.
     modalidad: modalidadGuardada(camp!.modalidad_comercial),
     vence: camp!.fecha_vencimiento,
+    // (B8) Experiencias que le quedan al código (con un código común, las del pack).
+    restantes: Number(c.usos_maximos) - Number(c.usos_actuales),
   });
 }
 
@@ -384,14 +392,11 @@ export async function reservarConCodigo(
 
   const val = await campaniaCanjeable(cod, ahora);
   if (!val.ok) return rechazo(val.status, "Código inválido o no disponible.");
-  const { duracion, modalidad } = val.data;
+  const { duracion, modalidad, restantes } = val.data;
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) return fail(400, "Fecha u hora inválida.");
   const sims = (Array.isArray(simuladores) ? simuladores : []).map((s) => String(s).trim()).filter(Boolean);
   if (sims.length < 1) return fail(400, "Elegí un simulador.");
-  // (B8) Un canje = un simulador = una experiencia: el código descuenta un uso por
-  // canje. Las RPC lo vuelven a exigir.
-  if (sims.length > 1) return fail(400, "Cada canje es una experiencia en un simulador: elegí uno solo.");
 
   let ev: Awaited<ReturnType<typeof evaluarTurnoEmpresa>>;
   try {
@@ -400,6 +405,12 @@ export async function reservarConCodigo(
     return fail(500, "No se pudo crear la reserva.");
   }
   if (!ev.ok) return rechazo(ev.status, ev.error);
+  // (B8) Cada simulador reservado (ya validados por la agenda) consume una experiencia
+  // del código. La RPC lo vuelve a comprobar con el código tomado FOR UPDATE: acá el
+  // dato puede estar desactualizado.
+  if (sims.length > restantes) {
+    return rechazo(409, `Este código tiene ${restantes} experiencia${restantes === 1 ? "" : "s"} disponible${restantes === 1 ? "" : "s"}: elegí hasta ${restantes} simulador${restantes === 1 ? "" : "es"}.`);
+  }
 
   const comunes = {
     p_codigo: cod,

@@ -83,7 +83,7 @@ export function estadoCodigoEfectivo(cod: CodigoInput, estadoCampania: EstadoEfe
 
 // ── Cupo y códigos (B8) ──────────────────────────────────────────────────────
 // El cupo de una campaña son sus EXPERIENCIAS contratadas (cantidad_contratada):
-// un canje = un simulador = una experiencia. Dos formas de emitirlas:
+// cada simulador reservado en un canje consume una. Dos formas de emitirlas:
 //   · código común: UN código para todas las tarjetas del pack, con
 //     usos_maximos = cantidad_contratada;
 //   · códigos individuales: cantidad_contratada códigos de un uso cada uno.
@@ -101,17 +101,34 @@ export function errorConfiguracionCupo(c: PlanCodigosInput): string | null {
   if (c.codigo_comun !== true && Math.trunc(Number(c.usos_por_codigo) || 1) !== 1) return MENSAJE_USOS_POR_CODIGO;
   return null;
 }
+// Un pack con código común se activa al ENTREGAR las tarjetas con el 100% cobrado: su
+// fecha de inicio (desde la que corren los 60 días) se carga recién con la campaña
+// pagada. Así el código, que existe antes para imprimir las tarjetas, no queda
+// habilitado por una fecha cargada de antemano.
+export const MENSAJE_INICIO_PACK =
+  "En un pack con código común, la fecha de inicio es la de la entrega de las tarjetas: se carga con la campaña pagada (100% cobrado).";
+export function errorInicioPack(c: { codigo_comun?: boolean | null; fecha_inicio?: string | null; estado_pago?: string | null }): string | null {
+  if (c.codigo_comun === true && c.fecha_inicio && c.estado_pago !== "pagado") return MENSAJE_INICIO_PACK;
+  return null;
+}
 
 // ── Métricas de campaña (derivadas de datos reales) ──────────────────────────
 export type MetricasInput = {
   campania: CampaniaEstadoInput & { cantidad_contratada?: number; duracion_minutos?: number };
   codigos: CodigoInput[];
-  // Canjes. Uno con estado 'cancelado' (reserva cancelada liberando el código) no
-  // cuenta como experiencia usada: el uso volvió al código.
+  // Canjes. Cada uno consumió `experiencias` (una por simulador; sin el dato, 1). Uno
+  // con estado 'cancelado' (reserva cancelada liberando el código) no cuenta: sus
+  // experiencias volvieron al código.
   usos: unknown[];
   hoy: string;
 };
-const usoVigente = (u: unknown) => (u as { estado?: unknown } | null | undefined)?.estado !== "cancelado";
+type UsoLectura = { estado?: unknown; experiencias?: unknown } | null | undefined;
+export const experienciasDeUso = (u: unknown): number => {
+  const x = u as UsoLectura;
+  if (x?.estado === "cancelado") return 0;
+  const n = Math.trunc(Number(x?.experiencias));
+  return n >= 1 ? n : 1;
+};
 export function metricasCampania({ campania, codigos, usos, hoy }: MetricasInput) {
   const est = estadoEfectivo(campania, hoy);
   let disponibles = 0, utilizados = 0, vencidos = 0, cancelados = 0;
@@ -125,7 +142,7 @@ export function metricasCampania({ campania, codigos, usos, hoy }: MetricasInput
   const generados = codigos.length;
   const contratados = Number(campania.cantidad_contratada) || 0;
   const duracion = Number(campania.duracion_minutos) || 0;
-  const usados = usos.filter(usoVigente).length; // experiencias usadas (canjes no cancelados)
+  const usados = usos.reduce<number>((s, u) => s + experienciasDeUso(u), 0); // experiencias usadas (sin canjes cancelados)
   // Sobre las experiencias contratadas, no sobre códigos agotados: con un código
   // común, «1 de 1 código» no dice cuántas tarjetas se usaron.
   const pctUtilizacion = contratados > 0 ? Math.round((usados / contratados) * 1000) / 10 : 0;

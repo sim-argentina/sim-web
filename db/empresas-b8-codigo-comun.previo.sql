@@ -1,14 +1,20 @@
 -- ============================================================================
 -- RESPALDO (B8): definiciones VIGENTES antes de db/empresas-b8-codigo-comun.sql,
--- tal como están en la cadena de db/orden.txt: crear_* de
--- db/empresas-b7-1-fecha.sql y reprogramar_* de db/empresas-b7-modalidad.sql.
+-- tal como están en la cadena de db/orden.txt:
+--   · crear_* de db/empresas-b7-1-fecha.sql;
+--   · reprogramar_* de db/empresas-b7-modalidad.sql;
+--   · cancelar_reserva_empresa del esquema base.
 -- No es una migración: sirve para volver atrás a mano si hiciera falta.
 --
 -- Antes de usarlo en Producción, compararlo con pg_get_functiondef() de cada
--- función (deben coincidir con lo aplicado por B7 y B7.1).
+-- función: deben coincidir con lo aplicado.
 --
--- La columna codigo_comun NO se borra al volver atrás: con estas funciones y el
--- código anterior se ignora, y su valor se conserva.
+-- No se deshace al volver atrás:
+--   · las columnas codigo_comun y experiencias se conservan; el código anterior
+--     las ignora;
+--   · el permiso de cancelar_reserva_empresa: CREATE OR REPLACE no toca los
+--     permisos, así que sigue ejecutable solo por service_role. NO se vuelve a
+--     abrir a anon ni a authenticated.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.crear_reserva_empresa(p_codigo text, p_nombre text, p_apellido text, p_telefono text, p_email text, p_fecha date, p_hora text, p_duracion integer, p_simuladores text[], p_slots text[], p_idempotency_key text)
@@ -247,3 +253,25 @@ $function$;
 
 revoke all on function public.reprogramar_reserva_empresa(bigint, date, text, text[], text[]) from public, anon, authenticated;
 grant execute on function public.reprogramar_reserva_empresa(bigint, date, text, text[], text[]) to service_role;
+
+CREATE OR REPLACE FUNCTION public.cancelar_reserva_empresa(p_reserva_id bigint, p_liberar_codigo boolean)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE v_res public.reservas%ROWTYPE;
+BEGIN
+  SELECT * INTO v_res FROM public.reservas WHERE id = p_reserva_id AND origen = 'empresa' FOR UPDATE;
+  IF NOT FOUND THEN RETURN false; END IF;
+  IF v_res.estado = 'cancelada' THEN RETURN true; END IF;
+  UPDATE public.reserva_slots SET estado = 'cancelada' WHERE reserva_id = p_reserva_id;
+  UPDATE public.reservas SET estado = 'cancelada' WHERE id = p_reserva_id;
+  IF p_liberar_codigo AND v_res.empresa_codigo_id IS NOT NULL THEN
+    UPDATE public.empresa_codigos
+       SET usos_actuales = greatest(usos_actuales - 1, 0), estado = 'disponible', updated_at = now()
+     WHERE id = v_res.empresa_codigo_id;
+    UPDATE public.empresa_codigo_usos SET estado = 'cancelado' WHERE reserva_id = p_reserva_id;
+  END IF;
+  RETURN true;
+END;
+$function$;

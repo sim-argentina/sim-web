@@ -12,6 +12,8 @@ import {
   formatearCodigo,
   planDeCodigos,
   errorConfiguracionCupo,
+  errorInicioPack,
+  experienciasDeUso,
 } from "./empresas";
 
 // npx tsx lib/empresas.test.ts
@@ -118,11 +120,12 @@ assert.equal(errorConfiguracionCupo({ codigo_comun: true, usos_por_codigo: 10 })
 assert.match(errorConfiguracionCupo({ codigo_comun: false, usos_por_codigo: 10 }) ?? "", /Código común/);
 assert.match(errorConfiguracionCupo({ usos_por_codigo: 2 }) ?? "", /1 uso/);
 
-// ── (B8) Métricas por experiencia: código común y canjes cancelados ──────────
+// ── (B8) Métricas por experiencia: varios simuladores, código común y cancelados ─
 const comun = { ...campania, cantidad_contratada: 10, duracion_minutos: 20 };
 const usosComun = [
-  ...Array.from({ length: 3 }, () => ({ estado: "consumido" })),
-  { estado: "cancelado" }, // reserva cancelada liberando el código: el uso volvió
+  { estado: "consumido", experiencias: 1 },
+  { estado: "consumido", experiencias: 2 }, // una reserva de 2 simuladores = 2 experiencias
+  { estado: "cancelado", experiencias: 4 }, // reserva cancelada liberando el código: volvieron
 ];
 const mComun = metricasCampania({ campania: comun, codigos: [{ estado: "disponible", usos_actuales: 3, usos_maximos: 10 }], usos: usosComun, hoy: HOY });
 assert.equal(mComun.generados, 1);
@@ -133,6 +136,16 @@ assert.equal(mComun.turnos_restantes, 7);
 assert.equal(mComun.pctUtilizacion, 30); // 3 de 10 experiencias, no «0 de 1 código agotado»
 assert.equal(mComun.minutos_contratados, 200);
 assert.equal(mComun.minutos_utilizados, 60);
+// Experiencias por uso: sin el dato vale 1 (usos anteriores a B8); un cancelado, 0.
+assert.equal(experienciasDeUso({ estado: "consumido" }), 1);
+assert.equal(experienciasDeUso({ estado: "consumido", experiencias: 4 }), 4);
+assert.equal(experienciasDeUso({ estado: "cancelado", experiencias: 4 }), 0);
+assert.equal(experienciasDeUso(undefined), 1);
+// Activación del pack: la fecha de inicio (entrega) solo con la campaña pagada.
+assert.equal(errorInicioPack({ codigo_comun: true, fecha_inicio: null, estado_pago: "pendiente" }), null);
+assert.match(errorInicioPack({ codigo_comun: true, fecha_inicio: "2026-11-05", estado_pago: "pendiente" }) ?? "", /entrega/);
+assert.equal(errorInicioPack({ codigo_comun: true, fecha_inicio: "2026-11-05", estado_pago: "pagado" }), null);
+assert.equal(errorInicioPack({ codigo_comun: false, fecha_inicio: "2026-11-05", estado_pago: "pendiente" }), null); // individuales: como antes
 // Individuales: un cancelado con liberación tampoco cuenta (antes sumaba como usado).
 const mInd = metricasCampania({
   campania, codigos, usos: [...Array.from({ length: 4 }, () => ({ estado: "consumido" })), { estado: "cancelado" }], hoy: HOY,
@@ -145,4 +158,4 @@ assert.equal(metricasCampania({ campania: comun, codigos: [], usos: Array.from({
 
 console.log("OK — empresas: vigencia 60/30, inicio programable, IVA, estados efectivos, " +
   "canje solo si activa, estado de código, métricas (contratado/usado/restante/vencido), generación de código y " +
-  "(B8) código común: plan de códigos con cupo = experiencias, configuración que multiplicaba rechazada, métricas por experiencia sin cancelados.");
+  "(B8) código común: plan de códigos con cupo = experiencias, configuración que multiplicaba rechazada, métricas por experiencia (una por simulador, sin cancelados) e inicio del pack solo pagado.");
