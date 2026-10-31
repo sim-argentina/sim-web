@@ -43,14 +43,19 @@ export default function Seguimiento() {
   const [datos, setDatos] = useState<BandejaDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
+  // La página vuelve a 1 cuando cambia la consulta (búsqueda, filtros, grupo o vista).
+  const [pagina, setPagina] = useState({ de: "", n: 1 });
 
-  const consulta = useMemo(() => {
+  const base = useMemo(() => {
     const u = new URLSearchParams({ vista });
     if (grupo && vista === "abiertas") u.set("grupo", grupo);
     if (q.trim()) u.set("q", q.trim());
     for (const [k, v] of Object.entries(f)) if (v) u.set(k, v);
     return u.toString();
   }, [vista, grupo, q, f]);
+  const n = pagina.de === base ? pagina.n : 1;
+  const consulta = `${base}&pagina=${n}`;
+  const irA = (x: number) => { setPagina({ de: base, n: x }); document.getElementById("titulo-pagina")?.scrollIntoView({ block: "start" }); };
 
   useEffect(() => {
     let vivo = true;
@@ -118,8 +123,11 @@ export default function Seguimiento() {
 
       {error ? <Aviso tipo="error">{error}</Aviso> : null}
       {!datos ? <Cargando /> : vista !== "abiertas" ? (
-        <ListaFilas filas={datos.filas} hoy={datos.hoy} onAbrir={abrir}
-          vacio={vista === "perdidas" ? "No hay oportunidades perdidas con estos filtros." : "No hay oportunidades ganadas con estos filtros. Las ventas, sus cobros y comisiones están en «Ventas»."} />
+        <>
+          <ListaFilas filas={datos.filas} hoy={datos.hoy} onAbrir={abrir}
+            vacio={vista === "perdidas" ? "No hay oportunidades perdidas con estos filtros." : "No hay oportunidades ganadas con estos filtros. Las ventas, sus cobros y comisiones están en «Ventas»."} />
+          <Paginas d={datos} onIr={irA} />
+        </>
       ) : (
         <>
           <div className="flex flex-wrap gap-2" aria-label="Grupos">
@@ -133,9 +141,9 @@ export default function Seguimiento() {
             <p className="text-sm text-white/60">No hay oportunidades abiertas con estos filtros.</p>
           ) : (
             <div className="space-y-8">
-              {GRUPOS.filter((g) => datos.conteos[g.id] > 0).map((g) => (
+              {GRUPOS.filter((g) => datos.filas.some((o) => o.grupo === g.id)).map((g) => (
                 <section key={g.id} aria-labelledby={`g-${g.id}`} className="space-y-2">
-                  <h2 id={`g-${g.id}`} className="text-sm font-bold uppercase tracking-wide text-white/70">{g.texto} <span className="text-white/40">({datos.conteos[g.id]})</span></h2>
+                  <h2 id={`g-${g.id}`} className="text-sm font-bold uppercase tracking-wide text-white/70">{g.texto} <span className="text-white/40">({datos.conteos[g.id]}{datos.total_paginas > 1 ? " en total" : ""})</span></h2>
                   <ListaFilas filas={datos.filas.filter((o) => o.grupo === g.id)} hoy={datos.hoy} onAbrir={abrir} vacio="" />
                 </section>
               ))}
@@ -144,8 +152,25 @@ export default function Seguimiento() {
         </>
       )}
 
+      {datos && vista === "abiertas" ? <Paginas d={datos} onIr={irA} /> : null}
+
       {op ? <DetalleOportunidad key={op} id={op} onCerrar={cerrar} onCambio={recargar} /> : null}
     </div>
+  );
+}
+
+/** Navegación entre páginas: búsqueda, filtros y contadores ya son de TODAS las oportunidades. */
+function Paginas({ d, onIr }: { d: BandejaDto; onIr: (n: number) => void }) {
+  if (d.total_paginas <= 1) return d.coincidencias ? <p className="text-xs text-white/50">{d.coincidencias} oportunidad{d.coincidencias === 1 ? "" : "es"}.</p> : null;
+  const desde = (d.pagina - 1) * d.por_pagina + 1;
+  return (
+    <nav aria-label="Páginas" className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+      <p className="text-sm text-white/70">{desde}–{desde + d.filas.length - 1} de {d.coincidencias} · página {d.pagina} de {d.total_paginas}</p>
+      <div className="flex gap-2">
+        <Boton onClick={() => onIr(d.pagina - 1)} disabled={d.pagina <= 1}>Anterior</Boton>
+        <Boton onClick={() => onIr(d.pagina + 1)} disabled={d.pagina >= d.total_paginas}>Siguiente</Boton>
+      </div>
+    </nav>
   );
 }
 

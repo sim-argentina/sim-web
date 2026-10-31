@@ -92,6 +92,29 @@ async function main() {
     assert.deepEqual(B.filtrar(filas, { proxima: "sin" }, HOY).map((o) => o.id), ["o3", "o4"]);
     assert.deepEqual(B.filtrar(filas, { proxima: "vencida" }, HOY).map((o) => o.id), ["o1", "o5"], "la pausa con fecha llegada también figura como vencida al filtrar");
     assert.deepEqual(B.ordenar(filas).slice(0, 2).map((o) => o.id), ["o5", "o1"], "lo que vence antes, primero");
+
+    // Paginación (cierre del MVP): orden TOTAL (con empates resueltos por id) y páginas sin repetir ni omitir.
+    const muchas: FilaBandeja[] = [];
+    for (let i = 0; i < 237; i++) {
+      // Muchos empates a propósito: mismos vencimientos y mismo momento del lead.
+      muchas.push(fila({ pendiente: i % 3 === 0 ? p("seguimiento", i % 2 ? "2026-10-29" : "2026-11-05") : null, gestionada: i % 5 !== 0,
+        origen: { usuario_id: "u1", nombre: "X", lead_en: "2026-10-01T12:00:00Z" } }));
+    }
+    const orden = B.ordenarPorGrupo([...muchas].reverse());
+    assert.deepEqual(orden.map((o) => o.id), B.ordenarPorGrupo(muchas).map((o) => o.id), "el orden no depende del orden de llegada");
+    const idx = orden.map((o) => B.GRUPOS.findIndex((g) => g.id === o.grupo));
+    assert.ok(idx.every((x, i) => i === 0 || idx[i - 1] <= x), "la vista general va por grupos, en el orden de GRUPOS");
+    const vistas: string[] = [];
+    const primera = B.paginar(orden, 1);
+    assert.deepEqual([primera.filas.length, primera.total_paginas, primera.coincidencias, primera.por_pagina], [50, 5, 237, 50]);
+    for (let pg = 1; pg <= primera.total_paginas; pg++) vistas.push(...B.paginar(orden, pg).filas.map((o) => o.id));
+    assert.equal(vistas.length, 237, "recorrer las páginas no omite");
+    assert.equal(new Set(vistas).size, 237, "ni repite");
+    assert.deepEqual(vistas, orden.map((o) => o.id));
+    assert.equal(B.paginar(orden, 99).pagina, 5, "fuera de rango: la última");
+    assert.equal(B.paginar(orden, Number.NaN).pagina, 1);
+    assert.equal(B.paginar(orden, 0).pagina, 1);
+    assert.deepEqual(B.paginar([], 3), { filas: [], pagina: 1, total_paginas: 1, por_pagina: 50, coincidencias: 0 });
   }
 
   // ── 4) Estados ────────────────────────────────────────────────────────

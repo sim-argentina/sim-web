@@ -188,10 +188,27 @@ export function contar(filas: FilaBandeja[]): Record<Grupo, number> {
   return c;
 }
 
-/** Orden dentro de cada grupo: lo que vence antes primero; sin fecha, el lead más viejo primero. */
+/** Orden dentro de cada grupo: lo que vence antes primero; sin fecha, el lead más viejo primero; empate, por id (orden total y estable). */
+const compararFilas = (a: FilaBandeja, b: FilaBandeja) =>
+  (a.pendiente?.vence_el ?? "9999").localeCompare(b.pendiente?.vence_el ?? "9999") || a.origen.lead_en.localeCompare(b.origen.lead_en) || a.id.localeCompare(b.id);
 export function ordenar(filas: FilaBandeja[]): FilaBandeja[] {
-  return [...filas].sort((a, b) =>
-    (a.pendiente?.vence_el ?? "9999").localeCompare(b.pendiente?.vence_el ?? "9999") || a.origen.lead_en.localeCompare(b.origen.lead_en));
+  return [...filas].sort(compararFilas);
+}
+
+const indiceGrupo = new Map<Grupo, number>(GRUPOS.map((g, i) => [g.id, i]));
+/** Vista general paginada: primero por grupo (en el orden de GRUPOS) y, dentro, como `ordenar`. */
+export function ordenarPorGrupo(filas: FilaBandeja[]): FilaBandeja[] {
+  return [...filas].sort((a, b) => indiceGrupo.get(a.grupo)! - indiceGrupo.get(b.grupo)! || compararFilas(a, b));
+}
+
+/** Filas por página de la bandeja: lo que viaja al navegador; búsqueda, filtros y contadores van sobre TODO. */
+export const POR_PAGINA = 50;
+export type Pagina<T> = { filas: T[]; pagina: number; total_paginas: number; por_pagina: number; coincidencias: number };
+/** Una página de una lista YA ordenada (orden total): sin repetir ni omitir filas entre páginas. Fuera de rango, la más cercana. */
+export function paginar<T>(xs: T[], pagina: number, porPagina = POR_PAGINA): Pagina<T> {
+  const total_paginas = Math.max(1, Math.ceil(xs.length / porPagina));
+  const p = Math.min(Math.max(1, Number.isFinite(pagina) ? Math.trunc(pagina) : 1), total_paginas);
+  return { filas: xs.slice((p - 1) * porPagina, p * porPagina), pagina: p, total_paginas, por_pagina: porPagina, coincidencias: xs.length };
 }
 
 // ── WhatsApp manual ─────────────────────────────────────────────────────────

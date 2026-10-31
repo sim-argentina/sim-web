@@ -9,9 +9,9 @@ import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { hoyEnSim } from "@/lib/agenda";
 import { canonico, type ContactoDto, type Interes, type Necesidad, type Pack, type VisitaDto } from "@/lib/crmB1";
-import { COLS_VISITA, actorRpc, armarVisitas, catalogo, nombres, revisar, rpc, trozos, type FilaVisita, type R } from "@/lib/crmB1Server";
+import { COLS_VISITA, actorRpc, armarVisitas, catalogo, nombres, revisar, rpc, todasLasFilas, trozos, type FilaVisita, type R } from "@/lib/crmB1Server";
 import {
-  ORIGEN_ADMIN, advertenciasDe, contar, filtrar, grupoDe, ordenar,
+  ORIGEN_ADMIN, advertenciasDe, contar, filtrar, grupoDe, ordenarPorGrupo, paginar,
   type EstadoOportunidad, type Etapa, type FilaBandeja, type FiltrosBandeja, type Grupo, type Pendiente,
 } from "@/lib/crmB2";
 import { ventaDeOportunidad } from "@/lib/crmB3Server";
@@ -38,20 +38,28 @@ export type Vista = "abiertas" | "perdidas" | "ganadas";
 export type BandejaDto = {
   hoy: string;
   vista: Vista;
+  /** Por grupo, sobre TODAS las oportunidades que cumplen la búsqueda y los filtros (no sobre la página). */
   conteos: Record<Grupo, number>;
+  /** Oportunidades que cumplen la búsqueda y los filtros (todos los grupos). */
   total: number;
+  /** Solo la página pedida (POR_PAGINA filas), ya ordenada. */
   filas: FilaBandeja[];
+  /** Filas de la lista elegida (con el grupo, si hay uno) y la página. */
+  coincidencias: number; pagina: number; total_paginas: number; por_pagina: number;
   opciones: { origenes: Array<{ id: string; nombre: string }>; rubros: Array<{ id: string; nombre: string }>; zonas: Array<{ id: string; nombre: string }> };
 };
 
 type FiltroExtra = { nulo?: string; igual?: [string, string] };
+/** Filas de `tabla` cuyo `campo` está en `ids`: de a 100 ids y, dentro de cada tanda, TODAS las páginas (orden por id). */
 async function porIds<T>(tabla: string, cols: string, campo: string, ids: string[], extra: FiltroExtra = {}): Promise<T[]> {
   const out: T[] = [];
   for (const t of trozos([...new Set(ids)])) {
-    let q = supabaseAdmin.from(tabla).select(cols).in(campo, t);
-    if (extra.nulo) q = q.is(extra.nulo, null);
-    if (extra.igual) q = q.eq(extra.igual[0], extra.igual[1]);
-    out.push(...((revisar(await q, tabla) ?? []) as T[]));
+    out.push(...await todasLasFilas<T>((a, b) => {
+      let q = supabaseAdmin.from(tabla).select(cols).in(campo, t);
+      if (extra.nulo) q = q.is(extra.nulo, null);
+      if (extra.igual) q = q.eq(extra.igual[0], extra.igual[1]);
+      return q.order("id").range(a, b);
+    }, tabla));
   }
   return out;
 }
@@ -68,13 +76,13 @@ async function armarFilas(opps: FilaOpp[], hoy: string): Promise<FilaBandeja[]> 
     porIds<{ id: string; oportunidad_id: string; ocurrida_en: string; interes: Interes | null; necesidades: Necesidad[]; necesidad_otra: string | null; pack_potencial: Pack | null; observacion: string | null }>(
       "crm_visitas", "id, oportunidad_id, ocurrida_en, interes, necesidades, necesidad_otra, pack_potencial, observacion", "oportunidad_id", ids, { nulo: "anulada_en" }),
     porIds<{ oportunidad_id: string; tipo: string; ocurrida_en: string; estado_despues: string | null }>(
-      "crm_actividades", "oportunidad_id, tipo, ocurrida_en, estado_despues", "oportunidad_id", ids),
+      "crm_actividades", "id, oportunidad_id, tipo, ocurrida_en, estado_despues", "oportunidad_id", ids),
     porIds<Pendiente & { oportunidad_id: string }>(
       "crm_seguimientos", "id, oportunidad_id, tipo, vence_el, descripcion", "oportunidad_id", ids, { igual: ["estado", "pendiente"] }),
     catalogo(false), nombres(ADMIN),
   ]);
   const notas = await porIds<{ visita_id: string; texto: string; creada_en: string }>(
-    "crm_visita_notas", "visita_id, texto, creada_en", "visita_id", visitas.map((v) => v.id), { igual: ["creada_por_rol", "comercial"] });
+    "crm_visita_notas", "id, visita_id, texto, creada_en", "visita_id", visitas.map((v) => v.id), { igual: ["creada_por_rol", "comercial"] });
   const empresaDe = new Map(empresas.map((e) => [e.id, e]));
   const contactoDe = new Map(contactos.map((c) => [c.id, c]));
   const pendienteDe = new Map(pendientes.map((p) => [p.oportunidad_id, p]));
@@ -136,25 +144,32 @@ async function armarFilas(opps: FilaOpp[], hoy: string): Promise<FilaBandeja[]> 
  * cerradas por pérdida; vista "ganadas" (B3) = las cerradas por una venta, que salen
  * del seguimiento pero siguen a mano. Los contadores salen de la MISMA lista filtrada que las
  * filas (contar(filtrar(...))); el grupo elegido solo recorta las filas.
+ *
+ * Se leen TODAS las oportunidades de la vista (de a páginas, sin límite) y la búsqueda, los
+ * filtros, los grupos y los contadores se aplican a ese conjunto completo. Al navegador viaja
+ * solo la página pedida, de una lista con orden total (desempate por id): en un conjunto sin
+ * cambios, recorrer las páginas no repite ni omite oportunidades.
  */
-export async function bandeja(vista: Vista, f: FiltrosBandeja): Promise<BandejaDto> {
+export async function bandeja(vista: Vista, f: FiltrosBandeja, pagina = 1): Promise<BandejaDto> {
   const hoy = hoyEnSim();
-  let q = supabaseAdmin.from("crm_oportunidades").select(COLS_OPP).order("lead_en").limit(1000);
-  q = vista === "abiertas" ? q.is("cerrada_en", null) : q.eq("cierre_motivo", vista === "perdidas" ? "perdida" : "ganada");
-  const opps = (revisar(await q, "oportunidades") ?? []) as unknown as FilaOpp[];
+  const opps = await todasLasFilas<FilaOpp>((a, b) => {
+    const q = supabaseAdmin.from("crm_oportunidades").select(COLS_OPP).order("lead_en").order("id");
+    return (vista === "abiertas" ? q.is("cerrada_en", null) : q.eq("cierre_motivo", vista === "perdidas" ? "perdida" : "ganada")).range(a, b);
+  }, "oportunidades");
   const todas = await armarFilas(opps, hoy);
   const filtradas = filtrar(todas, { ...f, grupo: undefined }, hoy);
   const conteos = contar(vista === "abiertas" ? filtradas : []);
   const ganadaEn = new Map(opps.map((o) => [o.id, o.ganada_en ?? ""]));
-  const filas = vista === "perdidas"
-    ? [...filtradas].sort((a, b) => (b.perdida?.en ?? "").localeCompare(a.perdida?.en ?? ""))
-    : vista === "ganadas" ? [...filtradas].sort((a, b) => ganadaEn.get(b.id)!.localeCompare(ganadaEn.get(a.id)!))
-      : ordenar(f.grupo ? filtradas.filter((o) => o.grupo === f.grupo) : filtradas);
+  const lista = vista === "perdidas"
+    ? [...filtradas].sort((a, b) => (b.perdida?.en ?? "").localeCompare(a.perdida?.en ?? "") || a.id.localeCompare(b.id))
+    : vista === "ganadas" ? [...filtradas].sort((a, b) => ganadaEn.get(b.id)!.localeCompare(ganadaEn.get(a.id)!) || a.id.localeCompare(b.id))
+      : ordenarPorGrupo(f.grupo ? filtradas.filter((o) => o.grupo === f.grupo) : filtradas);
+  const p = paginar(lista, pagina);
   const [cat, mapa] = await Promise.all([catalogo(false), nombres(ADMIN)]);
   const origenes = [...new Set(todas.map((o) => o.origen.usuario_id))]
     .map((id) => (id ? { id, nombre: mapa.get(id) ?? "Comercial" } : { id: ORIGEN_ADMIN, nombre: ORIGEN_RECOMPRA }));
   return {
-    hoy, vista, conteos, total: filtradas.length, filas,
+    hoy, vista, conteos, total: filtradas.length, filas: p.filas, coincidencias: p.coincidencias, pagina: p.pagina, total_paginas: p.total_paginas, por_pagina: p.por_pagina,
     opciones: { origenes, rubros: cat.rubros.map((r) => ({ id: r.id, nombre: r.nombre })), zonas: cat.zonas.map((z) => ({ id: z.id, nombre: z.nombre })) },
   };
 }

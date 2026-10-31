@@ -20,7 +20,7 @@ export async function seguimientoGet(req: Request): Promise<NextResponse> {
   const r = await leer("crm seguimiento", () => S.bandeja(vista, {
     q: texto("q"), estado: texto("estado"), origen: texto("origen"), interes: texto("interes"), rubro: texto("rubro"), zona: texto("zona"),
     proxima: texto("proxima"), grupo: texto("grupo"),
-  }));
+  }, Number(p.get("pagina") ?? 1)));
   return r.ok ? json(r.valor) : r.response;
 }
 
