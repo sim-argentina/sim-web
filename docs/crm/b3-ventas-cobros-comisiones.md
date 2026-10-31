@@ -164,7 +164,9 @@ Tobías no las ve en la V1.
   sin publicar), con un código de N usos y una experiencia por simulador reservado. El CRM muestra
   de la campaña vinculada:
   - si el código es común o son códigos individuales;
-  - las experiencias compradas, usadas y disponibles, sin las canceladas.
+  - las experiencias compradas, usadas y disponibles. «Usadas» son las descontadas del cupo:
+    reservas vigentes y canceladas sin liberar el código. Estas últimas se muestran además como
+    **retenidas**. Una cancelada liberando no cuenta.
 
   No lee los códigos ni los beneficiarios. Detalle en [cierre-mvp.md](cierre-mvp.md), §9.
 - La presentación de la tarjeta física se controla a mano en el stand. El sistema no valida

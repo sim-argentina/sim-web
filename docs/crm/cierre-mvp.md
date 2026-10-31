@@ -519,7 +519,7 @@ integración (`integracion-crm-b8`) la combina con el CRM.
 | Código generado antes del pago, bloqueado hasta el 100% y la entrega | **Soportado, con dos registros manuales** | Se genera sin pago y sin fechas. Canjea solo con la campaña pagada (100%) y `fecha_inicio` (entrega) ≤ hoy, y en un pack esa fecha se carga recién pagada. |
 | 60 días desde la activación | **Soportado** | Vencimiento = `fecha_inicio` + 60; generar no fija fechas. |
 | Campañas existentes | **Sin cambios** | La marca nace en falso y sus usos valen 1. La única campaña de Producción (1 uso por código, cancelada) no cambia. |
-| Pantallas, informes y CRM | **Corregidos** | Experiencias compradas, usadas y disponibles, sin las canceladas. El CRM las lee sin beneficiarios ni códigos. |
+| Pantallas, informes y CRM | **Corregidos** | Experiencias compradas, usadas (descontadas del cupo: reservas vigentes y canceladas sin liberar) y disponibles. Las canceladas sin liberar se muestran además como **retenidas**; una cancelada liberando no cuenta. Verificado: Pack 10, reserva de 2 cancelada sin liberar → 2 usadas (2 retenidas), 8 disponibles, igual tras reintentar con «liberar». El CRM las lee sin beneficiarios ni códigos. |
 | Tarjeta física | **Manual** | El sistema no la valida: la revisa el personal en el stand. |
 
 **Permisos:** en la cadena del repositorio, `cancelar_reserva_empresa` (SECURITY DEFINER) era

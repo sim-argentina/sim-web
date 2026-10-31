@@ -177,7 +177,11 @@ export default function DetalleVenta({ id }: { id: string }) {
               ? `código común (${d.campania.codigos.generados ? "generado" : "sin generar"}, ${d.campania.cantidad_contratada} usos)`
               : `${d.campania.codigos.generados} código(s) individual(es)`}</p>
             {/* (Empresas B8) Experiencias, no códigos: con un código común «1 disponible» no dice cuántas tarjetas quedan. */}
-            <p className="text-white/80">Experiencias: {d.campania.experiencias.contratadas} compradas · {d.campania.experiencias.usadas} usadas · {d.campania.experiencias.restantes} {d.campania.estado === "vencida" ? "sin usar (vencidas)" : "disponibles"}</p>
+            {/* Solo «disponibles» cuando el código se puede canjear hoy (campaña activa). */}
+            <p className="text-white/80">Experiencias: {d.campania.experiencias.contratadas} compradas · {d.campania.experiencias.usadas} usadas · {d.campania.experiencias.restantes} {restoCampania(d.campania.estado)}</p>
+            {d.campania.experiencias.retenidas > 0 ? (
+              <p className="text-amber-200">De las usadas, {d.campania.experiencias.retenidas} {d.campania.experiencias.retenidas === 1 ? "queda retenida" : "quedan retenidas"} por reservas canceladas sin liberar el código: descuentan cupo aunque no se vayan a usar.</p>
+            ) : null}
             {!d.campania.codigo_comun ? (
               <p className="text-white/60">Códigos: {d.campania.codigos.generados} generados · {d.campania.codigos.disponibles} disponibles · {d.campania.codigos.utilizados} utilizados{d.campania.codigos.vencidos ? ` · ${d.campania.codigos.vencidos} vencidos` : ""}{d.campania.codigos.cancelados ? ` · ${d.campania.codigos.cancelados} cancelados` : ""}</p>
             ) : null}
@@ -206,6 +210,14 @@ export default function DetalleVenta({ id }: { id: string }) {
       ) : null}
     </div>
   );
+}
+
+/** Rótulo de las experiencias que quedan según el estado efectivo de la campaña de Empresas. */
+function restoCampania(estado: string): string {
+  if (estado === "activa") return "disponibles";
+  if (estado === "vencida") return "sin usar (vencidas)";
+  if (estado === "borrador" || estado === "pendiente_pago" || estado === "programada") return "por usar (el código todavía no se puede canjear)";
+  return "sin usar";
 }
 
 function Seccion({ titulo, etiqueta, acciones, children }: { titulo: string; etiqueta?: ReactNode; acciones?: ReactNode; children: ReactNode }) {

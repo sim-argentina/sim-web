@@ -123,7 +123,7 @@ async function main() {
       id: "k", empresa: "Gym", nombre: null, estado: "activa", estado_pago: "pendiente", modalidad: "unica", cantidad_contratada: 10, duracion_minutos: 20,
       usos_por_codigo: 1, codigo_comun: false, fecha_inicio: null, fecha_vencimiento: null, eliminada: false,
       codigos: { generados: 10, disponibles: 10, utilizados: 0, vencidos: 0, cancelados: 0 }, usos: 0,
-      experiencias: { contratadas: 10, usadas: 0, restantes: 10 },
+      experiencias: { contratadas: 10, usadas: 0, retenidas: 0, restantes: 10 },
     };
     assert.deepEqual(B.avisosCampania({ experiencias: 10, duracion_minutos: 20, estado_cobro: "anticipo" }, k), [], "coincide: sin avisos");
     const a = B.avisosCampania({ experiencias: 25, duracion_minutos: 15, estado_cobro: "cobrada" }, k);

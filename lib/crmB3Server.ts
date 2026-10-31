@@ -141,14 +141,20 @@ export async function campaniaLectura(id: string): Promise<CampaniaLectura | nul
   if (!esUuid(id)) return null;
   const k = revisar(await supabaseAdmin.from("empresa_campanias").select(COLS_CAMPANIA).eq("id", id).maybeSingle(), "campaña") as FilaCampania | null;
   if (!k) return null;
-  // De los códigos solo el estado y los usos; de los canjes, solo su estado y cuántas
-  // experiencias consumió cada uno (no se leen beneficiarios ni los códigos en sí). Con
-  // eso, las métricas de Empresas (B8) cuentan experiencias y dejan afuera las canceladas.
-  const [cods, usos] = await Promise.all([
+  // De los códigos solo el estado y los usos; de los canjes, su estado, cuántas
+  // experiencias consumió cada uno y si su reserva está cancelada (no se leen
+  // beneficiarios ni los códigos en sí). Con eso, las métricas de Empresas (B8) cuentan
+  // lo descontado del cupo y separan lo retenido por cancelaciones sin liberar.
+  const [cods, filasUsos] = await Promise.all([
     supabaseAdmin.from("empresa_codigos").select("estado, usos_actuales, usos_maximos").eq("campania_id", id),
-    todasLasFilas<{ estado: string; experiencias: number }>((a, b) =>
-      supabaseAdmin.from("empresa_codigo_usos").select("id, estado, experiencias").eq("campania_id", id).order("id").range(a, b), "canjes"),
+    todasLasFilas<{ estado: string; experiencias: number; reserva_id: number | null }>((a, b) =>
+      supabaseAdmin.from("empresa_codigo_usos").select("id, estado, experiencias, reserva_id").eq("campania_id", id).order("id").range(a, b), "canjes"),
   ]);
+  const reservas = await porIds<{ id: number; estado: string }>("reservas", "id, estado", "id",
+    filasUsos.flatMap((u) => (u.reserva_id == null ? [] : [String(u.reserva_id)])));
+  const estadoReserva = new Map(reservas.map((r) => [Number(r.id), r.estado]));
+  const usos = filasUsos.map((u) => ({ estado: u.estado, experiencias: u.experiencias,
+    reserva: u.reserva_id == null ? null : { estado: estadoReserva.get(Number(u.reserva_id)) ?? null } }));
   const hoy = hoyEnSim();
   const m = metricasCampania({ campania: k, codigos: (revisar(cods, "códigos") ?? []) as Array<{ estado: string; usos_actuales: number; usos_maximos: number }>, usos, hoy });
   return {
@@ -158,7 +164,7 @@ export async function campaniaLectura(id: string): Promise<CampaniaLectura | nul
     fecha_inicio: k.fecha_inicio, fecha_vencimiento: k.fecha_vencimiento, eliminada: !!k.deleted_at,
     codigos: { generados: m.generados, disponibles: m.disponibles, utilizados: m.utilizados, vencidos: m.vencidos, cancelados: m.cancelados },
     usos: m.usados,
-    experiencias: { contratadas: m.turnos_contratados, usadas: m.turnos_utilizados, restantes: m.turnos_restantes },
+    experiencias: { contratadas: m.turnos_contratados, usadas: m.turnos_utilizados, retenidas: m.turnos_retenidos, restantes: m.turnos_restantes },
   };
 }
 

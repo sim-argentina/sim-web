@@ -228,9 +228,11 @@ export type CampaniaLectura = {
   codigo_comun: boolean;
   fecha_inicio: string | null; fecha_vencimiento: string | null; eliminada: boolean;
   codigos: { generados: number; disponibles: number; utilizados: number; vencidos: number; cancelados: number };
-  // Experiencias usadas: una por simulador de cada canje no cancelado (la regla de Empresas).
+  // Experiencias descontadas del cupo (la regla de Empresas): una por simulador de las
+  // reservas vigentes y de las canceladas sin liberar; de ellas, «retenidas» son las de
+  // canceladas sin liberar. Una cancelada liberando no cuenta.
   usos: number;
-  experiencias: { contratadas: number; usadas: number; restantes: number };
+  experiencias: { contratadas: number; usadas: number; retenidas: number; restantes: number };
 };
 
 /**

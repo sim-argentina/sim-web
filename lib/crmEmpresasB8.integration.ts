@@ -63,6 +63,11 @@ function limpiar() {
       or empresa_campania_id in (select id from public.empresa_campanias where empresa like 'zzcrmb8%');
     delete from public.reserva_slots where reserva_id in (select id from zz_r);
     delete from public.reservas where id in (select id from zz_r);
+    -- En modo replica no corren los ON DELETE CASCADE: usos y códigos se borran a mano
+    -- (si no, quedan usos huérfanos con sus claves de idempotencia).
+    delete from public.empresa_codigo_usos where campania_id in (select id from public.empresa_campanias where empresa like 'zzcrmb8%')
+      or idempotency_key like 'zzcrmb8%';
+    delete from public.empresa_codigos where campania_id in (select id from public.empresa_campanias where empresa like 'zzcrmb8%');
     delete from public.empresa_campanias where empresa like 'zzcrmb8%';`);
 }
 
@@ -161,7 +166,7 @@ async function main() {
     const antesDeVincular = huellaEmpresas();
     let k = await campaniaEnCrm(V);
     assert.equal(k.codigo_comun, true, "el CRM ve el código común");
-    assert.deepEqual(o(k.experiencias), { contratadas: 10, usadas: 0, restantes: 10 }, "compradas 10, usadas 0, disponibles 10");
+    assert.deepEqual(o(k.experiencias), { contratadas: 10, usadas: 0, retenidas: 0, restantes: 10 }, "compradas 10, usadas 0, disponibles 10");
     assert.deepEqual(k.avisos, [], "cantidad y duración coinciden con la venta");
     assert.equal(k.fecha_vencimiento, null, "sin activación no hay vencimiento");
     assert.ok(!JSON.stringify(k).includes(CODIGO), "el CRM no lee el código en sí");
@@ -193,12 +198,20 @@ async function main() {
     // ── 7) Reservas de 2 y de 1 simulador; cancelación con reintento ────────────
     const dos = await E.reservarConCodigo(CODIGO, BENEF, dia, "10:00", ["Ferrari", "McLaren"], `${MARCA}-dos`);
     assert.ok(dos.ok, dos.ok ? "" : dos.error);
-    assert.ok((await E.reservarConCodigo(CODIGO, BENEF, dia, "10:30", ["Red Bull"], `${MARCA}-uno`)).ok);
-    assert.deepEqual(await experienciasEnCrm(V), { contratadas: 10, usadas: 3, restantes: 7 }, "2 + 1 simuladores = 3 experiencias");
+    const uno = await E.reservarConCodigo(CODIGO, BENEF, dia, "10:30", ["Red Bull"], `${MARCA}-uno`);
+    assert.ok(uno.ok);
+    assert.deepEqual(await experienciasEnCrm(V), { contratadas: 10, usadas: 3, retenidas: 0, restantes: 7 }, "2 + 1 simuladores = 3 experiencias");
     const ridDos = (dos as { ok: true; data: { reserva_id: number } }).data.reserva_id;
     assert.ok((await E.cancelarReservaEmpresa(ridDos, true)).ok);
     assert.ok((await E.cancelarReservaEmpresa(ridDos, true)).ok, "reintento");
-    assert.deepEqual(await experienciasEnCrm(V), { contratadas: 10, usadas: 1, restantes: 9 }, "vuelven las 2, una sola vez");
+    assert.deepEqual(await experienciasEnCrm(V), { contratadas: 10, usadas: 1, retenidas: 0, restantes: 9 }, "vuelven las 2, una sola vez");
+    assert.equal(sql(`select usos_actuales from public.empresa_codigos where campania_id = ${lit(K)}`), "1");
+    // Cancelada SIN liberar: sigue descontando cupo y el CRM la muestra retenida; el
+    // reintento con «liberar» no cambia nada.
+    const ridUno = (uno as { ok: true; data: { reserva_id: number } }).data.reserva_id;
+    assert.ok((await E.cancelarReservaEmpresa(ridUno, false)).ok);
+    assert.ok((await E.cancelarReservaEmpresa(ridUno, true)).ok, "reintento con liberar");
+    assert.deepEqual(await experienciasEnCrm(V), { contratadas: 10, usadas: 1, retenidas: 1, restantes: 9 }, "sin liberar: retenida");
     assert.equal(sql(`select usos_actuales from public.empresa_codigos where campania_id = ${lit(K)}`), "1");
     k = await campaniaEnCrm(V);
     assert.ok(!/ZZTEST|B8CRM|zz@test/.test(JSON.stringify(k)), "sin datos de beneficiarios en el CRM");
