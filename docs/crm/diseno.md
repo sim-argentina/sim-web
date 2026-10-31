@@ -5,7 +5,8 @@ admin). Objetivo del MVP: registrar → seguir → vender → medir.
 
 Este documento resume el diseño acordado y las correcciones que se aplican a los bloques
 posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md),
-[b1-prospeccion.md](b1-prospeccion.md) y [b2-seguimiento.md](b2-seguimiento.md).
+[b1-prospeccion.md](b1-prospeccion.md), [b2-seguimiento.md](b2-seguimiento.md) y
+[b3-ventas-cobros-comisiones.md](b3-ventas-cobros-comisiones.md).
 
 ## Bloques
 
@@ -14,7 +15,7 @@ posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md),
 | B0 | Identidad comercial: usuarios individuales, sesión propia, administración de usuarios (+ B0.1: límite con respaldo, aislamiento de la analítica) | Implementado y verificado en local; sin migrar ni publicar |
 | B1 | Negocios, contactos, jornadas y visitas desde el celular; oportunidad al obtener un contacto útil; revisitas | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar |
 | B2 | Bandeja "Contactos para seguir": estados (contacto, conversación, interesado, negociación, pausa, perdida), actividades manuales, próxima acción, pérdida con motivo y reapertura por ciclos | Implementado y verificado en local; sin migrar ni publicar |
-| B3 | Ventas (y recién ahí "Ganado"), cobros, saldo y comisiones; vínculo de solo lectura con Empresas | Pendiente |
+| B3 | Ventas (y recién ahí "Ganado"), cobros, saldo y comisiones; recompras; vínculo de solo lectura con Empresas; correcciones y anulaciones | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar. Integró al cierre las correcciones de seguridad vigentes de `main` (Next 16.4.3, React 19.2.9, sharp 0.35.5, webhooks de Mercado Pago) |
 | B4 | Métricas y tablero (sobre los hitos y ciclos de B2, sin reescribir fechas) | Pendiente |
 
 Fuera de la V1: WhatsApp o emails automáticos, IA, scoring, mapas, propuestas automáticas e
@@ -72,3 +73,15 @@ integración automática con Finanzas.
    códigos (individuales o uno con varios usos), descuentos y su efecto en la comisión,
    intervención comercial en recompras, movilidad (quién la paga y si resta) y visibilidad de
    las comisiones para Tobías. B0 no implementa ni presupone ninguna.
+   *B3 resolvió:*
+   - el importe es el acuerdo comercial, sin IVA ni comprobantes;
+   - vigencia y vencimiento son los de la campaña de Empresas vinculada («sin definir» si no
+     hay), sin copiar 30 o 60 días;
+   - la entrega de tarjetas se marca a mano con fecha, sin activar nada;
+   - los códigos son los de la campaña de Empresas;
+   - un descuento o un personalizado exige confirmar la comisión;
+   - la recompra espontánea no lleva comisión y la trabajada lleva la completa, con la
+     intervención confirmada por Administración y vinculada a una visita o gestión;
+   - Tobías no ve comisiones en la V1.
+
+   *Sigue pendiente* la movilidad (y las devoluciones reales, fuera de B3).
