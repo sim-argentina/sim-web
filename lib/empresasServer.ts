@@ -17,7 +17,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   calcularVencimiento, formatearCodigo, estadoEfectivo, estadoCodigoEfectivo,
   metricasCampania, ivaDesglose, inicioValido, planDeCodigos, errorConfiguracionCupo, errorInicioPack,
-  experienciasDeUso, type Modalidad,
+  experienciasDeUso, experienciasRetenidasDeUso, type Modalidad,
 } from "@/lib/empresas";
 import { fechaValida, hoyEnSim } from "@/lib/agenda";
 import {
@@ -194,7 +194,6 @@ export async function getCampania(id: string, ahora: Date = new Date()): Promise
     supabaseAdmin.from("empresa_codigo_usos").select("*").eq("campania_id", id).order("created_at"),
   ]);
   const hoy = hoyEnSim(ahora);
-  const metricas = metricasCampania({ campania, codigos: codigos ?? [], usos: usos ?? [], hoy });
 
   // Enriquecer cada uso con su reserva real (simuladores/fecha/hora/estado/no-show).
   const reservaIds = (usos ?? []).map((u) => u.reserva_id).filter((x): x is number => x != null);
@@ -205,11 +204,14 @@ export async function getCampania(id: string, ahora: Date = new Date()): Promise
     (reservas ?? []).forEach((r) => reservasById.set(r.id, r));
   }
   const usosDto = (usos ?? []).map((u) => ({ ...u, reserva: u.reserva_id != null ? reservasById.get(u.reserva_id) ?? null : null }));
+  // (B8) Con su reserva, las métricas separan lo retenido por cancelaciones sin liberar.
+  const metricas = metricasCampania({ campania, codigos: codigos ?? [], usos: usosDto, hoy });
 
   // Distribución por simulador (de reservas reales). Fuente real, no hardcodeada.
   const porSimulador: Record<string, number> = {};
   for (const u of usosDto) {
-    if (!experienciasDeUso(u)) continue; // (B8) un canje cancelado no usó simuladores
+    // (B8) Una reserva cancelada no usó simuladores, haya liberado o no el código.
+    if (!experienciasDeUso(u) || experienciasRetenidasDeUso(u)) continue;
     const sims = Array.isArray((u.reserva as { simuladores?: unknown })?.simuladores) ? (u.reserva as { simuladores: string[] }).simuladores : [];
     for (const s of sims) porSimulador[String(s)] = (porSimulador[String(s)] || 0) + 1;
   }

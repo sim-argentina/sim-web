@@ -190,6 +190,7 @@ async function main() {
     assert.equal(await usosActuales(p2.id), 9, "la liberación se decide en la cancelación efectiva");
     const m2 = ((await getCampania(p2.id)) as Ok<{ metricas: Record<string, number> }>).data.metricas;
     assert.deepEqual([m2.turnos_contratados, m2.turnos_utilizados, m2.turnos_restantes, m2.pctUtilizacion, m2.generados], [10, 9, 1, 90, 1]);
+    assert.equal(m2.turnos_retenidos, 1, "la cancelada sin liberar sigue usada y figura retenida");
     const lista = (await listarCampanias({ q: MARCA })) as Ok<Array<{ id: string; generados: number; utilizados: number }>>;
     const fila = lista.data.find((c) => c.id === p2.id)!;
     assert.deepEqual([fila.generados, fila.utilizados], [1, 9], "listado: 1 código, 9 experiencias");

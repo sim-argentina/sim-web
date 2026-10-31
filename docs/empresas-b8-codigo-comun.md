@@ -69,11 +69,19 @@ El módulo Empresas no tenía una configuración correcta para eso:
    varios usos». Con el código generado, no se cambia el tipo de código ni el cupo de un código
    común.
 10. **Métricas, listado e informe por experiencia:**
-    - usadas = suma de `experiencias` de los canjes no cancelados;
-    - restantes = contratadas − usadas;
+    - **usadas** = experiencias **descontadas del cupo**: las de reservas vigentes y las de
+      reservas **canceladas sin liberar** el código. Una cancelada liberando no cuenta: sus
+      experiencias volvieron al código;
+    - **retenidas** = de las usadas, las de reservas canceladas sin liberar: descuentan cupo
+      aunque nadie las vaya a usar. Se muestran aparte en el detalle, en el informe y en el CRM;
+    - **restantes (disponibles)** = contratadas − usadas: lo que el código todavía permite reservar;
     - % uso = usadas ÷ contratadas.
 
-    La distribución por simulador ya no cuenta reservas canceladas.
+    «Personas que usaron el beneficio» y la distribución por simulador cuentan solo reservas no
+    canceladas.
+
+    Ejemplo verificado: Pack 10, reserva de 2 y cancelación sin liberar. Queda el código en 2/10,
+    con 2 usadas (2 retenidas) y 8 disponibles. Un reintento con «liberar» deja lo mismo.
 11. **Funciones:**
     - las cinco funciones modificadas son SECURITY DEFINER con `search_path = public` (las legacy
       y `cancelar` no lo tenían);

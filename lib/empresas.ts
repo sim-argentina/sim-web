@@ -116,19 +116,26 @@ export function errorInicioPack(c: { codigo_comun?: boolean | null; fecha_inicio
 export type MetricasInput = {
   campania: CampaniaEstadoInput & { cantidad_contratada?: number; duracion_minutos?: number };
   codigos: CodigoInput[];
-  // Canjes. Cada uno consumió `experiencias` (una por simulador; sin el dato, 1). Uno
-  // con estado 'cancelado' (reserva cancelada liberando el código) no cuenta: sus
-  // experiencias volvieron al código.
+  // Canjes. Cada uno consumió `experiencias` (una por simulador; sin el dato, 1) y las
+  // sigue descontando del cupo mientras no se libere:
+  //   · reserva vigente → usadas;
+  //   · reserva cancelada SIN liberar (el uso sigue 'consumido') → usadas y, además,
+  //     «retenidas»: descuentan cupo aunque nadie vaya a usarlas;
+  //   · reserva cancelada liberando el código (el uso pasa a 'cancelado') → no cuenta.
+  // Para separar las retenidas, el uso trae su reserva (`reserva.estado`).
   usos: unknown[];
   hoy: string;
 };
-type UsoLectura = { estado?: unknown; experiencias?: unknown } | null | undefined;
+type UsoLectura = { estado?: unknown; experiencias?: unknown; reserva?: { estado?: unknown } | null } | null | undefined;
 export const experienciasDeUso = (u: unknown): number => {
   const x = u as UsoLectura;
   if (x?.estado === "cancelado") return 0;
   const n = Math.trunc(Number(x?.experiencias));
   return n >= 1 ? n : 1;
 };
+/** Experiencias que un canje descuenta del cupo con su reserva ya cancelada sin liberar. */
+export const experienciasRetenidasDeUso = (u: unknown): number =>
+  (u as UsoLectura)?.reserva?.estado === "cancelada" ? experienciasDeUso(u) : 0;
 export function metricasCampania({ campania, codigos, usos, hoy }: MetricasInput) {
   const est = estadoEfectivo(campania, hoy);
   let disponibles = 0, utilizados = 0, vencidos = 0, cancelados = 0;
@@ -142,7 +149,9 @@ export function metricasCampania({ campania, codigos, usos, hoy }: MetricasInput
   const generados = codigos.length;
   const contratados = Number(campania.cantidad_contratada) || 0;
   const duracion = Number(campania.duracion_minutos) || 0;
-  const usados = usos.reduce<number>((s, u) => s + experienciasDeUso(u), 0); // experiencias usadas (sin canjes cancelados)
+  // Experiencias descontadas del cupo: reservas vigentes + canceladas sin liberar.
+  const usados = usos.reduce<number>((s, u) => s + experienciasDeUso(u), 0);
+  const retenidos = usos.reduce<number>((s, u) => s + experienciasRetenidasDeUso(u), 0);
   // Sobre las experiencias contratadas, no sobre códigos agotados: con un código
   // común, «1 de 1 código» no dice cuántas tarjetas se usaron.
   const pctUtilizacion = contratados > 0 ? Math.round((usados / contratados) * 1000) / 10 : 0;
@@ -157,6 +166,8 @@ export function metricasCampania({ campania, codigos, usos, hoy }: MetricasInput
     pctUtilizacion,
     turnos_contratados: contratados,
     turnos_utilizados: usados,
+    // De las utilizadas, las que retiene una reserva cancelada sin liberar el código.
+    turnos_retenidos: retenidos,
     turnos_restantes: Math.max(0, contratados - usados),
     minutos_contratados: contratados * duracion,
     minutos_utilizados: usados * duracion,

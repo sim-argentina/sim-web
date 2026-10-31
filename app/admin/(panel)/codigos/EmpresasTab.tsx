@@ -311,6 +311,12 @@ export default function EmpresasTab() {
             </div>
           ))}
         </div>
+        {/* (B8) Lo que descuenta cupo sin que nadie vaya a usarlo: reservas canceladas sin liberar el código. */}
+        {Number(m.turnos_retenidos) > 0 && (
+          <p className="text-xs text-amber-300">
+            De las usadas, {String(m.turnos_retenidos)} {Number(m.turnos_retenidos) === 1 ? "queda retenida" : "quedan retenidas"} por reservas canceladas sin liberar el código: descuentan cupo aunque no se vayan a usar.
+          </p>
+        )}
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-zinc-400">
           Contratación: <b className="text-white">{money(c.neto ?? c.precio_neto)}</b> neto · IVA {money(c.iva ?? 0)} · Total <b className="text-white">{money(c.total ?? c.precio_total ?? 0)}</b> · Pago: {c.estado_pago}
         </div>
