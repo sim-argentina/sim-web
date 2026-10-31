@@ -50,3 +50,6 @@ _build*.txt
 _buildout.txt
 _opt.js
 !.env.test.example
+
+# Instancia local aislada del CRM (scripts/pruebas/crm-local.mjs)
+/.crm-local/

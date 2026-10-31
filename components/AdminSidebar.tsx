@@ -94,6 +94,13 @@ export default function AdminSidebar({ role }: Props) {
       roles: ["admin"],
     },
     {
+      // CRM B2B: seguimiento (entrada principal), negocios, jornadas y configuración.
+      // Solo admin; los comerciales usan su propia interfaz (/comercial).
+      label: "CRM",
+      href: "/admin/crm/seguimiento",
+      roles: ["admin"],
+    },
+    {
       // Terminales de SIM Control y verificación de jornadas. Solo admin: desde acá se generan y
       // revocan credenciales de máquina.
       label: "SIM Control",

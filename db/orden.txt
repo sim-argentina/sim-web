@@ -116,5 +116,23 @@ esquema-base-permisos.sql
 # lectura (toda escritura pasa por sus RPCs). Necesita turnos_stand y empleados.
 interacciones-bloque1.sql
 
+# ── 13g. CRM B2B · B0: identidad comercial (usuarios comerciales y auditoría) ─
+# Mismo motivo que 13b: recorta a service_role a lectura (y sin la columna
+# password_hash) y le quita EXECUTE a las funciones internas que
+# esquema-base-permisos.sql le da sobre todo public. No depende de otro módulo.
+crm-b0-identidad.sql
+
+# ── 13h. CRM B2B · B1: prospección y visitas ───────────────────────────────
+# Necesita crm-b0-identidad.sql (usuarios y auditoría). Mismo patrón de permisos.
+crm-b1-prospeccion.sql
+
+# ── 13i. CRM B2B · B2: seguimiento comercial de Administración ───────────────
+# Necesita crm-b1-prospeccion.sql (oportunidades, visitas, contactos). Mismo patrón de permisos.
+crm-b2-seguimiento.sql
+
+# ── 13j. CRM B2B · B3: ventas, cobros, comisiones y recompras ────────────────
+# Necesita crm-b2-seguimiento.sql. Lee (no escribe) empresa_campanias/empresa_codigos de Empresas.
+crm-b3-ventas.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql

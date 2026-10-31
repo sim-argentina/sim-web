@@ -7,11 +7,13 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      // Panel/API y páginas transaccionales de resultado (éxito/pendiente/error):
-      // son de confirmación, sin valor de búsqueda y no deben indexarse.
+      // Panel/API, la interfaz comercial del CRM y páginas transaccionales de
+      // resultado (éxito/pendiente/error): son de confirmación o internas, sin
+      // valor de búsqueda y no deben indexarse.
       disallow: [
         "/admin",
         "/api",
+        "/comercial",
         "/reservas/exito",
         "/reservas/pendiente",
         "/reservas/error",

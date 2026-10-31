@@ -2,6 +2,8 @@
 // Empuja eventos al dataLayer usando la nomenclatura oficial de GA4. No contiene
 // lógica de negocio: solo medición aditiva.
 
+import { esAreaComercial } from "@/lib/areaComercial";
+
 const CONSENT_KEY = "sim-analytics-consent";
 const PENDING_PURCHASE_KEY = "sim-pending-purchase";
 const PURCHASE_FIRED_KEY = "sim-purchase-fired";
@@ -27,9 +29,12 @@ const HOSTS_PRODUCCION = new Set(["simexperience.com.ar", "www.simexperience.com
 // pathname NO es exactamente "/admin" ni empieza con "/admin/". No se apoya en
 // NODE_ENV porque un Vercel Preview también corre en modo production: el límite
 // efectivo es el hostname productivo. "/administracion" NO se bloquea.
+// La interfaz comercial del CRM ("/comercial", "/comercial/...") tampoco se mide:
+// es interna, como el panel.
 export function analyticsAllowedFor(hostname: string, pathname: string): boolean {
   if (!HOSTS_PRODUCCION.has(hostname)) return false;
   if (pathname === "/admin" || pathname.startsWith("/admin/")) return false;
+  if (esAreaComercial(pathname)) return false;
   return true;
 }
 
