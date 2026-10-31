@@ -141,6 +141,17 @@ assert.equal(experienciasDeUso({ estado: "consumido" }), 1);
 assert.equal(experienciasDeUso({ estado: "consumido", experiencias: 4 }), 4);
 assert.equal(experienciasDeUso({ estado: "cancelado", experiencias: 4 }), 0);
 assert.equal(experienciasDeUso(undefined), 1);
+// Cupo retenido: reserva cancelada SIN liberar → sigue descontando (usada) y figura retenida.
+const mRet = metricasCampania({
+  campania: comun, codigos: [{ estado: "disponible", usos_actuales: 2, usos_maximos: 10 }], hoy: HOY,
+  usos: [
+    { estado: "consumido", experiencias: 2, reserva: { estado: "cancelada" } }, // cancelada sin liberar
+    { estado: "cancelado", experiencias: 1, reserva: { estado: "cancelada" } }, // cancelada liberando: no cuenta
+  ],
+});
+assert.deepEqual([mRet.turnos_utilizados, mRet.turnos_retenidos, mRet.turnos_restantes], [2, 2, 8]);
+assert.equal(metricasCampania({ campania: comun, codigos: [], hoy: HOY,
+  usos: [{ estado: "consumido", experiencias: 2, reserva: { estado: "activa" } }] }).turnos_retenidos, 0, "vigente: usada, no retenida");
 // Activación del pack: la fecha de inicio (entrega) solo con la campaña pagada.
 assert.equal(errorInicioPack({ codigo_comun: true, fecha_inicio: null, estado_pago: "pendiente" }), null);
 assert.match(errorInicioPack({ codigo_comun: true, fecha_inicio: "2026-11-05", estado_pago: "pendiente" }) ?? "", /entrega/);

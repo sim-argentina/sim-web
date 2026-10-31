@@ -200,22 +200,27 @@ export function generarInformePDF(d: InformeData) {
   });
 
   // (B8) Con código común se informan experiencias: «1 código disponible» no dice
-  // cuántas tarjetas quedan. Personas = experiencias usadas (una por simulador, sin
-  // canjes cancelados).
+  // cuántas tarjetas quedan. «Usadas» = descontadas del cupo (reservas vigentes y
+  // canceladas sin liberar); de ellas, las retenidas no las usó nadie. Personas =
+  // usadas menos retenidas (una por simulador).
+  const retenidas = Number(m.turnos_retenidos) || 0;
+  const personas = String(Math.max(0, Number(m.turnos_utilizados) - retenidas));
   autoTable(doc, {
     head: [["Estado de utilización", ""]],
     body: c.codigo_comun === true ? [
       ["Código", `Común: uno para todas las tarjetas del pack (${m.generados} generado)`],
-      ["Experiencias usadas", String(m.turnos_utilizados)],
+      ["Experiencias usadas (descontadas del cupo)", String(m.turnos_utilizados)],
+      ["De ellas, retenidas por cancelaciones sin liberar", String(retenidas)],
       ["Experiencias restantes", String(m.turnos_restantes)],
-      ["Personas que usaron el beneficio", String(m.turnos_utilizados)],
+      ["Personas que usaron el beneficio", personas],
     ] : [
       ["Códigos generados", String(m.generados)],
       ["Usados", String(m.utilizados)],
       ["Disponibles", String(m.disponibles)],
       ["Vencidos", String(m.vencidos)],
       ["Cancelados", String(m.cancelados)],
-      ["Personas que usaron el beneficio", String(m.turnos_utilizados)],
+      ["Retenidas por cancelaciones sin liberar", String(retenidas)],
+      ["Personas que usaron el beneficio", personas],
     ],
     ...dosCol,
   });
