@@ -73,7 +73,7 @@ integración automática con Finanzas.
 8. **Historia B2B en Finanzas.** La auditoría buscó "empresa" y "pack" en descripciones y
    observaciones de `fin_movimientos`. Eso no demuestra que no haya operaciones B2B
    históricas: quedan *no identificadas con las comprobaciones realizadas*.
-9. **Decisiones comerciales pendientes, sin adoptar por defecto:** IVA de los precios,
+9. **Decisiones comerciales que estaban pendientes, sin adoptar por defecto:** IVA de los precios,
    vigencia de los packs, momento de entrega y activación de tarjetas/códigos, formato de
    códigos (individuales o uno con varios usos), descuentos y su efecto en la comisión,
    intervención comercial en recompras, movilidad (quién la paga y si resta) y visibilidad de
@@ -90,4 +90,29 @@ integración automática con Finanzas.
      oportunidad (una gestión de Administración sola no alcanza: corregido en B4);
    - Tobías no ve comisiones en la V1.
 
-   *Sigue pendiente* la movilidad (y las devoluciones reales, fuera de B3).
+   *Definidas el 31/10/2026* (condiciones comerciales vigentes; detalle en
+   [cierre-mvp.md](cierre-mvp.md), §7). Definirlas no implementa nada nuevo:
+   - **Packs:**
+     - Pack 10: 10 × 20 min, $150.000;
+     - Pack 25: 25 × 20 min, $360.000;
+     - más de 25: cotización personalizada de Administración.
+   - **Pago:** 50% al confirmar y 50% contra entrega de las tarjetas.
+   - **Activación:** al entregar las tarjetas, con el 100% cobrado. Es una acción manual del
+     personal, no automática.
+   - **Vigencia:** 60 días desde la activación.
+   - **Formato de códigos:** un código común por pack/campaña, compartido por sus tarjetas; cada
+     tarjeta es una experiencia de 20 minutos y hay que presentarla físicamente. El cupo total es
+     el de las experiencias compradas. **Hoy Empresas no lo soporta de forma correcta**:
+     cierre-mvp.md, §9.
+   - **Transferencia:** permitida para regalos, beneficios, premios, sorteos, incentivos y
+     acciones promocionales.
+   - **Reventa: no permitida.** No se pueden vender las experiencias por separado ni como turnos
+     propios de SIM. Incluirlas como premio dentro de una promoción sí está permitido.
+   - **Movilidad:** SIM cubre la movilidad comercial, con una estimación inicial de hasta dos
+     tanques mensuales, ajustable. Estacionamientos y peajes van aparte. Multas y gastos
+     personales no corresponden a SIM. La estimación no es un importe fijo ni un cupo.
+
+   *Siguen pendientes:*
+   - tratamiento fiscal e IVA (los importes no se tocan y no se agrega IVA);
+   - devoluciones reales de dinero (cancelar o reprogramar una reserva no es una devolución);
+   - el procedimiento concreto de liquidación de la movilidad.

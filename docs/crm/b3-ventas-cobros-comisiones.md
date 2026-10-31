@@ -37,6 +37,19 @@ Un pack no cambia su cantidad ni su duración. Cambiar el catálogo vale para la
 registren después: cada venta guarda su foto (`producto_nombre`, cantidad, duración, importe,
 `precio_catalogo`, `comision_catalogo`).
 
+**Condiciones comerciales vigentes** (31/10/2026; detalle y qué ejecuta cada parte en
+[cierre-mvp.md](cierre-mvp.md), §7):
+- **Precios:** son los de la tabla; más de 25 experiencias se cotizan de forma personalizada.
+- **Pago:** 50% al confirmar y 50% contra entrega de las tarjetas.
+- **Activación:** al entregar las tarjetas, con el 100% cobrado.
+- **Vigencia:** 60 días desde la activación.
+- **Tarjetas y código:** un código común por pack; cada tarjeta es una experiencia de 20 minutos
+  y hay que presentarla físicamente.
+- **Transferencia y reventa:** las experiencias se pueden entregar como regalo, beneficio, premio,
+  sorteo, incentivo o parte de una acción promocional. **No se pueden revender.**
+
+El CRM no agrega IVA: el tratamiento fiscal sigue pendiente.
+
 ## Venta y Ganado
 
 - **Una sola operación** (`crm_venta_registrar`) registra la venta y pasa la oportunidad a
@@ -62,8 +75,10 @@ registren después: cada venta guarda su foto (`producto_nombre`, cantidad, dura
 - Cada cobro: venta, **fecha efectiva** (entre el acuerdo y hoy), importe, medio (transferencia,
   efectivo, Mercado Pago *anotado a mano*, tarjeta, otro), referencia, concepto (anticipo,
   saldo, otro), actor (Administración) y **fecha de carga** aparte.
-- Condición inicial 50/50: el **anticipo esperado** es la mitad del importe (redondeada al
-  centavo hacia arriba); es una referencia para cargar, no un estado.
+- Condición vigente 50/50: 50% al confirmar y 50% contra entrega de las tarjetas. El **anticipo
+  esperado** es la mitad del importe (redondeada al centavo hacia arriba); es una referencia para
+  cargar, no un estado. El CRM no obliga a que la entrega coincida con el saldo: eso lo cuida el
+  personal.
 - Estado **derivado** de los cobros vigentes: *Sin cobros* · *Cobro parcial (menos que el
   anticipo)* · *Anticipo cobrado · falta el saldo* · *Cobrada por completo*. No hay casillas de
   «pagado».
@@ -140,6 +155,17 @@ Tobías no las ve en la V1.
   libera).
 - **Vencimiento**: el de la campaña vinculada; sin campaña (o sin fecha en la campaña), **«Sin
   definir»**. El CRM no copia ni calcula 30 o 60 días.
+- **Condición vigente:** el pack se activa al entregar las tarjetas, con el 100% cobrado, y vence
+  a los 60 días.
+  - En Empresas, a mano: compra única, `fecha_inicio` = día de la entrega y campaña pagada solo
+    con el 100%. Empresas calcula entonces el vencimiento.
+  - Ni la marca de entrega del CRM ni el cobro del saldo activan nada.
+- **Código común por pack:** hoy Empresas no lo soporta de forma correcta. Con un solo código
+  el cupo es el correcto, pero pantallas e informes muestran «1 turno contratado». La alternativa
+  de 10 códigos de 10 usos multiplica el cupo. Detalle y cambio mínimo, sin implementar, en
+  [cierre-mvp.md](cierre-mvp.md), §9.
+- La presentación de la tarjeta física se controla a mano en el stand. El sistema no valida
+  tarjetas.
 - Avisos (solo informan, no modifican nada):
   - cantidad o duración distintas entre la campaña y la venta;
   - campaña eliminada;
@@ -161,6 +187,8 @@ Solo Administración, siempre con motivo y auditoría, sin borrar nada.
 
 Todo en una transacción. **Devoluciones reales** (dinero que vuelve al cliente) quedan fuera
 de alcance: requieren definir su tratamiento en Finanzas y en la comisión antes de modelarlas.
+Tampoco es una devolución cancelar o reprogramar una reserva de Empresas, con o sin liberar el
+uso: mueve o libera una experiencia, y la compra corporativa sigue igual.
 
 ## Finanzas, aislado
 
@@ -328,7 +356,10 @@ Repetido sobre 16.4.3:
 - Sin recordatorios: lo pendiente se ve al abrir «Ventas».
 - Administración sigue siendo la credencial compartida: cobros y pagos figuran como
   «Administración».
-- Movilidad (quién la paga y si resta) sigue sin decidir; no entra en la comisión.
+- Movilidad: SIM cubre la movilidad comercial (guía comercial vigente, ver
+  [cierre-mvp.md](cierre-mvp.md), §7.2). El procedimiento de liquidación sigue pendiente. No entra
+  en la comisión.
+- Tratamiento fiscal e IVA, pendiente: el importe sigue siendo el acuerdo comercial, sin IVA.
 - El estado del negocio en la ficha sigue siendo el de la prospección («Visitado», «Lead para
   seguimiento»); las compras se ven en su sección.
 - **B4** (no empezado): métricas y tablero sobre ventas, cobros, comisiones, hitos y ciclos;

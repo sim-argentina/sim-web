@@ -233,8 +233,10 @@ verificación de B3 (OK 49) y un caso en la integración.
 - **Cobros menos comisiones pagadas** es exactamente esa resta, con flujos del período. No
   descuenta movilidad, prestación de las experiencias, impuestos ni gastos fijos, ni usa
   comisiones devengadas: **no** es ganancia ni resultado comercial neto.
-- **Movilidad registrada**: completas separadas de pendientes. Quién la paga todavía no está
-  definido, así que no se declara egreso de SIM ni se resta de nada.
+- **Movilidad registrada**: completas separadas de pendientes. SIM cubre la movilidad comercial
+  (guía comercial vigente, [cierre-mvp.md](cierre-mvp.md), §7.2), pero el procedimiento de
+  liquidación no está definido: no se declara egreso pagado ni se resta de nada. Las fórmulas no
+  cambian, y la estimación de dos tanques no es un tope ni un cupo.
 - Finanzas queda completamente aislado.
 
 ## Segmentos, necesidades y pérdidas
@@ -363,7 +365,8 @@ recortadas, así que la geometría se verificó midiendo el DOM.
 - La señal de interés depende de lo que se anotó: lo no evaluado queda afuera.
 - La bandeja de B2 ya no corta en 1000 oportunidades: desde el cierre del MVP lee todas y pagina de
   a 50 ([cierre-mvp.md](cierre-mvp.md), §2).
-- La movilidad no se asigna a negocios ni a ventas, ni se resta: falta decidir quién la paga.
+- La movilidad no se asigna a negocios ni a ventas, ni se resta: SIM la cubre, pero falta el
+  procedimiento de liquidación.
 - «Cobros menos comisiones pagadas» no es caja ni resultado. Caja y contribución comercial siguen
   pendientes de definición (diseno.md, corrección 6).
 - No hay comparación contra el período anterior (no se pidió) ni exportación.

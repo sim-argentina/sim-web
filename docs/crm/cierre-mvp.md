@@ -1,8 +1,9 @@
 # CRM B2B — Cierre del MVP
 
 Cierre integral del MVP (B0 → B4) **sin módulos nuevos**: corrección del límite de 1000 filas de
-Seguimiento, recorrido integral con los dos roles, plan de publicación y de vuelta atrás, y las
-condiciones comerciales que siguen abiertas. **Nada de esto está publicado:** sin push, sin merge a
+Seguimiento, recorrido integral con los dos roles y plan de publicación y de vuelta atrás. Incluye
+las condiciones comerciales vigentes, lo que siguen abiertas y la compatibilidad del código común
+con Empresas (§7–§10, ajuste del 31/10/2026). **Nada de esto está publicado:** sin push, sin merge a
 `main`, sin SQL en Producción y sin cambios en Vercel. Diseño: [diseno.md](diseno.md). Bloques:
 [B0](b0-identidad.md) · [B1](b1-prospeccion.md) · [B2](b2-seguimiento.md) ·
 [B3](b3-ventas-cobros-comisiones.md) · [B4](b4-metricas.md).
@@ -168,10 +169,11 @@ Administración desde `/admin/crm/configuracion`:
   o desactivar; no se borran.
 - **Productos y comisiones de lista:**
   - Pack 10: 10 experiencias de 20 min, $150.000, comisión $40.000;
-  - Pack 25: 25 experiencias, $360.000, comisión $90.000;
-  - Personalizado: desde 26 experiencias, importe y comisión a mano.
+  - Pack 25: 25 experiencias de 20 min, $360.000, comisión $90.000;
+  - Personalizado: desde 26 experiencias, cotización de Administración, importe y comisión a mano.
 
-  Son los precios aprobados en B3, sin IVA. Cambiarlos vale para las ventas siguientes.
+  Son los importes vigentes (§7.1). El CRM no les agrega IVA; el tratamiento fiscal sigue
+  pendiente (§7.3). Cambiarlos vale para las ventas siguientes.
 - **Zonas:** los SQL no siembran ninguna. Administración carga las que vaya a trabajar Tobías.
   Son opcionales en jornadas y negocios, pero sin ellas no hay métricas por zona.
 - **Usuario comercial de Tobías:** se crea después de publicar (abajo).
@@ -359,49 +361,255 @@ Mejoras opcionales, **no hechas** porque no son defectos:
 - cola sin conexión en el celular;
 - comparación contra el período anterior y exportación en Métricas.
 
-## 7. Condiciones comerciales pendientes
+## 7. Condiciones comerciales
 
-Siguen **sin definir**. El CRM no las resuelve por defecto ni las oculta: muestra «Sin definir»,
-no resta lo que no está decidido y rotula lo que muestra.
+### 7.1 Definidas (vigentes desde el 31/10/2026)
 
-**Afectan la oferta o la entrega de experiencias.** Hay que definirlas antes de cerrar la primera
-venta real. Mientras tanto, Tobías no debería prometer nada sobre ellas en la calle.
+Las fijó el owner y están en la guía comercial vigente. Ya **no** son decisiones pendientes. Que
+estén documentadas acá **no significa que el sistema las ejecute**: la tabla del final de esta
+sección dice qué hace cada parte y qué queda a cargo del personal.
 
-| Condición | Operación que afecta | Qué hace hoy el CRM |
+**Packs**
+
+| Pack | Experiencias | Precio |
 |---|---|---|
-| **Vigencia y condiciones de los packs corporativos** (plazo, días y horarios, transferencia, reprogramación) | Oferta en la visita; registro de la venta; vínculo con la campaña de Empresas | El vencimiento es el de la campaña vinculada, o «Sin definir». No copia ni calcula 30 o 60 días. La venta no guarda condiciones. |
-| **Momento de entrega o activación de los códigos** (¿con el anticipo, con el saldo, al entregar las tarjetas?) | Cobros, entrega de tarjetas, campaña de Empresas | La entrega se marca a mano con fecha y no activa nada. Los códigos los crea y activa Empresas. El CRM solo avisa la discordancia de cobro entre ambos. |
-| **Tratamiento fiscal** (IVA de los precios, comprobante, base de la comisión) | Precio que se ofrece; importe de la venta; cobros; comisión; futura integración con Finanzas | El importe es el acuerdo comercial, sin IVA ni comprobantes. La campaña de Empresas tiene su propio precio con IVA, así que se comparan estados, no montos. La comisión es un importe fijo de lista o confirmado. |
-| **Devoluciones reales** (dinero que vuelve al cliente) | Política que se ofrece; posventa; comisión ya pagada; métricas | Fuera de alcance. Anular un cobro o una venta corrige un error de carga, **no** es una devolución. No hay cómo registrar una devolución sin desfigurar los cobros. |
+| Pack 10 | 10 de 20 minutos | $ 150.000 |
+| Pack 25 | 25 de 20 minutos | $ 360.000 |
+| Más de 25 | cantidad a medida | cotización personalizada de Administración |
 
-**No afecta la oferta y no bloquea la prospección ni el seguimiento**
+Son los importes aprobados. El CRM no les agrega IVA: el tratamiento fiscal sigue pendiente (§7.3).
 
-| Condición | Operación que afecta | Qué hace hoy el CRM |
+**Pago, activación y vigencia**
+- 50% al confirmar.
+- 50% contra entrega de las tarjetas.
+- El pack se activa al entregar las tarjetas, con el 100% cobrado.
+- La vigencia es de 60 días desde la activación.
+
+**Tarjetas y código**
+- **Un código común por pack (campaña)**, compartido por las tarjetas de ese pack. No es un mismo
+  código para todas las empresas: cada pack tiene el suyo.
+- Cada tarjeta representa una experiencia de 20 minutos.
+- Para usar la experiencia hay que presentar la tarjeta física.
+- El cupo total corresponde a las experiencias compradas.
+
+**Transferencia, promociones y prohibición de reventa**
+- Las experiencias son transferibles para que la empresa las entregue como:
+  - regalos;
+  - beneficios para clientes o empleados;
+  - premios por compra;
+  - sorteos;
+  - incentivos;
+  - parte de acciones promocionales y comerciales.
+- **No está permitida la reventa.** La empresa no puede vender las experiencias por separado ni
+  comercializarlas como turnos propios de SIM.
+- Incluir una experiencia como premio o beneficio dentro de una promoción está permitido. Venderla
+  como producto independiente, no.
+- La frase de la guía comercial **«No pueden revenderse» es correcta y se conserva**.
+- Este repositorio nunca registró una autorización de reventa: se revisó entero el 31/10/2026.
+  Cualquier «reventa permitida» de un mensaje o material anterior queda reemplazada por esta
+  condición (ver §10).
+
+**Qué ejecuta el sistema y qué queda a mano**
+
+| Condición | El CRM (registra y consulta) | Empresas (ejecuta) | A cargo del personal |
+|---|---|---|---|
+| Precios | Catálogo con Pack 10 y Pack 25 a esos importes y su comisión de lista; el personalizado (desde 26) se carga a mano. | La campaña tiene su propio precio neto más IVA (21% por defecto) y no toma el del CRM. | Cargar el precio de la campaña según el tratamiento fiscal que se defina. |
+| 50% y 50% | El anticipo esperado (50%) es una referencia. El estado de cobro se deriva de los cobros cargados. La comisión queda «Prevista» hasta el 100%. | El estado de pago es binario (pendiente o pagado), sin parciales. | Cargar cada cobro en el CRM. Marcar la campaña pagada en Empresas **solo** con el 100% cobrado. |
+| Activación al entregar, con el 100% | La entrega es una marca manual con fecha: no activa nada y no exige el 100%. Si Empresas y el CRM no coinciden en el cobro, lo avisa. | El código es canjeable solo con la campaña pagada y `fecha_inicio` ≤ hoy. | Al entregar: confirmar el 100%, marcar la entrega en el CRM, marcar pagada la campaña y poner `fecha_inicio` = día de entrega. |
+| Vigencia de 60 días | Muestra el vencimiento de la campaña vinculada (o «Sin definir»); no lo calcula. | Compra única: vencimiento = `fecha_inicio` + 60 días (la mensual daría 30). | Elegir «Compra única». |
+| Código común, cupo y tarjeta física | Solo lee la campaña. | Hoy no tiene una configuración correcta para el código común (§9). | Revisar la tarjeta en el stand. |
+| Transferencia y no reventa | No registra a quién se entregan las experiencias. | Guarda nombre y contacto de quien reserva, sin relación con la empresa compradora. | Comunicar la condición a la empresa. Detectar una reventa es tarea del personal. |
+
+Ninguna activación es automática: no la dispara ni la entrega de las tarjetas ni el cobro del
+saldo.
+
+### 7.2 Movilidad
+
+La guía comercial vigente establece:
+- SIM cubre la movilidad comercial.
+- La estimación inicial es de hasta dos tanques mensuales, ajustable según el auto y los recorridos.
+- Los estacionamientos y peajes comerciales se registran aparte.
+- Las multas y los gastos personales no corresponden a SIM.
+
+Eso es la **condición**. El **procedimiento de liquidación** todavía no está definido:
+- quién aprueba;
+- cada cuánto se liquida;
+- con qué comprobantes;
+- por qué medio se paga;
+- cómo se ajusta la estimación;
+- qué admite el campo «otros».
+
+En el CRM, hoy:
+- **Registro:** cada jornada guarda por separado km, combustible (cantidad e importe),
+  estacionamiento, peajes y otros. El tablero muestra la «movilidad registrada» sin restarla de
+  nada.
+- **La estimación de dos tanques es solo una referencia:** no es un importe fijo, ni un cupo
+  automático, ni una autorización ilimitada de gastos.
+- **No hay efectos en otros módulos:** no se generan reintegros ni movimientos en Finanzas, y las
+  fórmulas del tablero no cambian.
+- **Multas y gastos personales:** no se cargan en «otros». Es una indicación para Tobías; el CRM
+  no lo valida.
+
+### 7.3 Siguen pendientes
+
+| Pendiente | Qué afecta | Qué hace hoy el sistema |
 |---|---|---|
-| **Quién paga la movilidad** (y si se reintegra o resta) | Cierre de jornada; liquidación con Tobías (fuera del CRM); futura contribución comercial | Registra km y gastos por jornada y los muestra como «movilidad registrada», sin restarlos ni asignarlos a ventas o negocios. No entra en la comisión. |
+| **Tratamiento fiscal e IVA** | Si los importes incluyen IVA; el comprobante; la base de la comisión; el precio de la campaña en Empresas; la futura integración con Finanzas. | El CRM guarda el importe como acuerdo comercial, sin IVA. Empresas propone 21% de IVA sobre su propio precio. No se agrega IVA automáticamente ni se cambian los importes aprobados. |
+| **Devoluciones reales de dinero** | La posventa, una comisión ya pagada, las métricas y Finanzas. | Fuera de alcance. Anular un cobro o una venta corrige una carga; no devuelve dinero. Tampoco lo devuelve **cancelar o reprogramar una reserva** de Empresas, con o sin liberar el uso: eso mueve o libera una experiencia, y la compra corporativa sigue igual. |
+| **Procedimiento de liquidación de la movilidad** | El pago a Tobías y la futura contribución comercial. | Ver §7.2. |
 
-Ninguna de las cinco impide empezar a prospectar y seguir leads: visitas, contactos, jornadas,
-Seguimiento y Métricas funcionan sin ellas. Siguen pendientes, además, la **caja** y la
-**contribución comercial** (diseno.md, corrección 6) y la **integración con Finanzas**, que no se
-empezó.
+También siguen pendientes la caja y la contribución comercial (diseno.md, corrección 6) y la
+integración con Finanzas, que no se empezó.
 
-## 8. Bloqueos reales antes del uso real
+## 8. Qué resolver y cuándo
 
-1. **Publicación sin autorizar:**
-   - SQL sin aplicar en SIM WEB;
-   - rama sin fusionar en `main`;
-   - `CRM_SESSION_SECRET` sin cargar en Vercel.
+**Antes de publicar el CRM**
+1. Autorización del owner y los pasos de §4: variable en Vercel, los cuatro SQL, el control de
+   solo lectura y el merge.
+2. Si `main` avanzó, volver a comparar y repetir las pruebas (§4, puntos 1–3).
+3. Después de publicar y antes de la primera jornada: crear el usuario real de Tobías y probarlo
+   en su teléfono real. El QA fue con emulación.
 
-   Por diseño de este cierre, nada de eso se hizo. Se sigue §4.
-2. **Condiciones que afectan la oferta** (§7: vigencia, activación, fiscal y devoluciones):
-   bloquean la primera venta real, no la prospección.
-3. **Usuario real de Tobías y su teléfono:** hay que crearlo después de publicar y probarlo en su
-   celular real (el QA fue con emulación).
-4. **`main` puede avanzar:** a la hora de publicar hay que volver a comparar y repetir las
-   pruebas (§4, puntos 1–3).
+Ninguna condición comercial bloquea la publicación. Prospección, seguimiento y métricas funcionan
+con lo definido en §7.1 y con los pendientes de §7.3 abiertos. El código común tampoco la bloquea:
+el CRM solo lee la campaña vinculada.
 
-No bloquean:
-- movilidad (se registra, no se resta);
-- Administración como credencial compartida (la auditoría dice «Administración»);
-- sin recordatorios ni importador;
-- zonas (se cargan desde Configuración).
+**Antes de ofrecer y vender experiencias reales**
+1. **Tratamiento fiscal e IVA.** Tobías tiene que poder responder si $150.000 y $360.000 incluyen
+   IVA y qué comprobante recibe la empresa.
+2. **Qué se le dice al cliente sobre devoluciones.** La forma de registrarlas en el sistema puede
+   esperar a la primera devolución real; la respuesta al cliente, no.
+3. **Cómo se producen las tarjetas.** Si se imprimen con el código antes de la entrega, el código
+   tiene que existir antes del pago total (§9, cambio 5).
+
+**Antes de entregar experiencias reales (la primera entrega de un pack)**
+1. **El cambio de Empresas para el código común y el cupo por experiencia (§9).** Sin ese cambio:
+   - con un código común, o el cupo se multiplica, o pantallas e informes muestran mal lo
+     comprado;
+   - una reserva puede dar varias experiencias por un solo uso.
+
+   Usar códigos individuales cuidaría el cupo, pero contradice la condición de §7.1.
+2. **El procedimiento de entrega del personal (§7.1):**
+   - cobrar el saldo;
+   - marcar la entrega en el CRM;
+   - marcar pagada la campaña con `fecha_inicio` = ese día y «Compra única» de 20 minutos;
+   - poner el código en las tarjetas;
+   - revisar la tarjeta en el stand.
+
+**Antes de la primera liquidación con Tobías**
+1. El procedimiento de liquidación de la movilidad (§7.2).
+
+## 9. Compatibilidad del código común (Empresas y el vínculo del CRM)
+
+Revisión del código local, sin cambiar su funcionamiento:
+- Empresas: `lib/empresas.ts` y `lib/empresasServer.ts`;
+- tablas: `db/esquema-base.sql`;
+- RPC vigentes de canje: `db/empresas-b7-modalidad.sql` y `db/empresas-b7-1-fecha.sql`;
+- canje público: `app/api/empresas/canje/route.ts` y `app/reservas-empresa/page.tsx`;
+- pantalla de Empresas: `app/admin/(panel)/codigos/EmpresasTab.tsx`;
+- vínculo del CRM: `lib/crmB3.ts`, `lib/crmB3Server.ts` y `components/crm/DetalleVenta.tsx`.
+
+**Cómo cuenta Empresas hoy**
+- La campaña tiene dos campos: `cantidad_contratada` («Cantidad contratada») y `usos_por_codigo`
+  («Usos por código (default 1)»).
+- **«Generar códigos» crea `cantidad_contratada` códigos**, cada uno con
+  `usos_maximos = usos_por_codigo`. El cupo real es `cantidad_contratada × usos_por_codigo`.
+- La pantalla, el informe y el CRM toman `cantidad_contratada` como «turnos contratados»:
+  - restantes = contratados − canjes;
+  - minutos = contratados × duración;
+  - «% uso» = códigos agotados ÷ códigos generados.
+- **Cada canje (una reserva) suma un uso** al código. Puede reservar de 1 a 4 simuladores: la web
+  pública manda uno, pero la API `/api/empresas/canje` acepta hasta 4.
+- **Un canje cancelado con «liberar código»** devuelve el uso al código, pero su fila de uso
+  (estado `cancelado`) sigue contando como «utilizado» en la pantalla, en el informe y en el
+  conteo de canjes que muestra el CRM.
+
+**Configuraciones posibles para un Pack 10**
+
+| Configuración | Códigos que genera | Cupo real | Lo que muestran pantallas, informe y CRM | Resultado |
+|---|---|---|---|---|
+| Cantidad 10, usos 10 | 10 códigos distintos | 100 experiencias | «10 turnos contratados» | **Cupo multiplicado por 10**, y no es un código común. |
+| Cantidad 1, usos 10 | 1 código | 10 experiencias | «1 turno contratado», 20 minutos y «Restantes 0» después del primer canje. El CRM avisa: «La campaña tiene 1 turno contratado y la venta, 10 experiencias». | Cupo correcto, **representación incorrecta**. |
+| Cantidad 10, usos 1 (lo habitual hoy) | 10 códigos individuales | 10 experiencias | Correcto | Correcto, pero **no es un código común**. |
+
+**Conclusión: el código común no es compatible hoy.** Ninguna configuración da a la vez un solo
+código, el cupo correcto y pantallas e informes correctos.
+
+**Por requisito**
+
+| Requisito | Estado | Detalle |
+|---|---|---|
+| Un código común por pack o campaña | **Pendiente de desarrollo** | Ver la tabla anterior. |
+| Cupo total de 10, 25 o una cantidad personalizada | **Soportado solo con códigos individuales**; con código común, pendiente | `cantidad_contratada` acepta cualquier cantidad. Con un código común, el cupo y su representación no coinciden. |
+| Experiencias de 20 minutos | **Soportado** | La campaña nueva toma la modalidad comercial vigente al crearla (`v2_10`: 10, 20 o 30 minutos). La RPC exige que la reserva dure lo que dice la campaña. El formulario propone 15 minutos, así que hay que cargar 20 a mano. |
+| Control del cupo ante reservas simultáneas | **Soportado por canje; pendiente por experiencia** | La RPC toma el código `FOR UPDATE`: dos canjes simultáneos del mismo código se serializan y el segundo ve el uso del primero (`lib/empresasCanje.integration.ts` lo prueba). Pero el control es por canje, no por experiencia: una reserva de 4 simuladores consume un solo uso. Con un código común en 10 tarjetas, cualquiera que lo conozca podría hacerlo por la API. |
+| Vigencia desde la activación acordada | **Manual** | Vencimiento = `fecha_inicio` + 60 días, en compra única. El personal carga `fecha_inicio` = día de entrega; tiene que caer entre el pago y 30 días después, así que cobrar el 100% ese día es compatible. No hay activación automática. Los códigos solo se generan con la campaña pagada. |
+| Presentación de la tarjeta física | **Manual** | El canje es por la web, con el código; el sistema no conoce las tarjetas. La revisión en el stand la hace el personal, que puede marcar ausente o cancelar. Con un código común, quien lo conozca puede reservar sin la tarjeta hasta agotar el cupo. |
+
+**Quién hace qué**
+1. **El CRM registra y consulta:**
+   - la venta: pack, experiencias, duración, importe, cobros 50/50, comisión y entrega con fecha;
+   - la campaña vinculada, en solo lectura: estado, pago en Empresas, cantidad, duración, usos por
+     código, códigos y canjes, y vencimiento;
+   - avisos de cantidad, duración y cobro.
+
+   No crea campañas ni códigos, no activa nada y no valida tarjetas.
+2. **Empresas ejecuta:**
+   - la campaña y la generación de códigos (con la campaña pagada);
+   - el canje web con reserva atómica: código `FOR UPDATE`, idempotencia, horarios y bloqueos;
+   - el vencimiento calculado;
+   - la cancelación, la reprogramación y la marca de ausente desde Administración;
+   - los informes.
+3. **Queda a cargo del personal:**
+   - marcar pagada la campaña al 100%, con `fecha_inicio` = entrega;
+   - elegir «Compra única» y 20 minutos;
+   - generar el código y ponerlo en las tarjetas;
+   - revisar la tarjeta física en el stand;
+   - cargar cobros y entrega en el CRM y vincular la campaña a la venta;
+   - comunicar la prohibición de reventa.
+4. **Necesita un cambio posterior:** el código común con cupo y representación correctos, un uso
+   por experiencia y los canjes cancelados fuera de «utilizados».
+
+**Cambio mínimo necesario (no implementado)**
+
+Va en el módulo Empresas, que hoy está en Producción y no es parte del CRM. Necesita su propia
+rama sobre `main`, una migración, pruebas y autorización. Antes de empezar hay que revisar, con
+autorización, si alguna campaña real usa `usos_por_codigo` > 1, para no cambiarle el sentido.
+1. **Código común:** una marca en la campaña (por ejemplo, `codigo_comun boolean not null
+   default false`). Con la marca, «Generar» crea **un** código con
+   `usos_maximos = cantidad_contratada`. Sin ella, todo sigue como hoy. `cantidad_contratada`
+   sigue siendo el cupo de experiencias, así que pantallas, informe y CRM quedan bien sin cambiar
+   su lectura.
+2. **Un uso por experiencia:** que la RPC de canje (v2 y legacy) y `reservarConCodigo` exijan un
+   simulador por canje, o que sumen un uso por simulador comprobando
+   `usos_actuales + n <= usos_maximos`. Reprogramar no puede cambiar la cantidad de simuladores.
+3. **Métricas (`metricasCampania`):**
+   - «turnos utilizados» = canjes no cancelados;
+   - «% uso» = canjes ÷ cantidad contratada, no códigos agotados ÷ códigos generados.
+
+   El conteo de canjes del CRM tiene que aplicar el mismo filtro.
+4. **CRM, solo visualización:** mostrar «código común» en lugar de «N usos por código».
+5. **Opcional, según cómo se impriman las tarjetas:** permitir generar el código antes de marcar
+   pagada la campaña. El canje ya exige pagada y `fecha_inicio`, así que el código no se podría
+   usar antes de tiempo.
+
+Pruebas del cambio:
+- `lib/empresas.test.ts`;
+- `lib/empresasCanje.integration.ts`, con código común de cupo 10 bajo concurrencia, rechazo de un
+  canje de varios simuladores y una cancelación con liberación;
+- regresión del vínculo de B3 en el CRM.
+
+## 10. Materiales fuera del repositorio
+
+Estas actualizaciones quedan pendientes; no se tocaron:
+- **Guía comercial vigente** (no está en el repositorio):
+  - conservar «No pueden revenderse»;
+  - si alguna lista de supuestos errores de la guía la incluye, retirarla de esa lista (en el
+    repositorio no hay ninguna);
+  - quitar cualquier «reventa permitida» de mensajes o materiales anteriores.
+- **Material para la empresa cliente y las tarjetas**, si existe: tiene que coincidir con §7.1.
+  Es decir: código común del pack, tarjeta física para usar la experiencia, 60 días desde la
+  entrega, transferencia permitida y reventa prohibida.
+
+En el repositorio no hay páginas públicas ni textos con condiciones de los packs corporativos,
+fuera de esta documentación.
