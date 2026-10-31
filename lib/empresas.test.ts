@@ -10,6 +10,8 @@ import {
   estadoCodigoEfectivo,
   metricasCampania,
   formatearCodigo,
+  planDeCodigos,
+  errorConfiguracionCupo,
 } from "./empresas";
 
 // npx tsx lib/empresas.test.ts
@@ -99,5 +101,48 @@ assert.ok(!/[01OI]/.test(cod.replace(/^EMP-/, "").replace(/-/g, ""))); // sin 0/
 // Determinista: mismos bytes → mismo código.
 assert.equal(formatearCodigo(new Uint8Array([7, 7, 7, 7, 7, 7, 7, 7, 7, 7])), formatearCodigo(new Uint8Array([7, 7, 7, 7, 7, 7, 7, 7, 7, 7])));
 
+// ── (B8) Plan de códigos: el cupo son las experiencias contratadas ────────────
+assert.deepEqual(planDeCodigos({ codigo_comun: true, cantidad_contratada: 10, usos_por_codigo: 1 }), { codigos: 1, usosPorCodigo: 10 });
+assert.deepEqual(planDeCodigos({ codigo_comun: true, cantidad_contratada: 25, usos_por_codigo: 7 }), { codigos: 1, usosPorCodigo: 25 }); // ignora usos_por_codigo
+assert.deepEqual(planDeCodigos({ codigo_comun: true, cantidad_contratada: 0 }), { codigos: 0, usosPorCodigo: 0 });
+assert.deepEqual(planDeCodigos({ codigo_comun: false, cantidad_contratada: 10, usos_por_codigo: 1 }), { codigos: 10, usosPorCodigo: 1 });
+assert.deepEqual(planDeCodigos({ cantidad_contratada: 3 }), { codigos: 3, usosPorCodigo: 1 }); // sin marca = individuales
+for (const [codigo_comun, cantidad] of [[true, 10], [true, 25], [true, 37], [false, 10], [false, 25]] as const) {
+  const p = planDeCodigos({ codigo_comun, cantidad_contratada: cantidad, usos_por_codigo: 1 });
+  assert.equal(p.codigos * p.usosPorCodigo, cantidad, `cupo = experiencias (${codigo_comun ? "común" : "individual"} ${cantidad})`);
+}
+// La configuración que multiplicaba el cupo (individuales con varios usos) ya no se acepta.
+assert.equal(errorConfiguracionCupo({ codigo_comun: false, usos_por_codigo: 1 }), null);
+assert.equal(errorConfiguracionCupo({ codigo_comun: true, usos_por_codigo: 1 }), null);
+assert.equal(errorConfiguracionCupo({ codigo_comun: true, usos_por_codigo: 10 }), null);
+assert.match(errorConfiguracionCupo({ codigo_comun: false, usos_por_codigo: 10 }) ?? "", /Código común/);
+assert.match(errorConfiguracionCupo({ usos_por_codigo: 2 }) ?? "", /1 uso/);
+
+// ── (B8) Métricas por experiencia: código común y canjes cancelados ──────────
+const comun = { ...campania, cantidad_contratada: 10, duracion_minutos: 20 };
+const usosComun = [
+  ...Array.from({ length: 3 }, () => ({ estado: "consumido" })),
+  { estado: "cancelado" }, // reserva cancelada liberando el código: el uso volvió
+];
+const mComun = metricasCampania({ campania: comun, codigos: [{ estado: "disponible", usos_actuales: 3, usos_maximos: 10 }], usos: usosComun, hoy: HOY });
+assert.equal(mComun.generados, 1);
+assert.equal(mComun.turnos_contratados, 10);
+assert.equal(mComun.turnos_utilizados, 3);
+assert.equal(mComun.usados, 3);
+assert.equal(mComun.turnos_restantes, 7);
+assert.equal(mComun.pctUtilizacion, 30); // 3 de 10 experiencias, no «0 de 1 código agotado»
+assert.equal(mComun.minutos_contratados, 200);
+assert.equal(mComun.minutos_utilizados, 60);
+// Individuales: un cancelado con liberación tampoco cuenta (antes sumaba como usado).
+const mInd = metricasCampania({
+  campania, codigos, usos: [...Array.from({ length: 4 }, () => ({ estado: "consumido" })), { estado: "cancelado" }], hoy: HOY,
+});
+assert.equal(mInd.turnos_utilizados, 4);
+assert.equal(mInd.turnos_restantes, 21);
+assert.equal(mInd.pctUtilizacion, 16);
+// Sin estado (como cuenta el CRM: solo la cantidad de canjes) se toman como vigentes.
+assert.equal(metricasCampania({ campania: comun, codigos: [], usos: Array.from({ length: 2 }), hoy: HOY }).turnos_utilizados, 2);
+
 console.log("OK — empresas: vigencia 60/30, inicio programable, IVA, estados efectivos, " +
-  "canje solo si activa, estado de código, métricas (contratado/usado/restante/vencido) y generación de código.");
+  "canje solo si activa, estado de código, métricas (contratado/usado/restante/vencido), generación de código y " +
+  "(B8) código común: plan de códigos con cupo = experiencias, configuración que multiplicaba rechazada, métricas por experiencia sin cancelados.");

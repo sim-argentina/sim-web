@@ -16,7 +16,7 @@ import { randomBytes } from "crypto";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   calcularVencimiento, formatearCodigo, estadoEfectivo, estadoCodigoEfectivo,
-  metricasCampania, ivaDesglose, inicioValido, type Modalidad,
+  metricasCampania, ivaDesglose, inicioValido, planDeCodigos, errorConfiguracionCupo, type Modalidad,
 } from "@/lib/empresas";
 import { fechaValida, hoyEnSim } from "@/lib/agenda";
 import {
@@ -35,7 +35,7 @@ const ok = <T>(data: T): Resultado<T> => ({ ok: true, data });
 // por acción; pero estado_pago/fecha_pago/medio_pago son datos comerciales editables.
 const CAMPOS_EDITABLES = [
   "empresa", "nombre_campania", "contacto_nombre", "contacto_telefono", "contacto_email",
-  "cuit", "modalidad", "cantidad_contratada", "duracion_minutos", "usos_por_codigo",
+  "cuit", "modalidad", "cantidad_contratada", "duracion_minutos", "usos_por_codigo", "codigo_comun",
   "precio_neto", "iva_porcentaje", "fecha_inicio", "observaciones",
   "estado_pago", "fecha_pago", "medio_pago",
 ] as const;
@@ -50,6 +50,7 @@ function limpiarCampania(body: Record<string, unknown>): Record<string, unknown>
     if (n in out) out[n] = Number(out[n]) || 0;
   }
   if ("modalidad" in out && out.modalidad !== "mensual") out.modalidad = "unica";
+  if ("codigo_comun" in out) out.codigo_comun = out.codigo_comun === true;
   // Campaña opcional: string vacío/espacios se normaliza a null de forma consistente.
   if ("nombre_campania" in out) out.nombre_campania = String(out.nombre_campania ?? "").trim() || null;
   return out;
@@ -69,17 +70,23 @@ export async function listarCampanias(opts: { q?: string | null; estado?: string
   const { data, error } = await query;
   if (error) return fail(500, "No se pudieron cargar las campañas.");
   const hoy = hoyEnSim(ahora);
-  // Conteo de códigos por campaña (barato) para el listado.
+  // Conteo por campaña (barato) para el listado: códigos generados y (B8)
+  // experiencias usadas = canjes no cancelados, que con un código común no es lo
+  // mismo que códigos agotados.
   const ids = (data ?? []).map((c) => c.id);
   const conteos = new Map<string, { generados: number; utilizados: number }>();
+  const acumular = (id: string, campo: "generados" | "utilizados") => {
+    const acc = conteos.get(id) ?? { generados: 0, utilizados: 0 };
+    acc[campo]++;
+    conteos.set(id, acc);
+  };
   if (ids.length) {
-    const { data: cods } = await supabaseAdmin.from("empresa_codigos").select("campania_id, estado").in("campania_id", ids);
-    for (const c of cods ?? []) {
-      const acc = conteos.get(c.campania_id) ?? { generados: 0, utilizados: 0 };
-      acc.generados++;
-      if (c.estado === "utilizado") acc.utilizados++;
-      conteos.set(c.campania_id, acc);
-    }
+    const [{ data: cods }, { data: usos }] = await Promise.all([
+      supabaseAdmin.from("empresa_codigos").select("campania_id").in("campania_id", ids),
+      supabaseAdmin.from("empresa_codigo_usos").select("campania_id, estado").in("campania_id", ids),
+    ]);
+    for (const c of cods ?? []) acumular(c.campania_id, "generados");
+    for (const u of usos ?? []) if (u.estado !== "cancelado") acumular(u.campania_id, "utilizados");
   }
   const rows = (data ?? [])
     .map((c) => {
@@ -113,7 +120,7 @@ export async function crearCampania(body: Record<string, unknown>, createdBy: st
   const modalidadComercial = cat.catalogo.modalidad;
 
   const row = limpiarCampania(body);
-  const err = validarCampania(row);
+  const err = validarCampania(row) ?? errorConfiguracionCupo(row);
   if (err) return fail(400, err);
   if (!duracionEmpresaValida(modalidadComercial, row.duracion_minutos)) return fail(400, mensajeDuracionEmpresa(modalidadComercial));
   const modalidad = (row.modalidad as Modalidad) ?? "unica";
@@ -132,6 +139,22 @@ export async function actualizarCampania(id: string, body: Record<string, unknow
   const merged = { ...actual, ...row };
   const err = validarCampania(merged);
   if (err) return fail(400, err);
+  // (B8) El tipo de código y el cupo de un código común quedan fijos al generarlo:
+  // cambiarlos después desacoplaría el código de lo comprado.
+  const cambiaNumero = (k: string) => k in row && Number(row[k]) !== Number(actual[k]);
+  const cambiaComun = "codigo_comun" in row && row.codigo_comun !== Boolean(actual.codigo_comun);
+  if (actual.codigos_generados && cambiaComun) {
+    return fail(409, "Los códigos ya fueron generados: no se puede cambiar entre código común y códigos individuales.");
+  }
+  if (actual.codigos_generados && actual.codigo_comun && cambiaNumero("cantidad_contratada")) {
+    return fail(409, `El código común ya se generó con ${actual.cantidad_contratada} usos: la cantidad contratada no se puede cambiar.`);
+  }
+  // Una campaña anterior con usos_por_codigo > 1 se sigue pudiendo editar; lo que
+  // no se acepta es pasar a esa configuración.
+  if (cambiaComun || cambiaNumero("usos_por_codigo")) {
+    const errCupo = errorConfiguracionCupo(merged);
+    if (errCupo) return fail(400, errCupo);
+  }
   // (B7) modalidad_comercial no es editable (no está en CAMPOS_EDITABLES). Una
   // duración NUEVA se valida contra la modalidad GUARDADA de la campaña; la que
   // ya tenía se conserva siempre, aunque hoy no se venda.
@@ -204,34 +227,43 @@ function nuevoCodigo(): string {
   return formatearCodigo(new Uint8Array(randomBytes(12)));
 }
 
-// Genera los códigos contratados. Solo si la campaña está pagada y aún no generó.
-// Idempotente por la bandera codigos_generados (§40: generar ≠ exportar).
+// Genera los códigos contratados, una sola vez (§40: generar ≠ exportar).
+// (B8) Con código común: UN código con usos_maximos = cantidad_contratada, y se
+// puede generar antes del pago para imprimir las tarjetas (el canje igual exige
+// la campaña pagada y su fecha de inicio). Con códigos individuales, como antes:
+// solo con la campaña pagada.
 export async function generarCodigos(id: string): Promise<Resultado<unknown>> {
   const { data: campania } = await supabaseAdmin.from("empresa_campanias").select("*").eq("id", id).is("deleted_at", null).maybeSingle();
   if (!campania) return fail(404, "Campaña no encontrada.");
   if (campania.estado === "cancelada") return fail(409, "La campaña está cancelada.");
-  if (campania.estado_pago !== "pagado") return fail(409, "La campaña no está paga: no se pueden generar códigos.");
+  const comun = campania.codigo_comun === true;
+  if (!comun && campania.estado_pago !== "pagado") return fail(409, "La campaña no está paga: no se pueden generar códigos.");
   if (campania.codigos_generados) return fail(409, "Los códigos ya fueron generados para esta campaña.");
-  const cantidad = Number(campania.cantidad_contratada) || 0;
-  if (cantidad < 1) return fail(400, "La cantidad contratada debe ser al menos 1.");
+  const plan = planDeCodigos(campania);
+  if (plan.codigos < 1) return fail(400, "La cantidad contratada debe ser al menos 1.");
 
-  const usosMax = Number(campania.usos_por_codigo) || 1;
+  // (B8) Se reserva la generación ANTES de insertar: dos «Generar» simultáneos no
+  // pueden emitir dos tandas (con un código común, el cupo se duplicaría).
+  const { data: reservada } = await supabaseAdmin.from("empresa_campanias")
+    .update({ codigos_generados: true, updated_at: new Date().toISOString() })
+    .eq("id", id).eq("codigos_generados", false).select("id").maybeSingle();
+  if (!reservada) return fail(409, "Los códigos ya fueron generados para esta campaña.");
+  const liberar = () => supabaseAdmin.from("empresa_campanias").update({ codigos_generados: false }).eq("id", id);
+
   // Genera un set localmente único; el UNIQUE de DB cubre colisiones globales.
   for (let intento = 0; intento < 3; intento++) {
     const set = new Set<string>();
-    while (set.size < cantidad) set.add(nuevoCodigo());
-    const filas = Array.from(set).map((codigo) => ({ campania_id: id, codigo, usos_maximos: usosMax }));
+    while (set.size < plan.codigos) set.add(nuevoCodigo());
+    const filas = Array.from(set).map((codigo) => ({ campania_id: id, codigo, usos_maximos: plan.usosPorCodigo }));
     const { error } = await supabaseAdmin.from("empresa_codigos").insert(filas);
-    if (!error) {
-      await supabaseAdmin.from("empresa_campanias")
-        .update({ codigos_generados: true, updated_at: new Date().toISOString() }).eq("id", id);
-      return ok({ generados: cantidad });
-    }
+    if (!error) return ok({ generados: plan.codigos, usos_por_codigo: plan.usosPorCodigo, codigo_comun: comun });
     if (!String(error.message || "").toLowerCase().includes("unique") && error.code !== "23505") {
+      await liberar();
       return fail(500, "No se pudieron generar los códigos.");
     }
     // Colisión (rarísima): reintenta con nuevos códigos.
   }
+  await liberar();
   return fail(500, "No se pudieron generar los códigos (colisión persistente).");
 }
 
@@ -245,8 +277,10 @@ export async function datosInforme(id: string, tipo: "parcial" | "definitivo"): 
   };
 
   // Evolución por día (dato real): fecha de la reserva si existe, si no la del canje.
+  // (B8) Sin los canjes cancelados, igual que las métricas.
   const porDia: Record<string, number> = {};
   for (const u of data.usos) {
+    if (u.estado === "cancelado") continue;
     const d = String(u.reserva?.fecha ?? u.created_at ?? "").slice(0, 10);
     if (d) porDia[d] = (porDia[d] || 0) + 1;
   }
@@ -355,6 +389,9 @@ export async function reservarConCodigo(
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) return fail(400, "Fecha u hora inválida.");
   const sims = (Array.isArray(simuladores) ? simuladores : []).map((s) => String(s).trim()).filter(Boolean);
   if (sims.length < 1) return fail(400, "Elegí un simulador.");
+  // (B8) Un canje = un simulador = una experiencia: el código descuenta un uso por
+  // canje. Las RPC lo vuelven a exigir.
+  if (sims.length > 1) return fail(400, "Cada canje es una experiencia en un simulador: elegí uno solo.");
 
   let ev: Awaited<ReturnType<typeof evaluarTurnoEmpresa>>;
   try {
@@ -439,10 +476,17 @@ export async function cancelarReservaEmpresa(reservaId: number, liberarCodigo: b
 // legacy sigue en grilla de 20 después del corte y una v2 en grilla de 10. Su
 // propio lugar actual no la bloquea.
 export async function reprogramarReservaEmpresa(reservaId: number, fecha: string, hora: string, simuladores: string[], ahora: Date = new Date()): Promise<Resultado<unknown>> {
-  const { data: res } = await supabaseAdmin.from("reservas").select("duracion_minutos, origen, modalidad").eq("id", reservaId).maybeSingle();
+  const { data: res } = await supabaseAdmin.from("reservas").select("duracion_minutos, origen, modalidad, cantidad_turnos").eq("id", reservaId).maybeSingle();
   if (!res || res.origen !== "empresa") return fail(404, "Reserva empresarial no encontrada.");
   const sims = (Array.isArray(simuladores) ? simuladores : []).map((s) => String(s).trim()).filter(Boolean);
   if (sims.length < 1) return fail(400, "Elegí un simulador.");
+  // (B8) Reprogramar mueve la reserva, no cambia cuántas experiencias consumió.
+  const actuales = Number(res.cantidad_turnos) || 1;
+  if (sims.length !== actuales) {
+    return fail(400, actuales === 1
+      ? "Reprogramar no cambia la cantidad: elegí un solo simulador."
+      : `Reprogramar no cambia la cantidad: elegí ${actuales} simuladores.`);
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || !/^\d{2}:\d{2}$/.test(hora)) return fail(400, "Fecha u hora inválida.");
   const modalidad = modalidadGuardada(res.modalidad);
   let ev: Awaited<ReturnType<typeof evaluarTurnoEmpresa>>;

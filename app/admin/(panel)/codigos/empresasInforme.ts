@@ -148,7 +148,8 @@ export function generarInformePDF(d: InformeData) {
   y += 6;
   const kpis: Array<{ label: string; valor: string; acento?: boolean }> = [
     { label: "CONTRATADO", valor: String(m.turnos_contratados) },
-    { label: "UTILIZADO", valor: String(m.utilizados) },
+    // (B8) Experiencias usadas, no códigos agotados: con un código común no coinciden.
+    { label: "UTILIZADO", valor: String(m.turnos_utilizados) },
     { label: "RESTANTE", valor: String(m.turnos_restantes) },
     { label: "% UTILIZACIÓN", valor: `${m.pctUtilizacion}%`, acento: true },
   ];
@@ -273,7 +274,7 @@ export function generarInformeExcel(d: InformeData) {
     ["Campaña", tituloCampania(c)],
     ["Modalidad", c.modalidad === "mensual" ? "Pack mensual" : "Compra única"],
     ["Inicio", c.fecha_inicio], ["Vencimiento", c.fecha_vencimiento],
-    ["Contratado", m.turnos_contratados], ["Utilizado", m.utilizados], ["Restante", m.turnos_restantes],
+    ["Contratado", m.turnos_contratados], ["Utilizado", m.turnos_utilizados], ["Restante", m.turnos_restantes],
     ["Vencidos", m.vencidos], ["Cancelados", m.cancelados], ["% utilización", `${m.pctUtilizacion}%`],
     ["Minutos contratados", m.minutos_contratados], ["Minutos utilizados", m.minutos_utilizados],
     ["Neto", c.neto ?? c.precio_neto], ["IVA", c.iva], ["Total", c.total ?? c.precio_total],

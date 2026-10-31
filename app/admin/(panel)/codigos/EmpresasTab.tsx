@@ -7,6 +7,8 @@ import { hoyEnSim } from "@/lib/agenda";
 type Campania = {
   id: string; empresa: string; nombre_campania: string | null; modalidad: string;
   cantidad_contratada: number; duracion_minutos: number; usos_por_codigo: number;
+  // (B8) Un solo código para todas las tarjetas del pack, con cantidad_contratada usos.
+  codigo_comun?: boolean;
   precio_neto: number; iva_porcentaje: number; precio_total?: number; neto?: number; iva?: number; total?: number;
   fecha_pago: string | null; estado_pago: string; fecha_inicio: string | null; fecha_vencimiento: string | null;
   estado: string; estado_efectivo?: string; observaciones: string | null; codigos_generados: boolean;
@@ -29,7 +31,7 @@ const secc = "mt-4 mb-2 border-t border-white/10 pt-3 text-xs font-bold uppercas
 // El estado y el pago NO se editan acá: se derivan / se marcan con acciones explícitas.
 const BLANK = {
   empresa: "", nombre_campania: "", contacto_nombre: "", contacto_telefono: "", contacto_email: "", cuit: "",
-  modalidad: "unica", cantidad_contratada: "25", duracion_minutos: "15", usos_por_codigo: "1",
+  modalidad: "unica", cantidad_contratada: "25", duracion_minutos: "15", usos_por_codigo: "1", codigo_comun: "false",
   precio_neto: "0", iva_porcentaje: "21", fecha_inicio: "", observaciones: "",
   estado_pago: "pendiente", fecha_pago: "", medio_pago: "transferencia",
 };
@@ -46,8 +48,8 @@ function badge(estado: string) {
 
 // Modal de alta/edición a NIVEL MÓDULO (identidad estable → los inputs no pierden
 // el foco al tipear, a diferencia de un componente anidado en el render).
-function CampaniaFormModal({ form, set, editId, duraciones, msg, busy, onGuardar, onClose }: {
-  form: typeof BLANK; set: (k: string, v: string) => void; editId: string | null; duraciones: number[];
+function CampaniaFormModal({ form, set, editId, codigosGenerados, duraciones, msg, busy, onGuardar, onClose }: {
+  form: typeof BLANK; set: (k: string, v: string) => void; editId: string | null; codigosGenerados: boolean; duraciones: number[];
   msg: string; busy: boolean; onGuardar: () => void; onClose: () => void;
 }) {
   const dias = form.modalidad === "mensual" ? 30 : 60;
@@ -82,13 +84,24 @@ function CampaniaFormModal({ form, set, editId, duraciones, msg, busy, onGuardar
               <option value="unica">Compra única (60 días)</option><option value="mensual">Pack mensual (30 días)</option>
             </select>
           </label>
-          <label className="text-sm text-zinc-300">Cantidad contratada<input type="number" className={inp} value={form.cantidad_contratada} onChange={(e) => set("cantidad_contratada", e.target.value)} /></label>
+          <label className="text-sm text-zinc-300">Cantidad contratada (experiencias)<input type="number" className={inp} value={form.cantidad_contratada} disabled={codigosGenerados && form.codigo_comun === "true"} onChange={(e) => set("cantidad_contratada", e.target.value)} /></label>
           {/* (B7) Solo las duraciones que manda el servidor: las vigentes para una campaña nueva, las de su modalidad al editar. */}
           <label className="text-sm text-zinc-300">Duración por experiencia
             <select className={inp} value={form.duracion_minutos} onChange={(e) => set("duracion_minutos", e.target.value)}>
               <option value="">Elegí la duración</option>
               {duraciones.map((d) => <option key={d} value={String(d)}>{d} minutos</option>)}
             </select>
+          </label>
+          {/* (B8) Código común: un código para todas las tarjetas del pack; el cupo sigue siendo la cantidad contratada. */}
+          <label className="flex items-start gap-2 text-sm text-zinc-300 sm:col-span-2">
+            <input type="checkbox" className="mt-1 h-4 w-4 accent-red-600" checked={form.codigo_comun === "true"} disabled={codigosGenerados}
+              onChange={(e) => set("codigo_comun", e.target.checked ? "true" : "false")} />
+            <span>
+              Código común: un solo código para todas las tarjetas del pack, con {Number(form.cantidad_contratada) || 0} usos (uno por experiencia).
+              <span className="block text-xs text-zinc-500">
+                {codigosGenerados ? "Los códigos ya se generaron: el tipo de código no se puede cambiar." : "Se puede generar antes del pago para imprimir las tarjetas; se canjea recién con la campaña pagada y su fecha de inicio."}
+              </span>
+            </span>
           </label>
         </div>
 
@@ -110,10 +123,13 @@ function CampaniaFormModal({ form, set, editId, duraciones, msg, busy, onGuardar
           </label>
         </div>
         {editId && <p className="mt-2 text-xs text-amber-400">El pago no impacta Finanzas automáticamente: registrá el ingreso a mano cuando lo cobres.</p>}
-        <details className="mt-2">
-          <summary className="cursor-pointer text-xs font-bold text-zinc-400">Opciones avanzadas</summary>
-          <label className="mt-2 block text-sm text-zinc-300">Usos por código (default 1)<input type="number" className={inp} value={form.usos_por_codigo} onChange={(e) => set("usos_por_codigo", e.target.value)} /></label>
-        </details>
+        {/* (B8) Varios usos por código individual multiplicaba el cupo: ya no se ofrece. Solo se
+            muestra en una campaña anterior que lo tenga, para que se vea y se pueda dejar en 1. */}
+        {form.usos_por_codigo !== "1" && (
+          <label className="mt-2 block text-sm text-zinc-300">Usos por código (campaña anterior)<input type="number" className={inp} value={form.usos_por_codigo} onChange={(e) => set("usos_por_codigo", e.target.value)} />
+            <span className="block text-xs text-amber-400">Con códigos individuales cada código es una experiencia: el cupo real hoy es cantidad × usos.</span>
+          </label>
+        )}
         <label className="mt-3 block text-sm text-zinc-300">Observaciones<textarea className={inp} rows={2} value={form.observaciones} onChange={(e) => set("observaciones", e.target.value)} /></label>
         <div className="mt-2 rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-xs text-zinc-400">
           Neto: <b className="text-white">{money(neto)}</b> · IVA ({form.iva_porcentaje || 0}%): <b className="text-white">{money(ivaMonto)}</b> · Total: <b className="text-white">{money(total)}</b>
@@ -177,7 +193,8 @@ export default function EmpresasTab() {
       empresa: c.empresa, nombre_campania: c.nombre_campania || "", contacto_nombre: c.contacto_nombre || "",
       contacto_telefono: c.contacto_telefono || "", contacto_email: c.contacto_email || "", cuit: c.cuit || "",
       modalidad: c.modalidad, cantidad_contratada: String(c.cantidad_contratada), duracion_minutos: String(c.duracion_minutos),
-      usos_por_codigo: String(c.usos_por_codigo), precio_neto: String(c.precio_neto), iva_porcentaje: String(c.iva_porcentaje),
+      usos_por_codigo: String(c.usos_por_codigo), codigo_comun: c.codigo_comun ? "true" : "false",
+      precio_neto: String(c.precio_neto), iva_porcentaje: String(c.iva_porcentaje),
       fecha_inicio: c.fecha_inicio || "", observaciones: c.observaciones || "",
       estado_pago: c.estado_pago || "pendiente", fecha_pago: c.fecha_pago || "", medio_pago: (c as { medio_pago?: string }).medio_pago || "transferencia",
     });
@@ -214,6 +231,7 @@ export default function EmpresasTab() {
           ...form,
           cantidad_contratada: Number(form.cantidad_contratada), duracion_minutos: Number(form.duracion_minutos),
           usos_por_codigo: Number(form.usos_por_codigo), precio_neto: Number(form.precio_neto), iva_porcentaje: Number(form.iva_porcentaje),
+          codigo_comun: form.codigo_comun === "true",
           fecha_inicio: form.fecha_inicio || null, fecha_pago: form.fecha_pago || null,
           // (B7) Con qué catálogo se armó el formulario de una campaña nueva.
           ...(editId ? {} : { modalidad_vista: catalogo?.modalidad }),
@@ -267,17 +285,21 @@ export default function EmpresasTab() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-lg font-black text-white">{c.empresa}{c.nombre_campania ? ` — ${c.nombre_campania}` : ""}</h3>
-            <p className="text-xs text-zinc-500">{c.modalidad === "mensual" ? "Pack mensual" : "Compra única"} · {c.duracion_minutos} min · Agenda {c.modalidad_comercial === "v2_10" ? "10/20/30" : "15/30"} · {c.fecha_inicio || "—"} → {c.fecha_vencimiento || "—"} · {badge(String(m.estado))}</p>
+            <p className="text-xs text-zinc-500">{c.modalidad === "mensual" ? "Pack mensual" : "Compra única"} · {c.duracion_minutos} min{c.codigo_comun ? " · Código común" : ""} · Agenda {c.modalidad_comercial === "v2_10" ? "10/20/30" : "15/30"} · {c.fecha_inicio || "—"} → {c.fecha_vencimiento || "—"} · {badge(String(m.estado))}</p>
           </div>
           <button onClick={() => abrirEditar(c)} className="rounded-xl bg-zinc-800 px-4 py-2 text-sm font-bold text-white hover:bg-zinc-700">Editar</button>
         </div>
 
         {/* Métricas */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-          {[
+          {/* (B8) Con código común se cuentan experiencias: «1 código disponible» no dice cuántas tarjetas se usaron. */}
+          {(c.codigo_comun ? [
+            ["Contratadas", m.turnos_contratados], ["Usadas", m.turnos_utilizados], ["Restantes", m.turnos_restantes],
+            ["% uso", `${m.pctUtilizacion}%`], ["Código", Number(m.generados) > 0 ? "Generado" : "Sin generar"],
+          ] : [
             ["Generados", m.generados], ["Usados", m.utilizados], ["Disponibles", m.disponibles],
             ["Vencidos", m.vencidos], ["% uso", `${m.pctUtilizacion}%`], ["Restantes", m.turnos_restantes],
-          ].map(([label, val]) => (
+          ]).map(([label, val]) => (
             <div key={String(label)} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
               <p className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</p>
               <p className="text-lg font-black text-white">{String(val)}</p>
@@ -294,9 +316,14 @@ export default function EmpresasTab() {
             <button onClick={() => setPago({ fecha_pago: hoyEnSim(), medio_pago: "transferencia" })} disabled={busy}
               className="rounded-xl bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-500 disabled:opacity-50">Marcar como pagada</button>
           )}
-          {!c.codigos_generados && c.estado_pago === "pagado" && (
+          {!c.codigos_generados && c.estado_pago === "pagado" && !c.codigo_comun && (
             <button onClick={() => { if (confirm(`¿Generar ${c.cantidad_contratada} códigos?`)) accionDetalle("/codigos"); }} disabled={busy}
               className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-50">Generar {c.cantidad_contratada} códigos</button>
+          )}
+          {/* (B8) El código común se puede generar antes del pago (para imprimir las tarjetas). */}
+          {!c.codigos_generados && c.codigo_comun && m.estado !== "cancelada" && (
+            <button onClick={() => { if (confirm(`¿Generar el código común con ${c.cantidad_contratada} usos?`)) accionDetalle("/codigos"); }} disabled={busy}
+              className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-50">Generar código común ({c.cantidad_contratada} usos)</button>
           )}
           {m.estado !== "finalizada" && m.estado !== "cancelada" && (
             <button onClick={() => { if (confirm("¿Finalizar la campaña?")) postAccion({ accion: "finalizar" }); }} disabled={busy}
@@ -386,7 +413,7 @@ export default function EmpresasTab() {
                               <button onClick={() => {
                                 const f = prompt("Nueva fecha (YYYY-MM-DD):", r?.fecha); if (!f) return;
                                 const h = prompt("Nueva hora (HH:MM):", r?.hora); if (!h) return;
-                                const s = prompt("Simulador(es), separados por coma:", (r?.simuladores || []).join(", ")); if (!s) return;
+                                const s = prompt("Simulador (la cantidad no cambia: uno por experiencia; si eran varios, separados por coma):", (r?.simuladores || []).join(", ")); if (!s) return;
                                 postAccion({ accion: "reserva_reprogramar", reserva_id: u.reserva_id, fecha: f, hora: h, simuladores: s.split(",").map((x) => x.trim()).filter(Boolean) });
                               }} className="text-xs text-blue-400 hover:text-blue-300">Reprogramar</button>
                               <button onClick={() => postAccion({ accion: "reserva_no_show", reserva_id: u.reserva_id, no_show: !r?.no_show })} className="text-xs text-amber-400 hover:text-amber-300">{r?.no_show ? "Quitar no-show" : "No-show"}</button>
@@ -401,7 +428,7 @@ export default function EmpresasTab() {
             </div>
           )}
         </div>
-        {showForm && <CampaniaFormModal form={form} set={set} editId={editId} duraciones={editId ? duracionesEdicion : catalogo?.duraciones ?? []} msg={msg} busy={busy} onGuardar={guardar} onClose={() => setShowForm(false)} />}
+        {showForm && <CampaniaFormModal form={form} set={set} editId={editId} codigosGenerados={Boolean(editId) && editWarn} duraciones={editId ? duracionesEdicion : catalogo?.duraciones ?? []} msg={msg} busy={busy} onGuardar={guardar} onClose={() => setShowForm(false)} />}
 
         {/* Modal Marcar pagada: registra fecha + medio + confirma (impacta Finanzas). */}
         {pago && (
@@ -462,7 +489,8 @@ export default function EmpresasTab() {
                   <td className="px-3 py-2 text-zinc-400">{c.fecha_vencimiento || "—"}</td>
                   <td className="px-3 py-2 text-zinc-400">{c.cantidad_contratada}</td>
                   <td className="px-3 py-2 text-zinc-400">{c.utilizados ?? 0}</td>
-                  <td className="px-3 py-2 text-zinc-400">{c.generados ? Math.round(((c.utilizados ?? 0) / c.generados) * 100) : 0}%</td>
+                  {/* (B8) Experiencias usadas sobre contratadas (con código común, «códigos agotados» no sirve). */}
+                  <td className="px-3 py-2 text-zinc-400">{c.cantidad_contratada ? Math.round(((c.utilizados ?? 0) / c.cantidad_contratada) * 100) : 0}%</td>
                   <td className="px-3 py-2">{c.estado_pago === "pagado" ? <span className="text-green-400">Pagado</span> : <span className="text-amber-300">Pendiente</span>}</td>
                   <td className="px-3 py-2"><button onClick={() => abrirDetalle(c.id)} className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-bold text-white hover:bg-zinc-700">Ver</button></td>
                 </tr>
@@ -471,7 +499,7 @@ export default function EmpresasTab() {
           </table>
         </div>
       )}
-      {showForm && <CampaniaFormModal form={form} set={set} editId={editId} duraciones={editId ? duracionesEdicion : catalogo?.duraciones ?? []} msg={msg} busy={busy} onGuardar={guardar} onClose={() => setShowForm(false)} />}
+      {showForm && <CampaniaFormModal form={form} set={set} editId={editId} codigosGenerados={Boolean(editId) && editWarn} duraciones={editId ? duracionesEdicion : catalogo?.duraciones ?? []} msg={msg} busy={busy} onGuardar={guardar} onClose={() => setShowForm(false)} />}
     </div>
   );
 }
