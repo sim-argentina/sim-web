@@ -7,6 +7,7 @@ Este documento resume el diseño acordado y las correcciones que se aplican a lo
 posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md),
 [b1-prospeccion.md](b1-prospeccion.md), [b2-seguimiento.md](b2-seguimiento.md),
 [b3-ventas-cobros-comisiones.md](b3-ventas-cobros-comisiones.md) y [b4-metricas.md](b4-metricas.md).
+Cierre del MVP, publicación, vuelta atrás y condiciones pendientes: [cierre-mvp.md](cierre-mvp.md).
 
 ## Bloques
 
@@ -17,6 +18,7 @@ posteriores. Lo implementado está en [b0-identidad.md](b0-identidad.md),
 | B2 | Bandeja "Contactos para seguir": estados (contacto, conversación, interesado, negociación, pausa, perdida), actividades manuales, próxima acción, pérdida con motivo y reapertura por ciclos | Implementado y verificado en local; sin migrar ni publicar |
 | B3 | Ventas (y recién ahí "Ganado"), cobros, saldo y comisiones; recompras; vínculo de solo lectura con Empresas; correcciones y anulaciones | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar. Integró al cierre las correcciones de seguridad vigentes de `main` (Next 16.4.3, React 19.2.9, sharp 0.35.5, webhooks de Mercado Pago) |
 | B4 | Métricas y tablero (`/admin/crm/metricas`): prospección, conversión por cohorte, jornadas y eficiencia, segmentos y pérdidas, resultados económicos; una definición por métrica; solo lectura | Implementado y verificado en local (incluye QA móvil); sin migrar ni publicar. Corrigió la intervención de la recompra trabajada de B3 |
+| Cierre | Sin módulos nuevos: Seguimiento sin el límite de 1000, recorrido integral con ambos roles, control de solo lectura del esquema, plan de publicación y de vuelta atrás, condiciones comerciales pendientes | Verificado en local; sin migrar ni publicar |
 
 Fuera de la V1: WhatsApp o emails automáticos, IA, scoring, mapas, propuestas automáticas e
 integración automática con Finanzas.

@@ -83,6 +83,16 @@ oculta la oportunidad, y el detalle ofrece cómo resolverla (elegir otro contact
 cargar o editar contactos, desarchivar o revisar el negocio). Las perdidas se consultan en su
 vista, con fecha, motivo y cuántas visitas hubo después.
 
+**Sin límite de filas (cierre del MVP).** El servidor lee **todas** las oportunidades de la vista
+(`todasLasFilas`, de a páginas con orden estable), y búsqueda, filtros, grupos y contadores
+corren sobre el conjunto completo con las mismas funciones de `lib/crmB2.ts`. El orden es total:
+- en Para seguir: grupo, vencimiento, `lead_en` e `id`;
+- en Perdidas y Ganadas: fecha descendente e `id`.
+
+Al navegador solo llega la página pedida, de 50 filas (`paginar`), con `coincidencias`, `pagina`
+y `total_paginas`. Antes cortaba en 1000 filas. Detalle y evidencia en
+[cierre-mvp.md](cierre-mvp.md), §2.
+
 ## Próxima acción
 
 - Una sola pendiente por oportunidad (índice único parcial). Opciones rápidas (mañana, en 3
@@ -164,6 +174,7 @@ creado no da acceso permanente (la autoría queda en `creada_por_usuario`).
 | `lib/crmB2.test.ts` (puro): grupos y precedencia, medianoche de SIM, contadores = filas, filtros, estados, WhatsApp sin prefijos inventados, advertencias, huella, aislamiento estático | OK |
 | `lib/crmB2.integration.ts` (rutas reales): permisos; lead de B1 en la bandeja; consultar no gestiona; gestiones con y sin próxima acción; reprogramar; nota y propuesta; fecha de SIM y vencidas; visitas sobre avanzadas, pausadas y perdidas; corrección y anulación; pausa → fecha → retomar; pérdida; reapertura con y sin otra abierta; reintentos secuenciales y en paralelo; **carrera real** (6 programaciones a la vez → 1 pendiente; control sin bloqueo ni índice → 6); resumen comercial sin datos privados; reasignación sin acceso; advertencias; contadores = grupos = filas | OK |
 | Regresión: verificación B0 (OK 129), B1 (OK 110), integración B0 y B1 (con su carrera y control), pruebas puras de B1 y navegación | OK |
+| `lib/crmB2Paginacion.integration.ts` (cierre del MVP): 1100 oportunidades ficticias; búsqueda, contadores, filtros y grupos sobre el total; 22 páginas sin repetidos ni faltantes; respuesta < 120 kB | OK |
 
 ## QA (escritorio y celular, servidor de producción local)
 

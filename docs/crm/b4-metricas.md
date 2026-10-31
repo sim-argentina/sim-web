@@ -73,6 +73,7 @@ ocupa la pantalla.
   filtros, fechas y exclusiones: no pueden diferir.
 - **Sin límites de filas**: `lib/crmB4Server.ts` lee todo de a páginas (`todasLasFilas`, en
   `lib/crmB1Server.ts`). La lista de Ventas de B3 pasó a usar lo mismo; antes cortaba en 1000 filas.
+  En el cierre del MVP también la bandeja de B2 ([cierre-mvp.md](cierre-mvp.md), §2).
 - **Fecha de negocio de SIM** (Córdoba): las visitas, jornadas, acuerdos, cobros y pagos ya guardan
   el día. Los instantes (lead, señales, pérdidas) se pasan al día de Córdoba: las 23:30 del 31/10
   son octubre.
@@ -360,8 +361,8 @@ recortadas, así que la geometría se verificó midiendo el DOM.
 - No hay fotos históricas: rubro, zona, estado e «interés» son los de hoy. Una corrección posterior
   cambia meses pasados (está advertido en pantalla).
 - La señal de interés depende de lo que se anotó: lo no evaluado queda afuera.
-- La bandeja de B2 todavía lee hasta 1000 oportunidades abiertas (es una lista operativa, no una
-  métrica).
+- La bandeja de B2 ya no corta en 1000 oportunidades: desde el cierre del MVP lee todas y pagina de
+  a 50 ([cierre-mvp.md](cierre-mvp.md), §2).
 - La movilidad no se asigna a negocios ni a ventas, ni se resta: falta decidir quién la paga.
 - «Cobros menos comisiones pagadas» no es caja ni resultado. Caja y contribución comercial siguen
   pendientes de definición (diseno.md, corrección 6).
