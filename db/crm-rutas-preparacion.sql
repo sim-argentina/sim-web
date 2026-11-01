@@ -86,7 +86,16 @@ begin
   if v_orden is not null and (v_orden <> trunc(v_orden) or v_orden < 1) then
     raise exception 'datos_invalidos:recorrido_orden' using errcode = '22023';
   end if;
-  v_notas := public.crm_texto(p_datos, 'notas_preparacion', 4000);
+  -- Las notas conservan sus saltos de línea (crm_texto los colapsa): se normalizan los
+  -- espacios dentro de cada línea y las líneas vacías, con el mismo tope de 4000.
+  if p_datos ? 'notas_preparacion' and jsonb_typeof(p_datos -> 'notas_preparacion') not in ('string', 'null') then
+    raise exception 'datos_invalidos:notas_preparacion' using errcode = '22023';
+  end if;
+  v_notas := nullif(btrim(regexp_replace(regexp_replace(regexp_replace(coalesce(p_datos ->> 'notas_preparacion', ''),
+    '[ \t\r\f\v]+', ' ', 'g'), ' *\n *', E'\n', 'g'), E'\n{2,}', E'\n', 'g'), E' \n'), '');
+  if v_notas is not null and char_length(v_notas) > 4000 then
+    raise exception 'datos_invalidos:notas_preparacion' using errcode = '22023';
+  end if;
 
   -- Mismas validaciones y aviso de parecidos que un alta manual; los parecidos se
   -- confirman (quedan en similar_a para revisión) porque una sucursal es otro punto.
