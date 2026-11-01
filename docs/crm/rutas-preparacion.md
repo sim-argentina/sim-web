@@ -2,6 +2,25 @@
 
 Ajuste mínimo para cargar las rutas de prospección investigadas sin inventar actividad comercial.
 
+## Estado (01/11/2026)
+
+- **Lote `rutas-2026-10-31-v1` cargado en SIM WEB.** 15 rutas (01–10 y 12–16):
+  - 1.092 negocios creados y asignados a Tobías;
+  - 0 vinculados a negocios existentes y 0 pendientes;
+  - 1.001 teléfonos publicados, con decisor «no sabe»; 252 con WhatsApp según la fuente;
+  - 15 zonas y 16 rubros nuevos. Los 14 rubros existentes se reutilizaron y el rubro exacto de la fuente queda en las notas.
+- **Traza:** `crm_auditoria`, con acción `registro` y `datos.lote`. Las correcciones posteriores figuran como `correccion`:
+  - 177 fechas de consulta que la extracción no tomó;
+  - 1.092 reconstrucciones de los saltos de línea de las notas.
+
+  Ninguna corrección cambió ID, ruta, parada ni responsable.
+- **Parecidos (`similar_a`, 112 negocios):** ningún duplicado.
+  - 107 son negocios distintos: 106 en un mismo predio y 1 con nombre parecido.
+  - 5 son sucursales legítimas de una misma marca: BestClub, Deporbas, Difarma I y II, y Organización Centro.
+  - Ninguno requiere una decisión sobre la base. Las confirmaciones de campo están en las notas de cada ficha.
+- **Pendiente documental:** Ruta 11 (Cofico / Alta Córdoba / San Martín). No está en el paquete y no se reconstruye. Cuando llegue, se carga con el mismo procedimiento.
+- **Definiciones comerciales pendientes** (no bloquean la prospección): IVA, devoluciones y liquidación de la movilidad.
+
 ## Qué cambia
 
 - **Base (`db/crm-rutas-preparacion.sql`)**
@@ -18,6 +37,8 @@ Ajuste mínimo para cargar las rutas de prospección investigadas sin inventar a
   - El comercial puede filtrar por zona/ruta y prioridad. Con una zona elegida, la lista sale en orden de recorrido.
   - La lista de negocios lee **todas** las filas: antes se cortaba en 300 por nombre.
 - **Control**: `crm-poscontrol.sql` pasa a P8 = 58 funciones / 27 RPC.
+- **Notas:** `crm_empresa_importar` conserva los saltos de línea de `notas_preparacion`; normaliza los espacios y las líneas vacías. `crm_texto` los colapsa y no se usa para este campo.
+- **Menú del panel:** el botón ☰ es `absolute`. Ocupa el espacio reservado arriba y se va con la página, así no tapa títulos al desplazarla.
 
 ## Qué no hace
 
