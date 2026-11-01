@@ -17,7 +17,8 @@
 --   P6 definer_sin_path|0
 --   P7 exec_anon_auth|0
 --   P8 funciones|57|service_role_exec=26 (57 funciones crm_*, sin sobrecargas;
---      26 son las RPC que llama el servidor; las demás son internas)
+--      26 son las RPC que llama el servidor; las demás son internas). Con
+--      crm-rutas-preparacion.sql: funciones|58|service_role_exec=27 (crm_empresa_importar).
 --   P9 rubros|14 (la configuración inicial; Administración puede agregar más)
 --   P10 productos|pack_10:150000.00:40000.00,pack_25:360000.00:90000.00,personalizado:-:-
 --   P11 datos|… todo 0 en una base recién migrada (ningún dato copiado)

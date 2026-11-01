@@ -88,12 +88,13 @@ function autorDe(actor: ActorRpc, rol: string | null, usuarioId: string | null, 
 }
 
 // ── Negocios ────────────────────────────────────────────────────────────────
-const COLS_EMPRESA = "id, nombre_comercial, rubro_id, rubro_detalle, direccion, zona_id, instagram, web, prioridad, responsable_id, cliente_previo, origen, similar_a, archivada_en, archivada_motivo, version";
+const COLS_EMPRESA = "id, nombre_comercial, rubro_id, rubro_detalle, direccion, zona_id, instagram, web, prioridad, responsable_id, cliente_previo, origen, origen_ref, similar_a, archivada_en, archivada_motivo, recorrido_tramo, recorrido_orden, notas_preparacion, version";
 
 type FilaEmpresa = {
   id: string; nombre_comercial: string; rubro_id: string | null; rubro_detalle: string | null; direccion: string | null; zona_id: string | null;
   instagram: string | null; web: string | null; prioridad: "A" | "B" | "C" | null; responsable_id: string | null; cliente_previo: boolean;
-  origen: string; similar_a: string[]; archivada_en: string | null; archivada_motivo: string | null; version: number;
+  origen: string; origen_ref: string | null; similar_a: string[]; archivada_en: string | null; archivada_motivo: string | null;
+  recorrido_tramo: string | null; recorrido_orden: number | null; notas_preparacion: string | null; version: number;
 };
 type Estadistica = { visitas: number; ultima: string | null; oportunidad: boolean; revisita: string | null | false };
 
@@ -128,12 +129,13 @@ function dtoEmpresa(actor: ActorRpc, e: FilaEmpresa, s: Estadistica, cat: Catalo
     rubro_detalle: e.rubro_detalle, direccion: e.direccion, zona_id: e.zona_id, zona: cat.zonas.find((z) => z.id === e.zona_id)?.nombre ?? null,
     instagram: e.instagram, web: e.web, prioridad: e.prioridad, cliente_previo: e.cliente_previo, version: e.version, estado: estadoDe(e, s),
     visitas: s.visitas, ultima_visita: s.ultima, revisita_pendiente: s.revisita,
+    recorrido_tramo: e.recorrido_tramo, recorrido_orden: e.recorrido_orden, notas_preparacion: e.notas_preparacion,
   };
   if (esComercial(actor)) return base;
   return {
     ...base,
     responsable: e.responsable_id ? { id: e.responsable_id, nombre: mapa.get(e.responsable_id) ?? "Comercial" } : null,
-    posible_duplicado: (e.similar_a ?? []).length > 0, origen: e.origen, archivada_motivo: e.archivada_motivo,
+    posible_duplicado: (e.similar_a ?? []).length > 0, origen: e.origen, origen_ref: e.origen_ref, archivada_motivo: e.archivada_motivo,
   };
 }
 
@@ -142,24 +144,30 @@ export type FiltrosEmpresas = {
   estado?: string | null; archivadas?: boolean; duplicados?: boolean;
 };
 
+// Todas las filas que cumplen el filtro (sin tope: una ruta importada asigna cientos de
+// negocios). Con zona elegida, en el orden de recorrido del documento; si no, por nombre.
 export async function listarEmpresas(actor: ActorRpc, f: FiltrosEmpresas = {}): Promise<EmpresaDto[]> {
-  let q = supabaseAdmin.from("crm_empresas").select(COLS_EMPRESA).order("nombre_comercial").limit(300);
-  if (esComercial(actor)) {
-    q = q.eq("responsable_id", actor.usuarioId).is("archivada_en", null);
-  } else {
-    if (!f.archivadas && f.estado !== "archivado") q = q.is("archivada_en", null);
-    if (f.estado === "archivado") q = q.not("archivada_en", "is", null);
-    if (f.responsable === "sin_asignar") q = q.is("responsable_id", null);
-    else if (esUuid(f.responsable)) q = q.eq("responsable_id", f.responsable);
-    if (f.duplicados) q = q.neq("similar_a", "{}");
-  }
-  if (f.rubro === "sin_clasificar") q = q.is("rubro_id", null);
-  else if (esUuid(f.rubro)) q = q.eq("rubro_id", f.rubro);
-  if (esUuid(f.zona)) q = q.eq("zona_id", f.zona);
-  if (f.prioridad && ["A", "B", "C"].includes(f.prioridad)) q = q.eq("prioridad", f.prioridad);
   const busca = normalizarTexto(f.q).slice(0, 60);
-  if (busca) q = q.ilike("nombre_normalizado", `%${busca}%`);
-  const filas = (revisar(await q, "empresas") ?? []) as FilaEmpresa[];
+  const consulta = () => {
+    let q = supabaseAdmin.from("crm_empresas").select(COLS_EMPRESA);
+    if (esComercial(actor)) {
+      q = q.eq("responsable_id", actor.usuarioId).is("archivada_en", null);
+    } else {
+      if (!f.archivadas && f.estado !== "archivado") q = q.is("archivada_en", null);
+      if (f.estado === "archivado") q = q.not("archivada_en", "is", null);
+      if (f.responsable === "sin_asignar") q = q.is("responsable_id", null);
+      else if (esUuid(f.responsable)) q = q.eq("responsable_id", f.responsable);
+      if (f.duplicados) q = q.neq("similar_a", "{}");
+    }
+    if (f.rubro === "sin_clasificar") q = q.is("rubro_id", null);
+    else if (esUuid(f.rubro)) q = q.eq("rubro_id", f.rubro);
+    if (esUuid(f.zona)) q = q.eq("zona_id", f.zona);
+    if (f.prioridad && ["A", "B", "C"].includes(f.prioridad)) q = q.eq("prioridad", f.prioridad);
+    if (busca) q = q.ilike("nombre_normalizado", `%${busca}%`);
+    if (esUuid(f.zona)) q = q.order("recorrido_orden", { ascending: true, nullsFirst: false });
+    return q.order("nombre_comercial").order("id");
+  };
+  const filas = await todasLasFilas<FilaEmpresa>((desde, hasta) => consulta().range(desde, hasta), "empresas");
   const [s, cat, mapa] = await Promise.all([estadisticas(filas.map((e) => e.id)), catalogo(false), nombres(actor)]);
   const out = filas.map((e) => dtoEmpresa(actor, e, s.get(e.id)!, cat, mapa));
   return f.estado && f.estado !== "archivado" ? out.filter((e) => e.estado === f.estado) : out;

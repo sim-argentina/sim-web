@@ -86,10 +86,16 @@ export type EmpresaDto = {
   visitas: number;
   ultima_visita: string | null;
   revisita_pendiente: string | null | false;
+  /** Preparación de rutas: tramo y parada del documento (la ruta es la zona) y notas de la investigación. */
+  recorrido_tramo: string | null;
+  recorrido_orden: number | null;
+  notas_preparacion: string | null;
   /** Solo admin. */
   responsable?: { id: string; nombre: string } | null;
   posible_duplicado?: boolean;
   origen?: string;
+  /** Solo admin: ID de investigación de una importación (SIM-Rxx-nnn). */
+  origen_ref?: string | null;
   archivada_motivo?: string | null;
 };
 

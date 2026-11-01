@@ -134,5 +134,9 @@ crm-b2-seguimiento.sql
 # Necesita crm-b2-seguimiento.sql. Lee (no escribe) empresa_campanias/empresa_codigos de Empresas.
 crm-b3-ventas.sql
 
+# ── 13k. CRM B2B · Preparación de rutas (negocios importados para visitar) ───
+# Necesita crm-b3-ventas.sql. Tramo, parada y notas de preparación + alta por importación.
+crm-rutas-preparacion.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql
