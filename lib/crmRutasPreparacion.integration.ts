@@ -60,7 +60,7 @@ async function main() {
   for (const [n, orden] of [["c", 3], ["a", 1], ["b", 2]] as const) {
     const r = importar(`${MARCA}-${n}`, {
       ...base, nombre_comercial: `${MARCA} ${n}`, direccion: `Calle de prueba ${orden}00`, rubro_detalle: "Rubro de la fuente",
-      recorrido_tramo: "Tramo A — prueba", recorrido_orden: orden, notas_preparacion: `${MARCA}-${n} · Para la visita: pedir gerencia.`,
+      recorrido_tramo: "Tramo A — prueba", recorrido_orden: orden, notas_preparacion: `${MARCA}-${n} · Tramo A\n   Para la visita:  pedir gerencia.\n\nMapa: búsqueda`,
     }, n === "a" ? [{ telefono: "0351 555 0101", tiene_whatsapp: true, cargo: "Teléfono publicado (sin verificar)" }] : null);
     assert.equal(r.resultado, "ok", JSON.stringify(r));
     ids[n] = r.id;
@@ -98,6 +98,8 @@ async function main() {
   const ficha = await S.fichaEmpresa(comercial, ids.a);
   assert.ok(ficha);
   assert.match(ficha!.empresa.notas_preparacion ?? "", new RegExp(`${MARCA}-a`));
+  // Los saltos de línea se conservan; espacios y líneas vacías se normalizan.
+  assert.equal(ficha!.empresa.notas_preparacion, `${MARCA}-a · Tramo A\nPara la visita: pedir gerencia.\nMapa: búsqueda`);
   assert.equal(ficha!.contactos.length, 1);
   const admin = await S.listarEmpresas({ rol: "admin" }, { zona: zonaId });
   assert.deepEqual(admin.map((e) => e.origen_ref), [`${MARCA}-a`, `${MARCA}-b`, `${MARCA}-c`]);

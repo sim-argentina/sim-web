@@ -113,9 +113,12 @@ export default function AdminSidebar({ role }: Props) {
 
   return (
     <>
+      {/* absolute (no fixed): ocupa el espacio que reserva el pt-20 del panel y se va con la
+          página al desplazarla, en vez de quedar encima de títulos y controles. */}
       <button
         onClick={() => setOpen(true)}
-        className="fixed top-5 left-5 z-50 bg-red-600 hover:bg-red-700 text-white rounded-xl px-4 py-3 font-bold shadow-lg"
+        aria-label="Abrir menú"
+        className="absolute top-5 left-5 z-50 bg-red-600 hover:bg-red-700 text-white rounded-xl px-4 py-3 font-bold shadow-lg"
       >
         ☰
       </button>
