@@ -41,11 +41,12 @@ export default function ListaNegocios({ modo, apiBase, baseNegocio, rutaNuevo }:
     const p = new URLSearchParams();
     if (q.trim()) p.set("q", q.trim());
     if (f.estado) p.set("estado", f.estado);
+    // Zona (= ruta) y prioridad sirven a los dos roles: el comercial recorre su ruta en orden.
+    if (f.zona) p.set("zona", f.zona);
+    if (f.prioridad) p.set("prioridad", f.prioridad);
     if (modo === "admin") {
       if (f.responsable) p.set("responsable", f.responsable);
       if (f.rubro) p.set("rubro", f.rubro);
-      if (f.zona) p.set("zona", f.zona);
-      if (f.prioridad) p.set("prioridad", f.prioridad);
       if (f.duplicados) p.set("duplicados", "1");
     }
     const t = setTimeout(() => {
@@ -93,6 +94,15 @@ export default function ListaNegocios({ modo, apiBase, baseNegocio, rutaNuevo }:
           </label>
         </div>
       ) : null}
+      {modo === "comercial" && catalogo && catalogo.zonas.length > 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Selector etiqueta="Zona / ruta" valor={f.zona} onCambio={(v) => setF({ ...f, zona: v })} vacio="Todas" opciones={catalogo.zonas.map((z) => ({ valor: z.id, texto: z.nombre }))} />
+          <Selector etiqueta="Prioridad" valor={f.prioridad} onCambio={(v) => setF({ ...f, prioridad: v })} vacio="Todas" opciones={["A", "B", "C"].map((p) => ({ valor: p, texto: p }))} />
+        </div>
+      ) : null}
+      {lista && lista.length > 0 ? (
+        <p className="text-xs text-white/50">{lista.length} negocio{lista.length === 1 ? "" : "s"}{f.zona ? " · en orden de recorrido" : ""}</p>
+      ) : null}
       {error ? <Aviso tipo="error">{error}</Aviso> : lista === null ? <Cargando /> : lista.length === 0 ? (
         <p className="py-6 text-sm text-white/60">{modo === "comercial" ? "No tenés negocios con ese filtro." : "No hay negocios con ese filtro."}</p>
       ) : (
@@ -104,6 +114,9 @@ export default function ListaNegocios({ modo, apiBase, baseNegocio, rutaNuevo }:
                   <div className="min-w-0">
                     <p className="font-bold">{e.nombre_comercial}</p>
                     <p className="text-sm text-white/60">{[e.rubro ?? (e.rubro_detalle ? `${e.rubro_detalle} (sin clasificar)` : null), e.zona, e.direccion].filter(Boolean).join(" · ") || "Sin datos de ubicación"}</p>
+                    {e.recorrido_orden || e.recorrido_tramo ? (
+                      <p className="text-xs text-white/50">{[e.recorrido_orden ? `Parada ${e.recorrido_orden}` : null, e.recorrido_tramo].filter(Boolean).join(" · ")}</p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     <EstadoNegocioEtiqueta estado={e.estado} />

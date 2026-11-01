@@ -113,6 +113,15 @@ export default function FichaNegocio({ modo, apiBase, id, rutaNuevaVisita, baseJ
           <p className="text-sm text-white/60">Responsable: <b>{e.responsable?.nombre ?? "sin asignar"}</b> · origen: {e.origen === "visita" ? "creado al registrar una visita" : e.origen === "importacion" ? "importación" : "alta manual"}
             {e.archivada_motivo ? ` · archivado: ${e.archivada_motivo}` : ""}</p>
         ) : null}
+        {e.recorrido_orden || e.recorrido_tramo || e.notas_preparacion ? (
+          <details className="rounded-2xl border border-white/10 bg-white/[0.02] p-3 text-sm">
+            <summary className="cursor-pointer font-semibold text-white/80">
+              Preparación de la ruta{e.recorrido_orden ? ` · parada ${e.recorrido_orden}` : ""}{e.recorrido_tramo ? ` · ${e.recorrido_tramo}` : ""}
+            </summary>
+            {e.notas_preparacion ? <p className="mt-2 whitespace-pre-line break-words text-white/70">{e.notas_preparacion}</p> : null}
+            <p className="mt-2 text-xs text-white/45">Datos de investigación previos a la visita: no acreditan contacto, decisor, interés ni presupuesto.</p>
+          </details>
+        ) : null}
         <div className="flex flex-wrap gap-2 pt-1">
           {modo === "comercial" && rutaNuevaVisita ? (
             <Link href={rutaNuevaVisita} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-bold text-white hover:bg-red-700"><Plus className="h-4 w-4" aria-hidden />Registrar visita</Link>
