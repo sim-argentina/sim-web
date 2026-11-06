@@ -125,8 +125,34 @@ async function main() {
     assert.fail("la campaña no terminó");
   }
 
+  // ═══ 0. Llave maestra apagada: TODO responde "Deshabilitado", también sin sesión ═══
+  {
+    delete process.env.MARKETING_CAMPANIAS_ENABLED;
+    const EJEC = await import("@/app/api/admin/marketing/campanias/ejecutar/route");
+    const antes = sql(`select count(*) || '|' || coalesce(max(creada_en)::text, '') from public.mkt_campanias`);
+    const id0 = randomUUID();
+    const respuestas = [
+      await llamar(LISTA.GET, "/api/admin/marketing/campanias"),
+      await post({ accion: "vista_previa", datos: datos() }),
+      await post({ accion: "guardar", clave: randomUUID(), datos: datos() }),
+      await llamar(UNA.GET, `/api/admin/marketing/campanias/${id0}`, undefined, ctx(id0)),
+      await accion(id0, { accion: "ejecutar_lote" }),
+    ];
+    cookie = undefined;
+    respuestas.push(await llamar(LISTA.GET, "/api/admin/marketing/campanias"), await post({ accion: "guardar", clave: randomUUID(), datos: datos() }));
+    cookie = admin;
+    for (const r of respuestas) assert.deepEqual([r.status, r.json.codigo, r.json.estado], [503, "marketing_deshabilitado", "Deshabilitado"], JSON.stringify(r.json));
+    const ej = await EJEC.POST(new Request(`${ORIGEN}/api/admin/marketing/campanias/ejecutar`, { method: "POST" }));
+    assert.equal(ej.status, 503, "el ejecutor de servidor tampoco corre");
+    const srv = await SRV.ejecutarPendientes();
+    assert.ok(!srv.ok && srv.e?.codigo === "solo_simulacion_local", "y el servidor, llamado directo, no escribe");
+    assert.equal(sql(`select count(*) || '|' || coalesce(max(creada_en)::text, '') from public.mkt_campanias`), antes, "nada se escribió");
+    process.env.MARKETING_CAMPANIAS_ENABLED = "true";
+  }
+  console.log("OK — 0: con MARKETING_CAMPANIAS_ENABLED apagada, rutas y ejecutor responden 503 \"Deshabilitado\" (con o sin sesión) y no se escribe nada.");
+
   // ── Datos sintéticos: texto vigente, 13 teléfonos con turnos en la ventana ──
-  vigentePrevio = sql(`select coalesce((select version from public.mkt_textos_consentimiento where estado = 'vigente'), '')`) || null;
+  vigentePrevio =sql(`select coalesce((select version from public.mkt_textos_consentimiento where estado = 'vigente'), '')`) || null;
   sql(`insert into public.mkt_textos_consentimiento (version, titulo, texto, huella)
        values (${lit(TEXTO)}, 'Prueba campañas', 'Acepto recibir promociones de prueba de SIM Argentina por WhatsApp (integración de campañas).', '');
        select public.mkt_texto_publicar(${lit(TEXTO)}, 'admin');`);

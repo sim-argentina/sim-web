@@ -14,6 +14,7 @@ import {
   type Fuente,
   type TextoDto,
 } from "@/lib/marketing/consentimiento";
+import type { EstadoMarketing } from "@/lib/marketing/estadoMarketing";
 import Campanias from "./Campanias";
 import Whatsapp from "./Whatsapp";
 import { Campo, Seccion, Tarjeta, btnBorde, btnRojo, fecha, inp } from "./ui";
@@ -152,6 +153,7 @@ function PanelConsentimiento() {
         <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-white/70">
           El registro de consentimiento todavía no está instalado en esta base (falta la migración
           <code className="mx-1 text-white">db/marketing-consentimiento.sql</code>).
+          Captación: {datos.modulo.formulario_publico ? "encendida" : "Deshabilitado"}.
         </p>
       </>
     );
@@ -162,8 +164,8 @@ function PanelConsentimiento() {
     <>
       {/* ── Estado: las dos llaves ───────────────────────────────────────── */}
       <div className="mb-6 grid gap-3 md:grid-cols-4">
-        <Tarjeta titulo="Formulario público" valor={datos.modulo.formulario_publico ? "Encendido" : "Apagado"}
-          nota={datos.modulo.formulario_publico ? `${RUTA_ALTA} y ${RUTA_BAJA} responden` : "MARKETING_CONSENTIMIENTO_ENABLED no está en \"true\""}
+        <Tarjeta titulo="Captación" valor={datos.modulo.formulario_publico ? "Encendida" : "Deshabilitado"}
+          nota={datos.modulo.formulario_publico ? `${RUTA_ALTA} y ${RUTA_BAJA} responden` : "MARKETING_CONSENTIMIENTO_ENABLED no está en \"true\": sin formulario, casilla ni altas del panel"}
           alerta={!datos.modulo.formulario_publico} />
         <Tarjeta titulo="Texto vigente" valor={datos.modulo.texto_vigente?.version ?? "Ninguno"}
           nota={datos.modulo.texto_vigente ? `Publicado ${fecha(datos.modulo.texto_vigente.publicado_en)}` : "Sin texto publicado no hay altas"}
@@ -188,6 +190,7 @@ function PanelConsentimiento() {
             key={datos.consulta.telefono}
             consulta={datos.consulta}
             esAdmin={esAdmin}
+            captacion={datos.modulo.formulario_publico}
             publicados={publicados}
             vigente={datos.modulo.texto_vigente?.version ?? null}
             alGuardar={(msg) => { setAviso(msg); void cargar(datos.consulta!.telefono); }}
@@ -216,7 +219,11 @@ function PanelConsentimiento() {
                   Creado {fecha(t.creado_en)} · Publicado {fecha(t.publicado_en)} · Retirado {fecha(t.retirado_en)} · huella {t.huella.slice(0, 12)}…
                 </p>
                 <div className="mt-3 flex gap-2">
-                  {t.estado === "borrador" && <button type="button" className={btnRojo} onClick={() => void accionTexto("publicar", t)}>Publicar</button>}
+                  {t.estado === "borrador" && (
+                    <button type="button" className={btnRojo} disabled={!datos.modulo.formulario_publico}
+                      title={datos.modulo.formulario_publico ? undefined : "Deshabilitado: con la captación apagada no se publican textos"}
+                      onClick={() => void accionTexto("publicar", t)}>Publicar</button>
+                  )}
                   {t.estado === "vigente" && <button type="button" className={btnBorde} onClick={() => void accionTexto("retirar", t)}>Retirar</button>}
                 </div>
               </div>
@@ -249,8 +256,8 @@ function PanelConsentimiento() {
 }
 
 // ── Ficha de un número: estado, historial y cargas ─────────────────────────
-function FichaTelefono({ consulta, esAdmin, publicados, vigente, alGuardar }: {
-  consulta: Consulta; esAdmin: boolean; publicados: TextoDto[]; vigente: string | null; alGuardar: (msg: string) => void;
+function FichaTelefono({ consulta, esAdmin, captacion, publicados, vigente, alGuardar }: {
+  consulta: Consulta; esAdmin: boolean; captacion: boolean; publicados: TextoDto[]; vigente: string | null; alGuardar: (msg: string) => void;
 }) {
   const e = consulta.estado;
   const [modo, setModo] = useState<"baja" | "alta" | null>(null);
@@ -277,15 +284,15 @@ function FichaTelefono({ consulta, esAdmin, publicados, vigente, alGuardar }: {
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" className={btnBorde} onClick={() => setModo(modo === "baja" ? null : "baja")}>Registrar baja</button>
         {esAdmin && (
-          <button type="button" className={btnBorde} disabled={e?.estado === "baja" || publicados.length === 0}
-            title={e?.estado === "baja" ? "Una carga del panel no revierte una baja" : publicados.length === 0 ? "No hay ningún texto publicado" : undefined}
+          <button type="button" className={btnBorde} disabled={!captacion || e?.estado === "baja" || publicados.length === 0}
+            title={!captacion ? "Deshabilitado: la captación está apagada" : e?.estado === "baja" ? "Una carga del panel no revierte una baja" : publicados.length === 0 ? "No hay ningún texto publicado" : undefined}
             onClick={() => setModo(modo === "alta" ? null : "alta")}>
             Registrar alta con evidencia
           </button>
         )}
       </div>
       {modo === "baja" && <FormBaja telefono={consulta.telefono} alGuardar={(m) => { setModo(null); alGuardar(m); }} />}
-      {modo === "alta" && esAdmin && (
+      {modo === "alta" && esAdmin && captacion && (
         <FormAlta telefono={consulta.telefono} publicados={publicados} vigente={vigente} alGuardar={(m) => { setModo(null); alGuardar(m); }} />
       )}
 
@@ -450,6 +457,7 @@ function Marco({ children, pestania, alElegir }: { children: React.ReactNode; pe
             Consentimiento para promociones por WhatsApp y campañas de recuperación del stand en simulación.
             No envía mensajes ni crea códigos.
           </p>
+          <EstadoLlaves />
           <div role="tablist" className="mt-4 flex flex-wrap gap-2">
             {tab("consentimiento", "Consentimiento")}
             {tab("campanias", "Campañas (simulación)")}
@@ -459,6 +467,30 @@ function Marco({ children, pestania, alElegir }: { children: React.ReactNode; pe
         {children}
       </section>
     </main>
+  );
+}
+
+// Diagnóstico privado de las llaves de entorno (/api/admin/marketing/estado).
+function EstadoLlaves() {
+  const [e, setE] = useState<EstadoMarketing | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    fetch("/api/admin/marketing/estado", { cache: "no-store" })
+      .then(async (res) => { const d = res.ok ? await res.json().catch(() => null) : null; if (vivo && d?.partes) setE(d as EstadoMarketing); })
+      .catch(() => { /* sin diagnóstico: cada pestaña informa lo suyo */ });
+    return () => { vivo = false; };
+  }, []);
+  if (!e) return null;
+  const apagado = e.estado === "Deshabilitado";
+  return (
+    <div role="status" className={`mt-4 rounded-2xl border p-4 ${apagado ? "border-white/15 bg-white/[0.04]" : "border-yellow-500/40 bg-yellow-950/20"}`}>
+      <p className="text-sm font-black uppercase tracking-[0.14em] text-white">Marketing: {e.estado}</p>
+      <ul className="mt-2 space-y-1 text-xs text-white/60">
+        {e.partes.map((p) => (
+          <li key={p.clave}><span className="font-bold text-white/80">{p.titulo}: {p.habilitado ? "Habilitado" : "Deshabilitado"}.</span> {p.nota}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

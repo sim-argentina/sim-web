@@ -46,6 +46,7 @@ let vigentePrevio: string | null = null;
 async function main() {
   process.env.ADMIN_SESSION_SECRET = randomBytes(32).toString("hex");
   process.env.MARKETING_WHATSAPP_PROVIDER = "fake";
+  process.env.MARKETING_CAMPANIAS_ENABLED = "true";
   process.env.CRON_SECRET = randomBytes(16).toString("hex");
   Object.assign(process.env, {
     WHATSAPP_APP_SECRET: SECRETO, WHATSAPP_VERIFY_TOKEN: VERIFICAR, WHATSAPP_ACCESS_TOKEN: ACCESO,

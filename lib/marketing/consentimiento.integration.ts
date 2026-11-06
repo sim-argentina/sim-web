@@ -109,11 +109,27 @@ async function main() {
     assert.equal(estado(tel(0)), "baja|-");
   }
   {
+    // La captación del stand (alta del panel con evidencia) y publicar un texto
+    // también se cortan con la llave apagada; la baja del panel sigue.
+    const alta = await http(PANEL.POST, "POST", "/api/admin/marketing/consentimientos", {
+      token: admin, body: { accion: "alta", idempotency_key: randomUUID(), telefono: tel(40), texto_version: V1, tipo_evidencia: "papel_firmado", referencia: `Planilla ${RUN}` },
+    });
+    assert.deepEqual([alta.status, alta.json.codigo, alta.json.estado], [503, "captacion_apagada", "Deshabilitado"]);
+    assert.equal(eventos(tel(40)), 0, "el alta del panel no llegó a la base");
+    const pub = await http(TEXTOS.POST, "POST", "/api/admin/marketing/textos", { token: admin, body: { accion: "publicar", version: V1 } });
+    assert.deepEqual([pub.status, pub.json.codigo], [503, "captacion_apagada"], "con la captación apagada no se publica ningún texto");
+    const baja = await http(PANEL.POST, "POST", "/api/admin/marketing/consentimientos", {
+      token: staff, body: { accion: "baja", idempotency_key: randomUUID(), telefono: tel(41), canal: "presencial", nota: "lo pidió en el stand" },
+    });
+    assert.equal(baja.status, 201, "la baja del panel NO depende de la llave");
+    assert.equal(estado(tel(41)), "baja|-");
+  }
+  {
     const r = await http(PANEL.GET, "GET", "/api/admin/marketing/consentimientos", { token: staff });
     assert.equal(r.status, 200);
     assert.deepEqual(r.json.modulo, { instalado: true, formulario_publico: false, texto_vigente: null });
   }
-  console.log("OK — 1: con la captación apagada, texto y alta dan 404; la baja y el panel funcionan.");
+  console.log("OK — 1: con la captación apagada, texto y alta pública dan 404, alta del panel y publicar 503; las bajas y el panel funcionan.");
 
   // ── 2. Llave prendida sin texto vigente: altas cerradas, bajas abiertas ───
   flag(true);

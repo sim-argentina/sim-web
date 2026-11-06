@@ -77,7 +77,9 @@ if (process.argv.includes("--mp-simulado")) {
 // preparar y ejecutar campañas con datos sintéticos (scripts/pruebas/marketing-campanias-demo.mjs).
 // No hay proveedor real: nada sale a WhatsApp.
 if (process.argv.includes("--marketing-simulado")) {
-  Object.assign(env, { MARKETING_WHATSAPP_PROVIDER: "fake" });
+  // La llave maestra (MARKETING_CAMPANIAS_ENABLED) se enciende solo acá: sin esta
+  // opción, también el Next local responde "Deshabilitado", como Producción.
+  Object.assign(env, { MARKETING_WHATSAPP_PROVIDER: "fake", MARKETING_CAMPANIAS_ENABLED: "true" });
   if (!env.CRON_SECRET) env.CRON_SECRET = randomBytes(24).toString("hex");
   console.log("Campañas en SIMULACIÓN: proveedor de WhatsApp falso, solo esta base local.");
 }

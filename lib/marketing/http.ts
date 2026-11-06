@@ -20,6 +20,14 @@ export function responderError(e: ErrorApi, extra: Record<string, unknown> = {})
 
 export const noEncontrado = () => responder({ error: "No encontrado." }, 404);
 
+/** Llave maestra de campañas apagada (lib/featureFlags.ts → marketingCampaniasHabilitadas). */
+export const campaniasDeshabilitadas = () =>
+  responder({ error: "Deshabilitado. Las campañas de Marketing están apagadas en este entorno.", codigo: "marketing_deshabilitado", estado: "Deshabilitado" }, 503);
+
+/** Captación apagada (MARKETING_CONSENTIMIENTO_ENABLED): sin altas ni textos nuevos. Las bajas siguen. */
+export const captacionDeshabilitada = (que: string) =>
+  responder({ error: `Deshabilitado. La captación de promociones está apagada: ${que}. Las bajas siguen funcionando.`, codigo: "captacion_apagada", estado: "Deshabilitado" }, 503);
+
 /** Error conocido → su respuesta; inesperado → 500 genérico con requestId (detalle solo en el log). */
 export function responderFallo(r: Extract<R<unknown>, { ok: false }>, contexto: string): NextResponse {
   if (r.e) return responderError(r.e);

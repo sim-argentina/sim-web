@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { logSecurityEvent } from "@/lib/apiError";
+import { marketingCampaniasHabilitadas } from "@/lib/featureFlags";
 import { ejecutarPendientes } from "@/lib/marketing/campaniasServer";
+import { campaniasDeshabilitadas } from "@/lib/marketing/http";
 import { procesarEventos } from "@/lib/marketing/whatsappServer";
 
 // Marketing · disparador de SERVIDOR del ejecutor de campañas (simulación).
@@ -11,7 +13,9 @@ import { procesarEventos } from "@/lib/marketing/whatsappServer";
 // NO está programado: el plan Hobby de Vercel solo admite crons diarios, que no
 // sirven para una campaña. Queda listo para el mecanismo que se elija en la
 // etapa real (ver docs/marketing/campanias.md, "Ejecución desde el servidor").
-// Como todo el ejecutor, solo escribe en la base local de pruebas.
+// Como todo el ejecutor, solo escribe en la base local de pruebas. Con la llave
+// maestra apagada (MARKETING_CAMPANIAS_ENABLED) responde 503 "Deshabilitado" sin
+// tocar la bandeja ni las campañas.
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +28,7 @@ function tieneSecreto(req: Request): boolean {
 }
 
 export async function POST(req: Request) {
+  if (!marketingCampaniasHabilitadas()) return campaniasDeshabilitadas();
   if (!tieneSecreto(req)) return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   try {
     // Primero la bandeja del webhook de WhatsApp (bajas y estados que hayan

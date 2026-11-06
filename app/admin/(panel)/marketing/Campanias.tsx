@@ -64,6 +64,7 @@ export default function Campanias() {
   const params = useSearchParams();
   const [lista, setLista] = useState<Lista | null>(null);
   const [error, setError] = useState("");
+  const [deshabilitado, setDeshabilitado] = useState(false);
   const [vista, setVista] = useState<{ tipo: "lista" } | { tipo: "nueva" } | { tipo: "detalle"; id: string } | { tipo: "editar"; id: string }>(() => {
     const id = params.get("campania");
     return id ? { tipo: "detalle", id } : { tipo: "lista" };
@@ -74,7 +75,7 @@ export default function Campanias() {
     try {
       const res = await fetch("/api/admin/marketing/campanias", { cache: "no-store" });
       const d = await res.json().catch(() => null);
-      if (!res.ok) { setError(d?.error || "No se pudieron cargar las campañas."); return; }
+      if (!res.ok) { setDeshabilitado(d?.codigo === "marketing_deshabilitado"); setError(d?.error || "No se pudieron cargar las campañas."); return; }
       setLista(d as Lista);
       setError("");
     } catch {
@@ -99,6 +100,15 @@ export default function Campanias() {
     void cargar();
   };
 
+  if (deshabilitado && !lista) {
+    return (
+      <p role="status" className="rounded-2xl border border-white/15 bg-white/[0.04] p-5 text-white/70">
+        <span className="block text-lg font-black uppercase text-white">Deshabilitado</span>
+        Las campañas de Marketing están apagadas en este entorno (<code className="text-white">MARKETING_CAMPANIAS_ENABLED</code>):
+        no se preparan, no se ejecutan, no se generan beneficios y no se envía nada.
+      </p>
+    );
+  }
   if (error && !lista) return <p className="rounded-2xl border border-red-500/40 bg-red-950/30 p-4 font-bold text-red-300">{error}</p>;
   if (!lista) return <p className="text-white/60">Cargando…</p>;
   const esAdmin = lista.rol === "admin";

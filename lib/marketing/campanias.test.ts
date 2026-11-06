@@ -149,9 +149,12 @@ async function main() {
 
   // ── 6. Entorno: solo la base local con proveedor falso puede escribir ─────
   {
-    const local = { NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:55321", MARKETING_WHATSAPP_PROVIDER: "fake" };
+    const local = { NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:55321", MARKETING_WHATSAPP_PROVIDER: "fake", MARKETING_CAMPANIAS_ENABLED: "true" };
     assert.equal(evaluarEntornoCampanias(local).escritura, true);
     const no = (e: Record<string, string | undefined>) => { const r = evaluarEntornoCampanias(e); return r.escritura ? "si" : r.codigo; };
+    for (const v of [undefined, "", "TRUE", "1", "true "]) {
+      assert.equal(no({ ...local, MARKETING_CAMPANIAS_ENABLED: v }), "marketing_deshabilitado", `la llave maestra manda aunque la base sea la local (${JSON.stringify(v)})`);
+    }
     assert.equal(no({ ...local, VERCEL: "1" }), "campanias_en_vercel");
     assert.equal(no({ ...local, VERCEL_ENV: "preview" }), "campanias_en_vercel");
     assert.equal(no({ ...local, NEXT_PUBLIC_SUPABASE_URL: "https://bcmoewwhsyxsiyvroarj.supabase.co" }), "campanias_base_no_local");

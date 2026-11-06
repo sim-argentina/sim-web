@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
 import { createHmac } from "node:crypto";
+import { estadoMarketing } from "@/lib/marketing/estadoMarketing";
 import {
   CODIGO_ENVIO_REAL_BLOQUEADO,
+  CODIGO_MARKETING_DESHABILITADO,
   armarPedidoPlantilla,
   clasificarRespuestaCloud,
   crearProveedorCloud,
@@ -30,6 +32,7 @@ const CREDENCIALES = {
   WHATSAPP_ACCESS_TOKEN: TOKEN, WHATSAPP_PHONE_NUMBER_ID: "123456789012345", WHATSAPP_BUSINESS_ACCOUNT_ID: "987654321098765",
   WHATSAPP_APP_SECRET: "secreto-app", WHATSAPP_VERIFY_TOKEN: "verificar", WHATSAPP_GRAPH_VERSION: "v26.0",
   MARKETING_WHATSAPP_PLANTILLA: "recuperacion_stand_v1", MARKETING_WHATSAPP_IDIOMA: "es_AR",
+  MARKETING_CAMPANIAS_ENABLED: "true",
 };
 const MSJ: MensajePlantilla = {
   destino: "5493511234567", plantilla: "", idioma: "", variables: ["Hola Ana", "10 % de descuento", "30/10", "reservas web y Gift Cards"],
@@ -58,6 +61,28 @@ async function main() {
     const malaVersion = evaluarEnvioReal({ ...CREDENCIALES, WHATSAPP_GRAPH_VERSION: "latest", MARKETING_WHATSAPP_ENVIOS_REALES: "true" });
     assert.ok(!malaVersion.ok && malaVersion.codigo === "configuracion_incompleta");
     assert.ok(!JSON.stringify(sinVersion).includes(TOKEN), "el motivo no lleva secretos");
+  }
+
+  // ── 1b. Llave maestra de campañas: sin ella, ni con el bloqueo abierto ─────
+  {
+    for (const v of [undefined, "", "TRUE", "1", "true "]) {
+      const r = evaluarEnvioReal({ ...CREDENCIALES, MARKETING_CAMPANIAS_ENABLED: v, MARKETING_WHATSAPP_ENVIOS_REALES: "true" });
+      assert.ok(!r.ok && r.codigo === CODIGO_MARKETING_DESHABILITADO && r.motivo.startsWith("Deshabilitado"), `MARKETING_CAMPANIAS_ENABLED=${JSON.stringify(v)}`);
+    }
+    const { t, llamadas } = transporte(() => json(200, { messages: [{ id: "wamid.X" }] }));
+    const p = crearProveedorCloud({ transporte: t, entorno: () => ({ ...CREDENCIALES, MARKETING_CAMPANIAS_ENABLED: undefined, MARKETING_WHATSAPP_ENVIOS_REALES: "true" }) });
+    const r = await p.enviarPlantilla(MSJ);
+    assert.ok(!r.ok && r.codigo === CODIGO_ENVIO_REAL_BLOQUEADO);
+    assert.equal(llamadas.length, 0, "con la llave maestra apagada no sale ningún pedido a Meta");
+
+    // Diagnóstico privado: con todo apagado dice "Deshabilitado" y no muestra valores.
+    const apagado = estadoMarketing({ ...CREDENCIALES, MARKETING_CAMPANIAS_ENABLED: undefined, MARKETING_WHATSAPP_ENVIOS_REALES: "true" });
+    assert.equal(apagado.estado, "Deshabilitado");
+    assert.deepEqual(apagado.partes.map((x) => [x.clave, x.habilitado]), [["captacion", false], ["campanias", false], ["envios_reales", false]]);
+    assert.ok(!JSON.stringify(apagado).includes(TOKEN), "el diagnóstico no lleva secretos");
+    assert.equal(estadoMarketing({}).estado, "Deshabilitado", "un entorno vacío es Deshabilitado");
+    assert.equal(estadoMarketing({ MARKETING_CONSENTIMIENTO_ENABLED: "true" }).estado, "Habilitado en parte");
+    assert.equal(estadoMarketing({ MARKETING_CAMPANIAS_ENABLED: "true" }).estado, "Habilitado en parte");
   }
 
   // ── 2. El bloqueo se comprueba ANTES de cualquier salida ──────────────────

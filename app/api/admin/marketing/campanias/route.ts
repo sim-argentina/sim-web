@@ -1,4 +1,5 @@
 import { requireAdmin, requireStaffOrAdmin } from "@/lib/adminGuards";
+import { marketingCampaniasHabilitadas } from "@/lib/featureFlags";
 import { forbiddenOrigin, isAllowedOrigin } from "@/lib/originCheck";
 import {
   PROPUESTA_SIN_APROBAR,
@@ -15,9 +16,11 @@ import {
   listarCampanias,
   vistaPrevia,
 } from "@/lib/marketing/campaniasServer";
-import { inesperado, leerCuerpo, responder, responderError, responderFallo } from "@/lib/marketing/http";
+import { campaniasDeshabilitadas, inesperado, leerCuerpo, responder, responderError, responderFallo } from "@/lib/marketing/http";
 
 // Marketing · campañas (SIMULACIÓN). Ver lib/marketing/campaniasServer.ts.
+// Con la llave maestra apagada (MARKETING_CAMPANIAS_ENABLED) todo responde 503
+// "Deshabilitado" antes de mirar la sesión o la base.
 //   GET  → staff o admin: campañas, entorno (si esta base admite escribir) y
 //          lo que hace cumplir hoy el módulo de Códigos.
 //   POST → SOLO admin:
@@ -31,6 +34,7 @@ export const dynamic = "force-dynamic";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function GET() {
+  if (!marketingCampaniasHabilitadas()) return campaniasDeshabilitadas();
   const auth = await requireStaffOrAdmin();
   if (!auth.ok) return auth.response;
   try {
@@ -55,6 +59,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  if (!marketingCampaniasHabilitadas()) return campaniasDeshabilitadas();
   if (!isAllowedOrigin(req)) return forbiddenOrigin();
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;

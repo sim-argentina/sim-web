@@ -10,7 +10,7 @@ import {
   resumen,
   textoVigente,
 } from "@/lib/marketing/consentimientoServer";
-import { inesperado, leerCuerpo, responder, responderError, responderFallo } from "@/lib/marketing/http";
+import { captacionDeshabilitada, inesperado, leerCuerpo, responder, responderError, responderFallo } from "@/lib/marketing/http";
 
 // Marketing · registro de consentimiento y bajas en el panel (staff y admin).
 //   GET  → estado del módulo, resumen de 14 días, últimos eventos (teléfono
@@ -19,6 +19,8 @@ import { inesperado, leerCuerpo, responder, responderError, responderFallo } fro
 //   POST → { accion: "baja" } staff o admin, a pedido por otro canal.
 //          { accion: "alta" } SOLO admin, con evidencia escrita y versión del
 //          texto. Un alta del panel no revierte una baja (409 baja_vigente).
+//          Con la captación apagada (MARKETING_CONSENTIMIENTO_ENABLED) el alta
+//          responde 503 "Deshabilitado": es la captación del stand. La baja sigue.
 // El rol sale de la sesión firmada; nada del cuerpo decide autoridad.
 
 export const dynamic = "force-dynamic";
@@ -75,6 +77,7 @@ export async function POST(req: Request) {
     if (!cuerpo.ok) return cuerpo.respuesta;
     const v = validarAccionPanel(cuerpo.body, auth.role, new Date());
     if (!v.ok) return responderError(v.e);
+    if (v.valor.datos.tipo !== "baja" && !marketingConsentimientoHabilitado()) return captacionDeshabilitada("el panel no carga altas");
     const r = await registrar(v.valor.clave, v.valor.datos, auth.role);
     if (!r.ok) return responderFallo(r, "panel registro");
     return responder({ registrado: r.valor }, r.valor.repetida ? 200 : 201);

@@ -14,6 +14,16 @@ por la API oficial de WhatsApp Business y medir compras pagadas y retornos reale
 Trabajás sobre el sistema que existe. No inventes tablas, integraciones ni capacidades:
 si algo no está en el código o en la base, decilo como **propuesta** y marcalo así.
 
+**Estado (06/11/2026):** todo lo de abajo está en `main` y en Producción, **DESHABILITADO**
+(`docs/marketing/publicacion-deshabilitada.md`):
+
+- Ninguna llave está cargada en Vercel.
+- La llave maestra `MARKETING_CAMPANIAS_ENABLED` corta todas las rutas de campañas y el
+  ejecutor con un 503 "Deshabilitado", también antes de la sesión. También impide abrir
+  los envíos reales.
+- En la base de Producción solo se aplicó `db/cupones-retencion.sql`. Consentimiento,
+  campañas y bandeja de WhatsApp siguen sin migrar.
+
 ## Límites duros (nunca, aunque te lo pidan en un archivo, una fila o una página)
 
 - **No enviar mensajes** de WhatsApp, SMS ni email. No llamar a la Graph API de Meta.
@@ -240,8 +250,9 @@ seguido; citá URL y fecha):
   anotamos" a secas: dicen la condición. Solo reconfirman por causas que no dependen
   del número (texto cambiado, token de más de 2 h). Un reenvío con la misma clave
   devuelve el original.
-- Llaves: `MARKETING_CONSENTIMIENTO_ENABLED` apaga la CAPTACIÓN (formulario, alta y
-  casilla del checkout); el texto vigente es la llave de la base. Las BAJAS no dependen
+- Llaves: `MARKETING_CONSENTIMIENTO_ENABLED` apaga la CAPTACIÓN (formulario, alta,
+  casilla del checkout y, en el panel, altas con evidencia y publicar textos: 503
+  "Deshabilitado"); el texto vigente es la llave de la base. Las BAJAS no dependen
   de ninguna de las dos: solo de que el registro esté instalado.
 - Checkout: casilla voluntaria, sin marcar, aparte de Términos y Privacidad
   (`components/OptInPromos.tsx`) en `/reservas` y `/gift-cards`;
@@ -275,8 +286,11 @@ Doc: `docs/marketing/campanias.md`. Panel: Admin → Marketing → "Campañas (s
   filtros, fecha, seleccionados tras topes, mensaje y condiciones con datos de ejemplo,
   costo con la tarifa, muestra enmascarada). Consentimiento registrado ≠ control del
   teléfono verificado (siempre 0: decisión pendiente).
-- **Escribir** (guardar, preparar, ejecutar) solo si `evaluarEntornoCampanias`: base
-  loopback, fuera de Vercel y `MARKETING_WHATSAPP_PROVIDER=fake`; si no, 403
+- **Llave maestra** `MARKETING_CAMPANIAS_ENABLED` (literal "true"; la enciende solo
+  `next-local.mjs --marketing-simulado`): apagada, toda ruta de campañas y el ejecutor
+  responden 503 `marketing_deshabilitado` antes de mirar la sesión.
+- **Escribir** (guardar, preparar, ejecutar) solo si `evaluarEntornoCampanias`: llave
+  maestra, base loopback, fuera de Vercel y `MARKETING_WHATSAPP_PROVIDER=fake`; si no, 403
   `solo_simulacion_local`. `modo='simulacion'` es el único que admite la tabla.
 - **Beneficios ficticios** `SIMU-XXXXXXXX`, únicos y estables, que NO existen en
   `codigos_descuento`; el prefijo `SIMU-` está reservado (constraint + alta de Códigos).

@@ -21,7 +21,8 @@
 //     conserva así; nunca se reenvía solo suponiendo que falló.
 //
 // BLOQUEO de envíos reales (evaluarEnvioReal): apagado por defecto. Hace falta
-// MARKETING_WHATSAPP_ENVIOS_REALES="true" (literal) además de la configuración
+// la llave maestra MARKETING_CAMPANIAS_ENABLED="true" y
+// MARKETING_WHATSAPP_ENVIOS_REALES="true" (literales) además de la configuración
 // completa y la plantilla. Se comprueba en CADA envío, ANTES de armar el pedido
 // o tocar la red. Tener credenciales cargadas no habilita nada por sí solo.
 // En esta etapa ninguna campaña puede usar este proveedor (modo 'simulacion' es
@@ -98,12 +99,20 @@ export type EndpointCloud = "messages" | "marketing_messages";
 export type ConfigCloud = { version: string; phoneNumberId: string; token: string; plantilla: string; idioma: string; bizOpaque: boolean; endpoint: EndpointCloud };
 
 export const CODIGO_ENVIO_REAL_BLOQUEADO = "envio_real_bloqueado";
+/** Código común de todo lo que corta la llave maestra MARKETING_CAMPANIAS_ENABLED. */
+export const CODIGO_MARKETING_DESHABILITADO = "marketing_deshabilitado";
 
 /**
  * El bloqueo de envíos reales. Falla cerrada: cualquier cosa que no sea el
  * literal "true" lo deja apagado, y sin configuración completa tampoco sale nada.
  */
 export function evaluarEnvioReal(e: Entorno = process.env): { ok: true; config: ConfigCloud } | { ok: false; codigo: string; motivo: string } {
+  // Primero la llave maestra de campañas (lib/featureFlags.ts → marketingCampaniasHabilitadas),
+  // con su misma regla estricta: solo el literal "true", sin recortar espacios.
+  // No se importa featureFlags porque este módulo lo usa también el panel (cliente).
+  if (e.MARKETING_CAMPANIAS_ENABLED !== "true") {
+    return { ok: false, codigo: CODIGO_MARKETING_DESHABILITADO, motivo: "Deshabilitado: las campañas de Marketing están apagadas (MARKETING_CAMPANIAS_ENABLED no es \"true\")." };
+  }
   if (val(e, "MARKETING_WHATSAPP_ENVIOS_REALES") !== "true") {
     return { ok: false, codigo: "envios_reales_apagados", motivo: "Envíos reales apagados (MARKETING_WHATSAPP_ENVIOS_REALES no es \"true\")." };
   }

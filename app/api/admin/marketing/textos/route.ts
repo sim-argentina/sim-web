@@ -1,8 +1,9 @@
 import { requireAdmin } from "@/lib/adminGuards";
+import { marketingConsentimientoHabilitado } from "@/lib/featureFlags";
 import { forbiddenOrigin, isAllowedOrigin } from "@/lib/originCheck";
 import { validarAccionTexto } from "@/lib/marketing/consentimiento";
 import { listarTextos, publicarTexto, retirarTexto } from "@/lib/marketing/consentimientoServer";
-import { inesperado, leerCuerpo, responder, responderError, responderFallo } from "@/lib/marketing/http";
+import { captacionDeshabilitada, inesperado, leerCuerpo, responder, responderError, responderFallo } from "@/lib/marketing/http";
 
 // Marketing · textos de la aceptación de promociones (solo admin).
 //   GET  → todas las versiones (borradores incluidos).
@@ -10,6 +11,8 @@ import { inesperado, leerCuerpo, responder, responderError, responderFallo } fro
 // Publicar un borrador retira el vigente anterior; retirar sin publicar otro
 // cierra las altas públicas al instante (las bajas siguen). Los borradores se
 // redactan y corrigen por SQL, con la revisión legal: acá no se edita texto.
+// Con la captación apagada (MARKETING_CONSENTIMIENTO_ENABLED) publicar responde
+// 503 "Deshabilitado": un borrador sin aprobar no puede quedar vigente. Retirar sigue.
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +37,7 @@ export async function POST(req: Request) {
     if (!cuerpo.ok) return cuerpo.respuesta;
     const v = validarAccionTexto(cuerpo.body);
     if (!v.ok) return responderError(v.e);
+    if (v.valor.accion === "publicar" && !marketingConsentimientoHabilitado()) return captacionDeshabilitada("no se publican textos");
     const r = v.valor.accion === "publicar" ? await publicarTexto(v.valor.version) : await retirarTexto(v.valor.version);
     if (!r.ok) return responderFallo(r, `texto ${v.valor.accion}`);
     const textos = await listarTextos();

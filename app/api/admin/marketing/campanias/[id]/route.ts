@@ -1,4 +1,5 @@
 import { requireAdmin, requireStaffOrAdmin } from "@/lib/adminGuards";
+import { marketingCampaniasHabilitadas } from "@/lib/featureFlags";
 import { forbiddenOrigin, isAllowedOrigin } from "@/lib/originCheck";
 import { errorCampanias } from "@/lib/marketing/campanias";
 import {
@@ -9,9 +10,10 @@ import {
   resolverIncierto,
   type AccionEstado,
 } from "@/lib/marketing/campaniasServer";
-import { inesperado, leerCuerpo, responder, responderError, responderFallo } from "@/lib/marketing/http";
+import { campaniasDeshabilitadas, inesperado, leerCuerpo, responder, responderError, responderFallo } from "@/lib/marketing/http";
 
-// Marketing · una campaña (SIMULACIÓN).
+// Marketing · una campaña (SIMULACIÓN). Con la llave maestra apagada
+// (MARKETING_CAMPANIAS_ENABLED) todo responde 503 "Deshabilitado".
 //   GET  → staff o admin: configuración, conteos, destinatarios (teléfono
 //          enmascarado, sin nombre), historial y atribución.
 //   POST → SOLO admin, solo en la base local de pruebas:
@@ -29,6 +31,7 @@ const ESTADOS: AccionEstado[] = ["iniciar", "pausar", "reanudar", "cancelar"];
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, ctx: Ctx) {
+  if (!marketingCampaniasHabilitadas()) return campaniasDeshabilitadas();
   const auth = await requireStaffOrAdmin();
   if (!auth.ok) return auth.response;
   const { id } = await ctx.params;
@@ -43,6 +46,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 }
 
 export async function POST(req: Request, ctx: Ctx) {
+  if (!marketingCampaniasHabilitadas()) return campaniasDeshabilitadas();
   if (!isAllowedOrigin(req)) return forbiddenOrigin();
   const auth = await requireAdmin();
   if (!auth.ok) return auth.response;
