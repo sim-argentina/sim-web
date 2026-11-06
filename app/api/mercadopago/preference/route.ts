@@ -1,28 +1,41 @@
 import { NextResponse } from "next/server";
-import MercadoPagoConfig, { Preference } from "mercadopago";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  evaluarPedido, filaReservaWeb, precioDelPedido, prepararReservaWeb, type Fallo,
+  evaluarPedido, filaReservaWeb, precioDelPedido, prepararReservaWeb, type Fallo, type PedidoReservaWeb,
 } from "@/lib/reservasComercial";
-import { validarCodigoDescuento } from "@/lib/codigosDescuento";
+import { evaluarCodigoDescuento, validarCodigoDescuento } from "@/lib/codigosDescuento";
+import {
+  huellaIntento, intentoDe, liberarRetencion, pasoReintento, prepararPagoConRetencion, retencionDeIntento, retenerCupon,
+  type EstadoCompraIntento, type FalloCupon, type Retencion,
+} from "@/lib/cuponesRetencion";
+import { mercadoPago } from "@/lib/mercadoPagoApi";
 import { rateLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { isAllowedOrigin, forbiddenOrigin } from "@/lib/originCheck";
 import { failResponse } from "@/lib/apiError";
 import { experimentoPostpayActivo, retornoExperimental } from "@/lib/reservaPostpay";
+import { registrarPromosCheckout } from "@/lib/marketing/checkoutPromos";
 
 const falloJson = (f: Fallo) =>
   NextResponse.json(
     { error: f.error, ...(f.codigo ? { codigo: f.codigo } : {}), ...(f.duraciones ? { duraciones: f.duraciones } : {}) },
     { status: f.status },
   );
+const falloCuponJson = (f: FalloCupon) => NextResponse.json({ error: f.error, codigo: f.codigo }, { status: f.status });
 
 const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
 
-const client = new MercadoPagoConfig({ accessToken: accessToken! });
-
 function isInvalidBaseUrl(url: string) {
   return url.includes("localhost") || url.includes("127.0.0.1");
+}
+
+/** Lo que identifica el pedido de un intento: si cambia, es otro intento. */
+function huellaReserva(pedido: PedidoReservaWeb, codigo: string, totalOriginal: number) {
+  return huellaIntento({
+    producto: "reserva", codigo, modalidad: pedido.modalidad, fecha: pedido.fecha, hora: pedido.hora,
+    duracion: pedido.duracion, simuladores: [...pedido.simuladores].sort(), nombre: pedido.nombre,
+    telefono: pedido.telefono, total_original: totalOriginal,
+  });
 }
 
 export async function POST(req: Request) {
@@ -32,6 +45,8 @@ export async function POST(req: Request) {
   if (!isAllowedOrigin(req)) return forbiddenOrigin();
 
   let reservaPendienteId: number | null = null;
+  // Cupón de usos limitados: retenido ANTES de habilitar el pago con descuento.
+  let retencion: Retencion | null = null;
   try {
     if (!accessToken) {
       return failResponse(500, "Servicio de pago no disponible", {
@@ -80,16 +95,22 @@ export async function POST(req: Request) {
 
     let descuentoAplicado = 0;
     let codigoAplicado: string | null = null;
+    let limitado = false;
+    const intento = intentoDe(body);
     if (codigo_descuento) {
       const r = await validarCodigoDescuento(codigo_descuento, totalOriginal, fecha, duracion);
-      if (!r.valido) {
+      const previa = r.valido ? null : await retencionDeIntento(intento, codigo_descuento);
+      // Un reintento de una compra que ya usó el cupón no vuelve a validar: manda el
+      // estado de su propia retención (misma compra, mismo link, o "ya se pagó").
+      if (!r.valido && !previa) {
         return NextResponse.json({ error: r.error || "Código inválido" }, { status: 400 });
       }
-      descuentoAplicado = Number(r.descuento || 0);
-      codigoAplicado = r.codigo;
+      descuentoAplicado = previa ? Number(previa.descuento ?? 0) : Number(r.descuento || 0);
+      codigoAplicado = previa ? previa.codigo : r.codigo;
+      limitado = previa ? true : Boolean(r.limitado);
     }
 
-    const totalFinal = Math.round(Math.max(totalOriginal - descuentoAplicado, 0));
+    let totalFinal = Math.round(Math.max(totalOriginal - descuentoAplicado, 0));
     if (!Number.isFinite(totalFinal) || totalFinal <= 0) {
       return NextResponse.json(
         { error: "El total final debe ser mayor a $0 para pagar con Mercado Pago." },
@@ -97,83 +118,229 @@ export async function POST(req: Request) {
       );
     }
 
-    // Disponibilidad real (motor por intervalos): reservas activas + pendientes
-    // recientes + bloqueos; cada simulador pedido libre durante TODO el turno,
-    // buffer incluido en v2.
-    if (veredicto.ocupado) return falloJson(veredicto.ocupado);
-
-    const { data: reservaPendiente, error: insertError } = await supabaseAdmin
-      .from("reservas")
-      .insert([
-        filaReservaWeb(pedido, {
-          estado: "pendiente_pago",
-          total: totalFinal,
-          total_original: totalOriginal,
-          descuento_aplicado: Math.round(descuentoAplicado),
-          codigo_descuento: codigoAplicado,
-        }),
-      ])
-      .select("id")
-      .single();
-
-    if (insertError || !reservaPendiente) {
-      return failResponse(500, "Error creando la reserva", {
-        logContext: "pref-resv insert",
-        error: insertError,
+    // Cupón de usos limitados: se retiene en la base (exclusivo entre Reservas y
+    // Gift Cards) y el descuento se recalcula sobre la fila bloqueada. Un
+    // reintento del mismo intento sigue su propio camino.
+    let reintento = false;
+    if (codigoAplicado && limitado) {
+      const h = await retenerCupon({
+        codigo: codigoAplicado, producto: "reserva", intento, huella: huellaReserva(pedido, codigoAplicado, totalOriginal),
       });
+      if (!h.ok) return falloCuponJson(h);
+      retencion = h.retencion;
+      if (h.reutilizada) {
+        const paso = pasoReintento(h.retencion, await estadoReservaDelIntento(h.retencion), new Date(), true);
+        if (paso.paso === "rechazar") return falloCuponJson(paso.fallo);
+        if (paso.paso === "devolver") return respuestaDeRetencion(h.retencion, paso.preferencia_id, paso.init_point);
+        if (paso.paso === "rehacer_preferencia") {
+          // Los importes son los que quedaron fijados en la retención.
+          reintento = true;
+          descuentoAplicado = Number(h.retencion.descuento);
+          totalFinal = Number(h.retencion.total_final);
+        }
+      }
+      if (!reintento) {
+        const ev = evaluarCodigoDescuento(h.fila, totalOriginal, fecha, duracion, new Date(), { ignorarCupo: true });
+        if (!ev.valido || Math.round(ev.descuento) !== Math.round(descuentoAplicado)) {
+          await liberarRetencion(h.retencion.id, "sin_oportunidad_de_pago");
+          retencion = null;
+          return NextResponse.json(
+            { error: ev.valido ? "El código de descuento cambió mientras comprabas. Probá de nuevo." : ev.error || "Código inválido", codigo: "codigo_cambiado" },
+            { status: 409 },
+          );
+        }
+      }
     }
-    reservaPendienteId = reservaPendiente.id;
+
+    let reservaId: number;
+    if (reintento && retencion?.reserva_id) {
+      // El intento anterior creó la reserva pero no entregó link: misma reserva
+      // (misma external_reference). Primero se busca la preferencia que pudo
+      // quedar creada; solo si no hay ninguna pagable se crea otra.
+      const revivida = await revivirReserva(retencion.reserva_id, pedido);
+      if (!revivida.ok) return revivida.respuesta;
+      reservaId = retencion.reserva_id;
+    } else {
+      // Disponibilidad real (motor por intervalos): reservas activas + pendientes
+      // recientes + bloqueos; cada simulador pedido libre durante TODO el turno,
+      // buffer incluido en v2.
+      if (veredicto.ocupado) {
+        if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
+        retencion = null;
+        return falloJson(veredicto.ocupado);
+      }
+
+      const { data: reservaPendiente, error: insertError } = await supabaseAdmin
+        .from("reservas")
+        .insert([
+          filaReservaWeb(pedido, {
+            estado: "pendiente_pago",
+            total: totalFinal,
+            total_original: totalOriginal,
+            descuento_aplicado: Math.round(descuentoAplicado),
+            codigo_descuento: codigoAplicado,
+          }),
+        ])
+        .select("id")
+        .single();
+
+      if (insertError || !reservaPendiente) {
+        if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
+        retencion = null;
+        return failResponse(500, "Error creando la reserva", {
+          logContext: "pref-resv insert",
+          error: insertError,
+        });
+      }
+      reservaId = reservaPendiente.id;
+    }
+    reservaPendienteId = reservaId;
 
     // Experiencia post-pago nueva, con kill switch: con
     // EXPERIMENTAL_RESERVA_POSTPAY=true vuelve a /reservas/confirmacion (cualquier
     // cliente); si no, el retorno de siempre, idéntico (ver lib/reservaPostpay.ts).
     const experimental = (await experimentoPostpayActivo())
-      ? retornoExperimental(baseUrl, reservaPendiente.id)
+      ? retornoExperimental(baseUrl, reservaId)
       : null;
 
-    const preference = new Preference(client);
-    const result = await preference.create({
-      body: {
-        items: [
-          {
-            id: `reserva-sim-${reservaPendiente.id}`,
-            title: "Reserva SIM Argentina",
-            quantity: 1,
-            unit_price: totalFinal,
-            currency_id: "ARS",
-          },
-        ],
-        external_reference: `reserva_${reservaPendiente.id}`,
-        back_urls: experimental ?? {
-          success: `${baseUrl}/reservas/exito`,
-          failure: `${baseUrl}/reservas/error`,
-          pending: `${baseUrl}/reservas/pendiente`,
+    const cuerpo = (extra: Record<string, unknown> = {}) => ({
+      items: [
+        {
+          id: `reserva-sim-${reservaId}`,
+          title: "Reserva SIM Argentina",
+          quantity: 1,
+          unit_price: totalFinal,
+          currency_id: "ARS",
         },
-        ...(experimental ? { auto_return: "approved" } : {}),
-        notification_url: `${baseUrl}/api/mercadopago/webhook`,
+      ],
+      external_reference: `reserva_${reservaId}`,
+      back_urls: experimental ?? {
+        success: `${baseUrl}/reservas/exito`,
+        failure: `${baseUrl}/reservas/error`,
+        pending: `${baseUrl}/reservas/pendiente`,
       },
+      ...(experimental ? { auto_return: "approved" } : {}),
+      notification_url: `${baseUrl}/api/mercadopago/webhook`,
+      ...extra,
+    });
+
+    let preferencia: { id: string; init_point?: string | null; sandbox_init_point?: string | null };
+    if (retencion) {
+      // Turno + oportunidad de pago anotada ANTES de pedirle la preferencia a
+      // Mercado Pago, con vencimiento (es lo que acota la retención), y el link
+      // guardado en la retención: un reintento recibe ESTE link, no otro.
+      const pago = await prepararPagoConRetencion({
+        retencion,
+        reintento,
+        vinculo: {
+          reserva_id: reservaId, external_reference: `reserva_${reservaId}`,
+          total_original: totalOriginal, descuento: Math.round(descuentoAplicado), total_final: totalFinal,
+        },
+        crear: (campos) => mercadoPago.crearPreferencia(cuerpo(campos)),
+      });
+      if (!pago.ok) {
+        // Sin poder verificar la anterior, la compra vuelve a quedar como fallida
+        // (sin link). Si otro pedido tiene el turno, no se toca nada: es suyo.
+        if (pago.fallo.codigo === "verificando_pago") await marcarErrorPago(reservaId);
+        return falloCuponJson(pago.fallo);
+      }
+      preferencia = { ...pago.preferencia, sandbox_init_point: null };
+    } else {
+      preferencia = await mercadoPago.crearPreferencia(cuerpo());
+    }
+
+    // Casilla voluntaria de promociones: aparte de la compra, nunca la bloquea ni
+    // la cambia (lib/marketing/checkoutPromos.ts). Sin casilla, no hace nada.
+    const promos = await registrarPromosCheckout({
+      body, fuente: "checkout_reserva", telefono: pedido.telefono, nombre: pedido.nombre,
+      compra: { reserva_id: String(reservaId) }, ip: clientIp(req),
     });
 
     return NextResponse.json({
-      id: result.id,
-      init_point: result.init_point,
-      sandbox_init_point: result.sandbox_init_point,
-      reserva_id: reservaPendiente.id,
+      id: preferencia.id,
+      init_point: preferencia.init_point,
+      sandbox_init_point: preferencia.sandbox_init_point ?? null,
+      reserva_id: reservaId,
       total_original: totalOriginal,
       descuento_aplicado: Math.round(descuentoAplicado),
       total_final: totalFinal,
       codigo_descuento: codigoAplicado,
+      promos: promos.estado,
     });
   } catch (error) {
-    if (reservaPendienteId) {
-      await supabaseAdmin
-        .from("reservas")
-        .update({ estado: "error_pago" })
-        .eq("id", reservaPendienteId);
-    }
+    if (reservaPendienteId) await marcarErrorPago(reservaPendienteId);
+    // Sin oportunidad de pago anotada, nada pudo cobrarse con este cupón y se
+    // libera. Con ella, la preferencia pudo crearse aunque no llegó la respuesta:
+    // la base se niega a liberar y la retención queda hasta vencer y verificarse.
+    if (retencion) await liberarRetencion(retencion.id, "sin_oportunidad_de_pago");
     return failResponse(500, "No se pudo crear la preferencia", {
       logContext: "pref-resv",
       error,
     });
   }
+}
+
+/** La misma respuesta que el pedido original, desde lo guardado en la retención. */
+function respuestaDeRetencion(r: Retencion, preferenciaId: string, initPoint: string) {
+  return NextResponse.json({
+    id: preferenciaId,
+    init_point: initPoint,
+    sandbox_init_point: null,
+    reserva_id: r.reserva_id,
+    total_original: Number(r.total_original),
+    descuento_aplicado: Number(r.descuento),
+    total_final: Number(r.total_final),
+    codigo_descuento: r.codigo,
+    promos: "no_solicitada",
+  });
+}
+
+async function marcarErrorPago(reservaId: number) {
+  await supabaseAdmin
+    .from("reservas")
+    .update({ estado: "error_pago" })
+    .eq("id", reservaId)
+    .is("mercado_pago_payment_id", null);
+}
+
+/** Estado de la reserva de un intento que se reintenta. */
+async function estadoReservaDelIntento(r: Retencion): Promise<EstadoCompraIntento> {
+  if (!r.reserva_id) return "sin_compra";
+  const { data } = await supabaseAdmin.from("reservas").select("estado, mercado_pago_payment_id").eq("id", r.reserva_id).maybeSingle();
+  if (!data) return "sin_compra";
+  if (data.mercado_pago_payment_id || data.estado === "activa") return "completada";
+  if (data.estado === "error_pago") return "fallida";
+  return "en_preparacion";
+}
+
+/**
+ * La reserva del intento vuelve a pendiente_pago para rehacer su preferencia.
+ * Si había quedado en error_pago dejó de ocupar el turno: se vuelve a verificar
+ * que siga libre (sin contarse a sí misma, porque no está pendiente).
+ */
+async function revivirReserva(
+  reservaId: number,
+  pedido: PedidoReservaWeb,
+): Promise<{ ok: true } | { ok: false; respuesta: NextResponse }> {
+  const { data } = await supabaseAdmin.from("reservas").select("estado").eq("id", reservaId).maybeSingle();
+  if (data?.estado === "pendiente_pago") return { ok: true };
+  if (data?.estado !== "error_pago") {
+    return { ok: false, respuesta: NextResponse.json({ error: "Este intento de pago venció. Volvé a armar tu compra.", codigo: "intento_vencido" }, { status: 409 }) };
+  }
+  const veredicto = await evaluarPedido(pedido);
+  if (veredicto.bloqueado) {
+    return { ok: false, respuesta: NextResponse.json({ error: "Ese horario no está disponible." }, { status: 400 }) };
+  }
+  if (veredicto.ocupado) return { ok: false, respuesta: falloJson(veredicto.ocupado) };
+  const { data: revivida } = await supabaseAdmin
+    .from("reservas")
+    .update({ estado: "pendiente_pago" })
+    .eq("id", reservaId)
+    .eq("estado", "error_pago")
+    .is("mercado_pago_payment_id", null)
+    .select("id");
+  if (!revivida || revivida.length === 0) {
+    return { ok: false, respuesta: NextResponse.json({ error: "Este intento de pago venció. Volvé a armar tu compra.", codigo: "intento_vencido" }, { status: 409 }) };
+  }
+  return { ok: true };
 }

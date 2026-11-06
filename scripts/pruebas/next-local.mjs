@@ -56,6 +56,32 @@ try {
   process.exit(CODIGO_BLOQUEADA);
 }
 
+// 4 · Opcional: Mercado Pago SIMULADO (lib/mercadoPagoSimulado.ts) para probar el
+// checkout completo en el navegador sin dinero ni red. Las preferencias se pagan
+// en /pruebas/mercadopago, que avisa al webhook real de esta misma app. La URL
+// base no puede ser localhost (las rutas de pago la rechazan): se usa un dominio
+// .invalid y la página simulada vuelve siempre a este mismo servidor.
+if (process.argv.includes("--mp-simulado")) {
+  Object.assign(env, {
+    MERCADOPAGO_SIMULADO: "1",
+    MERCADOPAGO_ACCESS_TOKEN: "TEST-SIMULADO-LOCAL",
+    MERCADOPAGO_WEBHOOK_SECRET: randomBytes(24).toString("hex"),
+    CRON_SECRET: randomBytes(24).toString("hex"),
+    NEXT_PUBLIC_BASE_URL: "https://sim-pruebas.invalid",
+  });
+  console.log("Mercado Pago SIMULADO: los pagos se hacen en /pruebas/mercadopago (sin dinero ni red).");
+}
+
+// 5 · Opcional: campañas de Marketing en SIMULACIÓN (lib/marketing/campaniasServer.ts).
+// Con el proveedor de WhatsApp FALSO y esta base loopback, el panel puede guardar,
+// preparar y ejecutar campañas con datos sintéticos (scripts/pruebas/marketing-campanias-demo.mjs).
+// No hay proveedor real: nada sale a WhatsApp.
+if (process.argv.includes("--marketing-simulado")) {
+  Object.assign(env, { MARKETING_WHATSAPP_PROVIDER: "fake" });
+  if (!env.CRON_SECRET) env.CRON_SECRET = randomBytes(24).toString("hex");
+  console.log("Campañas en SIMULACIÓN: proveedor de WhatsApp falso, solo esta base local.");
+}
+
 console.log(`Next ${modo} contra ${e.url} (NODE_ENV=test: no se carga .env.local).`);
 const args = modo === "build" ? ["build"] : [modo, "-p", puerto];
 const hijo = spawn(process.execPath, [resolve(RAIZ, "node_modules/next/dist/bin/next"), ...args], { env, stdio: "inherit", cwd: RAIZ });

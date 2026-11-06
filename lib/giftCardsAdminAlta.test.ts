@@ -364,7 +364,9 @@ const validar = (body: Record<string, unknown>, modalidad: "legacy" | "v2_10" = 
 // ── 10) El flujo público no se convirtió en otra cosa ───────────────────────
 {
   const pref = read("app/api/gift-cards/preference/route.ts");
-  assert.ok(/new Preference\(client\)/.test(pref), "la compra pública sigue creando la preference");
+  // La preferencia se crea a través de lib/mercadoPagoApi.ts (el SDK, o el simulador local).
+  assert.ok(/mercadoPago\.crearPreferencia\(/.test(pref), "la compra pública sigue creando la preference");
+  assert.ok(/new Preference\(configuracion\(\)\)\.create\(/.test(read("lib/mercadoPagoApi.ts")), "y la crea con el SDK de Mercado Pago");
   assert.ok(/notification_url/.test(pref), "sigue avisando al webhook");
   assert.ok(/external_reference: `gift_card_\$\{grupoId\}`/.test(pref), "el external_reference no cambió");
 

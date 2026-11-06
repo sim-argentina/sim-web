@@ -11,6 +11,9 @@ import {
   CircleAlert,
 } from "lucide-react";
 import TeamCard from "@/components/TeamCard";
+import { guardarPagoPendiente, intentoParaPedido, intentoTerminado, olvidarIntento, olvidarPagoPendiente } from "@/lib/intentoCompra";
+import PagoPendiente from "@/components/PagoPendiente";
+import OptInPromos, { mensajePromosTrasCompra, type OptInPromosValor } from "@/components/OptInPromos";
 import {
   gaEvent, setPendingPurchase,
   trackSelectDate, trackSelectTime, trackApplyPromotion,
@@ -242,6 +245,9 @@ export default function ReservasPage() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [acceptedConditions, setAcceptedConditions] = useState(false);
+  // Casilla VOLUNTARIA de promociones, aparte de las condiciones. null = no marcada.
+  const [promos, setPromos] = useState<OptInPromosValor>(null);
+  const [optinClave, setOptinClave] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingReservations, setIsLoadingReservations] = useState(false);
 
@@ -681,7 +687,15 @@ export default function ReservasPage() {
       // precio, responde 409 sin crear nada ni cobrar.
       modalidad_vista: oferta.modalidad,
       precio_visto: pricePerSim,
+      // Solo si la persona marcó la casilla de promociones. La reserva no depende de esto.
+      ...(promos ? { promos } : {}),
     };
+
+    // Clave del intento: la MISMA para este pedido aunque se recargue la página o
+    // se vuelva desde Mercado Pago (con un cupón limitado el servidor devuelve el
+    // mismo link en vez de abrir otro); otra en cuanto cambia el pedido. La casilla
+    // de promociones trae un token nuevo en cada carga: no cuenta como cambio.
+    const intento_id = intentoParaPedido("reserva", { ...payload, promos: undefined });
 
     // Lo elegido, para conservarlo si hay que recargar la oferta.
     const pedidoActual = { fecha: selectedDate, duracion };
@@ -706,12 +720,14 @@ export default function ReservasPage() {
           body: JSON.stringify({
             ...payload,
             total: 0,
+            intento_id,
           }),
         });
 
         const result = await response.json().catch(() => null);
 
         if (!response.ok) {
+          if (intentoTerminado(result?.codigo)) olvidarIntento("reserva");
           if (esCatalogoActualizado(response, result)) {
             await cargarOferta(pedidoActual, "catalogo_actualizado", preferencia);
             return;
@@ -734,13 +750,19 @@ export default function ReservasPage() {
         openFeedbackModal(
           "success",
           "Reserva confirmada",
-          "Tu reserva bonificada fue guardada correctamente. No tenés que pagar nada por Mercado Pago."
+          // La línea de promociones solo aparece según lo que el servidor registró de verdad.
+          ["Tu reserva bonificada fue guardada correctamente. No tenés que pagar nada por Mercado Pago.",
+            mensajePromosTrasCompra(result?.promos)].filter(Boolean).join(" ")
         );
 
+        olvidarIntento("reserva");
+        olvidarPagoPendiente("reserva");
         setName("");
         setPhone("");
         setSelectedTeams([]);
         setAcceptedConditions(false);
+        setPromos(null);
+        setOptinClave((k) => k + 1);
         setCodigoInput("");
         setCodigoAplicado(null);
 
@@ -765,12 +787,13 @@ export default function ReservasPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, intento_id }),
       });
 
       const result = await response.json().catch(() => null);
 
       if (!response.ok) {
+        if (intentoTerminado(result?.codigo)) olvidarIntento("reserva");
         // La oferta cambió (corte de modalidad o precio nuevo): no es un error
         // técnico. No se creó reserva ni preferencia; se muestra la vigente.
         if (esCatalogoActualizado(response, result)) {
@@ -809,6 +832,12 @@ export default function ReservasPage() {
         transaction_id: result?.reserva_id ? `reserva_${result.reserva_id}` : null,
       });
       setPendingPurchase({ value: totalFinal, currency: "ARS", type: "reserva" });
+      // Si vuelve desde Mercado Pago, la página ofrece continuar ESTE pago.
+      guardarPagoPendiente("reserva", {
+        link: paymentUrl,
+        descripcion: `Reserva del ${selectedDate.split("-").reverse().slice(0, 2).join("/")} a las ${selectedTime} · ${selectedTeams.join(", ")} · $ ${totalFinal.toLocaleString("es-AR")}`,
+        conCupon: Boolean(codigoAplicado),
+      });
 
       window.location.href = paymentUrl;
     } catch (error) {
@@ -854,6 +883,7 @@ export default function ReservasPage() {
   return (
     <main className="min-h-screen bg-black text-white">
       <section className="mx-auto max-w-7xl px-4 py-8 md:px-6 lg:px-8">
+        <PagoPendiente flujo="reserva" />
         <div className="overflow-hidden rounded-[32px] border border-white/10 bg-gradient-to-r from-red-950/40 via-zinc-950 to-zinc-900">
           <div className="grid gap-8 p-6 md:p-10 lg:grid-cols-[1.5fr_0.9fr]">
             <div>
@@ -1411,6 +1441,9 @@ export default function ReservasPage() {
                       .
                     </span>
                   </label>
+
+                  {/* Voluntaria y aparte: reservar no exige marcarla. */}
+                  <OptInPromos key={optinClave} onChange={setPromos} />
                 </div>
 
                 <button

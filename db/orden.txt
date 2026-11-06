@@ -116,6 +116,27 @@ esquema-base-permisos.sql
 # lectura (toda escritura pasa por sus RPCs). Necesita turnos_stand y empleados.
 interacciones-bloque1.sql
 
+# ── 13c. Marketing: consentimiento promocional y bajas ──────────────────────
+# Mismo motivo que 13b: recorta a service_role a lectura (escribe por RPC).
+# Necesita mensualidad_normalizar_telefono (mensualidades-m2-1-telefono.sql).
+marketing-consentimiento.sql
+
+# ── 13d. Cupones de usos limitados: retención compartida Reservas / Gift Cards ─
+# Mismo motivo que 13b: service_role solo lee la tabla (escribe por RPC).
+# Reemplaza consumir_codigo_descuento (codigos-b9) para que cuente retenciones.
+cupones-retencion.sql
+
+# ── 13e. Marketing: campañas (SIMULACIÓN persistente: cola, lotes, beneficios ficticios) ─
+# Mismo motivo que 13b: service_role solo lee (escribe por RPC). Necesita
+# marketing-consentimiento.sql (revisa consentimiento y bajas) y
+# mensualidad_normalizar_telefono. Reserva el prefijo SIMU- en codigos_descuento.
+marketing-campanias.sql
+
+# ── 13f. Marketing: WhatsApp Cloud API (bandeja del webhook, estados y bajas) ──
+# Mismo motivo que 13b. Necesita marketing-campanias.sql (envíos y destinatarios)
+# y marketing-consentimiento.sql (mkt_wa_registrar_baja). No envía nada.
+marketing-whatsapp.sql
+
 # ── 13g. CRM B2B · B0: identidad comercial (usuarios comerciales y auditoría) ─
 # Mismo motivo que 13b: recorta a service_role a lectura (y sin la columna
 # password_hash) y le quita EXECUTE a las funciones internas que

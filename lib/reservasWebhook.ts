@@ -14,11 +14,18 @@
 //     para resolverla desde la administración. No hay reembolso automático.
 //   · Idempotente: una segunda notificación del mismo pago no duplica slots, ni
 //     la reserva, ni Finanzas, ni cambia la modalidad.
+//   · Cupón de usos limitados (lib/cuponesRetencion.ts): el pago aprobado
+//     consume la retención de la reserva AUNQUE quede en conflicto_pago (el
+//     descuento se cobró así). Idempotente, y también se asegura cuando llega
+//     una notificación repetida de una reserva ya procesada. Sin retención
+//     (código sin límite o reserva anterior a esta versión): como siempre, se
+//     consume el código solo si la reserva quedó activa.
 // ============================================================================
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { filasSlotsReserva } from "@/lib/reservasSlots";
 import { consumirCodigoDescuento } from "@/lib/codigosDescuento";
+import { consumirRetencionDeCompra } from "@/lib/cuponesRetencion";
 import { logSecurityEvent } from "@/lib/apiError";
 import { registrarPagoWebSeguro, type PagoMpFinanzas } from "@/lib/mercadopagoPagos";
 
@@ -44,6 +51,7 @@ export function motivoDeError(error: { code?: string } | null): MotivoConflicto 
 type Deps = {
   registrarPago?: typeof registrarPagoWebSeguro;
   consumirCodigo?: typeof consumirCodigoDescuento;
+  consumirRetencion?: typeof consumirRetencionDeCompra;
 };
 
 /**
@@ -61,6 +69,7 @@ export async function procesarPagoAprobadoReserva(args: {
   const paymentId = String(args.paymentId);
   const registrarPago = args.deps?.registrarPago ?? registrarPagoWebSeguro;
   const consumirCodigo = args.deps?.consumirCodigo ?? consumirCodigoDescuento;
+  const consumirRetencion = args.deps?.consumirRetencion ?? consumirRetencionDeCompra;
 
   const { data: reserva, error: reservaError } = await supabaseAdmin
     .from("reservas")
@@ -71,8 +80,15 @@ export async function procesarPagoAprobadoReserva(args: {
     return { http: 404, body: { error: "No se encontró la reserva" } };
   }
 
-  // Idempotencia: si ya tiene payment_id, ya se procesó.
+  // Idempotencia: si ya tiene payment_id, ya se procesó. Lo único que se
+  // asegura es el consumo de su retención (si la llamada anterior murió entre la
+  // reserva y el consumo); repetirlo no cambia nada.
   if (reserva.mercado_pago_payment_id) {
+    if (reserva.codigo_descuento) {
+      const consumo = await consumirRetencion({ reserva_id: reservaId }, String(reserva.mercado_pago_payment_id), contextoUso(reserva))
+        .catch(() => "error" as const);
+      if (consumo === "error") return { http: 500, body: { error: "No se pudo registrar el uso del código" } };
+    }
     return { http: 200, body: { received: true } };
   }
 
@@ -141,8 +157,23 @@ export async function procesarPagoAprobadoReserva(args: {
     return { http: 500, body: { error: "Error actualizando reserva" } };
   }
 
-  // Consumir el código solo si esta llamada activó realmente la reserva.
-  if (estadoFinal === "activa" && updated && updated.length > 0 && reserva.codigo_descuento) {
+  // Cupón con retención: el pago aprobado la consume, quede activa o en
+  // conflicto. Si la base no responde, 500: Mercado Pago reintenta y el
+  // reintento lo asegura (rama de arriba).
+  let conRetencion = false;
+  if (updated && updated.length > 0 && reserva.codigo_descuento) {
+    let consumo: Awaited<ReturnType<typeof consumirRetencionDeCompra>>;
+    try {
+      consumo = await consumirRetencion({ reserva_id: reservaId }, paymentId, contextoUso(reserva));
+    } catch {
+      return { http: 500, body: { error: "No se pudo registrar el uso del código" } };
+    }
+    conRetencion = consumo !== null;
+    if (consumo === "error") return { http: 500, body: { error: "No se pudo registrar el uso del código" } };
+  }
+
+  // Sin retención: consumir el código solo si esta llamada activó realmente la reserva.
+  if (!conRetencion && estadoFinal === "activa" && updated && updated.length > 0 && reserva.codigo_descuento) {
     await consumirCodigo(reserva.codigo_descuento, {
       reserva_id: reserva.id,
       nombre: reserva.nombre,
@@ -157,4 +188,13 @@ export async function procesarPagoAprobadoReserva(args: {
   }
 
   return { http: 200, body: { received: true }, estado: estadoFinal, motivo };
+}
+
+function contextoUso(reserva: Record<string, unknown>) {
+  return {
+    nombre: (reserva.nombre as string) ?? null,
+    telefono: (reserva.telefono as string) ?? null,
+    fecha_reserva: (reserva.fecha as string) ?? null,
+    hora_reserva: (reserva.hora as string) ?? null,
+  };
 }

@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import OlvidarPagoPendiente from "@/components/OlvidarPagoPendiente";
 import { CheckCircle2, Loader2, ArrowRight, Download } from "lucide-react";
 import GiftCardDownloadable, {
   downloadGiftCardPng,
@@ -107,6 +108,7 @@ function ExitoContent() {
 
   return (
     <main className="min-h-screen bg-black px-4 py-20 text-white">
+      <OlvidarPagoPendiente flujo="gift_card" />
       <PurchaseTracker kind="gift_card" />
       <section className="mx-auto flex max-w-2xl flex-col items-center text-center">
         <div className="mb-6 rounded-full border border-green-500/30 bg-green-500/10 p-5 text-green-400">
