@@ -166,6 +166,10 @@ assert.ok(archivos.length > 300, `se recorrieron ${archivos.length} archivos`);
     "lib/mensualidadesM7_4.test.ts": "vencimiento de ejemplo",
     "lib/ia/consumoMes.test.ts": "fin exclusivo del rango de septiembre",
     "lib/turneroCambio.test.ts": "Turnero, cambio de caja: 01/10 es el ejemplo de un cierre cualquiera, no el corte",
+    "lib/crmB2.test.ts":
+      "CRM Seguimiento (paginación): lead_en 2026-10-01T12:00Z es el momento compartido por 237 filas para forzar empates, no el corte",
+    "lib/crmB4.test.ts":
+      "CRM métricas: OCT = P(\"2026-10-01\", \"2026-10-31\") es el período de octubre (desde inclusive), no el corte",
   };
   const conFecha = archivos.filter((f) => leer(f).includes(FECHA));
   const sinPermiso = conFecha.filter((f) => !(f in PERMITIDOS));

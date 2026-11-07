@@ -19,7 +19,6 @@ const RUTAS = [
   "/campeonatos",
   "/tienda",
   "/sobre-nosotros",
-  "/viaja-con-sim",
   "/legales/terminos",
   "/legales/privacidad",
   "/legales/cookies",

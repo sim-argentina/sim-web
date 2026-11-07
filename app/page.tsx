@@ -2,11 +2,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import HeroHome from "@/components/HeroHome";
-import ReviewsCarousel from "@/components/ReviewsCarousel";
 import SesionesVigentes from "@/components/SesionesVigentes";
-import { getGoogleReviews, getGooglePlaceUrl } from "@/lib/googleReviews";
+import ResenasGoogle from "@/components/ResenasGoogle";
+import { fichaConfigurada } from "@/lib/googleReviews";
+import { resenasGooglePublicasHabilitadas } from "@/lib/featureFlags";
 
-// ISR: la Home se revalida cada 6h para refrescar las reseñas de Google.
+// ISR: la Home se revalida cada 6 h. Las reseñas de Google NO viajan en este
+// HTML ni en su RSC (las políticas de Google no permiten guardarlas): las pide
+// el navegador a /api/resenas, sin caché, solo cuando el visitante pulsa
+// «Ver reseñas» y si RESENAS_GOOGLE_PUBLICAS está prendida (<ResenasGoogle />).
 // (Bloque final) Lo que depende de la modalidad comercial NO viaja en este HTML:
 // las duraciones de las sesiones las trae <SesionesVigentes /> del catálogo
 // vigente en cada visita, así quitar el override se ve sin esperar 6 h.
@@ -158,81 +162,12 @@ function Galeria() {
   );
 }
 
-// ─── 03 · TESTIMONIOS — PREPARADO PARA GOOGLE MAPS ──────────────
-async function Testimonios() {
-  // Reseñas reales de Google Places (server-side, solo 5★). Ante error o falta
-  // de envs, getGoogleReviews() devuelve [] y se muestra el fallback elegante.
-  const reviews = await getGoogleReviews();
-  const placeUrl = getGooglePlaceUrl();
-  const tieneReviews = reviews.length > 0;
-
-  return (
-    <section className="relative overflow-hidden border-y border-white/5 bg-black text-white">
-      {/* degradado sutil + leve glow rojo racing */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/[0.03] via-transparent to-black" />
-      <div className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[36rem] -translate-x-1/2 rounded-full bg-red-600/10 blur-[100px]" />
-
-      {/* header */}
-      <div className="relative px-6 pb-6 pt-14 md:px-12 md:pb-8 md:pt-16">
-        <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="mb-3 text-[10px] font-black uppercase tracking-[0.55em] text-red-500">
-              Lo que importa
-            </p>
-            <h2 className="text-2xl font-black uppercase leading-[1.05] md:text-[2.6rem]">
-              Clientes que ya vivieron la{" "}
-              <span className="whitespace-nowrap text-red-600">experiencia SIM.</span>
-            </h2>
-          </div>
-          {placeUrl && (
-            <a
-              href={placeUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex w-fit shrink-0 items-center gap-1.5 text-xs font-medium text-white/50 transition-colors hover:text-white"
-            >
-              Ver todas en Google Maps ↗
-            </a>
-          )}
-        </div>
-      </div>
-
-      {tieneReviews ? (
-        <ReviewsCarousel reviews={reviews} placeUrl={placeUrl} />
-      ) : (
-        // Fallback oscuro elegante
-        <div className="relative flex flex-col items-center justify-center gap-6 px-6 pb-16 text-center md:pb-20">
-          <div className="grid w-full max-w-5xl gap-4 md:grid-cols-3">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="flex flex-col gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-6">
-                <div className="flex gap-1">
-                  {[...Array(5)].map((_, j) => (
-                    <span key={j} className="text-base text-white/10">★</span>
-                  ))}
-                </div>
-                <div className="space-y-2">
-                  <div className="h-2.5 w-full rounded bg-white/5" />
-                  <div className="h-2.5 w-4/5 rounded bg-white/5" />
-                  <div className="h-2.5 w-3/5 rounded bg-white/5" />
-                </div>
-                <div className="mt-2 flex items-center gap-3 border-t border-white/10 pt-5">
-                  <div className="h-9 w-9 rounded-full bg-white/5" />
-                  <div className="space-y-1.5">
-                    <div className="h-2 w-20 bg-white/5" />
-                    <div className="h-2 w-12 bg-white/5" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="text-[10px] font-black uppercase tracking-[0.45em] text-white/25">
-            Reseñas verificadas · En camino
-          </p>
-        </div>
-      )}
-
-    </section>
-  );
+// ─── 03 · TESTIMONIOS — RESEÑAS REALES DE GOOGLE MAPS ───────────
+// El servidor solo pasa la ficha de Google Maps armada con el Place ID (que sí
+// puede guardarse) y si el botón «Ver reseñas» está habilitado. Las reseñas las
+// pide el navegador solo cuando el visitante pulsa el botón.
+function Testimonios() {
+  return <ResenasGoogle fichaUrl={fichaConfigurada()} consultaHabilitada={resenasGooglePublicasHabilitadas()} />;
 }
 
 // ─── 04 · COMUNIDAD ──────────────────────────────────────────────

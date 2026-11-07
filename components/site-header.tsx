@@ -5,7 +5,6 @@ export default function SiteHeader() {
   const links = [
     { href: "/", label: "Inicio" },
     { href: "/alquiler", label: "Alquiler" },
-    { href: "/viaja-con-sim", label: "Viaja con SIM", isBrasil: true },
     { href: "/sobre-nosotros", label: "Nosotros" },
   ];
 
@@ -45,21 +44,6 @@ export default function SiteHeader() {
                   className="text-sm font-semibold text-red-500 transition hover:text-red-400"
                 >
                   {link.label}
-                </Link>
-              );
-            }
-
-            // VIAJE CON SIM (COLORES BRASIL)
-            if ("isBrasil" in link && link.isBrasil) {
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className="text-sm font-semibold transition hover:opacity-80"
-                >
-                  <span className="text-[rgb(34,197,94)]">Viaja</span>
-                  <span className="mx-1 text-[rgb(255,214,10)]">con</span>
-                  <span className="text-[rgb(59,130,246)]">SIM</span>
                 </Link>
               );
             }
