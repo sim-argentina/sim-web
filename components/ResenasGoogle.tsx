@@ -7,6 +7,10 @@ import type { ResenasHome } from "@/lib/googleReviews";
 
 // 03 · Reseñas reales de Google Maps en la Home.
 //
+// HOY NO ESTÁ MONTADO: la Home muestra un resumen estático
+// (components/ResenasDestacadas.tsx) y no pide /api/resenas. Se conserva, con
+// la consulta pública apagada, por si se decide volver a las reseñas en vivo.
+//
 // NO viajan en el HTML ni en el RSC de la Home (ISR): las políticas de Google
 // Maps Platform no permiten guardar reseñas. El servidor pinta el encabezado y
 // el enlace a la ficha (armado con el Place ID, que sí puede guardarse).

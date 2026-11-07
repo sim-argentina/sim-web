@@ -5,7 +5,8 @@ import { atenderResenasPublicas } from "@/lib/googleReviews";
 import { contadorGooglePlaces } from "@/lib/googlePlacesConsumo";
 
 // Reseñas de Google para la Home, pedidas por el navegador SOLO cuando el
-// visitante pulsa «Ver reseñas» (components/ResenasGoogle.tsx).
+// visitante pulsa «Ver reseñas» (components/ResenasGoogle.tsx, hoy sin montar:
+// la Home muestra un resumen estático y no llama a esta ruta).
 //
 //   · Apagada por defecto (RESENAS_GOOGLE_PUBLICAS): 404 sin consultar a Google
 //     ni tocar el contador; la Home muestra solo el enlace a Google Maps.
