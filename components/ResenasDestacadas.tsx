@@ -42,7 +42,7 @@ export default function ResenasDestacadas({ fichaUrl }: { fichaUrl: string }) {
           <span className="whitespace-nowrap text-red-600">experiencia SIM.</span>
         </h2>
         <p className="mt-4 max-w-xl text-sm leading-6 text-white/55">
-          Lo que más destacaron en sus reseñas de Google Maps.
+          Lo que algunos clientes destacaron en Google Maps.
         </p>
 
         <ul className="mt-10 grid gap-4 md:grid-cols-3">
