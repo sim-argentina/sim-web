@@ -8,49 +8,44 @@ import type { ResenasHome } from "@/lib/googleReviews";
 // 03 · Reseñas reales de Google Maps en la Home.
 //
 // NO viajan en el HTML ni en el RSC de la Home (ISR): las políticas de Google
-// Maps Platform no permiten guardar reseñas. El servidor solo pinta el
-// encabezado y el enlace a la ficha (armado con el Place ID, que sí puede
-// guardarse); el navegador pide /api/resenas (sin caché) cuando la sección
-// está por verse. Una visita que nunca llega a la sección no consulta a Google.
+// Maps Platform no permiten guardar reseñas. El servidor pinta el encabezado y
+// el enlace a la ficha (armado con el Place ID, que sí puede guardarse).
+//
+// Consumo mínimo: a Google se le pregunta SOLO cuando el visitante pulsa
+// «Ver reseñas» (una vez por visita), y solo si la consulta pública está
+// habilitada (RESENAS_GOOGLE_PUBLICAS, apagada por defecto). Apagada, se ve
+// únicamente el enlace a Google Maps.
 //
 // Estados, todos con salida: carga (máximo 12 s) → reseñas, o el enlace a
-// Google Maps si no hay reseñas para mostrar, Google falla, falta configuración
-// o se superó un límite. Sin JavaScript se ve directamente el enlace. Nunca un
-// esqueleto indefinido ni contenido inventado.
+// Google Maps si no hay reseñas para mostrar, Google falla, se alcanzó el tope
+// diario, el contador no responde o se superó el límite por IP. Sin
+// JavaScript, el botón se oculta y queda el enlace. Nunca contenido inventado.
 
 const ESPERA_MAXIMA_MS = 12_000;
-const MARGEN_PREVIO = "600px 0px";
 
-type Estado = { fase: "esperando" | "cargando" } | { fase: "listo"; datos: ResenasHome } | { fase: "sin_datos" };
+type Estado = { fase: "inicial" | "cargando" | "sin_datos" } | { fase: "listo"; datos: ResenasHome };
 
 function formatoRating(n: number): string {
   return n.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
-function EnlaceFicha({ fichaUrl }: { fichaUrl: string }) {
+function BotonMaps({ fichaUrl }: { fichaUrl: string }) {
   return (
-    <div className="relative px-6 pb-16 md:px-12 md:pb-20">
-      <div className="mx-auto flex max-w-3xl flex-col items-center gap-5 rounded-xl border border-white/10 bg-white/[0.03] px-6 py-10 text-center">
-        <p className="max-w-md text-sm leading-6 text-white/65">
-          Las opiniones de quienes ya corrieron en SIM están en nuestra ficha de Google Maps.
-        </p>
-        <a
-          href={fichaUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 border border-white/20 px-6 py-3 text-xs font-black uppercase tracking-widest text-white/80 transition-all hover:border-red-600 hover:text-white"
-        >
-          Ver reseñas en Google Maps ↗
-        </a>
-      </div>
-    </div>
+    <a
+      href={fichaUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-2 border border-white/20 px-6 py-3 text-xs font-black uppercase tracking-widest text-white/80 transition-all hover:border-red-600 hover:text-white"
+    >
+      Ver reseñas en Google Maps ↗
+    </a>
   );
 }
 
 // Carga acotada: se ve solo mientras se espera la respuesta (máximo 12 s).
 function Cargando() {
   return (
-    <div className="resenas-cargando relative px-9 pb-16 pt-6 md:px-14 md:pb-20 md:pt-8" aria-busy="true">
+    <div className="relative px-9 pb-16 pt-6 md:px-14 md:pb-20 md:pt-8" aria-busy="true">
       <p className="sr-only">Cargando reseñas de Google Maps…</p>
       <div className="grid gap-4 md:grid-cols-3" aria-hidden="true">
         {[0, 1, 2].map((i) => (
@@ -71,50 +66,30 @@ function Cargando() {
   );
 }
 
-export default function ResenasGoogle({ fichaUrl }: { fichaUrl: string }) {
-  const seccion = useRef<HTMLElement>(null);
-  const [estado, setEstado] = useState<Estado>({ fase: "esperando" });
+export default function ResenasGoogle({ fichaUrl, consultaHabilitada }: { fichaUrl: string; consultaHabilitada: boolean }) {
+  const [estado, setEstado] = useState<Estado>({ fase: "inicial" });
+  const pedido = useRef<{ control: AbortController; reloj: ReturnType<typeof setTimeout> } | null>(null);
 
-  useEffect(() => {
-    const el = seccion.current;
-    if (!el) return;
-    let vivo = true;
-    const control = new AbortController();
-    let reloj: ReturnType<typeof setTimeout> | undefined;
-
-    const cargar = () => {
-      if (!vivo) return;
-      setEstado({ fase: "cargando" });
-      reloj = setTimeout(() => control.abort(), ESPERA_MAXIMA_MS);
-      fetch("/api/resenas", { cache: "no-store", signal: control.signal })
-        .then((r) => r.json() as Promise<ResenasHome | { estado: "limitado" }>)
-        .then((d) => {
-          if (!vivo) return;
-          const ok = d.estado === "ok" && "reviews" in d && Array.isArray(d.reviews) && d.reviews.length > 0;
-          setEstado(ok ? { fase: "listo", datos: d as ResenasHome } : { fase: "sin_datos" });
-        })
-        .catch(() => {
-          if (vivo) setEstado({ fase: "sin_datos" });
-        })
-        .finally(() => clearTimeout(reloj));
-    };
-
-    if (typeof IntersectionObserver === "undefined") {
-      const inicio = setTimeout(cargar, 0);
-      return () => { vivo = false; clearTimeout(inicio); control.abort(); clearTimeout(reloj); };
-    }
-    const obs = new IntersectionObserver(
-      (entradas) => {
-        if (entradas.some((e) => e.isIntersecting)) {
-          obs.disconnect();
-          cargar();
-        }
-      },
-      { rootMargin: MARGEN_PREVIO },
-    );
-    obs.observe(el);
-    return () => { vivo = false; obs.disconnect(); control.abort(); clearTimeout(reloj); };
+  // Al desmontar, se corta un pedido en curso.
+  useEffect(() => () => {
+    if (pedido.current) { pedido.current.control.abort(); clearTimeout(pedido.current.reloj); }
   }, []);
+
+  const verResenas = () => {
+    if (estado.fase !== "inicial" || pedido.current) return; // una consulta por visita
+    setEstado({ fase: "cargando" });
+    const control = new AbortController();
+    const reloj = setTimeout(() => control.abort(), ESPERA_MAXIMA_MS);
+    pedido.current = { control, reloj };
+    fetch("/api/resenas", { cache: "no-store", signal: control.signal })
+      .then((r) => (r.ok ? (r.json() as Promise<ResenasHome>) : null))
+      .then((d) => {
+        const ok = d && d.estado === "ok" && Array.isArray(d.reviews) && d.reviews.length > 0;
+        setEstado(ok ? { fase: "listo", datos: d } : { fase: "sin_datos" });
+      })
+      .catch(() => setEstado({ fase: "sin_datos" })) // red, timeout de 12 s o JSON inválido
+      .finally(() => clearTimeout(reloj));
+  };
 
   const datos = estado.fase === "listo" ? estado.datos : null;
   const resumen = datos?.resumen ?? null;
@@ -122,7 +97,7 @@ export default function ResenasGoogle({ fichaUrl }: { fichaUrl: string }) {
   const verTodas = datos?.fichaUrl ?? fichaUrl;
 
   return (
-    <section ref={seccion} className="relative overflow-hidden border-y border-white/5 bg-black text-white">
+    <section className="relative overflow-hidden border-y border-white/5 bg-black text-white">
       {/* degradado sutil + leve glow rojo racing */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/[0.03] via-transparent to-black" />
       <div className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[36rem] -translate-x-1/2 rounded-full bg-red-600/10 blur-[100px]" />
@@ -172,17 +147,34 @@ export default function ResenasGoogle({ fichaUrl }: { fichaUrl: string }) {
             <AtribucionGoogleMaps />
           </div>
         </>
-      ) : estado.fase === "sin_datos" ? (
-        <EnlaceFicha fichaUrl={fichaUrl} />
+      ) : estado.fase === "cargando" ? (
+        <Cargando />
       ) : (
-        <>
-          <Cargando />
-          {/* Sin JavaScript no hay carga: se ve directamente el enlace. */}
+        <div className="relative px-6 pb-16 md:px-12 md:pb-20">
+          <div className="mx-auto flex max-w-3xl flex-col items-center gap-5 rounded-xl border border-white/10 bg-white/[0.03] px-6 py-10 text-center">
+            <p className="max-w-md text-sm leading-6 text-white/65">
+              {estado.fase === "sin_datos"
+                ? "Ahora no pudimos mostrar las reseñas acá. Están todas en nuestra ficha de Google Maps."
+                : "Las opiniones de quienes ya corrieron en SIM están en nuestra ficha de Google Maps."}
+            </p>
+            <div className="flex flex-col items-center gap-3 sm:flex-row">
+              {consultaHabilitada && estado.fase === "inicial" && (
+                <button
+                  type="button"
+                  onClick={verResenas}
+                  className="resenas-boton inline-flex items-center gap-2 bg-red-600 px-6 py-3 text-xs font-black uppercase tracking-widest text-white transition-all hover:bg-white hover:text-black"
+                >
+                  Ver reseñas
+                </button>
+              )}
+              <BotonMaps fichaUrl={fichaUrl} />
+            </div>
+          </div>
+          {/* Sin JavaScript el botón no hace nada: se oculta y queda el enlace. */}
           <noscript>
-            <style>{".resenas-cargando{display:none}"}</style>
-            <EnlaceFicha fichaUrl={fichaUrl} />
+            <style>{".resenas-boton{display:none}"}</style>
           </noscript>
-        </>
+        </div>
       )}
     </section>
   );

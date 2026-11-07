@@ -52,3 +52,14 @@ export function marketingConsentimientoHabilitado(): boolean {
 export function marketingCampaniasHabilitadas(entorno: Record<string, string | undefined> = process.env): boolean {
   return flagHabilitada(entorno.MARKETING_CAMPANIAS_ENABLED);
 }
+
+// Reseñas de Google en la Home · consulta PÚBLICA (botón «Ver reseñas»).
+// Apagada (lo normal hasta decidirlo): la Home muestra solo el enlace a Google
+// Maps, /api/resenas responde 404 sin consultar a Google y no se gasta cupo.
+// El diagnóstico admin (/api/admin/resenas-google/diagnostico) NO depende de
+// esta llave: sirve para una consulta controlada con la key de Producción.
+// Prenderla exige además la tabla del tope diario (db/google-places-consumo.sql):
+// sin ella el contador queda "no operativo" y la Home vuelve a mostrar solo el enlace.
+export function resenasGooglePublicasHabilitadas(entorno: Record<string, string | undefined> = process.env): boolean {
+  return flagHabilitada(entorno.RESENAS_GOOGLE_PUBLICAS);
+}

@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   PLACE_ID_SIM, urlFicha, redactar, normalizarNueva, normalizarLegacy, leerErrorNueva,
-  indicacionPara, resenasPublicas, diagnosticarResenas, probarLegacy, fichaConfigurada, CAMPOS_NUEVA, type Intento,
+  indicacionPara, resenasPublicas, diagnosticarResenas, probarLegacy, fichaConfigurada, CAMPOS_NUEVA,
+  atenderResenasPublicas, topeDiario, TOPE_DIARIO_PROPUESTO, type Intento, type Contador,
 } from "@/lib/googleReviews";
+import { resenasGooglePublicasHabilitadas } from "@/lib/featureFlags";
 
 // Ejecutar: npx tsx lib/googleReviews.test.ts
 // Reseñas de Google de la Home con respuestas SIMULADAS: fetch se reemplaza por
@@ -14,11 +16,13 @@ import {
 //
 // Sin caché en ninguna capa (políticas de Google Maps Platform): consulta
 // no-store, nada en memoria, respuesta no-store y nada de reseñas en el
-// HTML/RSC de la Home.
+// HTML/RSC de la Home. Consumo: solo con el botón «Ver reseñas», con la
+// consulta pública apagada por defecto y un tope diario compartido (el
+// contador real vive en la base; acá se usa uno falso con su misma semántica).
 
 const KEY = "AIzaPRUEBA-no-es-una-key-real-0123456789";
 const intento = (p: Partial<Intento>): Intento =>
-  ({ api: "places_new", http: 403, estadoGoogle: null, motivo: null, mensaje: null, ms: 1, ...p });
+  ({ api: "places_new", http: 403, estadoGoogle: null, motivo: null, mensaje: null, ms: 1, contada: true, ...p });
 
 // ── 1 · Normalización: solo 5★ con texto, URLs https, texto original ─────────
 {
@@ -105,7 +109,7 @@ const intento = (p: Partial<Intento>): Intento =>
     `https://www.google.com/maps/search/?api=1&query=SIM%20Argentina&query_place_id=${PLACE_ID_SIM}`);
 }
 
-// ── 3 · Consulta completa con un doble de fetch ──────────────────────────────
+// ── 3 · Consulta completa con un doble de fetch y un contador falso ──────────
 type Llamada = { url: string; headers: Record<string, string>; cache: RequestCache | undefined; next: unknown };
 const llamadas: Llamada[] = [];
 let respuestas: Array<() => Promise<Response>> = [];
@@ -129,10 +133,32 @@ function preparar(env: { key?: string; place?: string }, ...r: Array<() => Promi
   if (env.place === undefined) delete process.env.GOOGLE_PLACE_ID; else process.env.GOOGLE_PLACE_ID = env.place;
 }
 
+/** Contador falso con la MISMA semántica que la RPC: sin forzar respeta el tope; forzado cuenta siempre. */
+function contadorFalso(o: { tope?: number; llamadas?: number; operativo?: boolean; lanza?: boolean; reservaCaida?: boolean } = {}) {
+  const c = { tope: o.tope ?? 30, llamadas: o.llamadas ?? 0, reservas: 0, forzadas: 0 };
+  const contador: Contador = {
+    tope: c.tope,
+    async reservar(forzar) {
+      if (o.lanza) throw new Error("red caída");
+      if (o.operativo === false || o.reservaCaida) return { ok: false, motivo: "no_operativo" };
+      if (!forzar && c.llamadas >= c.tope) return { ok: false, motivo: "tope" };
+      c.llamadas++; c.reservas++; if (forzar) c.forzadas++;
+      return { ok: true, llamada: c.llamadas };
+    },
+    async leer() {
+      return o.operativo === false
+        ? { operativo: false, fecha: "2026-11-07", llamadas: null, tope: c.tope }
+        : { operativo: true, fecha: "2026-11-07", llamadas: c.llamadas, tope: c.tope };
+    },
+  };
+  return { contador, c };
+}
+
 const RESENA_5 = {
   name: "places/x/reviews/a", rating: 5, originalText: { text: "La mejor experiencia" },
   authorAttribution: { displayName: "Ana", uri: "https://www.google.com/maps/contrib/1", photoUri: "https://lh3.googleusercontent.com/a" },
   relativePublishTimeDescription: "hace 1 mes", googleMapsUri: "https://www.google.com/maps/reviews/a",
+  flagContentUri: "https://www.google.com/local/review/rap/report?a",
 };
 const REFERER_BLOQUEADO = json(403, { error: { code: 403, status: "PERMISSION_DENIED", message: `Requests from referer <empty> are blocked. key=${KEY}`,
   details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "API_KEY_HTTP_REFERRER_BLOCKED" }] } });
@@ -140,40 +166,10 @@ const NUEVA_DESHABILITADA = json(403, { error: { code: 403, status: "PERMISSION_
   message: "Places API (New) has not been used in project 1 before or it is disabled.",
   details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SERVICE_DISABLED" }] } });
 const LEGACY_DENEGADA = json(200, { status: "REQUEST_DENIED", error_message: "You're calling a legacy API, which is not enabled for your project." });
-
-async function rutaPublica(
-  preparar: (env: { key?: string; place?: string }, ...r: Array<() => Promise<Response>>) => void,
-  llamadas: Llamada[],
-  ok: () => Promise<Response>,
-) {
-  for (const k of ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "UPSTASH_REDIS_REST_KV_REST_API_URL", "UPSTASH_REDIS_REST_KV_REST_API_TOKEN"]) delete process.env[k];
-  const { GET } = await import("@/app/api/resenas/route");
-  const pedido = (ip: string, q = "") => new Request(`https://simexperience.com.ar/api/resenas${q}`, { headers: { "x-vercel-forwarded-for": ip } });
-
-  preparar({ key: KEY }, ok);
-  let res = await GET(pedido("203.0.113.1", "?place=ChIJotro&fields=*"));
-  assert.equal(res.status, 200);
-  assert.equal(res.headers.get("cache-control"), "private, no-store, max-age=0");
-  assert.equal(res.headers.get("cdn-cache-control"), "no-store");
-  assert.equal(res.headers.get("vercel-cdn-cache-control"), "no-store");
-  const cuerpo = await res.json() as { estado: string; reviews: unknown[] };
-  assert.deepEqual([cuerpo.estado, cuerpo.reviews.length], ["ok", 1]);
-  assert.ok(llamadas[0].url.includes(`/places/${PLACE_ID_SIM}?`) && llamadas[0].headers["X-Goog-FieldMask"] === CAMPOS_NUEVA,
-    "los parámetros del cliente no cambian la consulta a Google");
-
-  // Límite por IP: 6 por minuto; el 7.º no consulta a Google y deja el enlace.
-  preparar({ key: KEY }, ok, ok, ok, ok, ok);
-  for (let i = 0; i < 5; i++) assert.equal((await GET(pedido("203.0.113.1"))).status, 200);
-  const antes = llamadas.length;
-  res = await GET(pedido("203.0.113.1"));
-  assert.equal(res.status, 429);
-  assert.equal(res.headers.get("cache-control"), "private, no-store, max-age=0");
-  assert.deepEqual(await res.json(), { estado: "limitado", reviews: [], resumen: null, fichaUrl: fichaConfigurada() });
-  assert.equal(llamadas.length, antes, "pasado el límite no se llama a Google");
-  // Otra IP sigue pudiendo.
-  preparar({ key: KEY }, ok);
-  assert.equal((await GET(pedido("203.0.113.2"))).status, 200);
-}
+const LEGACY_OK = json(200, { status: "OK", result: { rating: 4.9, user_ratings_total: 129, url: "https://maps.google.com/?cid=9",
+  reviews: [{ author_name: "Fede", rating: 5, text: "Excelente", time: 1 }] } });
+const OK = json(200, { rating: 4.9, userRatingCount: 129, googleMapsLinks: { reviewsUri: "https://www.google.com/maps/reviews-sim" },
+  reviews: [RESENA_5, { ...RESENA_5, name: "b", rating: 4 }] });
 
 async function consultas() {
 const avisos: string[] = [];
@@ -181,24 +177,25 @@ const warnReal = console.warn;
 console.warn = (...a: unknown[]) => { avisos.push(a.map(String).join(" ")); };
 
 try {
-  // a) Sin key: ni se consulta a Google; enlace válido a la ficha de SIM.
+  // a) Sin key: ni se reserva ni se consulta a Google; enlace válido a la ficha de SIM.
+  let k = contadorFalso();
   preparar({});
-  let h = await resenasPublicas();
-  assert.deepEqual([h.estado, h.reviews.length, h.resumen, llamadas.length], ["error", 0, null, 0]);
+  let h = await resenasPublicas(k.contador);
+  assert.deepEqual([h.estado, h.reviews.length, h.resumen, llamadas.length, k.c.reservas], ["error", 0, null, 0, 0]);
   assert.equal(h.fichaUrl, urlFicha(PLACE_ID_SIM));
-  let d = await diagnosticarResenas();
+  let d = await diagnosticarResenas(k.contador, false);
   assert.deepEqual(d.configuracion, { apiKey: "ausente", placeId: "predeterminado", placeIdUsado: PLACE_ID_SIM });
   assert.match(d.indicacion, /Falta la variable GOOGLE_PLACES_API_KEY en el entorno donde corre la web: \.env\.local en local, o Vercel/);
+  assert.equal(d.consultaPublica, "deshabilitada");
 
-  // b) Places API (New) responde: reseñas reales, una sola consulta, máscara de campos.
-  preparar({ key: KEY }, json(200, {
-    rating: 4.9, userRatingCount: 129, googleMapsLinks: { reviewsUri: "https://www.google.com/maps/reviews-sim" },
-    reviews: [RESENA_5, { ...RESENA_5, name: "b", rating: 4 }],
-  }));
-  h = await resenasPublicas();
+  // b) Places API (New) responde: una consulta, una reserva, máscara mínima, sin caché.
+  k = contadorFalso();
+  preparar({ key: KEY }, OK);
+  h = await resenasPublicas(k.contador);
   assert.deepEqual([h.estado, h.reviews.length, h.fichaUrl], ["ok", 1, "https://www.google.com/maps/reviews-sim"]);
   assert.deepEqual(h.resumen, { rating: 4.9, total: 129 });
-  assert.equal(llamadas.length, 1);
+  assert.equal(h.reviews[0].reportUri, "https://www.google.com/local/review/rap/report?a");
+  assert.deepEqual([llamadas.length, k.c.reservas, k.c.forzadas], [1, 1, 0], "cada consulta real a Google, contada");
   assert.ok(llamadas[0].url.startsWith(`https://places.googleapis.com/v1/places/${PLACE_ID_SIM}?`));
   assert.ok(llamadas[0].url.includes("languageCode=es"));
   assert.ok(!llamadas[0].url.includes(KEY), "la key va en el header, no en la URL");
@@ -211,18 +208,21 @@ try {
   assert.deepEqual([llamadas[0].cache, llamadas[0].next], ["no-store", undefined], "la consulta no entra al Data Cache de Next");
 
   // c) Responde pero sin 5★ con texto: "sin_resenas", no "error".
+  k = contadorFalso();
   preparar({ key: KEY, place: "ChIJotroLugar" }, json(200, { rating: 3.1, userRatingCount: 7, reviews: [{ ...RESENA_5, rating: 3 }] }));
-  d = await diagnosticarResenas();
+  d = await diagnosticarResenas(k.contador, false);
   assert.deepEqual([d.estado, d.recibidas, d.mostradas, d.configuracion.placeId], ["sin_resenas", 1, 0, "variable"]);
   assert.ok(llamadas[0].url.includes("/places/ChIJotroLugar?"), "GOOGLE_PLACE_ID manda si está");
   assert.equal(d.fichaUrl, urlFicha("ChIJotroLugar"), "sin enlace de Google: la ficha armada con el Place ID");
 
   // d) EL DEFECTO ORIGINAL: New sin habilitar y legacy contesta 200 REQUEST_DENIED.
-  //    Antes eso se leía como "no hay reseñas" sin dejar rastro.
+  //    Antes se leía como "no hay reseñas" sin rastro. El respaldo TAMBIÉN se cuenta.
+  k = contadorFalso();
   preparar({ key: KEY }, NUEVA_DESHABILITADA, LEGACY_DENEGADA);
   avisos.length = 0;
-  h = await resenasPublicas();
+  h = await resenasPublicas(k.contador);
   assert.deepEqual([h.estado, h.reviews.length], ["error", 0], "un REQUEST_DENIED es un error, no ausencia de reseñas");
+  assert.deepEqual([llamadas.length, k.c.reservas], [2, 2], "el intento de respaldo también reserva cupo");
   assert.equal(avisos.length, 1, "deja rastro en el log del servidor");
   assert.match(avisos[0], /places_new HTTP 403 PERMISSION_DENIED SERVICE_DISABLED \| places_legacy HTTP 200 REQUEST_DENIED/);
   assert.match(avisos[0], /habilitar «Places API \(New\)»/);
@@ -231,42 +231,112 @@ try {
   assert.equal(llamadas[1].cache, "no-store", "el respaldo tampoco se cachea");
 
   // d') Otra falla (restricción de la key): NO se gasta una consulta legacy que fallaría igual.
+  k = contadorFalso();
   preparar({ key: KEY }, REFERER_BLOQUEADO);
-  d = await diagnosticarResenas();
-  assert.equal(llamadas.length, 1, "sin consulta de respaldo");
-  assert.deepEqual(d.intentos.map((i) => [i.api, i.http, i.estadoGoogle, i.motivo]), [
-    ["places_new", 403, "PERMISSION_DENIED", "API_KEY_HTTP_REFERRER_BLOCKED"],
+  d = await diagnosticarResenas(k.contador, false);
+  assert.deepEqual([llamadas.length, k.c.reservas], [1, 1], "sin consulta de respaldo");
+  assert.deepEqual(d.intentos.map((i) => [i.api, i.http, i.estadoGoogle, i.motivo, i.contada]), [
+    ["places_new", 403, "PERMISSION_DENIED", "API_KEY_HTTP_REFERRER_BLOCKED", true],
   ]);
-  assert.match(d.indicacion, /restringida a sitios web/);
+  assert.match(d.indicacion, /quitar la restricción por sitio web/);
+  assert.ok(!/usar una key|crear/i.test(d.indicacion), "corrige la key existente: no propone otra");
   assert.ok(!JSON.stringify(d).includes(KEY), "el diagnóstico no devuelve la key");
   assert.equal(probarLegacy({ ...d.intentos[0] }), false);
-  assert.equal(probarLegacy({ api: "places_new", http: 403, estadoGoogle: "PERMISSION_DENIED", motivo: "SERVICE_DISABLED", mensaje: null, ms: 1 }), true);
 
-  // e) New deshabilitada, legacy habilitada: se muestran igual (respaldo).
-  preparar({ key: KEY }, NUEVA_DESHABILITADA,
-    json(200, { status: "OK", result: { rating: 4.9, user_ratings_total: 129, url: "https://maps.google.com/?cid=9",
-      reviews: [{ author_name: "Fede", rating: 5, text: "Excelente", time: 1 }] } }));
-  h = await resenasPublicas();
-  assert.deepEqual([h.estado, h.reviews.map((r) => r.author), h.fichaUrl], ["ok", ["Fede"], "https://maps.google.com/?cid=9"]);
+  // e) New deshabilitada, legacy habilitada: se muestran igual (respaldo), dos llamadas contadas.
+  k = contadorFalso();
+  preparar({ key: KEY }, NUEVA_DESHABILITADA, LEGACY_OK);
+  h = await resenasPublicas(k.contador);
+  assert.deepEqual([h.estado, h.reviews.map((r) => r.author), h.fichaUrl, k.c.reservas], ["ok", ["Fede"], "https://maps.google.com/?cid=9", 2]);
 
-  // f) Google no responde (timeout/red) o no devuelve JSON: error, nunca una excepción.
+  // f) Google no responde o no devuelve JSON: error, nunca una excepción.
+  k = contadorFalso();
   preparar({ key: KEY }, () => Promise.reject(new DOMException("abortado", "AbortError")));
-  d = await diagnosticarResenas();
+  d = await diagnosticarResenas(k.contador, false);
   assert.deepEqual([d.intentos.map((i) => i.http), d.estado, llamadas.length], [[null], "error", 1]);
   assert.match(d.indicacion, /no respondió a tiempo/);
   preparar({ key: KEY }, () => Promise.resolve(new Response("<html>502</html>", { status: 502 })));
-  d = await diagnosticarResenas();
+  d = await diagnosticarResenas(contadorFalso().contador, false);
   assert.deepEqual([d.intentos.map((i) => i.http), d.estado], [[502], "error"]);
 
-  // g) Sin memoria entre requests: dos pedidos seguidos son dos consultas a Google.
-  const OK = json(200, { reviews: [RESENA_5] });
+  // g) Sin memoria entre requests: dos pedidos seguidos son dos consultas y dos reservas.
+  k = contadorFalso();
   preparar({ key: KEY }, OK, OK);
-  await resenasPublicas();
-  await resenasPublicas();
-  assert.equal(llamadas.length, 2, "nada queda guardado en el proceso");
+  await resenasPublicas(k.contador);
+  await resenasPublicas(k.contador);
+  assert.deepEqual([llamadas.length, k.c.reservas], [2, 2], "nada queda guardado en el proceso");
 
-  // h) /api/resenas: respuesta sin caché, sin parámetros del cliente, con límites.
-  await rutaPublica(preparar, llamadas, OK);
+  // ── TOPE DIARIO COMPARTIDO ────────────────────────────────────────────────
+  // h) Tope ya alcanzado: no se consulta a Google; queda solo el enlace.
+  k = contadorFalso({ tope: 3, llamadas: 3 });
+  preparar({ key: KEY }, OK);
+  h = await resenasPublicas(k.contador);
+  assert.deepEqual([h.estado, h.reviews.length, llamadas.length, k.c.llamadas], ["limitado", 0, 0, 3], "sin cupo, sin consulta");
+  assert.equal(h.fichaUrl, urlFicha(PLACE_ID_SIM));
+
+  // i) El cupo se acaba ENTRE la API nueva y el respaldo: el respaldo no sale.
+  k = contadorFalso({ tope: 1 });
+  preparar({ key: KEY }, NUEVA_DESHABILITADA, LEGACY_OK);
+  h = await resenasPublicas(k.contador);
+  assert.deepEqual([h.estado, llamadas.length, k.c.llamadas], ["limitado", 1, 1], "la llamada nueva contó; el respaldo no se hizo");
+
+  // j) Contador sin responder (falta la migración, base caída) o que lanza: cerrado.
+  for (const o of [{ operativo: false }, { lanza: true }]) {
+    k = contadorFalso(o);
+    preparar({ key: KEY }, OK);
+    h = await resenasPublicas(k.contador);
+    assert.deepEqual([h.estado, llamadas.length], ["limitado", 0], `contador ${JSON.stringify(o)}: sin consulta`);
+  }
+
+  // k) Diagnóstico admin: consulta controlada que el tope NO frena, pero queda contada.
+  k = contadorFalso({ tope: 3, llamadas: 3 });
+  preparar({ key: KEY }, OK);
+  d = await diagnosticarResenas(k.contador, true);
+  assert.deepEqual([d.estado, llamadas.length, k.c.llamadas, k.c.forzadas, d.intentos[0].contada], ["ok", 1, 4, 1, true]);
+  assert.deepEqual(d.contador, { operativo: true, fecha: "2026-11-07", llamadas: 4, tope: 3, origenTope: "predeterminado" });
+  assert.equal(d.consultaPublica, "habilitada");
+
+  // l) Diagnóstico con el contador sin responder: consulta igual y avisa que NO quedó contada.
+  k = contadorFalso({ operativo: false });
+  preparar({ key: KEY }, OK);
+  d = await diagnosticarResenas(k.contador, false);
+  assert.deepEqual([d.estado, llamadas.length, d.intentos[0].contada, d.contador.operativo], ["ok", 1, false, false]);
+  assert.match(d.indicacion, /esta consulta NO quedó contada/);
+  // l') La tabla se lee pero la RPC de reserva no responde (visto en la base local): tampoco es "operativo".
+  k = contadorFalso({ reservaCaida: true });
+  preparar({ key: KEY }, OK);
+  d = await diagnosticarResenas(k.contador, false);
+  assert.deepEqual([d.estado, d.intentos[0].contada, d.contador.operativo], ["ok", false, false]);
+  assert.match(d.indicacion, /NO quedó contada/);
+  // Con todo contado, sin aviso.
+  d = await (async () => { preparar({ key: KEY }, OK); return diagnosticarResenas(contadorFalso().contador, false); })();
+  assert.ok(d.contador.operativo && !/NO quedó contada/.test(d.indicacion));
+
+  // ── 4 · /api/resenas (lógica): apagada por defecto, límite por IP, sin parámetros ──
+  const pedido = (q = "") => new Request(`https://simexperience.com.ar/api/resenas${q}`);
+  let creados = 0;
+  const deps = (habilitada: boolean, ipOk = true) => {
+    const kk = contadorFalso();
+    return { kk, d: { habilitada, contador: () => { creados++; return kk.contador; }, limitePorIp: async () => ipOk } };
+  };
+  // Apagada: 404, ni contador ni Google.
+  creados = 0;
+  let x = deps(false);
+  preparar({ key: KEY }, OK);
+  let res = await atenderResenasPublicas(pedido(), x.d);
+  assert.deepEqual([res.status, res.cuerpo.estado, res.cuerpo.fichaUrl, llamadas.length, creados], [404, "desactivado", fichaConfigurada(), 0, 0]);
+  // Prendida, límite por IP superado: 429, sin contador ni Google.
+  x = deps(true, false);
+  preparar({ key: KEY }, OK);
+  res = await atenderResenasPublicas(pedido(), x.d);
+  assert.deepEqual([res.status, res.cuerpo.estado, llamadas.length, creados], [429, "limitado", 0, 0]);
+  // Prendida: una consulta contada; los parámetros del cliente no cambian nada.
+  x = deps(true);
+  preparar({ key: KEY }, OK);
+  res = await atenderResenasPublicas(pedido("?place=ChIJotro&fields=*"), x.d);
+  assert.deepEqual([res.status, res.cuerpo.estado, x.kk.c.reservas], [200, "ok", 1]);
+  assert.ok(llamadas[0].url.includes(`/places/${PLACE_ID_SIM}?`) && llamadas[0].headers["X-Goog-FieldMask"] === CAMPOS_NUEVA,
+    "los parámetros del cliente no cambian la consulta a Google");
 } finally {
   globalThis.fetch = fetchReal;
   console.warn = warnReal;
@@ -275,7 +345,21 @@ try {
 }
 }
 
-// ── 4 · Capas sin caché y la Home sin reseñas en su HTML ─────────────────────
+// ── 5 · Tope configurable y llave apagada por defecto ───────────────────────
+{
+  assert.equal(TOPE_DIARIO_PROPUESTO, 30);
+  assert.deepEqual(topeDiario({}), { tope: 30, origen: "predeterminado" });
+  assert.deepEqual(topeDiario({ GOOGLE_PLACES_TOPE_DIARIO: "50" }), { tope: 50, origen: "variable" });
+  assert.deepEqual(topeDiario({ GOOGLE_PLACES_TOPE_DIARIO: " 0 " }), { tope: 0, origen: "variable" });
+  for (const malo of ["-1", "abc", "1e3", "10.5", "9999999"]) {
+    assert.deepEqual(topeDiario({ GOOGLE_PLACES_TOPE_DIARIO: malo }), { tope: 0, origen: "invalido" }, `"${malo}" cierra`);
+  }
+  assert.equal(resenasGooglePublicasHabilitadas({}), false, "apagada por defecto");
+  assert.equal(resenasGooglePublicasHabilitadas({ RESENAS_GOOGLE_PUBLICAS: "1" }), false);
+  assert.equal(resenasGooglePublicasHabilitadas({ RESENAS_GOOGLE_PUBLICAS: "true" }), true);
+}
+
+// ── 6 · Capas sin caché, sin carga automática y la Home sin reseñas en su HTML ─
 {
   const leer = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
   const sinComentarios = (x: string) => x.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -286,24 +370,42 @@ try {
   assert.ok(lib.includes('cache: "no-store"') && !/revalidate|next:\s*\{|force-cache|unstable_cache|"use cache"|cacheLife/.test(lib),
     "fetch sin caché y sin otra caché de Next");
   assert.ok(!/^(let|const|var)\s+\w+\s*=\s*new (Map|WeakMap|Set)\b/m.test(lib) && !/^let\s/m.test(lib), "sin estado de módulo que guarde respuestas");
+  assert.ok(!/supabaseAdmin|createClient/.test(lib), "la lógica no toca la base: el contador se inyecta");
+  assert.equal((lib.match(/await pedir\(/g) ?? []).length, 2, "dos consultas posibles (nueva y respaldo)…");
+  assert.equal((lib.match(/await reservar\("places_(new|legacy)"\)/g) ?? []).length, 2, "…y cada una reserva cupo antes");
+
+  // Contador real (Supabase).
+  const consumo = sinComentarios(leer("lib/googlePlacesConsumo.ts"));
+  assert.ok(consumo.includes('"google_places_reservar_llamada"') && consumo.includes("p_forzar: forzar"));
+  assert.ok(/motivo: "no_operativo"/.test(consumo), "falla cerrado");
+  const sql = leer("db/google-places-consumo.sql");
+  assert.ok(sql.includes("on conflict (fecha) do update") && sql.includes("where coalesce(p_forzar, false) or c.llamadas < p_tope"), "reserva atómica con tope");
+  assert.ok(sql.includes("(now() at time zone 'America/Argentina/Buenos_Aires')::date") && !/current_date/i.test(sql), "fecha de negocio de Argentina");
+  assert.ok(/^google-places-consumo\.sql$/m.test(leer("db/orden.txt")), "en el esquema local");
 
   // Respuesta HTTP.
   const ruta = sinComentarios(leer("app/api/resenas/route.ts"));
   assert.ok(/export const dynamic = "force-dynamic"/.test(ruta) && ruta.includes('"private, no-store, max-age=0"'));
-  assert.ok(ruta.includes("rateLimit(") && !/searchParams|req\.url/.test(ruta), "con límites y sin parámetros del cliente");
+  assert.ok(ruta.includes("habilitada: resenasGooglePublicasHabilitadas()") && ruta.includes("contadorGooglePlaces()"));
+  assert.ok(ruta.includes("rateLimit(") && !/searchParams|req\.url/.test(ruta), "con límite por IP y sin parámetros del cliente");
   const diag = sinComentarios(leer("app/api/admin/resenas-google/diagnostico/route.ts"));
-  assert.ok(diag.includes("requireAdmin()") && diag.includes("no-store"));
+  assert.ok(diag.includes("requireAdmin()") && diag.includes("no-store") && diag.includes("diagnosticarResenas(contadorGooglePlaces()"));
 
-  // HTML/RSC de la Home: el servidor no consulta a Google; solo pasa la ficha.
+  // HTML/RSC de la Home: el servidor no consulta a Google; solo pasa la ficha y la llave.
   const home = sinComentarios(leer("app/page.tsx"));
-  assert.ok(home.includes("<ResenasGoogle fichaUrl={fichaConfigurada()} />"));
+  assert.ok(home.includes("<ResenasGoogle fichaUrl={fichaConfigurada()} consultaHabilitada={resenasGooglePublicasHabilitadas()} />"));
   assert.ok(!/resenasPublicas|diagnosticarResenas|ReviewsCarousel|await\s+\w*[Rr]esen/.test(home), "la Home no trae reseñas al renderizar");
-  const seccion = leer("components/ResenasGoogle.tsx");
-  assert.ok(/^"use client"/.test(seccion) && seccion.includes('fetch("/api/resenas", { cache: "no-store"'), "las pide el navegador, sin caché");
-  assert.ok(seccion.includes("IntersectionObserver") && seccion.includes("ESPERA_MAXIMA_MS = 12_000"), "carga al llegar a la sección y con tope");
-  assert.ok(seccion.includes("<noscript>"), "sin JavaScript: el enlace, no un esqueleto");
-  assert.ok(seccion.includes("Mostramos solo reseñas de 5 estrellas"), "aviso de cómo se filtran");
-  assert.ok(seccion.includes("<AtribucionGoogleMaps />"));
+  const seccion = sinComentarios(leer("components/ResenasGoogle.tsx"));
+  assert.ok(/^"use client"/.test(leer("components/ResenasGoogle.tsx")));
+  assert.ok(!/IntersectionObserver/.test(seccion), "sin carga automática al acercarse");
+  assert.equal((seccion.match(/fetch\(/g) ?? []).length, 1);
+  const iFetch = seccion.indexOf('fetch("/api/resenas", { cache: "no-store"');
+  const iBoton = seccion.indexOf("const verResenas = () => {");
+  const iFinBoton = seccion.indexOf("const datos = ");
+  assert.ok(iBoton > 0 && iFetch > iBoton && iFetch < iFinBoton, "el único fetch está dentro del clic en «Ver reseñas»");
+  assert.ok(seccion.includes("onClick={verResenas}") && seccion.includes("Ver reseñas") && seccion.includes("consultaHabilitada && estado.fase === \"inicial\""));
+  assert.ok(seccion.includes("ESPERA_MAXIMA_MS = 12_000") && seccion.includes("<noscript>"), "carga con tope y sin JS solo el enlace");
+  assert.ok(seccion.includes("Mostramos solo reseñas de 5 estrellas") && seccion.includes("<AtribucionGoogleMaps />"));
   assert.ok(!/En camino|verificadas/i.test(seccion + home), "sin el esqueleto «Reseñas verificadas · En camino»");
 
   // Atribuciones.
@@ -316,7 +418,7 @@ try {
 }
 
 consultas().then(() => {
-  console.log("OK — Reseñas de Google (simuladas): normalización y atribuciones, errores con motivo (incluido el REQUEST_DENIED que antes se tragaba), respaldo legacy solo con la API nueva deshabilitada, sin key, sin 5★, timeout, la key nunca en logs ni respuestas; sin caché en consulta, proceso y respuesta; /api/resenas con límites y sin parámetros; la Home sin reseñas en su HTML.");
+  console.log("OK — Reseñas de Google (simuladas): atribuciones, errores con motivo, respaldo legacy solo con la API nueva deshabilitada; tope diario compartido reservado antes de cada consulta (incluido el respaldo), cerrado si el contador no responde, diagnóstico forzado y contado; /api/resenas apagada por defecto, con límite por IP y sin parámetros; sin caché ni carga automática; la Home sin reseñas en su HTML.");
 }).catch((e) => {
   console.error(e);
   process.exit(1);

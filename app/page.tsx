@@ -5,10 +5,12 @@ import HeroHome from "@/components/HeroHome";
 import SesionesVigentes from "@/components/SesionesVigentes";
 import ResenasGoogle from "@/components/ResenasGoogle";
 import { fichaConfigurada } from "@/lib/googleReviews";
+import { resenasGooglePublicasHabilitadas } from "@/lib/featureFlags";
 
 // ISR: la Home se revalida cada 6 h. Las reseñas de Google NO viajan en este
 // HTML ni en su RSC (las políticas de Google no permiten guardarlas): las pide
-// el navegador a /api/resenas, sin caché (<ResenasGoogle />).
+// el navegador a /api/resenas, sin caché, solo cuando el visitante pulsa
+// «Ver reseñas» y si RESENAS_GOOGLE_PUBLICAS está prendida (<ResenasGoogle />).
 // (Bloque final) Lo que depende de la modalidad comercial NO viaja en este HTML:
 // las duraciones de las sesiones las trae <SesionesVigentes /> del catálogo
 // vigente en cada visita, así quitar el override se ve sin esperar 6 h.
@@ -162,9 +164,10 @@ function Galeria() {
 
 // ─── 03 · TESTIMONIOS — RESEÑAS REALES DE GOOGLE MAPS ───────────
 // El servidor solo pasa la ficha de Google Maps armada con el Place ID (que sí
-// puede guardarse). Las reseñas las carga el navegador al llegar a la sección.
+// puede guardarse) y si el botón «Ver reseñas» está habilitado. Las reseñas las
+// pide el navegador solo cuando el visitante pulsa el botón.
 function Testimonios() {
-  return <ResenasGoogle fichaUrl={fichaConfigurada()} />;
+  return <ResenasGoogle fichaUrl={fichaConfigurada()} consultaHabilitada={resenasGooglePublicasHabilitadas()} />;
 }
 
 // ─── 04 · COMUNIDAD ──────────────────────────────────────────────

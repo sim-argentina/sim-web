@@ -159,5 +159,9 @@ crm-b3-ventas.sql
 # Necesita crm-b3-ventas.sql. Tramo, parada y notas de preparación + alta por importación.
 crm-rutas-preparacion.sql
 
+# ── 13l. Reseñas de Google: tope diario compartido de consultas a Places ─────
+# Independiente. service_role solo lee la tabla (reserva por RPC). Sin datos.
+google-places-consumo.sql
+
 # ── 14. Fixtures de la base de pruebas (configuración, cero datos de negocio) ──
 fixtures-pruebas.sql

@@ -24,12 +24,19 @@
 //   · consulta: fetch con cache "no-store" (nada en el Data Cache de Next);
 //   · proceso: sin memoria ni memoización entre requests;
 //   · respuesta: /api/resenas y el diagnóstico responden Cache-Control no-store;
-//   · HTML/RSC: la Home (ISR) NO las trae; las pide el navegador al llegar a
-//     la sección (components/ResenasGoogle.tsx).
-// Cuándo se llama a Google: una vez por visita que llega a la sección de
-// reseñas (con JavaScript), a través de /api/resenas, con límites por IP y
-// global. Nunca en el build, en la revalidación de la Home ni por un rastreador
-// sin JavaScript. El diagnóstico admin hace una llamada por apertura.
+//   · HTML/RSC: la Home (ISR) NO las trae; las pide el navegador cuando el
+//     visitante pulsa «Ver reseñas» (components/ResenasGoogle.tsx).
+// Cuándo se llama a Google: SOLO cuando un visitante pulsa «Ver reseñas» y la
+// consulta pública está habilitada (RESENAS_GOOGLE_PUBLICAS, apagada por
+// defecto), y cuando un admin abre el diagnóstico. Nunca en el build, en la
+// revalidación de la Home, al cargar la página ni por un rastreador.
+//
+// TOPE DIARIO COMPARTIDO (db/google-places-consumo.sql): ANTES de cada consulta
+// real a Google —también el respaldo legacy— se reserva una llamada en un
+// contador por fecha de Argentina que comparten todas las instancias. Si el
+// tope del día se alcanzó o el contador no responde, no se consulta y la Home
+// muestra solo el enlace a Google Maps. El diagnóstico admin cuenta igual
+// (forzado: no lo frena el tope) y avisa si su llamada no pudo quedar contada.
 
 export type GoogleReview = {
   id: string;
@@ -49,7 +56,8 @@ export type GoogleReview = {
 
 export type ResumenLugar = { rating: number | null; total: number | null };
 
-export type EstadoResenas = "ok" | "sin_resenas" | "error";
+/** "limitado": no se consultó a Google por el tope diario, el contador o el límite por IP. "desactivado": consulta pública apagada. */
+export type EstadoResenas = "ok" | "sin_resenas" | "error" | "limitado" | "desactivado";
 
 export type ResenasHome = {
   estado: EstadoResenas;
@@ -71,7 +79,46 @@ export type Intento = {
   /** Mensaje de Google, sin la key. */
   mensaje: string | null;
   ms: number;
+  /** true si quedó registrada en el contador diario compartido. */
+  contada: boolean;
 };
+
+/** Resultado de reservar una consulta en el contador diario compartido. */
+export type Reserva = { ok: true; llamada: number } | { ok: false; motivo: "tope" | "no_operativo" };
+
+export type EstadoContador = {
+  /** false: la tabla o la RPC no respondieron (p. ej. falta la migración). */
+  operativo: boolean;
+  /** Fecha de negocio de Argentina (AAAA-MM-DD). */
+  fecha: string;
+  /** Consultas reales a Google contadas hoy. */
+  llamadas: number | null;
+  tope: number;
+};
+
+/** Contador diario compartido. La implementación real (Supabase) está en lib/googlePlacesConsumo.ts. */
+export type Contador = {
+  tope: number;
+  /** forzar: cuenta aunque se haya alcanzado el tope (solo el diagnóstico admin). */
+  reservar(forzar: boolean): Promise<Reserva>;
+  leer(): Promise<EstadoContador>;
+};
+
+/**
+ * Tope diario inicial PROPUESTO: 30 consultas reales a Google por día (~900 por
+ * mes), dentro de las 1.000 gratuitas mensuales del SKU Place Details
+ * Enterprise + Atmosphere si nada más de la cuenta de facturación lo usa.
+ * Configurable con GOOGLE_PLACES_TOPE_DIARIO (entero >= 0).
+ */
+export const TOPE_DIARIO_PROPUESTO = 30;
+
+/** Tope configurado. Un valor inválido CIERRA (tope 0): nunca abre de más por un typo. */
+export function topeDiario(entorno: Record<string, string | undefined> = process.env): { tope: number; origen: "variable" | "predeterminado" | "invalido" } {
+  const crudo = (entorno.GOOGLE_PLACES_TOPE_DIARIO ?? "").trim();
+  if (!crudo) return { tope: TOPE_DIARIO_PROPUESTO, origen: "predeterminado" };
+  if (!/^\d{1,6}$/.test(crudo)) return { tope: 0, origen: "invalido" };
+  return { tope: Number(crudo), origen: "variable" };
+}
 
 export type DiagnosticoResenas = {
   configuracion: {
@@ -80,6 +127,10 @@ export type DiagnosticoResenas = {
     /** El Place ID es público (también viaja en el enlace de la Home). */
     placeIdUsado: string;
   };
+  /** RESENAS_GOOGLE_PUBLICAS: el botón «Ver reseñas» de la Home. */
+  consultaPublica: "habilitada" | "deshabilitada";
+  /** Estado del contador diario compartido DESPUÉS de este diagnóstico. */
+  contador: EstadoContador & { origenTope: "variable" | "predeterminado" | "invalido" };
   intentos: Intento[];
   estado: EstadoResenas;
   /** Reseñas que devolvió Google (todas las estrellas). */
@@ -284,7 +335,7 @@ export function indicacionPara(i: Intento | null, apiKeyPresente: boolean): stri
     return "La API no está habilitada para la key: habilitar «Places API (New)» en el proyecto de Google Cloud al que pertenece GOOGLE_PLACES_API_KEY.";
   }
   if (/API_KEY_HTTP_REFERRER_BLOCKED|referer/i.test(m)) {
-    return "La key está restringida a sitios web (referer) y la consulta sale del servidor, sin referer: usar una key de servidor sin restricción de sitio web, restringida por API a «Places API (New)».";
+    return "La key está restringida a sitios web (referer) y la consulta sale del servidor, sin referer: en la key quitar la restricción por sitio web y dejarla restringida por API a «Places API (New)».";
   }
   if (/API_KEY_IP_ADDRESS_BLOCKED/i.test(m)) {
     return "La key está restringida por IP y Vercel no tiene IP fija: quitar la restricción por IP y restringirla por API a «Places API (New)».";
@@ -345,7 +396,9 @@ export function fichaConfigurada(): string {
   return urlFicha((process.env.GOOGLE_PLACE_ID ?? "").trim() || PLACE_ID_SIM);
 }
 
-async function consultar(): Promise<{ resenas: ResenasHome; diagnostico: DiagnosticoResenas }> {
+async function consultar(contador: Contador, forzar: boolean): Promise<{
+  resenas: ResenasHome; diagnostico: Omit<DiagnosticoResenas, "consultaPublica" | "contador">;
+}> {
   const apiKey = (process.env.GOOGLE_PLACES_API_KEY ?? "").trim();
   const placeEnv = (process.env.GOOGLE_PLACE_ID ?? "").trim();
   const placeId = placeEnv || PLACE_ID_SIM;
@@ -361,12 +414,17 @@ async function consultar(): Promise<{ resenas: ResenasHome; diagnostico: Diagnos
   ) => {
     const fichaUrl = datos?.ficha ?? urlFicha(placeId);
     const reviews = estado === "ok" && datos ? datos.reviews : [];
+    const frenada = intentos.find((i) => i.estadoGoogle === "NO_CONSULTADO");
     const indicacion =
       estado === "ok"
         ? `La integración funciona: ${reviews.length} reseña(s) de 5★ para la Home.`
         : estado === "sin_resenas"
           ? `La integración funciona, pero Google devolvió ${datos?.recibidas ?? 0} reseña(s) y ninguna de 5★ con texto: la Home muestra el enlace a Google Maps.`
-          : indicacionPara(intentos[0] ?? null, !!apiKey);
+          : estado === "limitado"
+            ? frenada?.motivo === "TOPE_DIARIO"
+              ? `Se alcanzó el tope diario de consultas a Google (${contador.tope}): hasta mañana la Home muestra solo el enlace a Google Maps.`
+              : "El contador diario compartido no respondió (¿falta aplicar db/google-places-consumo.sql?): sin contador no se consulta a Google y la Home muestra solo el enlace."
+            : indicacionPara(intentos.find((i) => i.estadoGoogle !== "NO_CONSULTADO") ?? null, !!apiKey);
     return {
       resenas: { estado, reviews, resumen: datos?.resumen ?? null, fichaUrl },
       diagnostico: {
@@ -384,23 +442,44 @@ async function consultar(): Promise<{ resenas: ResenasHome; diagnostico: Diagnos
 
   if (!apiKey) return cerrar("error", null);
 
+  // Reserva en el contador ANTES de cada consulta real a Google. false: no consultar.
+  let contada = false;
+  const reservar = async (api: Intento["api"]): Promise<boolean> => {
+    let r: Reserva;
+    try {
+      r = await contador.reservar(forzar);
+    } catch {
+      r = { ok: false, motivo: "no_operativo" };
+    }
+    if (r.ok) { contada = true; return true; }
+    // Diagnóstico admin: consulta controlada aunque el contador no responda; queda marcada como no contada.
+    if (forzar && r.motivo === "no_operativo") { contada = false; return true; }
+    intentos.push({
+      api, http: null, estadoGoogle: "NO_CONSULTADO", motivo: r.motivo === "tope" ? "TOPE_DIARIO" : "CONTADOR_NO_OPERATIVO",
+      mensaje: null, ms: 0, contada: false,
+    });
+    return false;
+  };
+
   // 1) Places API (New): GET places/{id} con máscara de campos.
+  if (!(await reservar("places_new"))) return cerrar("limitado", null);
   const nueva = await pedir(
     `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?languageCode=es&regionCode=AR`,
     { "X-Goog-Api-Key": apiKey, "X-Goog-FieldMask": CAMPOS_NUEVA },
   );
   if (nueva.http === 200 && nueva.body && typeof nueva.body === "object" && !("error" in nueva.body)) {
-    intentos.push({ api: "places_new", http: 200, estadoGoogle: "OK", motivo: null, mensaje: null, ms: nueva.ms });
+    intentos.push({ api: "places_new", http: 200, estadoGoogle: "OK", motivo: null, mensaje: null, ms: nueva.ms, contada });
     const datos = normalizarNueva(nueva.body as NewApiPlace);
     return cerrar(datos.reviews.length > 0 ? "ok" : "sin_resenas", datos);
   }
   const err = leerErrorNueva(nueva.body);
   const fallaNueva: Intento = {
     api: "places_new", http: nueva.http, estadoGoogle: err.estado, motivo: err.motivo,
-    mensaje: redactar(err.mensaje, apiKey), ms: nueva.ms,
+    mensaje: redactar(err.mensaje, apiKey), ms: nueva.ms, contada,
   };
   intentos.push(fallaNueva);
   if (!probarLegacy(fallaNueva)) return cerrar("error", null);
+  if (!(await reservar("places_legacy"))) return cerrar("limitado", null);
 
   // 2) Respaldo: Place Details (legacy), SOLO si la API nueva no está habilitada
   //    para la key. Contesta HTTP 200 también ante errores: decide `status`.
@@ -411,21 +490,21 @@ async function consultar(): Promise<{ resenas: ResenasHome; diagnostico: Diagnos
   );
   const lb = (legacy.body ?? null) as LegacyResponse | null;
   if (legacy.http === 200 && lb?.status === "OK") {
-    intentos.push({ api: "places_legacy", http: 200, estadoGoogle: "OK", motivo: null, mensaje: null, ms: legacy.ms });
+    intentos.push({ api: "places_legacy", http: 200, estadoGoogle: "OK", motivo: null, mensaje: null, ms: legacy.ms, contada });
     const datos = normalizarLegacy(lb);
     return cerrar(datos.reviews.length > 0 ? "ok" : "sin_resenas", datos);
   }
   intentos.push({
     api: "places_legacy", http: legacy.http, estadoGoogle: lb?.status ?? null, motivo: null,
-    mensaje: redactar(lb?.error_message, apiKey), ms: legacy.ms,
+    mensaje: redactar(lb?.error_message, apiKey), ms: legacy.ms, contada,
   });
   return cerrar("error", null);
 }
 
 /** Para /api/resenas (sin caché). Nunca lanza; el motivo de una falla va al log del servidor, sin la key ni el texto de las reseñas. */
-export async function resenasPublicas(): Promise<ResenasHome> {
+export async function resenasPublicas(contador: Contador): Promise<ResenasHome> {
   try {
-    const { resenas, diagnostico } = await consultar();
+    const { resenas, diagnostico } = await consultar(contador, false);
     if (resenas.estado === "error") {
       const resumen = diagnostico.intentos
         .map((i) => `${i.api} HTTP ${i.http ?? "sin respuesta"} ${i.estadoGoogle ?? ""} ${i.motivo ?? ""}`.trim())
@@ -440,7 +519,45 @@ export async function resenasPublicas(): Promise<ResenasHome> {
   }
 }
 
-/** Diagnóstico para el panel (sin caché, solo admin). Nunca lanza ni devuelve la key. */
-export async function diagnosticarResenas(): Promise<DiagnosticoResenas> {
-  return (await consultar()).diagnostico;
+export type DependenciasPublicas = {
+  /** RESENAS_GOOGLE_PUBLICAS. */
+  habilitada: boolean;
+  /** Se crea recién si la consulta está habilitada (apagada no se toca la base). */
+  contador: () => Contador;
+  /** Límite por IP (anti abuso). true: permitido. */
+  limitePorIp: (req: Request) => Promise<boolean>;
+};
+
+/**
+ * Lógica de GET /api/resenas (la ruta solo agrega los encabezados sin caché).
+ * Apagada: 404 sin consultar a Google ni tocar el contador. Pasado el límite
+ * por IP: 429. Si no, una consulta con reserva previa en el tope diario.
+ */
+export async function atenderResenasPublicas(req: Request, deps: DependenciasPublicas): Promise<{ status: number; cuerpo: ResenasHome }> {
+  const sinConsulta = (estado: EstadoResenas): ResenasHome => ({ estado, reviews: [], resumen: null, fichaUrl: fichaConfigurada() });
+  if (!deps.habilitada) return { status: 404, cuerpo: sinConsulta("desactivado") };
+  if (!(await deps.limitePorIp(req))) return { status: 429, cuerpo: sinConsulta("limitado") };
+  return { status: 200, cuerpo: await resenasPublicas(deps.contador()) };
+}
+
+/** Diagnóstico para el panel (sin caché, solo admin). Cuenta en el tope diario sin que el tope lo frene. Nunca lanza ni devuelve la key. */
+export async function diagnosticarResenas(contador: Contador, consultaPublica: boolean): Promise<DiagnosticoResenas> {
+  const { diagnostico } = await consultar(contador, true);
+  let estadoContador: EstadoContador;
+  try {
+    estadoContador = await contador.leer();
+  } catch {
+    estadoContador = { operativo: false, fecha: "", llamadas: null, tope: contador.tope };
+  }
+  // Operativo = se puede leer Y cada consulta real de este diagnóstico quedó contada
+  // (la tabla puede leerse aunque la RPC de reserva no responda).
+  const sinContar = diagnostico.intentos.some((i) => !i.contada && i.estadoGoogle !== "NO_CONSULTADO");
+  return {
+    ...diagnostico,
+    indicacion: sinContar
+      ? `${diagnostico.indicacion} Atención: esta consulta NO quedó contada en el tope diario (la reserva no respondió; ¿falta aplicar db/google-places-consumo.sql?). Mientras tanto la consulta pública queda cerrada.`
+      : diagnostico.indicacion,
+    consultaPublica: consultaPublica ? "habilitada" : "deshabilitada",
+    contador: { ...estadoContador, operativo: estadoContador.operativo && !sinContar, origenTope: topeDiario().origen },
+  };
 }

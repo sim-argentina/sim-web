@@ -1,18 +1,22 @@
 import { NextResponse } from "next/server";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
-import { fichaConfigurada, resenasPublicas } from "@/lib/googleReviews";
+import { resenasGooglePublicasHabilitadas } from "@/lib/featureFlags";
+import { atenderResenasPublicas } from "@/lib/googleReviews";
+import { contadorGooglePlaces } from "@/lib/googlePlacesConsumo";
 
-// Reseñas de Google para la Home, pedidas por el navegador al llegar a la
-// sección (components/ResenasGoogle.tsx). SIN CACHÉ en ninguna capa: las
-// políticas de Google Maps Platform no permiten guardar reseñas, así que cada
-// respuesta sale de una consulta a Google en el momento y nada la retiene (ni
-// el Data Cache de Next, ni la CDN de Vercel, ni el navegador).
+// Reseñas de Google para la Home, pedidas por el navegador SOLO cuando el
+// visitante pulsa «Ver reseñas» (components/ResenasGoogle.tsx).
 //
-// No acepta parámetros: la consulta a Google es fija (Place ID y campos del
-// servidor), como pide la guía de seguridad de Google para un proxy. Los
-// límites protegen la facturación (cada respuesta es una consulta Place
-// Details Enterprise + Atmosphere): por IP y uno global por hora. Pasado un
-// límite, la Home muestra el enlace a Google Maps (nunca un esqueleto).
+//   · Apagada por defecto (RESENAS_GOOGLE_PUBLICAS): 404 sin consultar a Google
+//     ni tocar el contador; la Home muestra solo el enlace a Google Maps.
+//   · Prendida: límite por IP y TOPE DIARIO COMPARTIDO (db/google-places-consumo.sql),
+//     reservado antes de cada consulta real a Google, incluido el respaldo legacy.
+//     Tope alcanzado o contador sin responder → sin consulta, solo el enlace.
+//   · SIN CACHÉ en ninguna capa: las políticas de Google Maps Platform no
+//     permiten guardar reseñas (ni el Data Cache de Next, ni la CDN, ni el navegador).
+//   · No acepta parámetros: Place ID y campos los fija el servidor.
+//   · La lógica vive en atenderResenasPublicas (lib/googleReviews.ts), probada
+//     con dobles; acá solo se conectan las dependencias reales y los encabezados.
 
 export const dynamic = "force-dynamic";
 
@@ -22,19 +26,14 @@ const SIN_CACHE = {
   "Vercel-CDN-Cache-Control": "no-store",
 };
 
-/** Por IP: una visita normal pide 1 vez; 6 por minuto cubre recargas. */
+/** Por IP: una visita pulsa una vez; 6 por minuto cubre reintentos. */
 const LIMITE_POR_IP = { cantidad: 6, ventanaMs: 60_000 };
-/** Global: tope de consultas a Google por hora para todo el sitio. */
-const LIMITE_GLOBAL = { cantidad: 300, ventanaMs: 60 * 60_000 };
 
 export async function GET(req: Request) {
-  const porIp = await rateLimit(`resenas:ip:${clientIp(req)}`, LIMITE_POR_IP.cantidad, LIMITE_POR_IP.ventanaMs);
-  const global = porIp && (await rateLimit("resenas:global", LIMITE_GLOBAL.cantidad, LIMITE_GLOBAL.ventanaMs));
-  if (!porIp || !global) {
-    return NextResponse.json(
-      { estado: "limitado", reviews: [], resumen: null, fichaUrl: fichaConfigurada() },
-      { status: 429, headers: SIN_CACHE },
-    );
-  }
-  return NextResponse.json(await resenasPublicas(), { headers: SIN_CACHE });
+  const { status, cuerpo } = await atenderResenasPublicas(req, {
+    habilitada: resenasGooglePublicasHabilitadas(),
+    contador: () => contadorGooglePlaces(),
+    limitePorIp: (r) => rateLimit(`resenas:ip:${clientIp(r)}`, LIMITE_POR_IP.cantidad, LIMITE_POR_IP.ventanaMs),
+  });
+  return NextResponse.json(cuerpo, { status, headers: SIN_CACHE });
 }
