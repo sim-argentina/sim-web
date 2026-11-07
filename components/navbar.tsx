@@ -11,7 +11,6 @@ const LINKS = [
   { href: "/vivi-sim",            label: "Viví SIM"             },
   { href: "/campeonatos",         label: "Campeonatos"          },
   { href: "/alquiler",      label: "Alquiler"      },
-  { href: "/viaja-con-sim", label: "Viaja con SIM" },
   { href: "/tienda",        label: "Sim Store"     },
   { href: "/sobre-nosotros",label: "Sobre nosotros"},
 ];

@@ -3,14 +3,34 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { useDuracionesVigentes } from "@/components/SesionesVigentes";
 
-const STATS = [
-  { value: "F1",            sup: "",    label: "Experiencia\nprofesional" },
-  { value: "15",            sup: "MIN", label: "Turnos\nágiles"           },
-  { value: "30",            sup: "MIN", label: "Máxima\ninmersión"        },
-  { value: "NUEVO CENTRO",  sup: "",    label: "Shopping\nCórdoba"        },
-  { value: "EVENTOS",       sup: "",    label: "Corp.\ny privados"        },
-];
+type Stat = { value: string; sup: string; label: string };
+
+// Duraciones del stand en la barra del Hero. Salen del catálogo VIGENTE de
+// Reservas (la misma consulta que <SesionesVigentes />), así un cambio de
+// modalidad o un rollback se ve en el request siguiente aunque la Home sea ISR.
+// Hasta que responde se muestra la oferta vigente desde el 01/10/2026 (10, 20 y
+// 30 minutos) para no dejar la barra vacía; nunca las duraciones anteriores.
+const DURACIONES_INICIALES = [10, 20, 30];
+
+function statsDuracion(duraciones: number[]): Stat[] {
+  const maxima = duraciones[duraciones.length - 1];
+  const agiles = duraciones.slice(0, -1);
+  return [
+    ...(agiles.length > 0 ? [{ value: agiles.join(" / "), sup: "MIN", label: "Turnos\nágiles" }] : []),
+    { value: String(maxima), sup: "MIN", label: "Máxima\ninmersión" },
+  ];
+}
+
+function statsHero(duraciones: number[]): Stat[] {
+  return [
+    { value: "F1",            sup: "",    label: "Experiencia\nprofesional" },
+    ...statsDuracion(duraciones),
+    { value: "NUEVO CENTRO",  sup: "",    label: "Shopping\nCórdoba"        },
+    { value: "EVENTOS",       sup: "",    label: "Corp.\ny privados"        },
+  ];
+}
 
 const TICKER = [
   "SIM ARGENTINA",
@@ -31,6 +51,7 @@ const LINES = [
 ];
 
 export default function HeroHome() {
+  const STATS = statsHero(useDuracionesVigentes() ?? DURACIONES_INICIALES);
   return (
     <section className="relative flex min-h-[100svh] flex-col overflow-hidden bg-black">
 

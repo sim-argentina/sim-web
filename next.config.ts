@@ -18,7 +18,7 @@ const cspDirectives = [
   "frame-ancestors 'none'",
   // Next inyecta estilos inline; los previews de imágenes usan data:/blob:.
   // Google Analytics/Tag Manager: solo los dominios necesarios para pixels de GA4.
-  `img-src 'self' data: blob: https://*.supabase.co https://*.mlstatic.com https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com${live("https://vercel.live https://vercel.com")}`,
+  `img-src 'self' data: blob: https://*.supabase.co https://*.mlstatic.com https://*.googleusercontent.com https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com${live("https://vercel.live https://vercel.com")}`,
   "media-src 'self' blob: https://*.supabase.co",
   `style-src 'self' 'unsafe-inline'${live("https://vercel.live")}`,
   // 'unsafe-eval' lo requiere el runtime de Next en algunos navegadores.

@@ -18,19 +18,7 @@ function useItemsPerView(): number {
   return n;
 }
 
-// Logo "G" de Google (atribución real, no un sello inventado).
-function GoogleG({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 48 48" className={className} aria-hidden="true">
-      <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
-      <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z" />
-      <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z" />
-      <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
-    </svg>
-  );
-}
-
-// 5 estrellas doradas tipo Google (solo entran reseñas de 5★).
+// 5 estrellas (solo se muestran reseñas de 5★; la sección lo avisa).
 function Stars() {
   return (
     <div className="flex gap-0.5" aria-label="5 de 5 estrellas">
@@ -60,64 +48,91 @@ function Chevron({ dir }: { dir: "left" | "right" }) {
   );
 }
 
-function ReviewCard({ r, placeUrl }: { r: GoogleReview; placeUrl: string | null }) {
+// Avatar del autor (atribución de Google). Sin foto o si no carga: la inicial.
+function Avatar({ r }: { r: GoogleReview }) {
+  const [fallo, setFallo] = useState(false);
+  if (r.authorPhoto && !fallo) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- avatar remoto de Google, 40 px
+      <img
+        src={r.authorPhoto}
+        alt=""
+        width={40}
+        height={40}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFallo(true)}
+        className="h-10 w-10 shrink-0 rounded-full bg-white/10 object-cover"
+      />
+    );
+  }
+  return (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-sm font-semibold text-white/80">
+      {r.author.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+function ReviewCard({ r, fichaUrl }: { r: GoogleReview; fichaUrl: string }) {
   return (
     <article className="flex h-full flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-5">
-      {/* autor + marca Google */}
+      {/* autor (atribución: avatar, nombre y perfil en Google Maps) */}
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-sm font-semibold text-white/80">
-          {r.author.charAt(0).toUpperCase()}
-        </div>
+        <Avatar r={r} />
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-white/90">{r.author}</p>
+          {r.authorUri ? (
+            <a
+              href={r.authorUri}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block truncate text-sm font-semibold text-white/90 hover:underline"
+            >
+              {r.author}
+            </a>
+          ) : (
+            <p className="truncate text-sm font-semibold text-white/90">{r.author}</p>
+          )}
           {r.relativeTime && <p className="text-xs text-white/40">{r.relativeTime}</p>}
         </div>
-        <GoogleG className="ml-auto h-5 w-5 shrink-0" />
       </div>
 
       <Stars />
 
-      {/* texto exacto de la reseña (truncado solo visualmente) */}
+      {/* texto del autor (truncado solo visualmente; completo en Google Maps) */}
       <p className="line-clamp-5 flex-1 text-sm leading-6 text-white/70">{r.text}</p>
 
-      {/* link a la reseña en Google Maps */}
-      {placeUrl ? (
-        <a
-          href={placeUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs font-medium text-white/45 transition-colors hover:text-white/80"
-        >
-          Reseña en Google Maps ↗
-        </a>
-      ) : (
-        <span className="text-xs font-medium text-white/45">Reseña en Google Maps</span>
-      )}
+      {/* la reseña en Google Maps (fuente) */}
+      <a
+        href={r.reviewUri ?? fichaUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-xs font-medium text-white/45 transition-colors hover:text-white/80"
+      >
+        Ver reseña en Google Maps ↗
+      </a>
     </article>
   );
 }
 
 export default function ReviewsCarousel({
   reviews,
-  placeUrl,
+  fichaUrl,
 }: {
   reviews: GoogleReview[];
-  placeUrl: string | null;
+  fichaUrl: string;
 }) {
   const perView = useItemsPerView();
   const maxActive = Math.max(0, reviews.length - perView);
-  const [active, setActive] = useState(0);
+  const [elegido, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
 
-  // Clamp del índice cuando cambia el layout (resize mobile<->desktop).
-  useEffect(() => {
-    setActive((a) => Math.min(a, maxActive));
-  }, [maxActive]);
+  // Índice recortado al layout (resize mobile<->desktop), derivado sin efecto.
+  const active = Math.min(elegido, maxActive);
 
   // Auto-avance (pausa al hover; sin indicador visual de páginas).
   useEffect(() => {
     if (paused || maxActive <= 0) return;
-    const id = setInterval(() => setActive((a) => (a >= maxActive ? 0 : a + 1)), AUTO_MS);
+    const id = setInterval(() => setActive((a) => (Math.min(a, maxActive) >= maxActive ? 0 : Math.min(a, maxActive) + 1)), AUTO_MS);
     return () => clearInterval(id);
   }, [paused, maxActive]);
 
@@ -125,7 +140,7 @@ export default function ReviewsCarousel({
   const step = 100 / perView;
   const go = (dir: number) =>
     setActive((a) => {
-      const n = a + dir;
+      const n = Math.min(a, maxActive) + dir;
       if (n < 0) return maxActive;
       if (n > maxActive) return 0;
       return n;
@@ -144,7 +159,7 @@ export default function ReviewsCarousel({
         >
           {reviews.map((r) => (
             <div key={r.id} className="w-full shrink-0 px-2 md:w-1/3">
-              <ReviewCard r={r} placeUrl={placeUrl} />
+              <ReviewCard r={r} fichaUrl={fichaUrl} />
             </div>
           ))}
         </div>
