@@ -273,7 +273,7 @@ export function normalizarLegacy(data: LegacyResponse): {
 /** Indicación concreta a partir del primer intento fallido (la API New es la preferida). */
 export function indicacionPara(i: Intento | null, apiKeyPresente: boolean): string {
   if (!apiKeyPresente) {
-    return "Falta la variable GOOGLE_PLACES_API_KEY en Vercel (entorno Production). Cargarla y redeployar.";
+    return "Falta la variable GOOGLE_PLACES_API_KEY en el entorno donde corre la web: .env.local en local, o Vercel → Settings → Environment Variables para Preview o Production (después, redeployar).";
   }
   if (!i) return "Sin intentos registrados.";
   if (i.http === null) {

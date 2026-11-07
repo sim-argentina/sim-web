@@ -188,7 +188,7 @@ try {
   assert.equal(h.fichaUrl, urlFicha(PLACE_ID_SIM));
   let d = await diagnosticarResenas();
   assert.deepEqual(d.configuracion, { apiKey: "ausente", placeId: "predeterminado", placeIdUsado: PLACE_ID_SIM });
-  assert.match(d.indicacion, /Falta la variable GOOGLE_PLACES_API_KEY/);
+  assert.match(d.indicacion, /Falta la variable GOOGLE_PLACES_API_KEY en el entorno donde corre la web: \.env\.local en local, o Vercel/);
 
   // b) Places API (New) responde: reseñas reales, una sola consulta, máscara de campos.
   preparar({ key: KEY }, json(200, {
