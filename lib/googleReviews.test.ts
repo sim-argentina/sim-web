@@ -391,10 +391,22 @@ try {
   const diag = sinComentarios(leer("app/api/admin/resenas-google/diagnostico/route.ts"));
   assert.ok(diag.includes("requireAdmin()") && diag.includes("no-store") && diag.includes("diagnosticarResenas(contadorGooglePlaces()"));
 
-  // HTML/RSC de la Home: el servidor no consulta a Google; solo pasa la ficha y la llave.
+  // HTML/RSC de la Home: resumen ESTÁTICO de SIM; ni el servidor ni el navegador piden reseñas.
   const home = sinComentarios(leer("app/page.tsx"));
-  assert.ok(home.includes("<ResenasGoogle fichaUrl={fichaConfigurada()} consultaHabilitada={resenasGooglePublicasHabilitadas()} />"));
-  assert.ok(!/resenasPublicas|diagnosticarResenas|ReviewsCarousel|await\s+\w*[Rr]esen/.test(home), "la Home no trae reseñas al renderizar");
+  assert.ok(home.includes("<ResenasDestacadas fichaUrl={fichaConfigurada()} />"));
+  assert.ok(!/resenasPublicas|diagnosticarResenas|ReviewsCarousel|ResenasGoogle|resenasGooglePublicasHabilitadas|await\s+\w*[Rr]esen/.test(home),
+    "la Home no trae reseñas al renderizar ni monta la consulta pública");
+  const destacadasFuente = leer("components/ResenasDestacadas.tsx");
+  const destacadas = sinComentarios(destacadasFuente);
+  assert.ok(!/^"use client"/.test(destacadasFuente) && !/useState|useEffect|fetch\(|\/api\/resenas|googleapis/.test(destacadas),
+    "contenido estático del servidor: no consulta /api/resenas ni a Google");
+  const titulos = ["Sensación de Fórmula 1", "Un plan para compartir", "Variedad y buena atención"].map((t) => destacadas.indexOf(t));
+  assert.ok(titulos.every((i, n) => i > 0 && (n === 0 || i > titulos[n - 1])), "las tres tarjetas, en este orden");
+  assert.equal((destacadas.match(/<a\b/g) ?? []).length, 1, "un único enlace…");
+  assert.ok(destacadas.includes("href={fichaUrl}") && destacadas.includes("Ver todas las reseñas en Google Maps"), "…a la ficha de Google Maps");
+  assert.ok(!/En camino|verificadas|<img|★/i.test(destacadas), "sin esqueleto, fotos ni estrellas");
+
+  // Sección en vivo (hoy sin montar en la Home): se conserva su contrato.
   const seccion = sinComentarios(leer("components/ResenasGoogle.tsx"));
   assert.ok(/^"use client"/.test(leer("components/ResenasGoogle.tsx")));
   assert.ok(!/IntersectionObserver/.test(seccion), "sin carga automática al acercarse");

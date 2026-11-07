@@ -3,14 +3,13 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import HeroHome from "@/components/HeroHome";
 import SesionesVigentes from "@/components/SesionesVigentes";
-import ResenasGoogle from "@/components/ResenasGoogle";
+import ResenasDestacadas from "@/components/ResenasDestacadas";
 import { fichaConfigurada } from "@/lib/googleReviews";
-import { resenasGooglePublicasHabilitadas } from "@/lib/featureFlags";
 
 // ISR: la Home se revalida cada 6 h. Las reseñas de Google NO viajan en este
-// HTML ni en su RSC (las políticas de Google no permiten guardarlas): las pide
-// el navegador a /api/resenas, sin caché, solo cuando el visitante pulsa
-// «Ver reseñas» y si RESENAS_GOOGLE_PUBLICAS está prendida (<ResenasGoogle />).
+// HTML ni en su RSC (las políticas de Google no permiten guardarlas) y la Home
+// tampoco las pide: la sección de reseñas es un resumen estático escrito por
+// SIM, con un único enlace a la ficha de Google Maps (<ResenasDestacadas />).
 // (Bloque final) Lo que depende de la modalidad comercial NO viaja en este HTML:
 // las duraciones de las sesiones las trae <SesionesVigentes /> del catálogo
 // vigente en cada visita, así quitar el override se ve sin esperar 6 h.
@@ -162,12 +161,12 @@ function Galeria() {
   );
 }
 
-// ─── 03 · TESTIMONIOS — RESEÑAS REALES DE GOOGLE MAPS ───────────
-// El servidor solo pasa la ficha de Google Maps armada con el Place ID (que sí
-// puede guardarse) y si el botón «Ver reseñas» está habilitado. Las reseñas las
-// pide el navegador solo cuando el visitante pulsa el botón.
+// ─── 03 · TESTIMONIOS — LO QUE DESTACARON EN GOOGLE MAPS ────────
+// Tres tarjetas estáticas que resumen, sin citar ni identificar a nadie, lo que
+// destacaron los clientes, y un único botón a la ficha de Google Maps armada con
+// el Place ID (que sí puede guardarse). No consulta /api/resenas ni a Google.
 function Testimonios() {
-  return <ResenasGoogle fichaUrl={fichaConfigurada()} consultaHabilitada={resenasGooglePublicasHabilitadas()} />;
+  return <ResenasDestacadas fichaUrl={fichaConfigurada()} />;
 }
 
 // ─── 04 · COMUNIDAD ──────────────────────────────────────────────
