@@ -2,12 +2,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import HeroHome from "@/components/HeroHome";
-import ReviewsCarousel from "@/components/ReviewsCarousel";
 import SesionesVigentes from "@/components/SesionesVigentes";
-import AtribucionGoogleMaps from "@/components/AtribucionGoogleMaps";
-import { resenasParaHome } from "@/lib/googleReviews";
+import ResenasGoogle from "@/components/ResenasGoogle";
+import { fichaConfigurada } from "@/lib/googleReviews";
 
-// ISR: la Home se revalida cada 6h para refrescar las reseñas de Google.
+// ISR: la Home se revalida cada 6 h. Las reseñas de Google NO viajan en este
+// HTML ni en su RSC (las políticas de Google no permiten guardarlas): las pide
+// el navegador a /api/resenas, sin caché (<ResenasGoogle />).
 // (Bloque final) Lo que depende de la modalidad comercial NO viaja en este HTML:
 // las duraciones de las sesiones las trae <SesionesVigentes /> del catálogo
 // vigente en cada visita, así quitar el override se ve sin esperar 6 h.
@@ -160,91 +161,10 @@ function Galeria() {
 }
 
 // ─── 03 · TESTIMONIOS — RESEÑAS REALES DE GOOGLE MAPS ───────────
-// Las trae el servidor (lib/googleReviews.ts) y viajan en el HTML de la Home
-// (ISR 6 h): no hay estado de carga en el navegador. Sin reseñas para mostrar
-// (falla de Google, falta de configuración o ninguna de 5★) la sección lo dice
-// y deja el enlace a la ficha de Google Maps: nunca un esqueleto ni contenido
-// inventado.
-function formatoRating(n: number): string {
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-}
-
-async function Testimonios() {
-  const { estado, reviews, resumen, fichaUrl } = await resenasParaHome();
-  const tieneReviews = estado === "ok" && reviews.length > 0;
-
-  return (
-    <section className="relative overflow-hidden border-y border-white/5 bg-black text-white">
-      {/* degradado sutil + leve glow rojo racing */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/[0.03] via-transparent to-black" />
-      <div className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[36rem] -translate-x-1/2 rounded-full bg-red-600/10 blur-[100px]" />
-
-      {/* header */}
-      <div className="relative px-6 pb-6 pt-14 md:px-12 md:pb-8 md:pt-16">
-        <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="mb-3 text-[10px] font-black uppercase tracking-[0.55em] text-red-500">
-              Lo que importa
-            </p>
-            <h2 className="text-2xl font-black uppercase leading-[1.05] md:text-[2.6rem]">
-              Clientes que ya vivieron la{" "}
-              <span className="whitespace-nowrap text-red-600">experiencia SIM.</span>
-            </h2>
-          </div>
-          <div className="flex shrink-0 flex-col gap-1.5 md:items-end">
-            {tieneReviews && resumen?.rating != null && (
-              <p className="text-sm font-semibold text-white/80">
-                <span className="text-[#fbbc04]">★</span> {formatoRating(resumen.rating)}
-                {resumen.total != null && (
-                  <span className="font-normal text-white/50"> · {resumen.total.toLocaleString("es-AR")} reseñas</span>
-                )}
-              </p>
-            )}
-            <a
-              href={fichaUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-white/50 transition-colors hover:text-white"
-            >
-              Ver todas en Google Maps ↗
-            </a>
-          </div>
-        </div>
-      </div>
-
-      {tieneReviews ? (
-        <>
-          <ReviewsCarousel reviews={reviews} fichaUrl={fichaUrl} />
-          {/* aviso de filtro y atribución (políticas de Google Maps Platform) */}
-          <div className="relative flex flex-col gap-3 px-6 pb-12 md:flex-row md:items-center md:justify-between md:px-12 md:pb-14">
-            <p className="max-w-2xl text-[11px] leading-5 text-white/40">
-              Mostramos solo reseñas de 5 estrellas, elegidas entre las más relevantes que muestra Google.
-              Google no verifica las reseñas, pero revisa y elimina el contenido falso cuando lo detecta.
-            </p>
-            <AtribucionGoogleMaps />
-          </div>
-        </>
-      ) : (
-        // Sin reseñas para mostrar: enlace directo a la ficha, sin esqueletos.
-        <div className="relative px-6 pb-16 md:px-12 md:pb-20">
-          <div className="mx-auto flex max-w-3xl flex-col items-center gap-5 rounded-xl border border-white/10 bg-white/[0.03] px-6 py-10 text-center">
-            <p className="max-w-md text-sm leading-6 text-white/65">
-              Las opiniones de quienes ya corrieron en SIM están en nuestra ficha de Google Maps.
-            </p>
-            <a
-              href={fichaUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 border border-white/20 px-6 py-3 text-xs font-black uppercase tracking-widest text-white/80 transition-all hover:border-red-600 hover:text-white"
-            >
-              Ver reseñas en Google Maps ↗
-            </a>
-          </div>
-        </div>
-      )}
-
-    </section>
-  );
+// El servidor solo pasa la ficha de Google Maps armada con el Place ID (que sí
+// puede guardarse). Las reseñas las carga el navegador al llegar a la sección.
+function Testimonios() {
+  return <ResenasGoogle fichaUrl={fichaConfigurada()} />;
 }
 
 // ─── 04 · COMUNIDAD ──────────────────────────────────────────────

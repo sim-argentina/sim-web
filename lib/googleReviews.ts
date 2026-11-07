@@ -16,7 +16,20 @@
 //
 // Atribuciones (https://developers.google.com/maps/documentation/places/web-service/policies):
 // avatar, nombre y perfil del autor; enlace a la reseña en Google Maps
-// (googleMapsUri); atribución "Google Maps" en el contenedor.
+// (googleMapsUri) y para reportarla (flagContentUri); atribución "Google Maps".
+//
+// SIN CACHÉ (políticas de Places API y Service Specific Terms de Google Maps
+// Platform: las reseñas no se guardan ni se cachean; solo el Place ID puede
+// guardarse sin límite). En ninguna capa queda una reseña almacenada:
+//   · consulta: fetch con cache "no-store" (nada en el Data Cache de Next);
+//   · proceso: sin memoria ni memoización entre requests;
+//   · respuesta: /api/resenas y el diagnóstico responden Cache-Control no-store;
+//   · HTML/RSC: la Home (ISR) NO las trae; las pide el navegador al llegar a
+//     la sección (components/ResenasGoogle.tsx).
+// Cuándo se llama a Google: una vez por visita que llega a la sección de
+// reseñas (con JavaScript), a través de /api/resenas, con límites por IP y
+// global. Nunca en el build, en la revalidación de la Home ni por un rastreador
+// sin JavaScript. El diagnóstico admin hace una llamada por apertura.
 
 export type GoogleReview = {
   id: string;
@@ -30,6 +43,8 @@ export type GoogleReview = {
   relativeTime: string;
   /** La reseña en Google Maps (fuente). */
   reviewUri: string | null;
+  /** Reportar la reseña en Google (recomendado por las políticas). */
+  reportUri: string | null;
 };
 
 export type ResumenLugar = { rating: number | null; total: number | null };
@@ -79,14 +94,31 @@ export type DiagnosticoResenas = {
 /** Place ID de SIM Argentina (Av. Duarte Quirós 1400, Córdoba). Verificado el 06/11/2026. */
 export const PLACE_ID_SIM = "ChIJ3xfK5ruZMpQRkfHB5LldzCY";
 
-const REVALIDATE_SECONDS = 6 * 60 * 60; // 6 h, igual que la Home (ISR)
-const FETCH_TIMEOUT_MS = 6000;
+// Por intento. El navegador espera como máximo 12 s (ResenasGoogle.tsx): con
+// el respaldo legacy, 2 × 5 s todavía entran.
+const FETCH_TIMEOUT_MS = 5000;
 const MAX_TEXT = 600;
 // La Places API (New) devuelve hasta 5 reseñas (las más relevantes); el tope
 // queda alto para mostrar todas las que lleguen.
 const MAX_REVIEWS = 20;
 
-const CAMPOS_NUEVA = "rating,userRatingCount,googleMapsUri,googleMapsLinks,reviews";
+// SOLO los campos que se muestran (rutas con punto, como documenta "Choose
+// fields to return"). reviews factura el SKU Place Details Enterprise +
+// Atmosphere; Google cobra el SKU más alto de la máscara, así que rating y
+// userRatingCount (Enterprise) y googleMapsLinks (Pro) no suben el costo.
+export const CAMPOS_NUEVA = [
+  "rating",
+  "userRatingCount",
+  "googleMapsLinks.reviewsUri",
+  "reviews.name",
+  "reviews.rating",
+  "reviews.text",
+  "reviews.originalText",
+  "reviews.authorAttribution",
+  "reviews.relativePublishTimeDescription",
+  "reviews.googleMapsUri",
+  "reviews.flagContentUri",
+].join(",");
 
 // ── Utilidades puras ─────────────────────────────────────────────────────────
 
@@ -134,6 +166,7 @@ interface NewApiReview {
   authorAttribution?: { displayName?: string; uri?: string; photoUri?: string };
   relativePublishTimeDescription?: string;
   googleMapsUri?: string;
+  flagContentUri?: string;
 }
 interface NewApiPlace {
   rating?: number;
@@ -170,6 +203,7 @@ export function normalizarNueva(data: NewApiPlace): {
       text: cleanText(text),
       relativeTime: (r.relativePublishTimeDescription ?? "").trim(),
       reviewUri: https(r.googleMapsUri),
+      reportUri: https(r.flagContentUri),
     });
   });
   return {
@@ -223,6 +257,7 @@ export function normalizarLegacy(data: LegacyResponse): {
       text: cleanText(text),
       relativeTime: (r.relative_time_description ?? "").trim(),
       reviewUri: null, // la API legacy no da el enlace de cada reseña: se usa la ficha
+      reportUri: null,
     });
   });
   return {
@@ -277,22 +312,20 @@ export function indicacionPara(i: Intento | null, apiKeyPresente: boolean): stri
 
 // ── Consulta ─────────────────────────────────────────────────────────────────
 
-type Modo = "isr" | "sin_cache";
+/** El respaldo legacy solo sirve si la API nueva NO está habilitada: ante otra falla (key, restricción, cuota, red) fallaría igual y sería una llamada facturable más. */
+export function probarLegacy(i: Intento): boolean {
+  return /SERVICE_DISABLED|has not been used|is disabled/i.test(`${i.motivo ?? ""} ${i.mensaje ?? ""}`);
+}
 
-async function pedir(url: string, headers: Record<string, string>, modo: Modo): Promise<{
+async function pedir(url: string, headers: Record<string, string>): Promise<{
   http: number | null; body: unknown; ms: number;
 }> {
   const t0 = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    // Next guarda en su Data Cache SOLO respuestas 200: un error nunca queda
-    // retenido 6 h y la revalidación siguiente vuelve a preguntar.
-    const res = await fetch(url, {
-      headers,
-      signal: controller.signal,
-      ...(modo === "isr" ? { next: { revalidate: REVALIDATE_SECONDS } } : { cache: "no-store" as const }),
-    });
+    // no-store: ni el Data Cache de Next ni ninguna otra capa guarda la respuesta.
+    const res = await fetch(url, { headers, signal: controller.signal, cache: "no-store" });
     let body: unknown = null;
     try {
       body = await res.json();
@@ -307,7 +340,12 @@ async function pedir(url: string, headers: Record<string, string>, modo: Modo): 
   }
 }
 
-async function consultar(modo: Modo): Promise<{ resenas: ResenasHome; diagnostico: DiagnosticoResenas }> {
+/** Ficha de Google Maps armada con el Place ID configurado (el Place ID sí puede guardarse). */
+export function fichaConfigurada(): string {
+  return urlFicha((process.env.GOOGLE_PLACE_ID ?? "").trim() || PLACE_ID_SIM);
+}
+
+async function consultar(): Promise<{ resenas: ResenasHome; diagnostico: DiagnosticoResenas }> {
   const apiKey = (process.env.GOOGLE_PLACES_API_KEY ?? "").trim();
   const placeEnv = (process.env.GOOGLE_PLACE_ID ?? "").trim();
   const placeId = placeEnv || PLACE_ID_SIM;
@@ -350,7 +388,6 @@ async function consultar(modo: Modo): Promise<{ resenas: ResenasHome; diagnostic
   const nueva = await pedir(
     `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?languageCode=es&regionCode=AR`,
     { "X-Goog-Api-Key": apiKey, "X-Goog-FieldMask": CAMPOS_NUEVA },
-    modo,
   );
   if (nueva.http === 200 && nueva.body && typeof nueva.body === "object" && !("error" in nueva.body)) {
     intentos.push({ api: "places_new", http: 200, estadoGoogle: "OK", motivo: null, mensaje: null, ms: nueva.ms });
@@ -358,18 +395,19 @@ async function consultar(modo: Modo): Promise<{ resenas: ResenasHome; diagnostic
     return cerrar(datos.reviews.length > 0 ? "ok" : "sin_resenas", datos);
   }
   const err = leerErrorNueva(nueva.body);
-  intentos.push({
+  const fallaNueva: Intento = {
     api: "places_new", http: nueva.http, estadoGoogle: err.estado, motivo: err.motivo,
     mensaje: redactar(err.mensaje, apiKey), ms: nueva.ms,
-  });
+  };
+  intentos.push(fallaNueva);
+  if (!probarLegacy(fallaNueva)) return cerrar("error", null);
 
-  // 2) Respaldo: Place Details (legacy), por si la key solo tiene la API vieja.
-  //    Contesta HTTP 200 también ante errores: lo que decide es `status`.
+  // 2) Respaldo: Place Details (legacy), SOLO si la API nueva no está habilitada
+  //    para la key. Contesta HTTP 200 también ante errores: decide `status`.
   const legacy = await pedir(
     `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}` +
       `&fields=reviews,rating,user_ratings_total,url&language=es&reviews_no_translations=true&key=${encodeURIComponent(apiKey)}`,
     {},
-    modo,
   );
   const lb = (legacy.body ?? null) as LegacyResponse | null;
   if (legacy.http === 200 && lb?.status === "OK") {
@@ -384,10 +422,10 @@ async function consultar(modo: Modo): Promise<{ resenas: ResenasHome; diagnostic
   return cerrar("error", null);
 }
 
-/** Lo que muestra la Home (cacheado con la Home). Nunca lanza. */
-export async function resenasParaHome(): Promise<ResenasHome> {
+/** Para /api/resenas (sin caché). Nunca lanza; el motivo de una falla va al log del servidor, sin la key ni el texto de las reseñas. */
+export async function resenasPublicas(): Promise<ResenasHome> {
   try {
-    const { resenas, diagnostico } = await consultar("isr");
+    const { resenas, diagnostico } = await consultar();
     if (resenas.estado === "error") {
       const resumen = diagnostico.intentos
         .map((i) => `${i.api} HTTP ${i.http ?? "sin respuesta"} ${i.estadoGoogle ?? ""} ${i.motivo ?? ""}`.trim())
@@ -398,11 +436,11 @@ export async function resenasParaHome(): Promise<ResenasHome> {
     }
     return resenas;
   } catch {
-    return { estado: "error", reviews: [], resumen: null, fichaUrl: urlFicha((process.env.GOOGLE_PLACE_ID ?? "").trim() || PLACE_ID_SIM) };
+    return { estado: "error", reviews: [], resumen: null, fichaUrl: fichaConfigurada() };
   }
 }
 
 /** Diagnóstico para el panel (sin caché, solo admin). Nunca lanza ni devuelve la key. */
 export async function diagnosticarResenas(): Promise<DiagnosticoResenas> {
-  return (await consultar("sin_cache")).diagnostico;
+  return (await consultar()).diagnostico;
 }

@@ -101,15 +101,27 @@ function ReviewCard({ r, fichaUrl }: { r: GoogleReview; fichaUrl: string }) {
       {/* texto del autor (truncado solo visualmente; completo en Google Maps) */}
       <p className="line-clamp-5 flex-1 text-sm leading-6 text-white/70">{r.text}</p>
 
-      {/* la reseña en Google Maps (fuente) */}
-      <a
-        href={r.reviewUri ?? fichaUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-xs font-medium text-white/45 transition-colors hover:text-white/80"
-      >
-        Ver reseña en Google Maps ↗
-      </a>
+      {/* la reseña en Google Maps (fuente) y cómo reportarla */}
+      <div className="flex items-center justify-between gap-3">
+        <a
+          href={r.reviewUri ?? fichaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs font-medium text-white/45 transition-colors hover:text-white/80"
+        >
+          Ver reseña en Google Maps ↗
+        </a>
+        {r.reportUri && (
+          <a
+            href={r.reportUri}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-white/30 transition-colors hover:text-white/70"
+          >
+            Reportar
+          </a>
+        )}
+      </div>
     </article>
   );
 }

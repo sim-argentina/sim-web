@@ -5,8 +5,8 @@ import { listaDuraciones } from "@/lib/ofertaPublicaTexto";
 
 // (Bloque final) Las duraciones de las sesiones que muestra la Home salen del
 // catálogo VIGENTE de Reservas, que resuelve el servidor en cada request
-// (/api/reservas/catalogo: force-dynamic, no-store). La Home es ISR (6 h, por las
-// reseñas de Google): si el texto viajara en ese HTML, quitar el override se
+// (/api/reservas/catalogo: force-dynamic, no-store). La Home es ISR (6 h): si
+// el texto viajara en ese HTML, quitar el override se
 // vería recién en la próxima revalidación. Así cambia en el request siguiente,
 // sin redeploy y sin reloj del navegador. Mientras carga muestra "—".
 //
