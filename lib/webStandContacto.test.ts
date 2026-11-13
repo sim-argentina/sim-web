@@ -29,7 +29,12 @@ function archivos(dir: string, out: string[] = []): string[] {
   assert.deepEqual(conAnterior, [], "el contacto anterior no aparece en código, datos ni archivos públicos de texto");
   const tienda = leer("app/tienda/page.tsx");
   assert.ok(tienda.includes('const WA = "https://wa.me/5493518117091";'), "SIM Store consulta al número nuevo");
-  // El número principal de SIM (reservas, alquiler, campeonatos) NO cambia.
+  // Alquiler: su botón propio consulta al número laboral, con el mismo mensaje precargado.
+  const alquiler = leer("app/alquiler/page.tsx");
+  assert.deepEqual([...alquiler.matchAll(/https:\/\/wa\.me\/\d+[^"]*/g)].map((m) => m[0]),
+    ["https://wa.me/5493518117091?text=Hola%20SIM%2C%20quiero%20consultar%20disponibilidad%20para%20alquilar%20simuladores%20o%20el%20colectivo."],
+    "Alquiler consulta al número laboral");
+  // El número principal de SIM (menú general, reservas, campeonatos) NO cambia.
   assert.ok(leer("components/navbar.tsx").includes("5493512520927"));
   assert.ok(leer("components/seo/StructuredData.tsx").includes("+5493512520927"));
 }
